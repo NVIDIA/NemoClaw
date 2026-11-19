@@ -22,11 +22,12 @@ A row marked **not verified** names the run that would check it.
 
 ## Installation and Releases
 
-The source-build workflow does not supply an installer or a published package; keep the matching bundle for an existing deployment.
+Release archives exist only on draft releases; there is no installer or published package. Keep the matching bundle for an existing deployment.
 
 | Limit | Issue | Last verified |
 |---|---|---|
-| No published final release, installer, or release downloads; build the bundle from source | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue; only draft releases exist |
+| No published final release: the [release archives](../get-started/install.md) are on draft releases, which only maintainers see; others [build the bundle from source](../build-deploy/build.md#build-a-native-bundle) | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`291723b`][v1-291723b]: issue; only draft releases exist |
+| The release executables are neither signed nor notarized for macOS or Windows | [#14621](https://github.com/NVIDIA/NemoClaw/issues/14621) | [`291723b`][v1-291723b]: code, issue |
 | The SDK and provider packages are not published | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | No support policy or enterprise deployment qualification | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue |
 
@@ -39,6 +40,8 @@ Accepted platform and model declarations are not a tested matrix; verify the exa
 | No general DGX Station setup procedure; most Station configurations are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Managed Ollama with OpenClaw on DGX Station | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | [Nemotron on an AMD64 GPU host](../agents-inference/models.md#configure-nemotron-on-an-amd64-gpu-host): its runtime image and GPU inference | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, docs, issue |
+| A deployment from a Windows client on Docker Desktop or a Podman machine, with a managed or an external gateway: no Windows host has run one, and CI tests the Windows client against fake engines on named pipes | [#14639](https://github.com/NVIDIA/NemoClaw/issues/14639) | [`5223fdc`][v1-5223fdc]: code, docs, issue |
+| A managed gateway from a macOS client on Colima, Rancher Desktop, or a Podman machine: no macOS host has run one; the gateway binds `/var/run/docker.sock` in the engine's VM, from each engine's documentation. Docker Desktop 4.94 on macOS 26 created a sandbox through that socket in [#14643](https://github.com/NVIDIA/NemoClaw/pull/14643). An engine at another socket, such as a Lima instance's, binds the client's socket path, which its VM may not serve | [#14640](https://github.com/NVIDIA/NemoClaw/issues/14640) | [`ffe5406`][v1-ffe5406]: code, docs, issue |
 | Local GPU deployment on Windows/WSL or macOS | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | A model service on a separate physical SSH host | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Serving one model across several GPUs on one host: `container.gpuDevices` takes one entry, so vLLM refuses a [parallel layout](../agents-inference/models.md#set-the-parallel-layout) larger than one GPU | [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) | [`cb8ef25`][v1-cb8ef25]: code, issue |
@@ -65,9 +68,9 @@ A configured connection or ready container does not establish successful model r
 | Limit | Issue | Last verified |
 |---|---|---|
 | Hermes doesn't reject a managed Ollama window below its 64,000-token minimum; see [sizing the context for Hermes](../agents-inference/inference.md#size-the-context-for-hermes) | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) | [`cb8ef25`][v1-cb8ef25]: Hermes, issue |
-| OpenClaw with an `anthropic` provider: Fabric's OpenClaw adapter selects `openai-completions` for every route with a base URL, so OpenClaw sends the key in an `Authorization` bearer header, which OpenShell refuses with `403` `credential_placement_mismatch` because an `anthropic` provider places its key in `x-api-key`; use `provider: openai` for an endpoint that accepts OpenAI chat completions | [#14529](https://github.com/NVIDIA/NemoClaw/issues/14529), [NVIDIA/NeMo-Fabric#667](https://github.com/NVIDIA/NeMo-Fabric/pull/667) | [`cb8ef25`][v1-cb8ef25]: Fabric, OpenShell, issue |
 | Hermes with an `anthropic` provider whose endpoint's path doesn't end in `/anthropic` or `/anthropic/v1` and whose host isn't Anthropic's, Claude's or Azure's: Hermes sends the requests to `https://api.anthropic.com`, which OpenShell refuses; see [pointing Hermes at an Anthropic endpoint](../agents-inference/inference.md#point-hermes-at-an-anthropic-endpoint) | [#14538](https://github.com/NVIDIA/NemoClaw/issues/14538), [NVIDIA/NeMo-Fabric#666](https://github.com/NVIDIA/NeMo-Fabric/issues/666) | [`cb8ef25`][v1-cb8ef25]: Hermes, issue |
-| Managed llama.cpp and NVIDIA NIM services; use either as an external OpenAI-compatible endpoint | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) | [`cb8ef25`][v1-cb8ef25]: code, issue |
+| Native NIM's full tool inventory, default 8K context, general task reliability, cross-host cache restoration and other model/profile combinations remain unqualified; use the [bounded BF16 candidate configuration](../agents-inference/models.md#native-nim-candidate) | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556), [NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679) | See the [source-specific qualification record](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) |
+| llama.cpp bearer authentication protects inference; native model inventory and health remain public. A key does not provide inventory confidentiality | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) | See the [source-specific qualification record](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) |
 | Model Router | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
 | A provider that uses Gemini's native API; onboarding's Google Gemini preset connects through Gemini's OpenAI-compatible endpoint | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | No open issue | [`cb8ef25`][v1-cb8ef25]: docs |
@@ -89,7 +92,6 @@ Select the adapter and image together, then verify its integrations and native r
 | What an attached Hermes terminal and its in-flight turn do when Fabric stops the runtime: Fabric starts and stops the terminal's backend and doesn't define or test this yet | [NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656#issuecomment-6971534523) | [`cb8ef25`][v1-cb8ef25]: issue |
 | OpenClaw's Brave and Tavily web search plugins | [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) | [`cb8ef25`][v1-cb8ef25]: Fabric, issue |
 | NemoClaw's invoke path can't send `acknowledge_recovery`, so after `session_recovery_required` an agent that keeps its state answers only a request sent with `fabric-agent-ctl invoke --request`; see [continue after session_recovery_required](../observability/troubleshooting.md#continue-after-session_recovery_required). Native interfaces aren't affected | No open issue | [`cb8ef25`][v1-cb8ef25]: code, Fabric |
-| OpenClaw's `web_fetch` refuses every host, including hosts the network policy allows; the agent's exec tool still reaches them | [#14537](https://github.com/NVIDIA/NemoClaw/issues/14537) | [`cb8ef25`][v1-cb8ef25]: OpenShell, Fabric, OpenClaw, issue |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
 | Tavily and Brave search have not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | OpenShell refuses new connections to an address its policy DNS answered once the answer's TTL has passed, so a client that reconnects to the address it kept fails, as OpenClaw's Node.js does. For an OpenClaw agent, the model request fails and its runtime stops; the next apply starts a new runtime without the conversation | Fixed after OpenShell 0.1.9 by [NVIDIA/OpenShell#5650](https://github.com/NVIDIA/OpenShell/pull/5650) | [`cb8ef25`][v1-cb8ef25]: OpenShell |
@@ -117,6 +119,7 @@ Preserve state and native data before attempting a destructive operation.
 | Backup, restore, snapshots and transfer of mounted agent data | [Platform-owned storage](../build-deploy/state.md#keep-agent-files-on-mounted-volumes); no NemoClaw command | [`cb8ef25`][v1-cb8ef25]: code, docs |
 | A documented path from the earlier product's configuration export to a v1 deployment | [#14580](https://github.com/NVIDIA/NemoClaw/issues/14580) | [`cb8ef25`][v1-cb8ef25]: issue |
 | Moving data from the earlier product to v1 and back | No NemoClaw procedure; native data belongs to the harness and moving its storage to the platform ([migration](../get-started/migration.md)) | [`cb8ef25`][v1-cb8ef25]: docs |
+| Keeping a sandbox across a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: once the gateway runs again, the sandbox refuses the supervisor that OpenShell starts for it and goes to `Error` with `StartFailed`, and the next apply replaces it, which deletes its files outside mounted volumes and its conversation history. A graceful restart, such as `docker restart`, keeps the sandbox | [#13953](https://github.com/NVIDIA/NemoClaw/issues/13953), [NVIDIA/OpenShell#4910](https://github.com/NVIDIA/OpenShell/issues/4910) | [`291723b`][v1-291723b]: issue; on a DGX Spark, 9 of 9 SIGKILLed gateways lost their Hermes sandbox and 12 of 12 graceful restarts kept it |
 
 ## Security
 
@@ -153,4 +156,10 @@ Select the v1 guide explicitly and match its source revision to the bundle befor
 | Search and docs MCP scoped to v1 | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 | Packaged installation of the documentation skill for assistant clients | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 
+Managed [llama.cpp](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp) accepts pinned public GGUF files on one CUDA GPU.
+General tool use, multimodal input, other models and Classic host parity need separate qualification; see the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006).
+
 [v1-cb8ef25]: https://github.com/NVIDIA/NemoClaw/tree/cb8ef25252ffffbca051787adb4711c96ebfcf28
+[v1-291723b]: https://github.com/NVIDIA/NemoClaw/tree/291723b41b77dbd502f5418b9b0a9b7c1a322dc9
+[v1-5223fdc]: https://github.com/NVIDIA/NemoClaw/tree/5223fdc0b6c9a7ec0b7d86b9c11699eb3de1a206
+[v1-ffe5406]: https://github.com/NVIDIA/NemoClaw/tree/ffe5406498c6a27c068ad52a56ddcfb1cb37b904

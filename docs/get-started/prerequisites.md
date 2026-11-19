@@ -58,7 +58,7 @@ On Linux, the oldest supported release is Ubuntu 22.04, whose glibc is 2.35.
 `CI / Bundle` builds the Linux bundles there and fails if any bundle executable needs a newer glibc; it runs the contract, integration, and live tests on Ubuntu 24.04.
 A bundle runs only where the glibc is at least as new as on the host that built it, so build it on the oldest Linux release that will run it.
 
-There are no release downloads or installer yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
+To use a release's CLI instead of building it, [install the CLI](install.md) from the release's archive for your platform.
 
 ## Runtime and Inference Requirements
 

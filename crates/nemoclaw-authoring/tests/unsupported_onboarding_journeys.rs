@@ -13,18 +13,6 @@ fn an_author_can_choose_the_feature_gated_nemocua_agent() {
 }
 
 #[test]
-#[ignore = "V1 has no managed llama.cpp service or GGUF model contract"]
-fn an_author_can_attach_or_install_llama_cpp() {
-    panic!("missing V1 llama.cpp lifecycle contract");
-}
-
-#[test]
-#[ignore = "V1 has no managed NVIDIA NIM service identity"]
-fn an_author_can_choose_local_nvidia_nim_on_a_qualified_gpu() {
-    panic!("missing V1 NIM lifecycle contract");
-}
-
-#[test]
 #[ignore = "V1 has no managed model-router or model-pool lifecycle"]
 fn an_author_can_choose_the_experimental_model_router() {
     panic!("missing V1 model-router contract");
@@ -58,12 +46,6 @@ fn an_author_can_choose_a_policy_tier_then_customize_presets_and_access() {
 #[ignore = "V1 has no messaging-channel configuration model"]
 fn an_author_can_select_multiple_messaging_channels() {
     panic!("missing V1 messaging-channel contract");
-}
-
-#[test]
-#[ignore = "V1 Runtime has no sandbox GPU-selection or host-mount fields"]
-fn an_author_can_choose_sandbox_gpu_access_and_read_only_host_mounts() {
-    panic!("missing V1 sandbox runtime resource contract");
 }
 
 #[test]

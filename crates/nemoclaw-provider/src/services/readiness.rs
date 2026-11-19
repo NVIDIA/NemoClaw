@@ -149,6 +149,10 @@ pub async fn wait_service_ready(
         let (kind, authenticated) = match spec.as_ref() {
             RuntimeSpec::Vllm(service) => (vllm::SERVICE_KIND, service.authentication.is_some()),
             RuntimeSpec::Ollama(_) => (ollama::SERVICE_KIND, false),
+            RuntimeSpec::Nim(service) => (vllm::SERVICE_KIND, service.authentication.is_some()),
+            RuntimeSpec::LlamaCpp(service) => {
+                (vllm::SERVICE_KIND, service.authentication.is_some())
+            }
         };
         loop {
             let (running, started_at) = observe()

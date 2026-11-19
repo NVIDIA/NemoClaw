@@ -24,12 +24,144 @@ data vllm_capacity (version 0)
   observed_bytes: number, computed
   required_bytes: number, computed
 
+data vllm_llama_cpp_runtime (version 0)
+  > Computes a runtime contract from typed settings without contacting any host.
+  authentication: string, optional
+    > Native bearer authentication using a platform-supplied key or retained generated credential.
+  gpu_count: number, optional
+    > The number of GPUs the service uses, which requirements.gpu_count reports; spec doesn't change. It must be 1, because serving one model across several GPUs isn't implemented yet. Without it, gpu_count is 1, because the runtime requires exactly one visible GPU.
+  launch: object({ command = list(string), data_path = string, entrypoint = list(string), environment = map(string), key_env = string, port = number }), computed
+    > What any platform runs: entrypoint, command, environment (including the contract), the port the server listens on, the path for its data, and key_env, the variable an authenticated server reads a supplied API key from (empty without authentication). Place it with any container platform.
+  requirements: object({ gpu = bool, gpu_count = number, shared_memory_bytes = number, ulimits = map(number) }), computed
+    > What the runtime needs from its platform: a GPU and how many to give it (gpu_count), shared memory (a recommended minimum), and process limits by name, where -1 is unlimited. Platforms that cannot set process limits leave them to the node.
+  spec: string, computed
+    > Validated runtime specification for the container's NEMOCLAW_RUNTIME_SPEC environment variable.
+  block hardware: single
+    > Execution hardware observed before acquisition and startup; one NVIDIA CUDA GPU is required.
+    architecture: string, optional
+      > CPU architecture; this dedicated-memory contract requires amd64.
+    min_compute_capability: number, optional
+      > Minimum NVIDIA compute capability, encoded as major times ten plus minor; 90 means 9.0.
+    min_driver_major: number, optional
+      > Minimum installed NVIDIA driver major version.
+    min_gpu_memory_bytes: number, optional
+      > Minimum total dedicated memory of each selected GPU in bytes. Host RAM is measured separately.
+    profile: string, optional
+      > GPU family and memory architecture. Every profile requires observed compute capability and driver major 580 or newer. Unified-memory profiles budget host RAM; dedicated-memory profiles require GPU total/free counters.
+  block memory: optional
+    > Declared admission budget and resident host memory protection.
+    consecutive_samples: number, optional
+      > Consecutive low-memory observations required to stop native inference.
+    free_gate_gib: number, optional
+      > Available-memory gate for the free-memory threshold, in GiB.
+    gpu_memory_gib: number, optional
+      > GPU budget in GiB; native allocation semantics depend on the backend.
+    host_reserve_gib: number, optional
+      > Host memory reserved outside the native model allocation, in GiB.
+    min_available_gib: number, optional
+      > Stop threshold for available host memory, in GiB.
+    min_free_gib: number, optional
+      > Stop threshold for free host memory, in GiB.
+  block model: single
+    > One immutable public GGUF artifact; no model-source credential is resolved.
+    file: string, required
+      > Relative .gguf path at that commit; traversal, backslashes and reserved metadata paths are rejected.
+    repository: string, required
+      > Public Hugging Face owner/repository containing the GGUF.
+    revision: string, required
+      > Exact lowercase 40-character repository commit; branches and tags are rejected.
+    sha256: string, required
+      > Lowercase SHA-256 of the complete GGUF, checked on acquisition; warm starts observe verified size and modification time.
+    size_bytes: number, required
+      > Exact nonzero GGUF byte length, used to bound acquisition and disk requirements.
+  block serving: optional
+    > Native llama-server context, batching, alias and readiness deadline.
+    batch_tokens: number, optional
+      > Maximum logical prompt batch size; omission selects 2048.
+    context_tokens: number, optional
+      > Context tokens for the single slot, from 8192 through 131072; actual fit needs qualification.
+    micro_batch_tokens: number, optional
+      > Physical prompt microbatch, no larger than batchTokens; omission selects 512.
+    model_name: string, optional
+      > Nonempty model alias advertised in inventory; the agent route must name it.
+    port: number, optional
+      > Published inference port, from 1024 through 65535.
+    reasoning_strength: string, optional
+      > Optional low, medium or high reasoning_strength argument passed to the embedded Jinja template.
+    startup_timeout_seconds: number, optional
+      > Seconds allowed for health and model inventory after launch; omission selects 1800.
+
+data vllm_nim_runtime (version 0)
+  > Computes a runtime contract from typed settings without contacting any host.
+  authentication: string, optional
+    > Native vLLM bearer authentication; the published listener filters management routes.
+  backend: string, required
+    > Explicit native backend; other NIM engines are unsupported.
+  gpu_count: number, optional
+    > The number of GPUs the service uses, which requirements.gpu_count reports; spec doesn't change. It must be 1, because serving one model across several GPUs isn't implemented yet. Without it, gpu_count is 1, because the runtime requires exactly one visible GPU.
+  launch: object({ command = list(string), data_path = string, entrypoint = list(string), environment = map(string), key_env = string, port = number }), computed
+    > What any platform runs: entrypoint, command, environment (including the contract), the port the server listens on, the path for its data, and key_env, the variable an authenticated server reads a supplied API key from (empty without authentication). Place it with any container platform.
+  requirements: object({ gpu = bool, gpu_count = number, shared_memory_bytes = number, ulimits = map(number) }), computed
+    > What the runtime needs from its platform: a GPU and how many to give it (gpu_count), shared memory (a recommended minimum), and process limits by name, where -1 is unlimited. Platforms that cannot set process limits leave them to the node.
+  spec: string, computed
+    > Validated runtime specification for the container's NEMOCLAW_RUNTIME_SPEC environment variable.
+  block hardware: single
+    > Required GPU and execution-host compatibility.
+    architecture: string, optional
+      > CPU architecture; this dedicated-memory contract requires amd64.
+    min_compute_capability: number, optional
+      > Minimum NVIDIA compute capability, encoded as major times ten plus minor; 90 means 9.0.
+    min_driver_major: number, optional
+      > Minimum installed NVIDIA driver major version.
+    min_gpu_memory_bytes: number, optional
+      > Minimum total dedicated memory of each selected GPU in bytes. Host RAM is measured separately.
+    profile: string, optional
+      > GPU family and memory architecture. Every profile requires observed compute capability and driver major 580 or newer. Unified-memory profiles budget host RAM; dedicated-memory profiles require GPU total/free counters.
+  block memory: optional
+    > GPU budget and host memory protection.
+    consecutive_samples: number, optional
+      > Consecutive low-memory observations required to stop native inference.
+    free_gate_gib: number, optional
+      > Available-memory gate for the free-memory threshold, in GiB.
+    gpu_memory_gib: number, optional
+      > GPU budget in GiB; native allocation semantics depend on the backend.
+    host_reserve_gib: number, optional
+      > Host memory reserved outside the native model allocation, in GiB.
+    min_available_gib: number, optional
+      > Stop threshold for available host memory, in GiB.
+    min_free_gib: number, optional
+      > Stop threshold for free host memory, in GiB.
+  block model: single
+    > Exact native model and embedded profile.
+    cache_bytes: number, required
+      > Full cache disk allowance in bytes, excluding 16 GiB of working headroom.
+    chat_template_kwargs: string, optional
+      > Native vLLM default chat-template arguments, passed as JSON. Omission retains native defaults; request-level arguments take precedence.
+    min_gpu_memory_bytes: number, required
+      > Profile's upstream memory floor, in bytes; include activation headroom in the budget.
+    name: string, required
+      > Exact name advertised by NIM and used by the inference route.
+    profile: string, required
+      > Native profile identifier from this image's embedded manifest.
+    tool_parser: string, optional
+      > Native vLLM tool parser; a nonempty name enables auto tool choice. Omission leaves native defaults. Match the parser to the model and pinned image.
+  block serving: optional
+    > Native ports, context length, and startup wait.
+    context_tokens: number, optional
+      > Maximum prompt plus generated token count.
+    port: number, optional
+      > Native listener on the private model network; the next port is reserved for its backend.
+    startup_timeout_seconds: number, optional
+      > Maximum native startup wait in seconds, including profile/cache preparation.
+
 data vllm_readiness (version 0)
   container_id: string, optional
   contract: string, required
   endpoint: string, optional
   engine: string, optional
   name: string, optional
+  publication_container_id: string, optional
+  publication_endpoint: string, optional
   read_trigger: bool, optional
   ready: bool, computed
   ref: object({ credential_env = string, credential_source = string, endpoint = string, model = string, type = string }), computed

@@ -261,13 +261,98 @@ fn gemini_is_not_supported_yet() {
 }
 
 #[test]
-fn llama_cpp_is_not_supported_yet() {
-    let desired = DesiredState::from_yaml(include_bytes!("../../../examples/nemotron-amd64.yaml"))
-        .service_backend("llamacpp");
-    let result = Document::parse(desired.yaml().as_bytes());
+fn llama_cpp_accepts_a_pinned_gguf_and_rejects_a_mutable_revision() {
+    let text = include_bytes!("../../nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml");
+    let document = Document::parse(text.as_slice()).expect("managed llama.cpp configuration");
+    let desired = normalized(&document);
+    assert_eq!(desired["spec"]["services"]["qwen"]["kind"], "llamaCpp");
+    let mut bad = desired;
+    bad["spec"]["services"]["qwen"]["model"]["revision"] = json!("main");
+    assert!(Document::parse(serde_json::to_vec(&bad).unwrap().as_slice()).is_err());
+}
+
+#[test]
+fn nim_accepts_an_operator_file_reference_without_loading_the_credential() {
+    let document = Document::parse(
+        include_bytes!("../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml").as_slice(),
+    )
+    .expect("native NIM configuration with a Docker-host credential file reference");
+    let desired = normalized(&document);
+    assert_eq!(
+        desired["spec"]["services"]["local-nim"]["ngcCredential"]["file"],
+        "/etc/nemoclaw/secrets/ngc-key-v1"
+    );
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+}
+
+#[test]
+fn nim_preserves_native_chat_template_arguments_and_rejects_a_nonobject() {
+    let mut input: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml"
+    ))
+    .unwrap();
+    let arguments = json!({"tools_in_user_message": false});
+    input["spec"]["services"]["local-nim"]["model"]["chatTemplateKwargs"] = arguments.clone();
+    let document = Document::parse(serde_json::to_vec(&input).unwrap().as_slice()).unwrap();
+    assert_eq!(
+        normalized(&document)["spec"]["services"]["local-nim"]["model"]["chatTemplateKwargs"],
+        arguments
+    );
+    input["spec"]["services"]["local-nim"]["model"]["chatTemplateKwargs"] = false.into();
+    assert!(Document::parse(serde_json::to_vec(&input).unwrap().as_slice()).is_err());
+}
+
+#[test]
+fn nim_rejects_literal_credentials_unsupported_engines_and_shared_backend_networks() {
+    let document = Document::parse(
+        include_bytes!("../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml").as_slice(),
+    )
+    .unwrap();
+    let desired = normalized(&document);
+    for (field, value) in [
+        ("ngcCredential", json!({"value":"a-literal-key"})),
+        ("ngcCredential", json!({"file":"relative/key"})),
+        ("backend", json!("tensorrt")),
+        ("backendNetworkCIDR", json!("172.30.121.0/24")),
+        ("backendNetworkCIDR", json!("172.30.122.1/24")),
+    ] {
+        let mut bad = desired.clone();
+        bad["spec"]["services"]["local-nim"][field] = value;
+        assert!(
+            Document::parse(bad.to_string().as_bytes()).is_err(),
+            "must reject invalid NIM {field}"
+        );
+    }
+    let mut collision = desired;
+    let mut second = collision["spec"]["services"]["local-nim"].clone();
+    second["serving"]["port"] = json!(18890);
+    collision["spec"]["services"]["another-nim"] = second;
     assert!(
-        result.is_err(),
-        "configuration must reject unsupported llama.cpp services"
+        Document::parse(collision.to_string().as_bytes()).is_err(),
+        "two NIM models cannot share a private backend bridge"
+    );
+}
+
+#[test]
+fn nim_rejects_a_backend_subnet_that_contains_its_publication_host() {
+    let mut desired = normalized(
+        &Document::parse(
+            include_bytes!("../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml").as_slice(),
+        )
+        .unwrap(),
+    );
+    let service = &mut desired["spec"]["services"]["local-nim"];
+    service["placement"] =
+        json!({"engine":"ssh://operator@gpu-box", "networkCIDR":"172.30.123.0/24"});
+    service["publication"] =
+        json!({"endpoint":"http://10.0.0.8:18888/v1", "bindAddress":"10.0.0.8"});
+    service["backendNetworkCIDR"] = json!("10.0.0.0/24");
+    assert!(
+        Document::parse(desired.to_string().as_bytes()).is_err(),
+        "backend subnet must not overlap the published host address"
     );
 }
 
@@ -298,16 +383,6 @@ fn serving_profile_provenance_is_not_supported_yet() {
     assert!(
         result.is_err(),
         "configuration must reject unsupported serving-profile provenance"
-    );
-}
-
-#[test]
-fn sandbox_gpu_selection_is_not_supported_yet() {
-    let desired = DesiredState::openclaw().sandbox_gpu();
-    let result = Document::parse(desired.yaml().as_bytes());
-    assert!(
-        result.is_err(),
-        "configuration must reject unsupported sandbox GPU selection"
     );
 }
 
@@ -430,12 +505,6 @@ impl DesiredState {
         self
     }
 
-    fn service_backend(mut self, backend: &str) -> Self {
-        let service = self.provider()["serviceRef"].as_str().unwrap().to_owned();
-        self.value["spec"]["services"][service]["kind"] = json!(backend);
-        self
-    }
-
     fn model_router(mut self) -> Self {
         self.value["spec"]["modelRouter"] =
             json!({"profile": "balanced", "routes": ["hosted", "local"]});
@@ -450,12 +519,6 @@ impl DesiredState {
     fn serving_profile(mut self) -> Self {
         self.value["spec"]["servingProfile"] =
             json!({"id": "vllm.dgx-spark.example", "catalogDigest": "sha256:proposal"});
-        self
-    }
-
-    fn sandbox_gpu(mut self) -> Self {
-        self.value["spec"]["gateway"]["runtime"]["gpu"] =
-            json!({"required": true, "device": "nvidia.com/gpu=0"});
         self
     }
 

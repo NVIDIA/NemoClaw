@@ -23,18 +23,11 @@ pub(crate) async fn run(
     cancel: &CancellationToken,
     trip: &CancellationToken,
 ) -> Result<(), Error> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .mode(0o600)
-        .open(Path::new(ROOT).join("runtime.lock"))
-        .map_err(|_| Error::State("cannot open persistent runtime lock"))?;
-    lock.try_lock().map_err(|_| {
-        Error::Conflict("persistent storage already has a writer or locking failed")
-    })?;
+    let _writer = crate::execution::lock(
+        &Path::new(ROOT).join("runtime.lock"),
+        "cannot open persistent runtime lock",
+        "persistent storage already has a writer or locking failed",
+    )?;
     crate::execution::begin()?;
     let result = run_owned(service, cancel, trip).await;
     if let Err(error) = &result {

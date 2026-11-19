@@ -66,6 +66,7 @@ resource "openshell_sandbox" "agent" {
   generation  = "sandbox-generation"
   image       = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   launch_json = local.launch_json
+  gpu_count   = 1
   providers   = [openshell_web_search.brave.ref]
   driver_config = jsonencode({
     docker = {

@@ -670,7 +670,7 @@
                     "const": ""
                   },
                   {
-                    "pattern": "^unix:///"
+                    "pattern": "^(unix:///|npipe:////\\./pipe/)"
                   }
                 ],
                 "default": "unix:///var/run/docker.sock"
@@ -723,7 +723,7 @@
             },
             "engine": {
               "default": "unix:///var/run/docker.sock",
-              "description": "Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes.",
+              "description": "Managed local gateway engine: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket. Excluded by kubernetes.",
               "type": "string",
               "x-nemoclaw-default-rule": "With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes."
             },
@@ -863,6 +863,50 @@
           "type": "object"
         }
       ]
+    },
+    "GgufModel": {
+      "additionalProperties": false,
+      "description": "Exact immutable public artifact, independently hashed before serving.",
+      "properties": {
+        "file": {
+          "description": "Relative .gguf path at that commit; traversal, backslashes and reserved metadata paths are rejected.",
+          "maxLength": 512,
+          "minLength": 6,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._/-]*\\.gguf$",
+          "type": "string"
+        },
+        "repository": {
+          "description": "Public Hugging Face owner/repository containing the GGUF.",
+          "maxLength": 200,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+          "type": "string"
+        },
+        "revision": {
+          "description": "Exact lowercase 40-character repository commit; branches and tags are rejected.",
+          "pattern": "^[a-f0-9]{40}$",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lowercase SHA-256 of the complete GGUF, checked on acquisition; warm starts observe verified size and modification time.",
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "Exact nonzero GGUF byte length, used to bound acquisition and disk requirements.",
+          "format": "uint64",
+          "maximum": 1099511627776,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "repository",
+        "revision",
+        "file",
+        "sha256",
+        "sizeBytes"
+      ],
+      "type": "object"
     },
     "Grant": {
       "additionalProperties": false,
@@ -1581,6 +1625,66 @@
       },
       "type": "object"
     },
+    "LlamaCppServing": {
+      "additionalProperties": false,
+      "description": "Explicit context and batching; full CUDA offload, one slot and f16 KV are fixed.",
+      "properties": {
+        "batchTokens": {
+          "description": "Maximum logical prompt batch size; omission selects 2048.",
+          "format": "uint64",
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "contextTokens": {
+          "description": "Context tokens for the single slot, from 8192 through 131072; actual fit needs qualification.",
+          "format": "uint64",
+          "maximum": 131072,
+          "minimum": 8192,
+          "type": "integer"
+        },
+        "microBatchTokens": {
+          "description": "Physical prompt microbatch, no larger than batchTokens; omission selects 512.",
+          "format": "uint64",
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "modelName": {
+          "description": "Nonempty model alias advertised in inventory; the agent route must name it.",
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$",
+          "type": "string"
+        },
+        "port": {
+          "description": "Published inference port, from 1024 through 65535.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "reasoningStrength": {
+          "description": "Optional low, medium or high reasoning_strength argument passed to the embedded Jinja template.",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startupTimeoutSeconds": {
+          "description": "Seconds allowed for health and model inventory after launch; omission selects 1800.",
+          "format": "uint64",
+          "maximum": 3600,
+          "minimum": 60,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "ManagedKubernetes": {
       "additionalProperties": false,
       "dependentRequired": {
@@ -2049,6 +2153,110 @@
           "tier": {
             "const": ""
           }
+        }
+      },
+      "type": "object"
+    },
+    "NgcCredential": {
+      "additionalProperties": false,
+      "description": "An operator-owned regular file on the Docker engine host. NemoClaw never copies its contents into configuration or state.",
+      "properties": {
+        "file": {
+          "description": "Absolute file path. Rotate by selecting a versioned path and explicitly recreating the service; the operator retains and removes the file.",
+          "maxLength": 4096,
+          "minLength": 2,
+          "type": "string"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "type": "object"
+    },
+    "NimBackend": {
+      "description": "Native backend supported by the managed NIM authentication contract.",
+      "oneOf": [
+        {
+          "const": "vllm",
+          "description": "Native vLLM with bearer authentication supplied through VLLM_API_KEY.",
+          "type": "string"
+        }
+      ]
+    },
+    "NimModel": {
+      "additionalProperties": false,
+      "description": "Native model profile, GPU memory floor, and cache allowance.",
+      "properties": {
+        "cacheBytes": {
+          "description": "Full cache disk allowance in bytes, excluding 16 GiB of working headroom.",
+          "format": "uint64",
+          "maximum": 1099511627776,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "chatTemplateKwargs": {
+          "additionalProperties": true,
+          "description": "Native vLLM default chat-template arguments, passed as JSON. Omission retains native defaults; request-level arguments take precedence.",
+          "type": "object"
+        },
+        "minGpuMemoryBytes": {
+          "description": "Profile's upstream memory floor, in bytes; include activation headroom in the budget.",
+          "format": "uint64",
+          "maximum": 1099511627776,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Exact name advertised by NIM and used by the inference route.",
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$",
+          "type": "string"
+        },
+        "profile": {
+          "description": "Native profile identifier from this image's embedded manifest.",
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "toolParser": {
+          "description": "Native vLLM tool parser; a nonempty name enables auto tool choice. Omission leaves native defaults. Match the parser to the model and pinned image.",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "profile",
+        "minGpuMemoryBytes",
+        "cacheBytes"
+      ],
+      "type": "object"
+    },
+    "NimServing": {
+      "additionalProperties": false,
+      "description": "Native listener and generation settings; the public route filter uses the same serving port.",
+      "properties": {
+        "contextTokens": {
+          "description": "Maximum prompt plus generated token count.",
+          "format": "uint64",
+          "maximum": 131072,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "port": {
+          "description": "Native listener on the private model network; the next port is reserved for its backend.",
+          "format": "uint16",
+          "maximum": 65534,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "startupTimeoutSeconds": {
+          "description": "Maximum native startup wait in seconds, including profile/cache preparation.",
+          "format": "uint64",
+          "maximum": 7200,
+          "minimum": 60,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -2954,6 +3162,12 @@
           "description": "OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.",
           "type": "object"
         },
+        "gpus": {
+          "description": "GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
         "harness": {
           "$ref": "#/$defs/Harness",
           "description": "Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation."
@@ -3306,10 +3520,10 @@
               "type": "string"
             },
             "engine": {
-              "description": "Local Docker Unix socket. Omission uses the managed gateway engine.",
-              "pattern": "^unix:///[^?#\\x00]*$",
+              "description": "Local Docker engine: a Unix socket, or on Windows a named pipe such as `npipe:////./pipe/docker_engine`. Omission uses the managed gateway engine.",
+              "pattern": "^(unix:///[^?#\\x00]*|npipe:////\\./pipe/[A-Za-z0-9._-]+)$",
               "type": "string",
-              "x-nemoclaw-error": "proxy engine must be a local Unix socket"
+              "x-nemoclaw-error": "proxy engine must be a local Unix socket or named pipe"
             },
             "image": {
               "description": "Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.",
@@ -3682,6 +3896,219 @@
               }
             }
           },
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "dependentRequired": {
+            "placement": [
+              "publication"
+            ],
+            "publication": [
+              "placement"
+            ]
+          },
+          "description": "Managed llama.cpp runtime and immutable GGUF.",
+          "properties": {
+            "authentication": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ServiceAuthentication"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Native bearer authentication using a platform-supplied key or retained generated credential."
+            },
+            "container": {
+              "$ref": "#/$defs/ServiceContainer",
+              "description": "Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
+            },
+            "hardware": {
+              "$ref": "#/$defs/ServiceHardware",
+              "description": "Execution hardware observed before acquisition and startup; one NVIDIA CUDA GPU is required."
+            },
+            "image": {
+              "description": "Immutable image containing llama-server and the NemoClaw supervisor.",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "type": "string",
+              "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
+            },
+            "imagePullPolicy": {
+              "$ref": "#/$defs/ImagePullPolicy",
+              "description": "Image acquisition before container creation. Omission means IfNotPresent.",
+              "enum": [
+                "IfNotPresent",
+                "Never"
+              ]
+            },
+            "kind": {
+              "const": "llamaCpp",
+              "description": "Supported installer selected by this service definition.",
+              "type": "string"
+            },
+            "memory": {
+              "$ref": "#/$defs/SingleGpuMemory32",
+              "description": "Declared admission budget and resident host memory protection."
+            },
+            "model": {
+              "$ref": "#/$defs/GgufModel",
+              "description": "One immutable public GGUF artifact; no model-source credential is resolved."
+            },
+            "placement": {
+              "$ref": "#/$defs/ServicePlacement",
+              "description": "SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication.",
+              "x-nemoclaw-required": "With external gateway or Podman; paired with publication"
+            },
+            "publication": {
+              "$ref": "#/$defs/ServicePublication",
+              "description": "Private inference address reachable by OpenShell. Required with placement.",
+              "x-nemoclaw-required": "With placement"
+            },
+            "serving": {
+              "$ref": "#/$defs/LlamaCppServing",
+              "description": "Native llama-server context, batching, alias and readiness deadline."
+            },
+            "updatePolicy": {
+              "$ref": "#/$defs/ServiceUpdatePolicy",
+              "default": "Preserve",
+              "description": "Preserve refuses replacement of a running Docker model container. Recreate permits sequential replacement and possible downtime until removed or changed."
+            }
+          },
+          "required": [
+            "kind",
+            "image",
+            "hardware",
+            "model"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "dependentRequired": {
+            "placement": [
+              "publication"
+            ],
+            "publication": [
+              "placement"
+            ]
+          },
+          "description": "Native vLLM-backed NIM behind a private Docker network and route filter.",
+          "properties": {
+            "authentication": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ServiceAuthentication"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Native vLLM bearer authentication; the published listener filters management routes."
+            },
+            "backend": {
+              "$ref": "#/$defs/NimBackend",
+              "description": "Explicit native backend; other NIM engines are unsupported."
+            },
+            "backendNetworkCIDR": {
+              "description": "Dedicated canonical private IPv4 /24, distinct from all other service and gateway networks on this engine.",
+              "type": "string"
+            },
+            "container": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ServiceContainer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Docker execution limits and GPU selection, separate from native memory protection."
+            },
+            "hardware": {
+              "$ref": "#/$defs/ServiceHardware",
+              "description": "Required GPU and execution-host compatibility."
+            },
+            "image": {
+              "description": "Digest-pinned native NIM image containing the NemoClaw supervisor and nginx.",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
+              "type": "string",
+              "x-nemoclaw-error": "service image must be pinned by a SHA-256 digest"
+            },
+            "imagePullPolicy": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ImagePullPolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "IfNotPresent acquires a missing image; Never requires a locally installed image.",
+              "enum": [
+                "IfNotPresent",
+                "Never"
+              ]
+            },
+            "kind": {
+              "const": "nim",
+              "description": "Supported installer selected by this service definition.",
+              "type": "string"
+            },
+            "memory": {
+              "$ref": "#/$defs/SingleGpuMemory40",
+              "description": "GPU budget and host memory protection."
+            },
+            "model": {
+              "$ref": "#/$defs/NimModel",
+              "description": "Exact native model and embedded profile."
+            },
+            "ngcCredential": {
+              "$ref": "#/$defs/NgcCredential",
+              "description": "Operator-owned NGC credential file on the selected Docker host, mounted read-only for native startup."
+            },
+            "placement": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ServicePlacement"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Explicit SSH Docker placement; pair with publication. Omission inherits a managed local Docker gateway."
+            },
+            "publication": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ServicePublication"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Private published inference address reachable by OpenShell; pair with placement."
+            },
+            "serving": {
+              "$ref": "#/$defs/NimServing",
+              "description": "Native ports, context length, and startup wait."
+            },
+            "updatePolicy": {
+              "$ref": "#/$defs/ServiceUpdatePolicy",
+              "default": "Preserve",
+              "description": "Preserve refuses model replacement; Recreate permits sequential replacement and downtime during explicit apply."
+            }
+          },
+          "required": [
+            "kind",
+            "image",
+            "backendNetworkCIDR",
+            "ngcCredential",
+            "backend",
+            "hardware",
+            "model"
+          ],
           "type": "object"
         },
         {
@@ -4228,6 +4655,104 @@
       "required": [
         "modelName"
       ],
+      "type": "object"
+    },
+    "SingleGpuMemory32": {
+      "additionalProperties": false,
+      "description": "Single-GPU admission budget and continuous host memory thresholds.",
+      "properties": {
+        "consecutiveSamples": {
+          "description": "Consecutive low-memory observations required to stop native inference.",
+          "format": "uint64",
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "freeGateGiB": {
+          "description": "Available-memory gate for the free-memory threshold, in GiB.",
+          "format": "uint64",
+          "maximum": 24,
+          "minimum": 6,
+          "type": "integer"
+        },
+        "gpuMemoryGiB": {
+          "description": "GPU budget in GiB; native allocation semantics depend on the backend.",
+          "format": "uint64",
+          "maximum": 512,
+          "minimum": 4,
+          "type": "integer"
+        },
+        "hostReserveGiB": {
+          "description": "Host memory reserved outside the native model allocation, in GiB.",
+          "format": "uint64",
+          "maximum": 64,
+          "minimum": 28,
+          "type": "integer"
+        },
+        "minAvailableGiB": {
+          "description": "Stop threshold for available host memory, in GiB.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 6,
+          "type": "integer"
+        },
+        "minFreeGiB": {
+          "description": "Stop threshold for free host memory, in GiB.",
+          "format": "uint64",
+          "maximum": 8,
+          "minimum": 2,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SingleGpuMemory40": {
+      "additionalProperties": false,
+      "description": "Single-GPU admission budget and continuous host memory thresholds.",
+      "properties": {
+        "consecutiveSamples": {
+          "description": "Consecutive low-memory observations required to stop native inference.",
+          "format": "uint64",
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "freeGateGiB": {
+          "description": "Available-memory gate for the free-memory threshold, in GiB.",
+          "format": "uint64",
+          "maximum": 24,
+          "minimum": 6,
+          "type": "integer"
+        },
+        "gpuMemoryGiB": {
+          "description": "GPU budget in GiB; native allocation semantics depend on the backend.",
+          "format": "uint64",
+          "maximum": 512,
+          "minimum": 4,
+          "type": "integer"
+        },
+        "hostReserveGiB": {
+          "description": "Host memory reserved outside the native model allocation, in GiB.",
+          "format": "uint64",
+          "maximum": 64,
+          "minimum": 28,
+          "type": "integer"
+        },
+        "minAvailableGiB": {
+          "description": "Stop threshold for available host memory, in GiB.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 6,
+          "type": "integer"
+        },
+        "minFreeGiB": {
+          "description": "Stop threshold for free host memory, in GiB.",
+          "format": "uint64",
+          "maximum": 8,
+          "minimum": 2,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "Spec": {
