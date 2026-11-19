@@ -209,7 +209,7 @@ A successful complete preflight for `$$nemoclaw launch <sandbox-name>` can publi
 During the lease, `launch` still verifies the owning OpenShell gateway, exact live sandbox identity, registry and agent configuration, effective policy, inference route, required forwards, and semantic runtime health.
 
 <AgentOnly variant="openclaw,hermes">
-Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
+Every configured single-model route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
 Shared-route providers use `inference.local`.
 Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
 NVIDIA Endpoints, supported fixed hosted selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections verify their recorded sandbox-attached provider and run the bounded model request at its native endpoint without the shared-route models probe.
@@ -218,6 +218,17 @@ Retained OpenClaw local selections with a valid shared route continue to use `in
 A failed required probe or model request rejects launch readiness.
 This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>
+<AgentOnly variant="hermes">
+
+For Switchyard routing, [launch readiness](../../reference/commands#$$nemoclaw-launch-name) checks the recorded provider bindings.
+Gateway startup separately qualifies the judge with bounded model calls.
+
+If judge qualification fails, the gateway remains stopped.
+Check model access, or select a supported judge in your Switchyard configuration and onboard with a new sandbox name.
+For configuration requirements, refer to [`--switchyard-config`](../../reference/commands#--switchyard-config-file).
+
+</AgentOnly>
+
 <AgentOnly variant="deepagents">
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
 For new Deep Agents Code standalone local selections, NemoClaw verifies the recorded sandbox-attached provider and requests the model through its qualified host-local endpoint. Older Deep Agents Code standalone local shared routes without an attachment stop before resume or rebuild; back up and recreate the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM retains its shared route and does not require a native attachment to resume or rebuild. For retained legacy and custom shared routes, the models probe must return HTTP 2xx, except that a legacy `openrouter-api` route can return HTTP 404 for `GET /v1/models` when the model request succeeds. NVIDIA Endpoints and supported fixed hosted selections instead verify the recorded native attachment and request the model through its native endpoint.
@@ -225,7 +236,17 @@ A failed request rejects launch readiness and identifies the inference request a
 </AgentOnly>
 <AgentOnly variant="openclaw">
 
-For OpenClaw, `connect --probe-only` settles the existing allowlisted pairing flow before it publishes a credential-free pairing qualification with the lease. The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration. Its pairing qualification binds the canonical CLI client, exact paired device identity, required operator role and scopes, owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch. Before lease acceptance, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway. It skips the complete pairing approval pass only when the qualification still matches exactly and no relevant allowlisted request is pending. Any missing, unreadable, malformed, ambiguous, or changed observation runs the complete pairing approval pass. A relevant allowlisted pending request also runs that complete path.
+For OpenClaw, `connect --probe-only` settles the existing allowlisted pairing flow before it publishes a credential-free pairing qualification with the lease.
+The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration.
+Its pairing qualification binds the settled CLI or native terminal user interface (TUI) client, exact paired device identity, and required operator role and scopes.
+It also binds the owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch.
+Native TUI state must have the required grants and no pending pairing requests.
+Qualification does not change its credentials or grants.
+
+Before lease acceptance, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway.
+It skips the complete pairing approval pass only when the qualification still matches exactly and no relevant allowlisted request is pending.
+Any missing, unreadable, malformed, ambiguous, or changed observation runs the complete pairing approval pass.
+A relevant allowlisted pending request also runs that complete path.
 
 </AgentOnly>
 Hermes and LangChain Deep Agents Code retain their existing session setup on the lease-accepted path.
@@ -520,9 +541,20 @@ $$nemoclaw <sandbox-name> logs --tail 100
 ```
 
 If the warning says `The retained sandbox was stopped` and OpenShell confirms it remains stopped, keep it stopped.
-If the warning says the recovery marker could not be invalidated, the retained source still exists. Do not retry `rebuild`, even if the source is stopped: prepared recovery refuses a retained source. Preserve the source, backup, and recovery files. Ask a NemoClaw maintainer to reconcile the interrupted rebuild and any source writes before another rebuild.
-If source maintenance cleanup failed after the marker was removed, the old backup is inspection evidence, not retry authority. Keep the source stopped and ask a NemoClaw maintainer to reconcile its maintenance state and any writes before another rebuild. A later rebuild creates a new backup.
-If NemoClaw could not verify the stop or maintenance reconciliation, preserve the current state and ask a NemoClaw maintainer to review the warning, redacted logs, and backup path.
+
+If the warning says the recovery marker could not be invalidated, the retained source still exists.
+Do not retry `rebuild`, even if the source is stopped, because prepared recovery refuses a retained source.
+Preserve the source, backup, and recovery files.
+Ask a NemoClaw maintainer to reconcile the interrupted rebuild and any source writes before another rebuild.
+
+If source maintenance cleanup failed after the marker was removed, keep the old backup for inspection.
+Do not use it to retry the rebuild.
+Keep the source stopped.
+Ask a NemoClaw maintainer to reconcile its maintenance state and any writes before another rebuild.
+A later rebuild creates a new backup.
+
+If NemoClaw could not verify the stop or maintenance reconciliation, preserve the current state.
+Ask a NemoClaw maintainer to review the warning, redacted logs, and backup path.
 Do not delete the source or start another replacement until its maintenance state is reconciled.
 
 </AgentOnly>
@@ -705,6 +737,7 @@ Do not restart it solely to retry revocation if you need it to remain stopped.
 
 The backup diagnostic distinguishes credential-shaped content from extraction, SQLite inspection,
 and deadline failures. Credential-shaped content can include ordinary conversation examples.
+A quoted SQL `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `WITH`, or `EXPLAIN` statement that uses an unquoted `?` bind parameter does not by itself cause a credential refusal.
 The diagnostic reports a fixed rule identifier without printing matched text.
 When the first finding belongs to a known native session row with a validated thread identifier,
 it also reports that conversation identifier. Other findings report that conversation identification

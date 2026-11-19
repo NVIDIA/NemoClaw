@@ -57,7 +57,7 @@ import type {
 import { removeManagedHermesStateVolume } from "../managed-workload/hermes-state-volume";
 import {
   createOnboardRecreateGatewayAuthorityRevalidator,
-  shouldReconcileRestoredOpenClawSelection,
+  shouldReconcileRestoredSelection,
   type OwnedSandboxRecreateRuntime,
 } from "../onboard-recreate-journal";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
@@ -2727,9 +2727,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       // mutating a live sandbox.
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
       await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
-      reconcileOpenClawInference = shouldReconcileRestoredOpenClawSelection(
+      reconcileOpenClawInference = shouldReconcileRestoredSelection(
         getRequestedSandboxAgentName(agent),
-        customOpenClawImage,
+        Boolean(fromDockerfile || fromImage),
         isRecreateSandbox(false),
         selectionDrift,
       );
@@ -2761,6 +2761,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         }
         pendingStateRestore = result.backup;
       }
+
+      recreateProtection.preflightDeepAgentsConfigPreservation(
+        pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath,
+        {
+          agentName: getRequestedSandboxAgentName(agent),
+          customImage: Boolean(fromDockerfile || fromImage),
+          freshSelection: createIntent?.recreateTransaction?.freshSelection === true,
+          selectionChanged: reconcileOpenClawInference,
+          recordedSelection:
+            onboardSession.loadSession()?.checkpoint?.sandboxRecreate
+              ?.reconcileOpenClawInference === true,
+        },
+      );
 
       // Parse and freeze the rebuild policy while the source sandbox is still
       // intact. A malformed or raced policy must not fail after deletion.

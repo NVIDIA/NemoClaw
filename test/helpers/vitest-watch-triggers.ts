@@ -47,6 +47,15 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern:
+      /(?:^|\/)test\/e2e\/fixtures\/provider-profiles\/nemoclaw-e2e-(?:extra-provider|switchyard-peer)-v1\.yaml$/,
+    testsToRun: runTests("test/e2e/support/gateway-extra-provider-profile.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-security-code-review\/SKILL\.md$/,
+    testsToRun: runTests("test/security/security-review-paths.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)schemas\/network-policy\.schema\.json$/,
     testsToRun: runTests("test/onboarding/validate-config-schemas.test.ts"),
   },
@@ -158,6 +167,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/runtime/sandbox/sandbox-init.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/pr\.ya?ml$/,
+    testsToRun: runTests("test/automation/pull-requests/pr-workflow-contract.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/,
     testsToRun: runTests("test/repository/github-actions-workflow-names.test.ts"),
   },
@@ -249,6 +262,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)agents\/hermes\/(?:qualify-switchyard-judge\.py|start\.sh)$/,
     testsToRun: runTests("test/agents/hermes/hermes-switchyard-judge-preflight.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/switchyard-preflight\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-switchyard-preflight.test.ts"),
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/image-build-probes\.py$/,

@@ -612,7 +612,7 @@ describe("atomic recreate journal ownership", () => {
           id: TX_ID,
           targetGeneration: TARGET_GENERATION,
           targetIntentFingerprint: TARGET_INTENT,
-          ...(fresh ? { freshNonForced: true as const } : {}),
+          ...(fresh ? { freshSelection: true as const } : {}),
         },
         "alpha",
         "nemoclaw-31818",

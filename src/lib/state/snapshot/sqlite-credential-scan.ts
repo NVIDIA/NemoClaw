@@ -64,7 +64,12 @@ function cellCredentialRule(
 ): CredentialFindingRule | null {
   if (value instanceof Uint8Array) {
     return databaseKind === "dcode"
-      ? credentialFindingRule(normalizeDcodeSessionDiagnostic(Buffer.from(value).toString("utf8")))
+      ? credentialFindingRule(
+          normalizeDcodeSessionDiagnostic(Buffer.from(value).toString("utf8")),
+          {
+            sqlBindParameters: true,
+          },
+        )
       : credentialFindingRule(Buffer.from(value).toString("utf8"));
   }
   if (typeof value !== "string") return null;
@@ -78,7 +83,7 @@ function cellCredentialRule(
   ) {
     return null;
   }
-  return credentialFindingRule(value);
+  return credentialFindingRule(value, { sqlBindParameters: databaseKind === "dcode" });
 }
 
 /** Inspect logical SQLite values so record framing cannot create token-shaped byte sequences. */
