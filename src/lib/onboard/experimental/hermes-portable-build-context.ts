@@ -78,6 +78,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/patch-session-list-preview.py",
   "agents/hermes/plugin/__init__.py",
   "agents/hermes/plugin/plugin.yaml",
+  "agents/hermes/plugin/switchyard_events.py",
   "agents/hermes/qualify-switchyard-judge.py",
   "agents/hermes/runtime-config-guard.py",
   "agents/hermes/sharp-security-probes.mts",
