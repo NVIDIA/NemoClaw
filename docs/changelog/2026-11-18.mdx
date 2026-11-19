@@ -25,7 +25,7 @@ NemoClaw v0.0.145 improves onboarding recovery, Deep Agents state restoration, a
   Related changes: [PR #14157](https://github.com/NVIDIA/NemoClaw/pull/14157) and [PR #14509](https://github.com/NVIDIA/NemoClaw/pull/14509).
 - Sandboxes whose Microsoft Teams channel was added before OpenClaw 2026.10.5 load again after an upgrade.
   The registry converts that older Teams webhook setting when it reads the saved workload receipt, so `nemoclaw list`, `status`, and the pre-upgrade backup no longer fail on it.
-  Malformed or edited profiles are still rejected.
+  Malformed, noncanonical, unexpected-shape, or digest-mismatched profiles are still rejected.
   Related change: [PR #14545](https://github.com/NVIDIA/NemoClaw/pull/14545).
 
 ### Hermes Routing and Startup
