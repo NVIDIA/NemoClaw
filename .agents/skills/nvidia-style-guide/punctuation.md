@@ -79,10 +79,9 @@ If a series contains more than three items or the items are long, consider a bul
 
 Commas also follow an introductory phrase. If the sentence is long or complex, consider rewriting as two sentences.
 
-Use commas to separate thousands, millions, billions, and so on.
+- ✅ **Correct:** With WhatsApp, you can call any phone.
 
-- ✅ **Correct:** 1,397
-- ❌ **Incorrect:** 1397
+For the thousands separator, refer to [Numerals](numbers-dates-and-units.md#numerals).
 
 ### Dashes and hyphens (-)
 
@@ -110,12 +109,11 @@ Don’t use spaces on either side of an en dash unless it's used as a minus sign
 - ✅ **Correct:** 2015–2017
 - ❌ **Incorrect:** 2015-2017
 
-In text, don’t use an en dash in a range of times unless space is constrained. Use ‘to’ instead: 10:00 a.m to 2:00 p.m. In a schedule or listing, use an en dash with no spaces around it: 10:00 AM–2:00 PM.
+For ranges of times, refer to [Time](numbers-dates-and-units.md#time).
+In a range that includes two times and two dates, add spaces around the en dash. For example:
 
-The exception is in a date range that includes two times and two dates, add spaces around the en dash. For example:
-
-- 2:15 AM‒4:45 PM 4/1/16 (time range on a single day)
-- 2:15 PM 12/1/17 ‒ 4:45 PM 4/1/18 (range includes both time and date)
+- 2:15 a.m.–4:45 p.m. April 1, 2016 (time range on a single day)
+- 2:15 p.m. December 1, 2017 – 4:45 p.m. April 1, 2018 (range includes both time and date)
 
 #### Hyphen (-)
 
@@ -124,6 +122,10 @@ Hyphenate two or more words that precede and modify a noun as a unit if confusio
 - ✅ **Correct:** built-in drive, left-aligned text, real-time scenario
 - ❌ **Incorrect:** builtin drive, left aligned text, real time scenario
 
+*(Technical Documentation Writing Guide)* Other examples are high-level-language compiler, read-only memory, lower-left corner, floating-point decimal, line-by-line, and up-to-date information.
+Also hyphenate if one of the words is a past or present participle (a verb form ending in -ed or -ing and used as an adjective or noun), such as free-flowing form or well-defined schema.
+Avoid excessive hyphenation: *command line* is a noun without a hyphen, and *command-line output* hyphenates the adjective.
+
 ### Exclamation mark (!)
 
 Avoid using exclamation marks.
@@ -131,6 +133,8 @@ Avoid using exclamation marks.
 ### Parentheses ( )
 
 Use parentheses sparingly in body copy. Consider using an em dash (—) instead.
+
+*(Technical Documentation Writing Guide)* In technical documentation, use commas or parentheses instead of em dashes. Refer to [Technical Documentation Conventions](SKILL.md#technical-documentation-conventions).
 
 Do not use them in headlines or subheads.
 
@@ -146,6 +150,8 @@ Avoid using terminal periods in the following cases:
 - Table items
 
 Be consistent. If one or more list or table elements is a complete sentence, use a period after every element in the same list or column, even if any other element contains three or fewer words.
+
+For periods after list items that complete a lead-in sentence, refer to [Periods and Bulleted Lists](technical-documentation.md#periods-and-bulleted-lists).
 
 ### Quotation marks (“)
 
@@ -170,6 +176,7 @@ Semicolons are used between two independent clauses that aren't joined by a conj
 - ❌ **Incorrect:** Select the required **Option**; then select **Automatic backups**.
 
 When semicolons are used to separate items in a series that contains commas or other punctuation, break content out into a list instead.
+The Technical Documentation Writing Guide's [Semicolons](technical-documentation.md#semicolons) section explains their other uses and also advises using them sparingly.
 
 ### Slashes
 
@@ -188,7 +195,7 @@ Avoid using for exclusive or inclusive ‘or’ constructions. Okay to use for i
 
 ## Symbols
 
-See also [Equations and formulas](technical-content.md#equations-and-formulas).
+Related: [Equations and formulas](technical-content.md#equations-and-formulas).
 
 | Symbol | Usage | Example |
 |---|---|---|

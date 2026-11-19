@@ -1,13 +1,13 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Deploy to Kubernetes or OpenShift
+# Deploying to Kubernetes or OpenShift
 
 Run agent sandboxes on an existing Kubernetes or OpenShift cluster.
 NemoClaw either installs a development NVIDIA OpenShell gateway in a namespace it binds or creates, or uses a gateway you already run.
 The same agent images serve Docker, Podman, Kubernetes, and OpenShift.
 
-The managed gateway authenticates users through a development issuer it runs, or through [an existing OIDC issuer](#authenticate-through-an-existing-oidc-issuer).
+The managed gateway authenticates users through a development issuer it runs, or through [an existing OIDC issuer](#authenticating-through-an-existing-oidc-issuer).
 CI runs the managed lifecycle on kind (Kubernetes 1.37, Agent Sandbox 1.0.3, the version the pinned OpenShell's Kubernetes tests use).
 OpenShift was qualified by hand on one OpenShift Local 4.22.14 node (linux/arm64) at revision `62f994bf88` ([#12733](https://github.com/NVIDIA/NemoClaw/issues/12733)): the gateway and issuer ran under `restricted-v2`, and agents replied through a managed gateway, one authenticating through OIDC, and an existing gateway.
 No automated run covers OpenShift, and other clusters are untested.
@@ -18,10 +18,10 @@ No automated run covers OpenShift, and other clusters are untested.
 Confirm client access, cluster permissions, image availability, and inference reachability before applying the example.
 Managed model services aren't supported on Kubernetes.
 
-- **A NemoClaw bundle:** [Build one](build.md#build-a-native-bundle) from this revision.
+- **A NemoClaw bundle:** [Build one](build.md#building-a-native-bundle) from this revision.
   The bundle includes the Helm provider that installs the gateway.
   No Helm CLI is needed.
-- **Cluster access:** A kubeconfig file and an exact context, or, when NemoClaw [runs in a pod](#run-nemoclaw-in-a-pod), the pod's service account.
+- **Cluster access:** A kubeconfig file and an exact context, or, when NemoClaw [runs in a pod](#running-nemoclaw-in-a-pod), the pod's service account.
   Either must be able to read the deployment's namespace, or create it if it doesn't exist, and, inside it, create Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets, Jobs, and NetworkPolicies, and port-forward to its pods (`get` and `create` on `pods/portforward`).
   The SDK reads nothing else outside the namespace.
   The pinned OpenShell chart also creates [two cluster-wide objects](#cluster-wide-objects), so the context or service account must be able to create a ClusterRole and a ClusterRoleBinding.
@@ -40,7 +40,7 @@ Managed model services aren't supported on Kubernetes.
   NemoClaw checks none of these.
   The chart and the cluster report a missing Agent Sandbox or StorageClass, but Kubernetes accepts NetworkPolicies that no plugin enforces, so nothing reports a plugin that ignores them.
 - **Agent images:** Pushed to a registry the cluster can pull from, and referenced by digest.
-- **Inference:** An endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster).
+- **Inference:** An endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#using-a-model-server-in-the-cluster).
   Managed model services under `spec.services` aren't supported on Kubernetes ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 NemoClaw never selects a context for you.
@@ -53,7 +53,7 @@ Besides the namespace, a managed gateway adds two cluster-wide objects: the char
 They let the gateway read nodes, namespaces, RuntimeClasses, and PriorityClasses, and review ServiceAccount tokens.
 Destroy removes both with the gateway release.
 
-## Prepare Agent Images
+## Preparing Agent Images
 
 A cluster sandbox names its image's metadata bundle in `image.metadata`, because no local engine can inspect the image there.
 
@@ -82,10 +82,10 @@ When you copy the image to another registry, copy the whole index so its digest 
 Besides its platform's image, an index from `cargo images build` lists an attestation manifest that Buildx adds.
 With `oc image mirror`, pass `--keep-manifest-list=true --filter-by-os='.*'`.
 By default, it copies only the image for the platform `oc` runs on.
-If a copy changes the digest, write the bundle again from the copy with `--registry`, as [Build agent images](build.md#build-agent-images) describes.
+If a copy changes the digest, write the bundle again from the copy with `--registry`, as [Build agent images](build.md#building-agent-images) describes.
 For OpenShift's internal registry, reference the copy by the address nodes pull from, `image-registry.openshift-image-registry.svc:5000/<namespace>/<name>@<digest>`, and let the deployment's service accounts pull from that namespace, for example with the `system:image-puller` role.
 Set the environment variable named in `image.metadata` to the bundle's path before each command.
-See [Build agent images](build.md#build-agent-images) for the harnesses each platform builds.
+See [Build agent images](build.md#building-agent-images) for the harnesses each platform builds.
 
 ### Sandbox Count and Cluster Size
 
@@ -100,7 +100,7 @@ Size the cluster for the sandboxes you declare:
   At the kubelet's default of 110 pods per node, they need at least five nodes, plus room for the gateway, the issuer, and the cluster's own pods.
   A node allowed more than 250 pods also needs a pod range larger than a /24.
 - **Node memory:** In a recorded run, each OpenClaw sandbox used about 0.85 GiB of node memory, about 210 GiB for 256 ([#14403](https://github.com/NVIDIA/NemoClaw/issues/14403)).
-- **Storage:** A managed gateway gives each sandbox a 2 GiB workspace claim, so 256 sandboxes claim 512 GiB, from the cluster's default StorageClass unless `workspace_storage_class` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) names another, as [the placement example](../../examples/kubernetes/sandbox-placement.yaml) does.
+- **Storage:** A managed gateway gives each sandbox a 2 GiB workspace claim, so 256 sandboxes claim 512 GiB, from the cluster's default StorageClass unless `workspace_storage_class` in [`spec.gateway.config`](usage.md#configuring-a-managed-gateway) names another, as [the placement example](../../examples/kubernetes/sandbox-placement.yaml) does.
   OpenShell deletes a sandbox whose pod hasn't started within 5 minutes, so add sandboxes in steps the StorageClass provisions in that time.
   k3s's local-path provisioner made about one volume every 2 seconds.
   Steps of 64 sandboxes started within about 3 minutes, and a single apply of 256 lost 100.
@@ -113,17 +113,17 @@ Size the cluster for the sandboxes you declare:
 Each sandbox also attaches at most 32 providers, OpenShell's limit.
 See [inference](../agents-inference/inference.md).
 
-## Deploy With a Managed Gateway
+## Deploying With a Managed Gateway
 
 The SDK binds the namespace, creating it if it doesn't exist, adds a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
-The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs, also when you [publish the gateway](#publish-the-gateway-outside-the-cluster).
+The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs, also when you [publish the gateway](#publishing-the-gateway-outside-the-cluster).
 Start from [the Kubernetes example](../../examples/kubernetes/managed-development.yaml).
 [The examples' index](../../examples/kubernetes/README.md) lists the others.
 Replace these deployment-specific inputs before running the commands:
 
 - `metadata.uid` to a new UUID.
 - `gateway.kubernetes.kubeconfig` to the environment variable holding the kubeconfig path, and `context` to the exact context.
-  Omit both when [NemoClaw runs in a pod](#run-nemoclaw-in-a-pod).
+  Omit both when [NemoClaw runs in a pod](#running-nemoclaw-in-a-pod).
 - `gateway.kubernetes.namespace` to a namespace for this deployment alone.
   If it exists, NemoClaw records its UID and never labels, changes, or deletes it.
   Otherwise, NemoClaw creates it.
@@ -160,10 +160,10 @@ Apply creates the gateway and every sandbox, and starts each agent.
 Keep the state directory: it holds the cluster ownership receipt and the development issuer's keys, and destroy needs both.
 [Managed Kubernetes ownership](../../internal-docs/design/architecture.md#managed-kubernetes-ownership) describes which component owns each resource.
 
-### Authenticate Through an Existing OIDC Issuer
+### Authenticating Through an Existing OIDC Issuer
 
 The `development` profile runs a token issuer for this deployment, which isn't an identity service.
-Only NemoClaw can get its tokens, so it gives you no access of your own: to invoke agents or run `openshell` commands against the gateway, use the `oidc` profile and [reach the gateway from the OpenShell CLI](#reach-the-gateway-from-the-openshell-cli).
+Only NemoClaw can get its tokens, so it gives you no access of your own: to invoke agents or run `openshell` commands against the gateway, use the `oidc` profile and [reach the gateway from the OpenShell CLI](#reaching-the-gateway-from-the-openshell-cli).
 To have the gateway authenticate users through your identity provider instead, use the `oidc` profile, as [the OIDC example](../../examples/kubernetes/managed-oidc.yaml) does:
 
 ```yaml
@@ -184,7 +184,7 @@ spec:
         user_role: openshell-users
 ```
 
-- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments.
+- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configuring-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments.
   OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access.
   Omitted settings take OpenShell's defaults.
   The `oidc` profile requires the table.
@@ -203,7 +203,7 @@ spec:
 - `token.env` names the variable holding the bearer token NemoClaw sends to the gateway.
   NemoClaw reads the gateway's version and drivers, and creates and deletes its workspace, which OpenShell allows only to a Platform Admin, so the token needs the role `admin_role` names.
   Without it, plan fails with `observation permission denied`.
-  If you set `scopes_claim`, the token also needs the scopes an [external gateway's token](#reach-an-external-gateway-through-an-ingress) does.
+  If you set `scopes_claim`, the token also needs the scopes an [external gateway's token](#reaching-an-external-gateway-through-an-ingress) does.
 
 NemoClaw runs no sign-in flow and stores no token.
 Before each plan, apply, or destroy, get an access token for the audience from your identity provider, for example with its command-line tool, and put it in the variable `token.env` names:
@@ -218,7 +218,7 @@ OpenShell accepts a token for up to 60 seconds after its `exp`, the default leew
 With NemoClaw's chart values, the gateway authenticates each request by its token: it accepts a client without a certificate, and refuses the client certificate from `<release>-client-tls` without a token, with `missing authorization header`.
 With this profile, the namespace holds no development issuer, and the state directory holds no issuer keys.
 
-### Publish the Gateway Outside the Cluster
+### Publishing the Gateway Outside the Cluster
 
 Like a Docker gateway's published port, `gateway.kubernetes.expose` publishes the gateway at `gateway.endpoint`, where other clients, such as the OpenShell CLI, dial it without a port forward.
 NemoClaw's own plan, apply, and destroy still reach the gateway through port forwards, so they still need `pods/portforward`.
@@ -287,18 +287,18 @@ spec:
 - **Creating the Route:** Helm creates it with the identity that applies, which needs `create`, `update`, and `delete` on `routes` in the `route.openshift.io` API group, and OpenShift sets a Route's host only for an identity that can create `routes/custom-host`.
   OpenShift's `admin` and `edit` roles grant both.
 
-Sandbox [service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) skip the gateway's sign-in, so anyone who reaches the endpoint with a service's host name reaches that service, which must authenticate its own clients.
+Sandbox [service URLs](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway) skip the gateway's sign-in, so anyone who reaches the endpoint with a service's host name reaches that service, which must authenticate its own clients.
 The URLs that apply prints don't open remotely yet ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
 
 The chart writes the certificate once, when it creates the Secrets `<release>-server-tls`, `<release>-client-tls`, and `<release>-jwt-keys`, and destroy keeps them.
 A new deployment with the same `metadata.uid` in the same namespace reuses the retained Secrets, whose certificate might not name its host.
 Delete the three Secrets before its first apply.
 
-### Reach the Gateway From the OpenShell CLI
+### Reaching the Gateway From the OpenShell CLI
 
-With the `oidc` profile, the OpenShell CLI can reach the gateway with your own token, to [invoke agents](../agents-inference/interfaces.md#invoke-an-agent) and run other `openshell` commands.
+With the `oidc` profile, the OpenShell CLI can reach the gateway with your own token, to [invoke agents](../agents-inference/interfaces.md#invoking-an-agent) and run other `openshell` commands.
 It needs three things: a port forward to the gateway pod, the CA certificate that verifies the gateway, and an OpenShell gateway entry that signs in through your identity provider.
-A [published gateway](#publish-the-gateway-outside-the-cluster) needs no forward: set the variables in the first step but skip its `port-forward` command, and add the gateway at `gateway.endpoint` instead of `https://127.0.0.1:17671`.
+A [published gateway](#publishing-the-gateway-outside-the-cluster) needs no forward: set the variables in the first step but skip its `port-forward` command, and add the gateway at `gateway.endpoint` instead of `https://127.0.0.1:17671`.
 No automated test covers these steps.
 [#14131](https://github.com/NVIDIA/NemoClaw/issues/14131) records a manual run of the browser sign-in against a bare-metal single-node OpenShift 4.22 cluster, and [#14192](https://github.com/NVIDIA/NemoClaw/pull/14192) one of the client-credentials sign-in on kind.
 Both used Keycloak as the issuer.
@@ -363,14 +363,14 @@ openshell status
 When the token expires, the CLI gets a new one the same way, so keep `OPENSHELL_OIDC_CLIENT_SECRET` set for as long as you run `openshell` commands.
 
 `openshell status` reports the gateway as connected and authenticated.
-Then [select the gateway and workspace](../agents-inference/interfaces.md#select-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=$gateway_name`.
+Then [select the gateway and workspace](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=$gateway_name`.
 A token with the role `admin_role` names reaches the deployment's workspace.
 A token with only the role `user_role` names reaches it once a platform admin adds the token's subject to the workspace.
 Until then, sandbox commands fail with `not a member of workspace` and print the `openshell workspace member add` command to run.
 With only that role, `openshell status` also reports `authorization denied`, because its check reads gateway details that only an admin may read.
 See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
 
-### Reference Registry Credentials
+### Referencing Registry Credentials
 
 For a managed gateway, `gateway.kubernetes.imagePullSecrets` names Kubernetes Secrets in the deployment's namespace.
 The pinned chart attaches these references to gateway and helper pods and configures OpenShell to attach them to sandbox pods.
@@ -411,9 +411,9 @@ A configured reference doesn't establish registry access.
 Retire upstream registry credentials separately.
 Destroy retains the namespace and caller-managed Secrets.
 Docker and Podman gateways pull private images with Docker logins instead.
-See [Pull From Private Registries](usage.md#pull-from-private-registries).
+See [Pulling From Private Registries](usage.md#pulling-from-private-registries).
 
-### Run NemoClaw in a Pod
+### Running NemoClaw in a Pod
 
 When `nemoclaw` runs in a pod, such as a CI job, it can use the pod's service account instead of a kubeconfig.
 Omit `gateway.kubernetes.kubeconfig` and `context`:
@@ -513,7 +513,7 @@ rules:
 
 Bind the ClusterRole with a ClusterRoleBinding and the Role with a RoleBinding in the namespace, both to the pod's service account.
 
-## Deploy to OpenShift
+## Deploying to OpenShift
 
 Set `gateway.runtime.provider: openshift`.
 Everything else matches the managed Kubernetes deployment above.
@@ -529,7 +529,7 @@ This has since run by hand on one OpenShift Local 4.22.14 node (linux/amd64): `r
 
 The agent images need no OpenShift variant: any UID can read their workspace seed.
 
-## Use an Existing Gateway
+## Using an Existing Gateway
 
 To use an OpenShell gateway someone else runs on the cluster, set `gateway.management: external` with `runtime.provider` set to `kubernetes` or `openshift`.
 Give its endpoint, credential, and TLS material as environment references, as in [the external gateway example](../../examples/kubernetes/external-gateway.yaml).
@@ -537,7 +537,7 @@ NemoClaw then manages only the sandboxes.
 It neither installs nor removes the gateway.
 Sandboxes still need `image.metadata`.
 
-### Reach an External Gateway Through an Ingress
+### Reaching an External Gateway Through an Ingress
 
 NemoClaw doesn't put a managed gateway behind a Gateway API ingress, because TLS would end at the Gateway, which conflicts with NemoClaw's mTLS ([current limits](../resources/limits.md#platforms-models-and-placement)).
 On OpenShift, [a pass-through Route](#through-an-openshift-route) can publish a managed gateway instead.
@@ -598,7 +598,7 @@ spec:
 - **`endpoint`:** The listener certificate must name the endpoint's host.
   Otherwise, NemoClaw reports `the gateway's TLS server certificate does not name the endpoint's host`.
   When the operator sets the chart's `grpcRoute.hostnames`, the host must be one of them.
-- **`tls.ca`:** A variable holding the path of a CA certificate file, as for [any external gateway](usage.md#supply-credential-references).
+- **`tls.ca`:** A variable holding the path of a CA certificate file, as for [any external gateway](usage.md#supplying-credential-references).
   Give the CA that signed the certificate in the Secret the listener's `certificateRefs` names, `openshell-ingress-tls` in the guide.
   This CA is the chart's own only when the listener reuses the chart's server certificate Secret.
   Omit `tls` when a publicly trusted CA signed the listener certificate.
@@ -612,12 +612,12 @@ spec:
   The token therefore needs the gateway's `admin_role`, by default `openshell-admin` in the `realm_access.roles` claim, unless the gateway leaves both `admin_role` and `user_role` empty ([OIDC settings](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/authentication.mdx#oidc)).
   Without it, plan fails with `observation permission denied`.
   If the gateway sets `scopes_claim`, the token also needs `config:read`, `workspace:read`, `workspace:write`, `sandbox:read`, `sandbox:write`, `provider:read` and `provider:write`, or `openshell:all`.
-- **Service URLs:** [service exposure](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) URLs skip the gateway's authentication, so prefer [`openshell forward service`](../agents-inference/interfaces.md#forward-a-native-service).
+- **Service URLs:** [service exposure](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway) URLs skip the gateway's authentication, so prefer [`openshell forward service`](../agents-inference/interfaces.md#forwarding-a-native-service).
   The chart routes only gRPC, so the URLs need the operator's own route, as the guide's [Route Sandbox Service Traffic](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/kubernetes/ingress.mdx#route-sandbox-service-traffic) section describes.
   OpenShell builds them with the gateway pod's port, 8080, so behind an ingress on port 443 the URLs that apply prints name a port the ingress doesn't serve.
   With the chart's default service domain, the recorded runs printed `https://<workspace>--<sandbox>--<service>.openshell.localhost:8080/`.
 
-## Use a Model Server in the Cluster
+## Using a Model Server in the Cluster
 
 Sandboxes can use a model server that you run in the gateway's cluster.
 NemoClaw creates nothing for it: you deploy the server with your platform's own tools, and the sandboxes reach it through its Service.
@@ -641,7 +641,7 @@ spec:
 - **Key:** `credential` is optional.
   It names the variable that holds the server's key where you run `nemoclaw`.
   OpenShell stores the key and adds it to sandbox requests.
-  Give the server the same key from a Secret, as [Supply the Key on Other Platforms](../agents-inference/inference.md#supply-the-key-on-other-platforms) shows.
+  Give the server the same key from a Secret, as [Supplying the Key on Other Platforms](../agents-inference/inference.md#supplying-the-key-on-other-platforms) shows.
   The key crosses the cluster network over plain HTTP unless your network plugin or a service mesh encrypts Pod traffic.
 - **Model IDs:** The machine running `nemoclaw` usually can't resolve cluster names, so onboarding can't list the server's models.
   Write the route's model ID yourself.
@@ -655,7 +655,7 @@ spec:
 
 Start from [the in-cluster vLLM example](../../examples/kubernetes/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../../examples/kubernetes/in-cluster-ollama.yaml) for a server without a key.
 
-## Destroy a Deployment
+## Destroying a Deployment
 
 **Destroy deletes every sandbox, its in-memory conversation history, and its workspace claim.**
 Preview it, then run it with the same bundle and state directory:
@@ -670,12 +670,12 @@ Each sandbox's workspace claim goes with it, and the claim's StorageClass decide
 With the `Delete` reclaim policy, the cluster removes the volume and its data.
 With `Retain`, such as OpenShift Local's default StorageClass, the volume stays `Released` with the workspace files on it until you remove it.
 OpenShell creates workspace claims in the cluster's default StorageClass.
-To choose another, set `workspace_storage_class` in the `openshell.drivers.kubernetes` table of [`spec.gateway.config`](usage.md#configure-a-managed-gateway).
+To choose another, set `workspace_storage_class` in the `openshell.drivers.kubernetes` table of [`spec.gateway.config`](usage.md#configuring-a-managed-gateway).
 
 Destroy keeps the namespace, the credential key Secret, and the gateway's persistent volumes, as described in [deletion and retention](state.md#deletion-and-retention).
-To remove them and any released workspace volumes, follow [Remove Retained Resources](usage.md#remove-retained-resources).
-If destroy fails or is interrupted while removing the gateway release, follow [Recover an Interrupted Helm Removal](usage.md#recover-an-interrupted-helm-removal).
-If an apply failed or stopped while Helm installed the gateway release, or plan, apply, or destroy names a gateway release that the state doesn't record, follow [Recover From an Unfinished Helm Install](usage.md#recover-from-an-unfinished-helm-install).
+To remove them and any released workspace volumes, follow [Removing Retained Resources](usage.md#removing-retained-resources).
+If destroy fails or is interrupted while removing the gateway release, follow [Recovering an Interrupted Helm Removal](usage.md#recovering-an-interrupted-helm-removal).
+If an apply failed or stopped while Helm installed the gateway release, or plan, apply, or destroy names a gateway release that the state doesn't record, follow [Recovering From an Unfinished Helm Install](usage.md#recovering-from-an-unfinished-helm-install).
 
 ### If Destroy Refuses
 
@@ -695,7 +695,7 @@ kubectl --context "$deployment_context" delete clusterrolebinding,clusterrole \
   "$deployment_release-node-reader-$deployment_namespace"
 ```
 
-Then follow [Remove Retained Resources](usage.md#remove-retained-resources) on Kubernetes without its destroy check.
+Then follow [Removing Retained Resources](usage.md#removing-retained-resources) on Kubernetes without its destroy check.
 Its pod list still shows this deployment's gateway, issuer, and sandboxes.
 Deleting the namespace stops them, so continue if nothing else uses the namespace.
 That procedure keeps a namespace that existed before the first apply, so first delete the deployment's workloads in it:

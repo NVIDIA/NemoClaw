@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Define Once or Configure Inline
+# Defining Once or Configuring Inline
 
 Use an inline definition for one consumer, or a named definition with references to share it.
 Both forms use the same configuration type, defaults, and validation.
@@ -45,7 +45,7 @@ Paths below are relative to `spec`.
 | Inference | `inferences.<name>` or `sandboxes.<sandbox>.inferences.<name>` | Agent `inference` or `inferenceRef` | An explicit default selects a Fabric model role; Fabric validates the adapter's supported roles |
 | Harness | `harnesses.<name>` or `sandboxes.<sandbox>.harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration and one agent per sandbox |
 | Integration | `integrations.<name>` or `sandboxes.<sandbox>.integrations.<name>` | Agent `integrations.<name>`, `integrationRefs`, or both | Brave or Tavily `webSearch` credentials and grants; one attached search definition per sandbox |
-| Policy | `policies.<name>` | Network `policy.explicit` or `policyRef` | At most one of `tier`, `policy`, and `policyRef` per network; see [reuse policies and grants](../security/sandbox-network.md#reuse-policies-and-grants) |
+| Policy | `policies.<name>` | Network `policy.explicit` or `policyRef` | At most one of `tier`, `policy`, and `policyRef` per network; see [reuse policies and grants](../security/sandbox-network.md#reusing-policies-and-grants) |
 | Grant | `grants.<name>` | Network `grants.<name>`, `grantRefs`, or both | Added to the isolated preset only; names are unique across `grants` and `grantRefs` |
 
 Sandboxes, inference providers, inferences, harnesses, integrations, policies, and grants are maps keyed by name.
@@ -56,14 +56,14 @@ Sandbox-local providers receive stable identities derived from the sandbox and p
 Different sandboxes can reuse a local definition name without sharing its registration.
 A document supports one to 256 named sandboxes with a Kubernetes or OpenShift gateway, and one to 32 with Docker or Podman.
 OpenClaw agents can select models from different providers.
-See [multiple model choices](../agents-inference/inference.md#give-an-agent-multiple-model-choices) for defaults and current service limits.
+See [multiple model choices](../agents-inference/inference.md#giving-an-agent-multiple-model-choices) for defaults and current service limits.
 Multiple OpenClaw agents can reference the same provider and integration.
 Distinct inline instances aren't shared implicitly.
 
 Agent `auth.method` requires credentials from every selected routed provider.
-See [Hermes authentication](../agents-inference/inference.md#authenticate-hermes-through-the-provider) for credential handling.
+See [Hermes authentication](../agents-inference/inference.md#authenticating-hermes-through-the-provider) for credential handling.
 
-## Reference a Harness Configuration
+## Referencing a Harness Configuration
 
 Define runtime settings once and select them from the sandbox:
 
@@ -93,14 +93,14 @@ This fragment assumes a `chat` inference definition and omits other required dep
 Put `harnesses` under the sandbox to keep the definitions local to that sandbox.
 Use `harness: {kind: nvidia.fabric.openclaw}` for an inline configuration without additional settings.
 Native observability and interfaces belong in the harness's `settings`.
-[Configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness) says which Fabric sections the harness holds and which each agent keeps for itself.
+[Configure the agent and the harness](../agents-inference/agents.md#configuring-the-agent-and-the-harness) says which Fabric sections the harness holds and which each agent keeps for itself.
 Each sandbox requires exactly one of `harness` or `harnessRef`.
 Agents can't select a harness.
 Each sandbox's agent uses the selected implementation in its own Fabric runtime.
 Sharing a definition reuses configuration.
 Each sandbox owns its runtime process.
 
-## Reference an Inference Configuration
+## Referencing an Inference Configuration
 
 Use `inferenceRef` to reuse the complete inference configuration, including its provider selection and model settings:
 
@@ -136,7 +136,7 @@ Provider references resolve where the inference is defined: a deployment-level i
 An inline provider inside a shared inference is reused by every agent selecting that inference.
 Using `inference` and `inferenceRef` together is an error, including an empty inline object.
 
-## Reference an Inference Provider
+## Referencing an Inference Provider
 
 This fragment omits the deployment's other required fields:
 
@@ -176,15 +176,15 @@ inference:
 ```
 
 Use the [complete inline example](../../examples/inline-inference.yaml) as a starting point and follow [deployment prerequisites and image selection](usage.md) before applying it.
-For integration examples, see [define and attach integrations](../agents-inference/agents.md#define-and-attach-integrations).
+For integration examples, see [define and attach integrations](../agents-inference/agents.md#defining-and-attaching-integrations).
 
-## Combine Supported Features
+## Combining Supported Features
 
 The [full-featured OpenClaw example](../../examples/full-featured-openclaw.yaml) combines a managed gateway, remote authenticated vLLM, explicit ownership and GPU requirements, three agents in separate sandboxes that share one harness definition and one explicit network policy, a runtime timeout, and tool restrictions.
 All three agents select the same provider and inference settings.
 It passes the SDK parser and JSON Schema checks, but this combined deployment hasn't been qualified against live services.
 Replace the image placeholders, deployment UID, SSH alias, addresses, and model settings for your hosts before use.
-Follow the [SSH service prerequisites](../agents-inference/remote-service.md), [agent image procedure](build.md#build-agent-images), and [sandbox policy prerequisites](../security/sandbox-network.md).
+Follow the [SSH service prerequisites](../agents-inference/remote-service.md), [agent image procedure](build.md#building-agent-images), and [sandbox policy prerequisites](../security/sandbox-network.md).
 Apply provisions the managed resources and checks readiness.
 Verify inference separately.
 
@@ -193,8 +193,8 @@ No single active configuration exercises every schema branch:
 | Alternative | Example or guide | Why separate |
 |---|---|---|
 | Inline provider or integration | [Inline provider](../../examples/inline-inference.yaml), [inline integration](../agents-inference/agents.md#web-search) | A consumer can't both inline and reference the same definition |
-| Managed Ollama or an existing endpoint | [Managed Ollama](../../examples/managed-ollama.yaml), [external endpoint](../../examples/inference-tuning.yaml) | Each provider selects one service connection; see the [Ollama deployment limits](../agents-inference/inference.md#combine-local-and-hosted-providers) |
-| Existing Ollama through an authenticated proxy | [Proxy guide](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
+| Managed Ollama or an existing endpoint | [Managed Ollama](../../examples/managed-ollama.yaml), [external endpoint](../../examples/inference-tuning.yaml) | Each provider selects one service connection; see the [Ollama deployment limits](../agents-inference/inference.md#combining-local-and-hosted-providers) |
+| Existing Ollama through an authenticated proxy | [Proxy guide](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
 | Hermes provider authentication or Relay tracing | [Authentication](../../examples/hermes-auth.yaml), [Relay](../agents-inference/agents.md#hermes-relay-tracing) | The full-featured example selects OpenClaw |
 | Pi model extensions | [Pi example](../../examples/fabric-pi.yaml) | Pi needs a context window for a model it doesn't ship |
 | Model preparation recipe | [Recipe declaration](../agents-inference/recipes.md#declaration) | Separate model, image, and hardware contract |
@@ -211,9 +211,9 @@ Model, recipe, and gateway settings remain nested configuration.
 Managed services are named definitions under `spec.services`.
 Providers select them with `serviceRef` instead of `endpoint` and `credential`.
 Services have no inline provider form or sandbox-local scope, and every declared service participates in apply and destroy.
-Use [service configuration](../agents-inference/inference.md#choose-a-service-mode) for the available installers and lifecycle limits.
+Use [service configuration](../agents-inference/inference.md#choosing-a-service-mode) for the available installers and lifecycle limits.
 
 The [field reference](../reference/configuration.md) lists exact shapes and constraints.
 Editor schema checks cover structure and conditional forms.
 The SDK parser also resolves names and checks selected-provider compatibility when multiple named definitions exist.
-Validate connectivity and inference separately using the [deployment verification steps](../agents-inference/inference.md#verify-the-result).
+Validate connectivity and inference separately using the [deployment verification steps](../agents-inference/inference.md#verifying-the-result).

@@ -5,7 +5,7 @@
 
 Use the [public guide](../docs/README.md) for deployment tasks. The pages here record maintainer procedures and design decisions; they are not published in the v1 reader navigation.
 
-## Contribute and Validate
+## Contributing and Validating
 
 | Task | Guide |
 |---|---|

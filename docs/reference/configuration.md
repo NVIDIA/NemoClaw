@@ -90,7 +90,7 @@ Paths:
 
 Who registers APF with the gateway as its interceptor and provider-profile source.
 
-Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+Guide: [Letting APF author sandbox policy](../build-deploy/usage.md#letting-apf-author-sandbox-policy).
 
 Paths:
 
@@ -152,7 +152,7 @@ Constraints: `"api-key"`.
 
 OpenShell's service authorization modes.
 
-Guide: [Agent interfaces](../agents-inference/interfaces.md#expose-a-service-through-the-gateway).
+Guide: [Agent interfaces](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway).
 
 Paths:
 
@@ -343,7 +343,7 @@ Paths:
 
 External Ollama daemon observed by the managed proxy installer.
 
-Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy).
+Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy).
 
 Paths:
 
@@ -358,7 +358,7 @@ Paths:
 
 Existing Ollama model installation, independently owned outside the deployment.
 
-Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy).
+Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy).
 
 Paths:
 
@@ -691,7 +691,7 @@ A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
 
 TLS file reference for a service the gateway dials.
 
-Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+Guide: [Letting APF author sandbox policy](../build-deploy/usage.md#letting-apf-author-sandbox-policy).
 
 Paths:
 
@@ -926,7 +926,7 @@ Paths:
 
 Ollama GPU budget and host memory protection.
 
-Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
+Guide: [Managed Ollama](../agents-inference/inference.md#running-managed-ollama).
 
 Paths:
 
@@ -946,7 +946,7 @@ Paths:
 
 One immutable Ollama registry model installation.
 
-Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
+Guide: [Managed Ollama](../agents-inference/inference.md#running-managed-ollama).
 
 Paths:
 
@@ -961,7 +961,7 @@ Paths:
 
 Native Ollama serving controls supported by the managed installer.
 
-Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
+Guide: [Managed Ollama](../agents-inference/inference.md#running-managed-ollama).
 
 Paths:
 
@@ -1046,7 +1046,7 @@ Paths:
 
 The component that authors every sandbox's policy on a gateway, instead of NemoClaw.
 
-Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+Guide: [Letting APF author sandbox policy](../build-deploy/usage.md#letting-apf-author-sandbox-policy).
 
 Paths:
 
@@ -1442,7 +1442,7 @@ Paths:
 
 Bearer authentication for a managed inference service.
 
-Guide: [Managed vLLM authentication](../agents-inference/inference.md#authenticate-a-managed-vllm-service).
+Guide: [Managed vLLM authentication](../agents-inference/inference.md#authenticating-a-managed-vllm-service).
 
 Paths:
 
@@ -1456,7 +1456,7 @@ Constraints: `"bearer"`.
 
 Managed inference CPU and memory limits, GPU selection, IPC, and shared-memory settings.
 
-Guide: [Container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy).
+Guide: [Container limits and update policy](../agents-inference/inference.md#setting-container-limits-and-update-policy).
 
 Paths:
 
@@ -1602,7 +1602,7 @@ Image-owned container with explicit launch settings and bounded readiness.
 
 One OpenShell service exposure: a loopback port the gateway makes reachable.
 
-Guide: [Agent interfaces](../agents-inference/interfaces.md#expose-a-service-through-the-gateway).
+Guide: [Agent interfaces](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway).
 
 Paths:
 
@@ -1684,7 +1684,7 @@ Paths:
 
 Whether updates may stop an existing model service before its replacement is ready.
 
-Guide: [Container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy).
+Guide: [Container limits and update policy](../agents-inference/inference.md#setting-container-limits-and-update-policy).
 
 Paths:
 

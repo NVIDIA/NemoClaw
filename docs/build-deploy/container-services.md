@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Configure a Container Service
+# Configuring a Container Service
 
 Use `kind: container` to run an image-owned application on a managed local Docker gateway.
 The image supplies its entrypoint, application configuration, and health behavior.
@@ -10,7 +10,7 @@ This container path doesn't support Podman or Kubernetes service placement.
 The typed `ollama` and `vllm` kinds retain their own model preparation, credentials, readiness checks, and storage policies.
 A generic container doesn't inherit them.
 
-## Supply Inputs
+## Supplying Inputs
 
 The container image owns its application behavior.
 Configure the inputs NemoClaw needs to install and check it.
@@ -33,7 +33,7 @@ Without a path or runtime-status selection, the image must supply a Docker HEALT
 A service referenced by an inference `serviceRef` needs an address reachable from NVIDIA OpenShell, at base path `/v1`, and registration waits for readiness.
 See [inference](../agents-inference/inference.md) for authentication and API compatibility requirements.
 
-## Protect Application Credentials
+## Protecting Application Credentials
 
 Don't put secrets in a shared YAML file.
 An `environment` value is literal, even if it looks like `${API_KEY}`.
@@ -43,7 +43,7 @@ Removing a container doesn't revoke a credential or erase retained copies.
 Prefer a typed managed service when you need its credential and storage safeguards.
 Refer to [security](../security/security.md) and [state](state.md) for ownership and retention.
 
-## Decide Whether the Image Fits
+## Deciding Whether the Image Fits
 
 A running container doesn't establish application readiness, and readiness doesn't establish successful inference or an agent response.
 Generic services use disposable application storage.

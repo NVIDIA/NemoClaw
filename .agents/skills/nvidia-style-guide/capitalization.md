@@ -10,7 +10,7 @@ These guidelines apply to all areas of NVIDIA except GeForce, which can vary. Co
 
 For guidance on media or professional titles, refer to [Titles](names-titles-and-trademarks.md#titles).
 
-In general, follow standard guidelines for capitalization at the beginning of sentences, names and proper nouns, time zones, full quotes, and time periods. Avoid capitalizing compound words and seasons. For more information, refer to Capitalization in the Technical Documentation Writing Guide.
+In general, follow standard guidelines for capitalization at the beginning of sentences, names and proper nouns, time zones, full quotes, and time periods. Avoid capitalizing compound words and seasons. For more information, refer to [Capitalization Rules](technical-documentation.md#capitalization-rules).
 
 *(Transcribed from an image on the page: an annotated screenshot of an NVIDIA “Solutions for the Data Center” web page with numbered callouts identifying each type of heading.)*
 

@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Build Local Artifacts
+# Building Local Artifacts
 
 Build from the repository root with Rust 1.100.0, pinned in [rust-toolchain.toml](../../rust-toolchain.toml).
 Native bundles also require Protocol Buffers compiler 36.2.
@@ -13,9 +13,9 @@ If none is on `PATH`, set `PROTOC` to `.tools/protoc-36.2/bin/protoc` or another
 [versions.json](../../versions.json) records tool versions, download checksums, and the SDK's image pins: the gateway, sandbox runtime, and supervisor images, which documents don't name.
 The SDK generates its artifact constants from that manifest at build time.
 A Docker or Podman deployment keeps the gateway image pin of the bundle that created it.
-See [the change path](usage.md#choose-the-change-path) before operating it with a bundle built from a different pin.
+See [the change path](usage.md#choosing-the-change-path) before operating it with a bundle built from a different pin.
 
-## Build a Native Bundle
+## Building a Native Bundle
 
 Use a separate `target` directory in each worktree.
 Don't symlink it to another checkout or share `CARGO_TARGET_DIR` between revisions.
@@ -60,7 +60,7 @@ The builder replaces `dist/<platform>`.
 Copy the bundle to a dedicated location before a long live run.
 Repository text uses LF on every platform so checkout newline conversion doesn't change source-derived provider versions.
 
-## Retire a Local Development Bundle
+## Retiring a Local Development Bundle
 
 Removing a source-built bundle only removes local tools.
 It doesn't stop deployments, remove images, or revoke credentials.
@@ -68,7 +68,7 @@ There is no v1 `uninstall` command or package-manager installation to reverse in
 
 Before removing a bundle, identify every deployment using it and keep a verified copy wherever its original tooling is still needed for recovery or teardown.
 Finish any operation using that bundle.
-If retiring a deployment too, follow [destroy and retention](usage.md#destroy) first, then [Remove Retained Resources](usage.md#remove-retained-resources), keeping its state for anything that procedure doesn't cover.
+If retiring a deployment too, follow [destroy and retention](usage.md#destroying) first, then [Removing Retained Resources](usage.md#removing-retained-resources), keeping its state for anything that procedure doesn't cover.
 Then remove that dedicated bundle directory using your host's file manager and remove only its `bin` entry from your shell's `PATH` configuration.
 Open a new terminal and check `command -v nemoclaw` on a POSIX shell, or `Get-Command nemoclaw` in PowerShell, to identify any remaining installation.
 
@@ -76,7 +76,7 @@ Don't delete deployment state, model volumes, unrelated tool installations, or s
 Rebuild a bundle from the recorded source revision if you need the removed tools again.
 Compatibility with another revision isn't implied.
 
-## Build Agent Images
+## Building Agent Images
 
 Use Docker with Buildx on a native host that matches the selected image target.
 Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image builder.
@@ -171,7 +171,7 @@ Debian packages still come from the configured repositories.
 
 To extend an agent image with your own skills and tools, refer to [derived agent images](derived-images.md).
 
-## Build a Runtime Image
+## Building a Runtime Image
 
 Runtime images build with Docker Buildx Bake on a Linux ARM64 or AMD64 host, always for that host's platform, so the supervisor compiles natively rather than under emulation.
 They require a Docker daemon using the containerd image store, which keeps each local image's digest.
@@ -191,15 +191,15 @@ docker image inspect nc-prototype-vllm:rust-v1 --format '{{index .RepoDigests 0}
 ```
 
 The image contains the shared supervisor and the pinned multi-platform vLLM base for the build host's architecture, without model-specific patches or preparation tools.
-The [Nemotron example](../agents-inference/models.md#configure-nemotron-on-an-amd64-gpu-host) uses the AMD64 build.
+The [Nemotron example](../agents-inference/models.md#configuring-nemotron-on-an-amd64-gpu-host) uses the AMD64 build.
 Select the model through [model configuration](../agents-inference/models.md).
 Selecting this artifact doesn't qualify GPU inference on the host.
 
 A model that needs preparation tools or patches uses an image its recipe's authors build.
 See [inline recipes](../agents-inference/recipes.md).
 
-`docker buildx bake ollama` builds the [managed Ollama](../agents-inference/inference.md#run-managed-ollama) image.
-`docker buildx bake llama-cpp` builds the [managed llama.cpp](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp) image: llama.cpp's CUDA 13.5 server image with the supervisor added.
+`docker buildx bake ollama` builds the [managed Ollama](../agents-inference/inference.md#running-managed-ollama) image.
+`docker buildx bake llama-cpp` builds the [managed llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) image: llama.cpp's CUDA 13.5 server image with the supervisor added.
 Its CUDA 13.5, like the vLLM image's CUDA 13.0, needs NVIDIA driver 580 or newer.
 `docker buildx bake runtimes` builds all three.
 Run `cargo images fetch` first: it places the Ollama and llama.cpp licenses that the images retain, as `versions.json` pins them.

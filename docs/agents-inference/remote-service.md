@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Configure an SSH Model Service
+# Configuring an SSH Model Service
 
 The [remote-vllm.yaml](../../examples/spark/remote-vllm.yaml) example manages a Docker inference service through SSH while an existing native NVIDIA OpenShell gateway owns Podman sandboxes.
 Declare the service under `spec.services.<name>` and select it from an inference provider with `serviceRef`.
@@ -13,14 +13,14 @@ No engine registry or per-sandbox placement override is required.
 Replace the example SSH alias, gateway endpoint, and private publication address with your hosts.
 Publication currently requires a private IPv4 address, the service's port, and the `/v1` path.
 It uses private HTTP.
-Enable [managed bearer authentication](inference.md#authenticate-a-managed-vllm-service) with `authentication: bearer` on the service.
+Enable [managed bearer authentication](inference.md#authenticating-a-managed-vllm-service) with `authentication: bearer` on the service.
 Omission preserves unauthenticated serving.
 
 The remote host must satisfy its service's hardware contract and provide Docker with NVIDIA container GPU access.
 The runtime image performs hardware and memory observation inside the container.
 Normal deployment doesn't require the provider's optional SSH capacity collector.
 The existing example uses Linux ARM64 NVIDIA DGX Spark.
-[The Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) declares an AMD64 GPU with dedicated memory.
+[The Nemotron example](models.md#configuring-nemotron-on-an-amd64-gpu-host) declares an AMD64 GPU with dedicated memory.
 Configure SSH authentication and host trust beforehand.
 Docker resolves named cache and credential mounts in the selected daemon's storage namespace.
 It never substitutes the client host's storage path.
@@ -47,12 +47,12 @@ A cross-host transfer isn't qualified, so use a fresh deployment and state for a
 Failed observations stop the operation.
 Confirmed missing service compute can be recreated during explicit apply.
 Destroy retains model data and credentials and removes the service-owned network.
-To remove that retained data, follow [Remove Retained Resources](../build-deploy/usage.md#remove-retained-resources) on the SSH engine.
+To remove that retained data, follow [Removing Retained Resources](../build-deploy/usage.md#removing-retained-resources) on the SSH engine.
 
 No live test places a model service through SSH on GPU hardware.
 A separate-host deployment and other hardware remain qualification gates ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 A successful apply establishes configuration and readiness.
-Verify an agent response through OpenShell separately using [inference verification](inference.md#verify-the-result).
+Verify an agent response through OpenShell separately using [inference verification](inference.md#verifying-the-result).
 On failure, retain the configuration and state directory for [explicit recovery](../build-deploy/usage.md#updates-and-recovery).
-Use [the destroy procedure](../build-deploy/usage.md#destroy) when retiring the deployment.
+Use [the destroy procedure](../build-deploy/usage.md#destroying) when retiring the deployment.

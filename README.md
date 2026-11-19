@@ -23,7 +23,7 @@ Images are cached; no inference requests are sent, and only the plan-review paus
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).
 
-## Contribute
+## Contributing
 
 Read the [accepted scope](internal-docs/design/scope.md) and follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
 Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](internal-docs/contributing/documentation.md) for documentation changes.

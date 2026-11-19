@@ -12,7 +12,7 @@ Use [the SDK](sdk.md) or [CLI](cli.md) for the documented deployment workflow.
 
 ## Resource and State Ownership
 
-These ownership facts explain what each provider records and why an operation can refuse a change. For recovery and retention steps, refer to [Use Desired State](../build-deploy/usage.md#updates-and-recovery) and [Locate and Preserve Deployment State](../build-deploy/state.md).
+These ownership facts explain what each provider records and why an operation can refuse a change. For recovery and retention steps, refer to [Using Desired State](../build-deploy/usage.md#updates-and-recovery) and [Locating and Preserving Deployment State](../build-deploy/state.md).
 
 OpenTofu owns graph execution and resource state.
 The SDK retains desired intent, validates plans, and reports provider observations.
@@ -126,7 +126,7 @@ Other inputs are typed too:
 - `openshell_sandbox`'s optional `driver_config` is OpenShell's per-driver sandbox configuration (`SandboxTemplate.driver_config`) as JSON text, usually from `jsonencode()`, keyed by driver, such as volume mounts.
   It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/sandboxes/runtimes.mdx).
   The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
-  It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, replaces the sandbox, as for the image; see [change paths](../build-deploy/usage.md#choose-the-change-path).
+  It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, replaces the sandbox, as for the image; see [change paths](../build-deploy/usage.md#choosing-the-change-path).
 - `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).
   A new sandbox's creation request carries them unchanged, so OpenShell's defaults apply: an omitted mode is `STRIP`, and an empty name is the unnamed endpoint.
   Adding, changing, or removing a block updates the sandbox in place, as `openshell service expose` and `openshell service delete` do; so does a declared endpoint observed differently on the gateway. Endpoints under other names stay as they are.
@@ -385,7 +385,7 @@ Generated graphs need no such step: when a plan would create an agent in a sandb
 Starting an agent waits for its sandbox to be ready and for `fabric-agent-ctl serve` to answer.
 An explicit `Rejected` OpenShell configuration admission stops the wait even while the sandbox is `Starting`.
 The diagnostic names the sandbox and includes only recognized gateway reasons; unknown backend text becomes a fixed repair message.
-See [runtime policy rejection recovery](../security/sandbox-network.md#recover-from-runtime-policy-rejection).
+See [runtime policy rejection recovery](../security/sandbox-network.md#recovering-from-runtime-policy-rejection).
 
 Refresh runs `fabric-agent-ctl check` for the recorded runtime and records the result in the computed `running`.
 A runtime Fabric no longer has, one that fails its check, and one whose sandbox isn't ready or doesn't serve its bridge count as stopped; an adapter without health checks, or a probe that can't finish, counts as running.
@@ -496,7 +496,7 @@ OpenShell refuses deletion of profiles referenced by registrations and registrat
 Inference and web search resources therefore recreate a missing profile in place, and remove the registration before its profile.
 Generated graphs create an `openshell_inference` only for definitions selected by sandboxes; unused YAML definitions have no resource lifecycle.
 Standalone HCL can remove or replace an inference resource, while removing a last selection in SDK YAML also changes the sandbox's specification, which replaces the sandbox.
-Endpoint and policy changes that also change a sandbox's launch specification replace the sandbox; see [change paths](../build-deploy/usage.md#choose-the-change-path).
+Endpoint and policy changes that also change a sandbox's launch specification replace the sandbox; see [change paths](../build-deploy/usage.md#choosing-the-change-path).
 
 The provider's `destroy` setting authorizes explicit teardown of workspaces; reconstructible objects, sandboxes included, do not require it.
 It never authorizes deleting the workspace or bypassing identity checks.
@@ -571,7 +571,7 @@ Deployment postconditions name the sandbox and adapter and preserve unsupported 
 Onboarding uses the same assessment; unknown error variants retain a generic rejection.
 Omitting `config_json` preserves metadata-only discovery.
 
-The [agent image builder](../build-deploy/build.md#build-agent-images) reads `Fabric.discover()` inside each assembled image and stores the result in `io.nemoclaw.fabric.catalog`.
+The [agent image builder](../build-deploy/build.md#building-agent-images) reads `Fabric.discover()` inside each assembled image and stores the result in `io.nemoclaw.fabric.catalog`.
 It selects installed-package records using Fabric's provenance, without editing their descriptors.
 Harness image stages declare the directories where their layout installs each adapter; the builder records them as `runtime_files`, keyed by adapter ID, beside the descriptors.
 With deployment filesystem grants, every path in the adapter descriptor's `requirements.files`, its `runtime_files` entry, and the image runtime's `required_paths` must fall under a grant.
@@ -579,7 +579,7 @@ The bundled snapshot supports offline authoring and carries the same pinned Fabr
 For image metadata internals, refer to the [image metadata contract](../../internal-docs/design/fabric-management.md#image-metadata).
 Direct Bake builds without labels remain unverified.
 Catalog identifiers are not restricted to a compiled SDK list.
-The runtime consumes the same canonical public configuration through Fabric; see [discovered harness configuration](sdk.md#configure-a-discovered-fabric-harness).
+The runtime consumes the same canonical public configuration through Fabric; see [discovered harness configuration](sdk.md#configuring-a-discovered-fabric-harness).
 
 Generated graphs observe each sandbox image independently of resource creation or image acquisition.
 Managed gateways use their configured engine; external gateways require `spec.gateway.engine` for image inspection and do not run managed-gateway prerequisite checks.
@@ -625,7 +625,7 @@ Onboarding offers the observed identifiers as model suggestions for an endpoint 
 
 Credentials remain a direct SDK concern: `observe_credentials` reports whether each selected reference resolves, separately from remote authentication.
 Gateway and resource discovery reuse their existing strict lifecycle reads below, preserving bindings when refresh fails.
-See [SDK discovery](sdk.md#discover-before-authoring-or-planning) and [onboarding target checks](../../crates/nemoclaw-onboarding/README.md#target-checks).
+See [SDK discovery](sdk.md#discovering-before-authoring-or-planning) and [onboarding target checks](../../crates/nemoclaw-onboarding/README.md#target-checks).
 
 ## Gateway Capabilities
 
@@ -650,7 +650,7 @@ Two matching stopped or absent observations, separated by 200 milliseconds, stop
 A zero timeout reports a stopped process on its first observation and continues inspecting a running process while the single API request is pending.
 A running but unreachable gateway remains a transport failure; failed or incomplete engine observations are not treated as process absence.
 The error names the container, includes its observed exit code when available, and points to its logs without copying raw engine errors or log text.
-The observation neither restarts nor deletes the process; follow [gateway startup recovery](../observability/troubleshooting.md#recover-a-managed-gateway-startup-failure).
+The observation neither restarts nor deletes the process; follow [gateway startup recovery](../observability/troubleshooting.md#recovering-a-managed-gateway-startup-failure).
 Podman and external gateways have no process readiness read; their capability read retains its API wait.
 
 A known data-source result can be retained in a saved plan.
@@ -701,7 +701,7 @@ data "vllm_runtime" "qwen" {
 
 `launch` and `requirements` describe the server for any platform, so a Docker container, a Kubernetes pod, or any other placement can run it without the SDK:
 
-- `launch` has `entrypoint`, `command`, `environment` (only `NEMOCLAW_RUNTIME_SPEC`, holding `spec`), the `port` the server listens on, the `data_path` for its model cache, and `key_env`: with `authentication`, the variable a platform sets to [supply the server's API key](../agents-inference/inference.md#supply-the-key-on-other-platforms), otherwise empty.
+- `launch` has `entrypoint`, `command`, `environment` (only `NEMOCLAW_RUNTIME_SPEC`, holding `spec`), the `port` the server listens on, the `data_path` for its model cache, and `key_env`: with `authentication`, the variable a platform sets to [supply the server's API key](../agents-inference/inference.md#supplying-the-key-on-other-platforms), otherwise empty.
 - `requirements` has `gpu`; `gpu_count`, the number of GPUs to give the container; a recommended minimum `shared_memory_bytes` (8 GiB); and `ulimits` by name, where `-1` is unlimited: `memlock` and `stack`. Platforms that cannot set process limits leave them to the node.
 - Memory and CPU limits, IPC, publication, and credentials are the placement's choice.
 
@@ -742,7 +742,7 @@ Generated graphs place managed vLLM with Docker and declare:
 OpenTofu shows a changed setting as a replacement of the whole `NEMOCLAW_RUNTIME_SPEC` environment entry.
 Container limits and service-level `updatePolicy` belong to the SDK deployment contract and do not enter that runtime specification.
 For managed vLLM and Ollama, the SDK's default `Preserve` policy refuses replacement of a running Docker container; `Recreate` permits the replacement and its possible downtime.
-See [container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy) for common fields and platform constraints.
+See [container limits and update policy](../agents-inference/inference.md#setting-container-limits-and-update-policy) for common fields and platform constraints.
 
 ## Ollama Runtime Contracts
 
@@ -859,7 +859,7 @@ The SDK runs no readiness loop of its own.
 
 The [standalone readiness fixture](../../internal-docs/contributing/integration-tests.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
 A failed read retains managed bindings, and SDK teardown omits readiness gates.
-See [runtime ownership](../../internal-docs/design/runtime.md) and [recovery](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime).
+See [runtime ownership](../../internal-docs/design/runtime.md) and [recovery](../agents-inference/models.md#diagnosing-and-recovering-a-stopped-runtime).
 
 ## Service Capacity
 
@@ -935,7 +935,7 @@ Ambient Helm and Kubernetes settings are excluded.
 Teardown removes the release before the issuer.
 The authentication resource must confirm through `release_present` that the Helm release records are absent before it deletes the issuer.
 The namespace, encryption key, and persistent volumes remain.
-[Managed Kubernetes ownership](../../internal-docs/design/architecture.md#managed-kubernetes-ownership) explains recovery when Helm loses its release binding, and [Deploy to Kubernetes or OpenShift](../build-deploy/kubernetes.md) gives the procedure.
+[Managed Kubernetes ownership](../../internal-docs/design/architecture.md#managed-kubernetes-ownership) explains recovery when Helm loses its release binding, and [Deploying to Kubernetes or OpenShift](../build-deploy/kubernetes.md) gives the procedure.
 
 ## Packaging and Qualification
 

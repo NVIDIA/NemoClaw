@@ -1,19 +1,19 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Install the CLI
+# Installing the CLI
 
 Each release attaches a `nemoclaw` archive for each of four platforms and a `SHA256SUMS` file with their SHA-256 checksums.
 Each archive holds the CLI with the OpenTofu, providers, and schemas it uses.
 This page installs a release's archive, upgrades to another release, and uninstalls the CLI.
-To build the bundle from source instead, see [build local artifacts](../build-deploy/build.md#build-a-native-bundle).
+To build the bundle from source instead, see [build local artifacts](../build-deploy/build.md#building-a-native-bundle).
 
 No release is published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Until then, release candidates are draft releases that only users with push access see, and the download commands below fail.
 A maintainer downloads a draft's files with `gh release download TAG --repo NVIDIA/NemoClaw --pattern ARCHIVE --pattern SHA256SUMS`.
 A draft's images are in internal packages, so deployments need registry credentials for them: `spec.registries` on Docker, `imagePullSecrets` on Kubernetes.
 
-## Choose the Archive
+## Choosing the Archive
 
 The archive for release `TAG`, such as `v0.1.0-rc12`, is `nemoclaw-TAG-PLATFORM.tar.gz`, and it unpacks to `dist/PLATFORM`:
 
@@ -29,9 +29,9 @@ No Windows host has run a deployment yet ([#14639](https://github.com/NVIDIA/Nem
 The executables are neither signed nor notarized.
 See [current limits](../resources/limits.md#installation-and-releases).
 Use the CLI with the agent and runtime images that the same release lists by digest.
-[Compatibility](../references/compatibility.md#use-one-release-together) explains why.
+[Compatibility](../references/compatibility.md#using-one-release-together) explains why.
 
-## Install on Linux or macOS
+## Installing on Linux or macOS
 
 In an empty directory, set the release and platform, then download the archive and the checksums:
 
@@ -87,7 +87,7 @@ echo "export PATH=\"$INSTALL/dist/$PLATFORM/bin:\$PATH\"" >> ~/.bashrc
 
 The downloaded archive and `SHA256SUMS` aren't needed after unpacking.
 
-## Install on Windows
+## Installing on Windows
 
 In PowerShell, in an empty directory, download the archive and the checksums, and check the archive's checksum:
 
@@ -103,7 +103,7 @@ if ((Get-FileHash $Archive -Algorithm SHA256).Hash -ne $Expected) { throw "check
 
 Setting `$ProgressPreference` keeps Windows PowerShell 5.1's progress display from slowing the download.
 On `checksum mismatch` or any other error, delete the download and don't unpack it.
-For a final release, check the files' build provenance with `gh attestation verify $Archive --owner NVIDIA` and `gh attestation verify SHA256SUMS --owner NVIDIA`, as [on Linux or macOS](#install-on-linux-or-macos).
+For a final release, check the files' build provenance with `gh attestation verify $Archive --owner NVIDIA` and `gh attestation verify SHA256SUMS --owner NVIDIA`, as [on Linux or macOS](#installing-on-linux-or-macos).
 Otherwise, unpack the archive into a directory for this release, and add its `bin` directory to your user `Path` and to the current session's:
 
 ```powershell
@@ -118,7 +118,7 @@ nemoclaw --version
 
 As on Linux and macOS, keep `nemoclaw.exe` in `dist\windows_amd64\bin` and the directory unchanged, and run it from your deployment's directory, not from `bin`.
 
-## Upgrade
+## Upgrading
 
 Install the new release into its own directory as above, and put its `bin` directory on `PATH` in place of the old one: edit the line in your shell's startup file, or on Windows, the user `Path` in **Edit environment variables for your account**.
 Keep the old release's directory: a deployment keeps using the release that created it until you destroy it with that release, as [compatibility](../references/compatibility.md#deployment-state) describes.
@@ -134,13 +134,13 @@ On Windows, call `& "$env:LOCALAPPDATA\nemoclaw\OLD_TAG\dist\windows_amd64\bin\n
 Create new deployments with the new release, with a fresh `metadata.uid` and state directory, and with the new release's agent images.
 Rebuild [derived images](../build-deploy/derived-images.md) from them.
 
-## Uninstall
+## Uninstalling
 
 Uninstalling a release's CLI doesn't remove what its deployments created.
 For each deployment that the release created, with that release's CLI:
 
-1. Preview and run [destroy](../build-deploy/usage.md#destroy) with the deployment's state directory.
-2. To remove what destroy retains, such as gateway data, model caches, and credential volumes, follow [remove retained resources](../build-deploy/usage.md#remove-retained-resources).
+1. Preview and run [destroy](../build-deploy/usage.md#destroying) with the deployment's state directory.
+2. To remove what destroy retains, such as gateway data, model caches, and credential volumes, follow [remove retained resources](../build-deploy/usage.md#removing-retained-resources).
 3. After step 2 removes every retained entry, delete the state directory.
    If you keep retained resources, keep the state directory and this release's directory too.
    Reapplying needs both.
@@ -154,7 +154,7 @@ NemoClaw keeps its files in these places:
 | The CLI, OpenTofu, providers, and schemas | The release's directory | Deleting the directory |
 | Deployment state, including OpenTofu state and its configuration | Each deployment's state directory: `--state-dir`, by default `.nemoclaw` in the directory you ran `nemoclaw` from; see [deployment state](../build-deploy/state.md#local-deployment-files) | Deleting the directory, after destroy |
 | Deployment YAML | Where you saved it; `nemoclaw onboard` writes `deployment.yaml` in the current directory unless `--output` names another file | Deleting the file |
-| Sandboxes, gateways, model services, and their data | The deployment's Docker or Podman engine, or Kubernetes cluster; see [retained resources](../build-deploy/state.md#understand-the-retained-resources) | Destroy, then removing retained resources |
+| Sandboxes, gateways, model services, and their data | The deployment's Docker or Podman engine, or Kubernetes cluster; see [retained resources](../build-deploy/state.md#understanding-the-retained-resources) | Destroy, then removing retained resources |
 | Agent, gateway, and model runtime images | The engine's image store, or the cluster nodes' | The engine's image commands, such as `docker image rm`; NemoClaw doesn't remove them |
 
 The NVIDIA OpenShell CLI keeps its own gateway profiles.

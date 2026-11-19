@@ -26,7 +26,7 @@ Include the year at the beginning, all trademarked products in alphabetical orde
 
 ## Names
 
-See also [Titles, Professional](#professional).
+Related: [Titles, Professional](#professional).
 
 Use FirstName LastName on first use. For internal and casual content, use FirstName on second use. For more formal content, use LastName on second use.
 
@@ -56,7 +56,7 @@ For more information about general trademark usage, refer to NVIDIA Trademark an
 
 ## Titles
 
-See also [Capitalization](capitalization.md#capitalization), [SEO](seo-and-social-media.md#seo).
+Related: [Capitalization](capitalization.md#capitalization), [SEO](seo-and-social-media.md#seo).
 
 ### Content (films, video games, blog posts, articles)
 

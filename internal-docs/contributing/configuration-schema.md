@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Maintain the Configuration Schema
+# Maintaining the Configuration Schema
 
 The [YAML field reference](../../docs/reference/configuration.md) and [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) come from the SDK's configuration types and validation constraints.
 Edit their Rust sources, then regenerate both artifacts.
@@ -21,7 +21,7 @@ flowchart LR
     Schema --> Tests
 ```
 
-## Change a Field or Rule
+## Changing a Field or Rule
 
 Complete the [build prerequisites](../../docs/build-deploy/build.md).
 From the repository root:
@@ -57,7 +57,7 @@ Regenerate after correcting the source, then rerun the check and the [repository
 
 Keep schema changes, descriptions, examples, tests, and regenerated files in the same commit.
 
-## Preserve the Input Contract
+## Preserving the Input Contract
 
 Reusable application objects follow the [definitions and references contract](../../docs/build-deploy/configuration-references.md).
 Keep its coverage table accurate when adding a family or changing supported scopes.
@@ -96,7 +96,7 @@ Keep other conditional behavior in the owning Rust field descriptions when the g
 Schema validation does not establish image availability, host capacity, credential access, ownership, or inference readiness.
 The [reference's validation limits](../../docs/reference/configuration.md#validation-beyond-the-schema) list those boundaries.
 
-## Add a Reusable Configuration Family
+## Adding a Reusable Configuration Family
 
 Follow the [definitions and references contract](../../docs/build-deploy/configuration-references.md).
 Specify the definition collection, consumer, cardinality, visible scopes, and runtime identity before adding fields.
@@ -104,7 +104,7 @@ Use the same typed definition and resolved behavior for inline and reference for
 Test missing and conflicting selections, scope collisions, unused definitions, and export/reapply.
 Add the family to the authoring guide's coverage table only when its runtime behavior is implemented.
 
-## Keep Generation Reproducible
+## Keeping Generation Reproducible
 
 The generator selects JSON Schema Draft 2020-12 explicitly, sorts object keys, and writes LF-terminated files.
 Schemars and the runtime validator have fixed versions in [Cargo.toml](../../Cargo.toml), with resolved dependencies in [Cargo.lock](../../Cargo.lock).
@@ -114,4 +114,4 @@ The schema's API version identifies the document format; accepted fields can cha
 Use a schema from the same source revision as the SDK or CLI you run.
 Native bundles carry their matching schema at `schemas/nemoclaw-v1alpha1.schema.json`, covered by the bundle manifest's hash.
 The builder generates it from the compiled SDK and checks its source fingerprint before assembling CLI and provider binaries.
-See [bundle construction](../../docs/build-deploy/build.md#build-a-native-bundle) for rebuild and verification behavior.
+See [bundle construction](../../docs/build-deploy/build.md#building-a-native-bundle) for rebuild and verification behavior.
