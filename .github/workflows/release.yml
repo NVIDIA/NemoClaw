@@ -176,7 +176,8 @@ jobs:
   # Signing runs only for the platforms a repository administrator lists in the
   # RELEASE_SIGNING repository variable, such as `windows_amd64`: a job's if:
   # can't see an environment's variables. A listed platform's signing job must
-  # pass for staging to continue.
+  # pass for staging to continue, and a final release needs both platforms
+  # signed unless RELEASE_UNSIGNED_EXCEPTION names it (record-cli-signing.sh).
   sign-windows:
     name: Sign the Windows CLI
     needs: [bundles, security-controller]
@@ -245,6 +246,7 @@ jobs:
           append-signature: true
       # /all checks the Helm provider's nested signature too, and /tw fails an
       # untimestamped one, which stops verifying when its certificate expires.
+      # The output, which names each signer, is the release's evidence.
       - name: Verify every signature
         run: |
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
@@ -254,9 +256,10 @@ jobs:
             Write-Output '::error::The Windows bundle holds no executables.'
             exit 1
           }
+          $log = "$env:RUNNER_TEMP\windows_amd64.verification.txt"
           $failed = $false
           foreach ($file in $executables) {
-            & $signtool.FullName verify /pa /all /tw $file.FullName
+            & $signtool.FullName verify /pa /all /tw /v $file.FullName | Tee-Object -FilePath $log -Append
             if ($LASTEXITCODE -ne 0) {
               Write-Output "::error::$($file.FullName) has no valid timestamped signature."
               $failed = $true
@@ -268,6 +271,13 @@ jobs:
         with:
           name: signed-cli-windows_amd64
           path: ${{ runner.temp }}/dist/windows_amd64
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the signature checks
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signing-verification-windows_amd64
+          path: ${{ runner.temp }}/windows_amd64.verification.txt
           if-no-files-found: error
           retention-days: 7
   # Product Security decides whether Secure Signing signs and notarizes the
@@ -312,7 +322,10 @@ jobs:
       - name: Verify every signature
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-        run: bash .github/scripts/verify-macos-signatures.sh "$RUNNER_TEMP/dist/darwin_arm64" "$APPLE_TEAM_ID"
+        run: |
+          set -o pipefail
+          bash .github/scripts/verify-macos-signatures.sh "$RUNNER_TEMP/dist/darwin_arm64" "$APPLE_TEAM_ID" 2>&1 |
+            tee "$RUNNER_TEMP/darwin_arm64.verification.txt"
       - name: Upload the signed bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -320,11 +333,19 @@ jobs:
           path: ${{ runner.temp }}/dist/darwin_arm64
           if-no-files-found: error
           retention-days: 7
+      - name: Upload the signature checks
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signing-verification-darwin_arm64
+          path: ${{ runner.temp }}/darwin_arm64.verification.txt
+          if-no-files-found: error
+          retention-days: 7
   stage:
     name: Stage the release
     outputs:
       inventory_sha256: ${{ steps.draft.outputs.inventory_sha256 }}
       sboms_sha256: ${{ steps.draft.outputs.sboms_sha256 }}
+      cli_checksums: ${{ steps.pack.outputs.checksums }}
     needs: [select, build, runtimes, security-controller, bundles, sign-windows, sign-macos]
     if: >-
       !cancelled() && needs.security-controller.result == 'success' &&
@@ -392,15 +413,36 @@ jobs:
         with:
           name: signed-cli-darwin_arm64
           path: ${{ runner.temp }}/signed/darwin_arm64
+      - name: Download the signature checks
+        if: needs.sign-windows.result == 'success' || needs.sign-macos.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: signing-verification-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/signed
       # Resealing hashes the bundle with the SDK, which needs the pinned protoc.
       - name: Install the pinned build tools
         run: cargo ci tools
-      - name: Pack the CLI archives
+      # A final release fails here, before it pushes anything, unless its macOS
+      # and Windows executables are signed or RELEASE_UNSIGNED_EXCEPTION names it.
+      - name: Pack the CLI archives and record their signing
+        id: pack
+        env:
+          RELEASE_UNSIGNED_EXCEPTION: ${{ vars.RELEASE_UNSIGNED_EXCEPTION }}
         run: |
           cargo build --locked -q -p nemoclaw-build
           mkdir -p "$RUNNER_TEMP/signed"
+          cli="$RUNNER_TEMP/cli-bundles"
           PATH="$PWD/target/debug:$PATH" bash .github/scripts/pack-cli-bundles.sh \
-            "$RUNNER_TEMP/ci-bundles" "$RUNNER_TEMP/signed" "$RUNNER_TEMP/cli-bundles"
+            "$RUNNER_TEMP/ci-bundles" "$RUNNER_TEMP/signed" "$cli"
+          bash .github/scripts/record-cli-signing.sh "$RUNNER_TEMP/signed" "$cli" "$RUNNER_TEMP/cli-signing.md"
+          # A final release attests these digests.
+          {
+            echo 'checksums<<CHECKSUMS'
+            cat "$cli/SHA256SUMS"
+            (cd "$cli" && sha256sum SHA256SUMS)
+            echo CHECKSUMS
+          } >> "$GITHUB_OUTPUT"
       - name: Join each image's platforms and draft the release
         id: draft
         env:
@@ -432,6 +474,8 @@ jobs:
             while read -r sum archive; do
               echo "| \`$archive\` | \`$sum\` |"
             done < "$cli/SHA256SUMS"
+            echo
+            cat "$RUNNER_TEMP/cli-signing.md"
             echo
             echo '## Images'
             echo
@@ -511,7 +555,7 @@ jobs:
               --title "NemoClaw $TAG" --notes-file "$notes"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$bundles"/*.metadata.json
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$cli"/nemoclaw-* "$cli/SHA256SUMS"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$cli"/nemoclaw-* "$cli/SHA256SUMS" "$cli/release-evidence.json"
           cp "$inventory" "$sboms/inventory.json"
           echo "inventory_sha256=$(sha256sum "$inventory" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "sboms_sha256=$(sha256sum "$sboms/sboms.json" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
@@ -723,7 +767,7 @@ jobs:
   # candidates and internal packages stay private (#13521).
   attest:
     name: Attest
-    needs: assess
+    needs: [stage, assess]
     if: >-
       !cancelled() && needs.assess.result == 'success'
     permissions:
@@ -734,6 +778,7 @@ jobs:
     uses: ./.github/workflows/release-attest.yml
     with:
       images: ${{ needs.assess.outputs.images }}
+      checksums: ${{ needs.stage.outputs.cli_checksums }}
   release:
     name: Publish the release
     needs: [assess, attest]
@@ -741,8 +786,33 @@ jobs:
       !cancelled() && needs.assess.result == 'success' && needs.attest.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
+      attestations: read
       contents: write
     steps:
+      # The draft's archives and SHA256SUMS must be the attested ones; the
+      # checks' output joins the release's evidence.
+      - name: Verify the CLI archives' attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+          cli="$RUNNER_TEMP/cli"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$cli" \
+            --pattern 'nemoclaw-*' --pattern SHA256SUMS --pattern release-evidence.json
+          cd "$cli"
+          sha256sum --check --strict SHA256SUMS
+          for file in nemoclaw-*.tar.gz SHA256SUMS; do
+            if ! gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" --format json > "$RUNNER_TEMP/attestation.json"; then
+              echo "::error::$file has no valid build provenance attestation from this repository."
+              exit 1
+            fi
+            echo "$file: attestation verified"
+            jq --arg command "gh attestation verify $file --repo $GITHUB_REPOSITORY --format json" --slurpfile output "$RUNNER_TEMP/attestation.json" \
+              '.verification += [{command: $command, output: $output[0]}]' release-evidence.json > evidence.next
+            mv evidence.next release-evidence.json
+          done
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber release-evidence.json
       - name: Publish the draft
         env:
           GH_TOKEN: ${{ github.token }}

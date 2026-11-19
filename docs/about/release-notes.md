@@ -33,6 +33,11 @@ Releases:
 - A release's CLI reports the release's version: for `v0.1.0-rc12`, `nemoclaw --version` prints `nemoclaw 0.1.0-rc12`, and the bundle's `manifest.json` says `0.1.0-rc12`.
   Before, they said `0.1.0` and `0.1.0-dev.<hash>`.
   A bundle built from any other checkout, including one with uncommitted changes, still reports `0.1.0-dev.<hash>`, where the hash names its source files.
+- A final release attests the build provenance of each CLI archive and of `SHA256SUMS`; verify them with `gh attestation verify FILE --owner NVIDIA`, as [Install the CLI](../get-started/install.md#install-on-linux-or-macos) shows.
+  Release candidates have no attestations.
+- A final release's macOS and Windows executables must be signed; only a release-scoped exception, which the release notes state with its reason, lets one publish unsigned.
+  Release candidates may stay unsigned.
+- Each release attaches `release-evidence.json`, which records the signing decision, the signed executables, and the output of the release's checksum, signature, and attestation checks.
 
 Installation:
 

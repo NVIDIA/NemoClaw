@@ -10,7 +10,8 @@
 # signing it again would replace theirs.
 #
 # `codesign --verify --strict` alone accepts ad hoc signatures, such as
-# OpenTofu's own, so the requirement names the signer and notarization.
+# OpenTofu's own, so the requirement names the signer and notarization. Each
+# check's verbose output on standard error is the release's evidence.
 set -euo pipefail
 
 bundle=$1
@@ -25,7 +26,7 @@ while IFS= read -r -d '' file; do
     *) signer=$team ;;
   esac
   checked=$((checked + 1))
-  if ! codesign --verify --strict --check-notarization \
+  if ! codesign --verify --strict --check-notarization --verbose=2 \
     -R="notarized and anchor apple generic and certificate leaf[subject.OU] = \"$signer\"" "$file"; then
     echo "::error::$name isn't notarized with a Developer ID signature from team $signer"
     failed=1

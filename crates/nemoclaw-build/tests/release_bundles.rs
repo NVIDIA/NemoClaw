@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Release staging attaches the CLI bundles that CI / Bundle checked at the
-//! tag, with the executables the signing jobs signed. Its scripts run
-//! here against a fake GitHub and fake signing tools.
+//! tag, with the executables the signing jobs signed, and records the signing
+//! evidence. Its scripts run here against a fake GitHub and fake signing tools.
 
 use nemoclaw_sdk::bundle::{self, Bundle, Manifest};
 use serde_json::{Value, json};
@@ -17,6 +17,7 @@ use std::{
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const VERSION: &str = "v0.1.0-rc11";
+const FINAL: &str = "v0.1.0";
 const PROVIDER_VERSION: &str = "0.1.0";
 const PLATFORMS: [&str; 4] = [
     "linux_arm64",
@@ -84,6 +85,10 @@ team=$(printf '%s\n' "$requirement" | sed -n 's/^notarized and anchor apple gene
 
 struct Github {
     root: tempfile::TempDir,
+    /// The tag the release workflow runs for.
+    tag: String,
+    /// The RELEASE_UNSIGNED_EXCEPTION repository variable.
+    exception: Option<String>,
     runs: Vec<Value>,
     /// Each run's artifacts as GitHub lists them.
     artifacts: BTreeMap<u64, Vec<Value>>,
@@ -94,6 +99,8 @@ impl Github {
     fn new() -> Self {
         Self {
             root: tempfile::tempdir().unwrap(),
+            tag: VERSION.into(),
+            exception: None,
             runs: Vec::new(),
             artifacts: BTreeMap::new(),
             next_artifact: 100,
@@ -152,13 +159,24 @@ impl Github {
         }
     }
 
-    /// A signing job's upload: the platform's bundle directory with a signed
-    /// file, which artifact transfer leaves without its executable mode.
+    /// A signing job's uploads: the platform's bundle directory with a signed
+    /// file, which artifact transfer leaves without its executable mode, and
+    /// the output of its signature check.
     fn sign(&self, platform: &str, file: &str, contents: &str) {
         let path = self.signed().join(platform).join(file);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, contents).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let mut log = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.signed().join(format!("{platform}.verification.txt")))
+            .unwrap();
+        std::io::Write::write_all(
+            &mut log,
+            format!("Successfully verified: {file}\n").as_bytes(),
+        )
+        .unwrap();
     }
 
     fn signed(&self) -> PathBuf {
@@ -171,7 +189,8 @@ impl Github {
             .parent()
             .unwrap();
         // GitHub runs a step without a shell setting as `bash -e`.
-        Command::new("/bin/bash")
+        let mut command = Command::new("/bin/bash");
+        command
             .args(["--noprofile", "--norc", "-e"])
             .arg(repository().join(".github/scripts").join(name))
             .args(arguments)
@@ -185,16 +204,21 @@ impl Github {
             .env("GITHUB_OUTPUT", self.root.path().join("output"))
             .env("GITHUB_REPOSITORY", "NVIDIA/NemoClaw")
             .env("GITHUB_SHA", COMMIT)
-            .env("GITHUB_REF_NAME", VERSION)
+            .env("GITHUB_REF_NAME", &self.tag)
+            .env("GITHUB_SERVER_URL", "https://github.com")
+            .env("GITHUB_RUN_ID", "4242")
+            .env("GITHUB_RUN_ATTEMPT", "2")
             .env("GH_TOKEN", "token")
-            .current_dir(self.root.path())
-            .output()
-            .unwrap()
+            .current_dir(self.root.path());
+        if let Some(exception) = &self.exception {
+            command.env("RELEASE_UNSIGNED_EXCEPTION", exception);
+        }
+        command.output().unwrap()
     }
 
     /// Run the release's staging of the CLI bundles: find the checked bundles,
-    /// download them by ID as the workflow does, and pack them with whatever
-    /// the signing jobs signed.
+    /// download them by ID as the workflow does, pack them with whatever the
+    /// signing jobs signed, and record the signing.
     fn stage(&self) -> Output {
         fs::create_dir_all(self.data()).unwrap();
         fs::write(
@@ -243,14 +267,36 @@ impl Github {
             .unwrap();
         }
         fs::create_dir_all(self.signed()).unwrap();
-        self.script(
+        let packed = self.script(
             "pack-cli-bundles.sh",
             &[&downloads, &self.signed(), &self.archives()],
+        );
+        if !packed.status.success() {
+            return packed;
+        }
+        self.script(
+            "record-cli-signing.sh",
+            &[&self.signed(), &self.archives(), &self.notes_path()],
         )
     }
 
     fn archives(&self) -> PathBuf {
         self.root.path().join("runner-temp/cli-bundles")
+    }
+
+    fn notes_path(&self) -> PathBuf {
+        self.root.path().join("runner-temp/cli-signing.md")
+    }
+
+    /// The release notes' paragraph about signing.
+    fn notes(&self) -> String {
+        fs::read_to_string(self.notes_path()).unwrap()
+    }
+
+    /// The evidence record staging attaches to the release.
+    fn evidence(&self) -> Value {
+        serde_json::from_slice(&fs::read(self.archives().join("release-evidence.json")).unwrap())
+            .unwrap()
     }
 }
 
@@ -312,10 +358,10 @@ fn bundles(label: &str, attempt: u32) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Extract a platform's archive and return its bundle directory.
-fn extract(archives: &Path, platform: &str, into: &Path) -> PathBuf {
+/// Extract a platform's archive of the release `tag` and return its bundle directory.
+fn extract(archives: &Path, tag: &str, platform: &str, into: &Path) -> PathBuf {
     let archive =
-        fs::File::open(archives.join(format!("nemoclaw-{VERSION}-{platform}.tar.gz"))).unwrap();
+        fs::File::open(archives.join(format!("nemoclaw-{tag}-{platform}.tar.gz"))).unwrap();
     tar::Archive::new(flate2::read::GzDecoder::new(archive))
         .unpack(into)
         .unwrap();
@@ -434,7 +480,7 @@ fn signed_executables_replace_the_checked_ones_and_the_staged_bundle_still_opens
             "{platform}'s nemoclaw stays executable"
         );
         let directory = tempfile::tempdir().unwrap();
-        let extracted = extract(&archives, platform, directory.path());
+        let extracted = extract(&archives, VERSION, platform, directory.path());
         if let Err(error) = Bundle::open(&extracted) {
             panic!("{platform}'s staged bundle opens: {error}");
         }
@@ -512,6 +558,197 @@ fn staging_fails_naming_each_platform_whose_checked_bundle_expired() {
     assert!(
         !error.contains("linux_arm64"),
         "only the missing platform: {error}"
+    );
+}
+
+/// Staging for the final tag FINAL, whose CI / Bundle run passed.
+fn final_release() -> Github {
+    let mut github = Github::new();
+    github.tag = FINAL.into();
+    github.run(13, "push", FINAL, "success", &bundles("checked", 1));
+    github
+}
+
+fn errors(report: &str) -> Vec<&str> {
+    report
+        .lines()
+        .filter(|line| line.starts_with("::error::"))
+        .collect()
+}
+
+fn sha256(path: &Path) -> String {
+    let output = Command::new("sha256sum").arg(path).output().unwrap();
+    assert!(output.status.success(), "{}", report(&output));
+    String::from_utf8(output.stdout).unwrap()[..64].to_owned()
+}
+
+#[test]
+fn a_final_release_fails_unless_its_macos_and_windows_executables_are_signed() {
+    let github = final_release();
+    github.sign("windows_amd64", &cli(), "signed windows_amd64");
+
+    let output = github.stage();
+    let report = report(&output);
+    assert!(!output.status.success(), "staging fails: {report}");
+    let errors = errors(&report);
+    assert!(
+        errors.iter().any(|line| line.contains("darwin_arm64")),
+        "the error names the unsigned platform: {report}"
+    );
+    assert!(
+        !errors.iter().any(|line| line.contains("windows_amd64")),
+        "only the unsigned platform: {report}"
+    );
+    assert!(
+        !github.archives().join("release-evidence.json").exists(),
+        "no evidence is recorded"
+    );
+}
+
+#[test]
+fn a_final_release_with_its_own_exception_stages_unsigned_and_the_notes_give_the_reason() {
+    let mut github = final_release();
+    github.exception = Some(format!("{FINAL}:Apple Developer ID pending: see #14621"));
+
+    let output = github.stage();
+    assert!(output.status.success(), "{}", report(&output));
+
+    let notes = github.notes();
+    for expected in [
+        "darwin_arm64",
+        "windows_amd64",
+        "Apple Developer ID pending: see #14621",
+    ] {
+        assert!(
+            notes.contains(expected),
+            "the notes name {expected}: {notes}"
+        );
+    }
+    assert_eq!(
+        github.evidence()["signing"],
+        json!({
+            "required": true,
+            "unsigned": ["darwin_arm64", "windows_amd64"],
+            "exception": "Apple Developer ID pending: see #14621",
+        })
+    );
+}
+
+#[test]
+fn an_exception_for_another_release_or_without_a_reason_does_not_apply() {
+    for exception in [
+        format!("{VERSION}:candidate only"),
+        "v0.1.1:next release".to_owned(),
+        format!("{FINAL}:"),
+        FINAL.to_owned(),
+    ] {
+        let mut github = final_release();
+        github.exception = Some(exception.clone());
+
+        let output = github.stage();
+        let report = report(&output);
+        assert!(
+            !output.status.success(),
+            "{exception} doesn't let staging pass: {report}"
+        );
+        assert!(
+            errors(&report)
+                .iter()
+                .any(|line| line.contains("RELEASE_UNSIGNED_EXCEPTION")),
+            "the error says how to make an exception: {report}"
+        );
+    }
+}
+
+#[test]
+fn a_release_candidate_may_stay_unsigned() {
+    let mut github = Github::new();
+    github.run(13, "push", VERSION, "success", &bundles("checked", 1));
+    github.exception = Some("v0.1.1:another release".into());
+
+    let output = github.stage();
+    assert!(output.status.success(), "{}", report(&output));
+
+    assert_eq!(
+        github.evidence()["signing"],
+        json!({
+            "required": false,
+            "unsigned": ["darwin_arm64", "windows_amd64"],
+            "exception": null,
+        })
+    );
+    let notes = github.notes();
+    assert!(
+        notes.contains("darwin_arm64") && notes.contains("windows_amd64"),
+        "the notes name the unsigned platforms: {notes}"
+    );
+}
+
+#[test]
+fn the_evidence_records_each_archive_its_signed_executables_and_their_checks() {
+    let github = final_release();
+    github.sign("windows_amd64", &cli(), "signed windows_amd64");
+    github.sign("darwin_arm64", &cli(), "signed darwin_arm64");
+
+    let output = github.stage();
+    assert!(output.status.success(), "{}", report(&output));
+
+    let evidence = github.evidence();
+    assert_eq!(evidence["version"], FINAL);
+    assert_eq!(evidence["commit"], COMMIT);
+    assert_eq!(
+        evidence["run"],
+        "https://github.com/NVIDIA/NemoClaw/actions/runs/4242/attempts/2"
+    );
+    assert_eq!(
+        evidence["signing"],
+        json!({ "required": true, "unsigned": [], "exception": null })
+    );
+    let archives = github.archives();
+    let recorded = evidence["archives"].as_array().unwrap();
+    assert_eq!(recorded.len(), PLATFORMS.len(), "{evidence:#}");
+    for (entry, platform) in recorded.iter().zip(PLATFORMS) {
+        let archive = format!("nemoclaw-{FINAL}-{platform}.tar.gz");
+        assert_eq!(entry["platform"], platform);
+        assert_eq!(entry["archive"], archive.as_str());
+        assert_eq!(entry["sha256"], sha256(&archives.join(&archive)).as_str());
+        match platform {
+            "darwin_arm64" | "windows_amd64" => {
+                let directory = tempfile::tempdir().unwrap();
+                let bundle = extract(&archives, FINAL, platform, directory.path());
+                assert_eq!(
+                    entry["signed"],
+                    json!([{ "path": cli(), "sha256": sha256(&bundle.join(cli())) }]),
+                    "{platform}'s signed executable is the archived one"
+                );
+                assert_eq!(
+                    entry["signature_verification"],
+                    format!("Successfully verified: {}\n", cli()),
+                    "{platform}'s signing job's check"
+                );
+            }
+            _ => {
+                assert_eq!(entry["signed"], json!([]), "{platform} isn't code signed");
+                assert_eq!(entry["signature_verification"], Value::Null);
+            }
+        }
+    }
+    let verification = &evidence["verification"][0];
+    assert_eq!(
+        verification["command"],
+        "sha256sum --check --strict SHA256SUMS"
+    );
+    for platform in PLATFORMS {
+        let line = format!("nemoclaw-{FINAL}-{platform}.tar.gz: OK");
+        assert!(
+            verification["output"].as_str().unwrap().contains(&line),
+            "the checksum check passes for {platform}: {evidence:#}"
+        );
+    }
+    let notes = github.notes();
+    assert!(
+        notes.contains("release-evidence.json"),
+        "the notes point to the evidence: {notes}"
     );
 }
 
