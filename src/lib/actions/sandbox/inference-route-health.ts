@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  SwitchyardPreflightError,
+  switchyardStateForEntry,
+  verifySwitchyardRequest,
+  observeSwitchyardPreflight,
+} from "../../onboard/switchyard/preflight";
+
+import {
   normalizeNativeLocalProviderAttachment,
   type NativeLocalProviderAttachment,
 } from "../../inference/native-local/contract";
@@ -32,7 +39,6 @@ import {
   type NativeNvidiaProviderAttachment,
 } from "../../inference/native-nvidia";
 import { isOpenRouterRuntimeAdapterModelsRoute404 } from "../../inference/openrouter";
-import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 import {
   buildSandboxInferenceRouteProbeRequest,
   classifyInferenceRouteFailureLabel,
@@ -41,6 +47,7 @@ import {
   parseSandboxInferenceRouteProbeResult,
 } from "./connect-inference-route-probe";
 import {
+  isTransientInferenceInvocationFailure,
   probeSandboxInferenceInvocation,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   resolveSandboxInferenceInvocationEndpoint,
@@ -49,6 +56,7 @@ import {
 } from "./inference-invocation-probe";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
+export { isTransientInferenceInvocationFailure } from "./inference-invocation-probe";
 export type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 export type ProbeSandboxInferenceInvocation = typeof probeSandboxInferenceInvocation;
 
@@ -316,23 +324,6 @@ function classifyInferenceInvocationFailureLabel(
   if (httpStatus === null) return "unreachable";
   if (httpStatus === 401 || httpStatus === 403) return "unauthorized";
   return "unhealthy";
-}
-
-/**
- * True only when the inference request itself was declined with a transient
- * gateway or availability status, so sending it again is worthwhile.
- *
- * Credential, model, malformed-response, and unavailable-probe failures stay
- * terminal. A curl-confirmed timeout is transient even without an HTTP status.
- */
-export function isTransientInferenceInvocationFailure(
-  invocation: SandboxInferenceInvocationResult | null,
-): boolean {
-  if (invocation === null || invocation.ok) return false;
-  return (
-    (invocation.timedOut === true && invocation.httpStatus === null) ||
-    (invocation.httpStatus !== null && RETRIABLE_HTTP_PROBE_STATUSES.has(invocation.httpStatus))
-  );
 }
 
 function degradedNvidiaInferenceHealth(
@@ -703,4 +694,68 @@ export async function verifyHermesNvidiaCredential(
   ) {
     throw new Error("Hermes NVIDIA credential verification is unavailable.");
   }
+}
+
+/** Preserve malformed routing intent so status withholds inference rather than falling back. */
+export function hasSwitchyardStatusIntent(entry: SandboxEntry | null | undefined): boolean {
+  if (!entry) return false;
+  try {
+    return switchyardStateForEntry(entry) !== null;
+  } catch {
+    return true;
+  }
+}
+
+/** Keep preflight and the single capable request separate in status evidence. */
+export async function probeSwitchyardStatusInference(input: {
+  entry: SandboxEntry;
+  sandboxName: string;
+  gatewayName?: string;
+  provider: string;
+  model: string;
+  probe?: ProbeSandboxInferenceInvocation;
+  observe?: typeof observeSwitchyardPreflight;
+}): Promise<ProviderHealthStatus> {
+  const result = await verifySwitchyardRequest(
+    input.entry,
+    input.sandboxName,
+    () =>
+      runSandboxInferenceInvocationProbe(
+        {
+          sandboxName: input.sandboxName,
+          gatewayName: input.gatewayName,
+          agentName: "hermes",
+          provider: input.provider,
+          model: input.model,
+          preferredInferenceApi: input.entry.preferredInferenceApi ?? null,
+          nativeProvider: true,
+        },
+        input.probe,
+      ),
+    async (entry, sandboxName) => {
+      if (!input.gatewayName || input.gatewayName !== entry.gatewayName)
+        throw new SwitchyardPreflightError("configuration");
+      return (input.observe ?? observeSwitchyardPreflight)(entry, sandboxName);
+    },
+  );
+  return {
+    ok: result.ok,
+    probed: result.requestSent,
+    providerLabel: "Switchyard verification",
+    endpoint: "",
+    detail: result.detail,
+    probeLabel: "routing verification",
+    subprobes: [
+      {
+        ok: result.preflightOk,
+        probed: true,
+        providerLabel: "Switchyard preflight",
+        endpoint: "",
+        probeLabel: "routing preflight",
+        detail: result.preflightOk
+          ? "Installed routing inputs and provider policy are current."
+          : result.detail,
+      },
+    ],
+  };
 }
