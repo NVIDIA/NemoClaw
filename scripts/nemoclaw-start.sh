@@ -3209,6 +3209,7 @@ export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
     local _escaped_gateway_port _escaped_gateway_token _escaped_gateway_url
+    local _escaped_hermes_api_port
     for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR SQLITE_TMPDIR; do
       _openclaw_env_value="${!_openclaw_env_name:-}"
       [ -n "$_openclaw_env_value" ] || continue
@@ -3231,6 +3232,15 @@ PROXYEOF
       printf "export OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
     else
       printf 'unset OPENCLAW_GATEWAY_URL\n'
+    fi
+    # The Hermes agent process inherits the allocated API port from the
+    # sandbox-create environment, but connect and exec shells only source this
+    # file. Without the export the in-sandbox NemoClaw plugin cannot see which
+    # port this sandbox was allocated, falls back to 8642, and reports another
+    # sandbox's API address on hosts with two or more Hermes sandboxes (#14318).
+    if [ -n "${NEMOCLAW_HERMES_API_PORT:-}" ]; then
+      _escaped_hermes_api_port="$(printf '%s' "$NEMOCLAW_HERMES_API_PORT" | sed "s/'/'\\''/g")"
+      printf "export NEMOCLAW_HERMES_API_PORT='%s'\n" "$_escaped_hermes_api_port"
     fi
     # This legacy bypass was only needed by the removed private-interface
     # route. Never let an inherited value re-enable insecure remote WebSockets.
