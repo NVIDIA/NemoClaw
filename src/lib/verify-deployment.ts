@@ -20,6 +20,12 @@ import { nativeLocalAttachmentMatchesHostLocalReceipt } from "./state/registry/h
  */
 
 import os from "node:os";
+import {
+  switchyardStateForEntry,
+  verifySwitchyardRequest,
+  type SwitchyardEntry,
+  type observeSwitchyardPreflight,
+} from "./onboard/switchyard/preflight";
 
 import { parseVersionFromText } from "./adapters/openshell/client";
 import {
@@ -287,6 +293,7 @@ type InferenceRouteStatus = "ok" | "unreachable" | "unhealthy";
  * `status` uses so the two readiness paths cannot drift (#10080).
  */
 export type InferenceRouteContext = {
+  switchyardEntry?: SwitchyardEntry;
   provider?: string | null;
   endpointUrl?: string | null;
   gatewayName?: string;
@@ -454,6 +461,18 @@ async function verifyInferenceRoute(
   sleep: (ms: number) => Promise<void>,
   context: InferenceRouteContext,
 ): Promise<InferenceRouteProbe> {
+  if (context.switchyardEntry) {
+    const result = await deps.probeInferenceInvocation?.();
+    return {
+      status: result?.ok ? "ok" : "unhealthy",
+      detail:
+        result?.detail ?? "Switchyard verification is unavailable; no inference request was sent.",
+      httpCode: result?.ok ? 200 : 0,
+      hint: result?.ok
+        ? undefined
+        : "Inspect the Hermes gateway log and recorded Switchyard routing inputs, provider bindings, and model access, then rerun status.",
+    };
+  }
   const nativeLocal =
     context.nativeLocalExpected || context.nativeLocalProviderAttachment !== undefined;
   let hostedAttachment;
@@ -1020,9 +1039,27 @@ export function onboardInferenceVerificationContext(
         createdAt?: string | null;
         pendingRouteReservation?: boolean;
         hostLocalInferenceReceipt?: string | null;
+        hermesSwitchyard?: SwitchyardEntry["hermesSwitchyard"];
+        workload?: SwitchyardEntry["workload"];
+        gatewayName?: string | null;
       })
     | null,
 ): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
+  const entry: SwitchyardEntry = {
+    ...attachment,
+    agent: agentName,
+    gatewayName:
+      attachment?.gatewayName && attachment.gatewayName !== gatewayName ? undefined : gatewayName,
+    provider: flow.provider,
+    model: flow.model,
+  };
+  // Preserve malformed requested routing as a gated verification context.
+  let switchyardEntry: SwitchyardEntry | undefined;
+  try {
+    if (switchyardStateForEntry(entry)) switchyardEntry = entry;
+  } catch {
+    switchyardEntry = entry;
+  }
   const nativeLocalExpected =
     usesNativeLocalInferenceForAgent(
       agentName,
@@ -1050,6 +1087,7 @@ export function onboardInferenceVerificationContext(
       : (flow.endpointUrl ?? null);
   return {
     route: {
+      ...(switchyardEntry ? { switchyardEntry } : {}),
       provider: flow.provider,
       endpointUrl,
       gatewayName,
@@ -1058,6 +1096,7 @@ export function onboardInferenceVerificationContext(
       nativeHostedProviderAttachment,
     },
     invocation: {
+      ...(switchyardEntry ? { switchyardEntry } : {}),
       sandboxName,
       gatewayName,
       agentName,
@@ -1082,8 +1121,26 @@ export function onboardInferenceVerificationContext(
 export async function probeOnboardInferenceInvocation(
   context: InferenceInvocationContext,
   probe: typeof runSandboxInferenceInvocationProbe = runSandboxInferenceInvocationProbe,
+  switchyardPreflight?: typeof observeSwitchyardPreflight,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { model, provider } = context;
+  if (context.switchyardEntry) {
+    return verifySwitchyardRequest(
+      context.switchyardEntry,
+      context.sandboxName,
+      () =>
+        probe({
+          sandboxName: context.sandboxName,
+          gatewayName: context.gatewayName,
+          agentName: "hermes",
+          provider: provider ?? "",
+          model: model ?? "",
+          preferredInferenceApi: context.preferredInferenceApi,
+          nativeProvider: true,
+        }),
+      switchyardPreflight,
+    );
+  }
   if (!model || !provider) {
     return {
       ok: false,

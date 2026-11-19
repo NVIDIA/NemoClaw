@@ -9,7 +9,6 @@ import {
   type HermesSwitchyardRoutingIntent,
   createHermesSwitchyardRoutingIntent,
   HERMES_RELAY_PLUGINS_FILE,
-  HERMES_RELAY_PLUGIN_STATE_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_FILE,
   serializeHermesSwitchyardRouting,
 } from "../../../src/lib/hermes-switchyard-routing.ts";
@@ -43,13 +42,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import socket
-from threading import Thread
+import select
+from threading import Event, Thread
+import time
 
 class LocalUpstream:
-    def __init__(self, role, evidence=None):
+    def __init__(self, role, evidence=None, *, fault=None, phase='answer', p_solve=0.9, prefix_delay=0):
         self.role = role
         self.calls = []
         self.evidence = evidence
+        self.fault = fault
+        self.phase = phase
+        self.p_solve = p_solve
+        self.prefix_delay = prefix_delay
+        self.faults = []
+        self.stopping = Event()
+        self.released = Event()
 
     def __enter__(self):
         upstream = self
@@ -73,12 +81,50 @@ class LocalUpstream:
                             'role': upstream.role, 'model': body['model'],
                             'gatewayListening': gateway_listening,
                         }) + '\n')
+                phase = 'judge' if 'response_format' in body else 'answer'
+                if upstream.fault is not None and phase == upstream.phase:
+                    observation = {'phase': phase, 'started': time.monotonic(), 'stream': body.get('stream') is True}
+                    upstream.faults.append(observation)
+                    if upstream.fault == 'retryable':
+                        self.send_response(503)
+                        self.send_header('retry-after', '0')
+                        self.send_header('content-length', '0')
+                        self.end_headers()
+                        return
+                    if upstream.fault != 'stall':
+                        raise ValueError('Unknown fixture fault')
+                    self.send_response(200)
+                    self.send_header('content-type', 'text/event-stream' if observation['stream'] else 'application/json')
+                    self.end_headers()
+                    upstream.stopping.wait(upstream.prefix_delay)
+                    if observation['stream']:
+                        chunk = {'id': 'bounds', 'object': 'chat.completion.chunk', 'created': 1,
+                                 'model': body['model'], 'choices': [{'index': 0,
+                                 'delta': {'role': 'assistant', 'content': 'partial'}, 'finish_reason': None}]}
+                        self.wfile.write(('data: ' + json.dumps(chunk) + '\n\n').encode())
+                    else:
+                        self.wfile.write(b' ')
+                    self.wfile.flush()
+                    observation['prefixSent'] = True
+                    # Observe peer release separately from test-owned server cleanup.
+                    until = time.monotonic() + 135
+                    while not upstream.stopping.wait(0.05) and time.monotonic() < until:
+                        readable, _, _ = select.select([self.connection], [], [], 0)
+                        if readable:
+                            try:
+                                closed = self.connection.recv(1, socket.MSG_PEEK) == b''
+                            except ConnectionResetError:
+                                closed = True
+                            if closed:
+                                upstream.released.set()
+                                break
+                    return
                 if upstream.role in ('capable', 'judge'):
                     content = json.dumps({
                         'crux': 'bounded fixture task',
                         'primary_rule': 'SUP-1',
                         'capability_boundary': 'supported',
-                        'p_solve': 0.9,
+                        'p_solve': upstream.p_solve,
                     }, separators=(',', ':'))
                 else:
                     content = 'routed-efficient'
@@ -113,6 +159,7 @@ class LocalUpstream:
         return f'http://127.0.0.1:{self.server.server_port}/v1'
 
     def __exit__(self, _type, _value, _traceback):
+        self.stopping.set()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
@@ -387,6 +434,7 @@ export function hermesSwitchyardRoutedFixture(
 set -euo pipefail
 exec /opt/hermes/.venv/bin/python -I - <<'PY'
 import base64
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -413,15 +461,16 @@ try:
     directory.mkdir(exist_ok=True)
     directory.chmod(0o755)
     os.chown(directory, 0, 0)
-    for path, content in (
-        ('${HERMES_RELAY_PLUGINS_FILE}', base64.b64decode('${relayPluginsBase64}').decode('utf-8')),
-        ('${HERMES_RELAY_PLUGIN_STATE_FILE}', base64.b64decode('${relayPluginStateBase64}').decode('utf-8')),
-        ('${HERMES_SWITCHYARD_DEPLOYMENT_FILE}', deployment),
-    ):
-        target = Path(path)
-        target.write_text(content, encoding='utf-8')
-        os.chown(target, 0, 0)
-        target.chmod(0o444)
+    files = {
+        'relayPluginsToml': base64.b64decode('${relayPluginsBase64}').decode('utf-8'),
+        'relayPluginStateJson': base64.b64decode('${relayPluginStateBase64}').decode('utf-8'),
+        'switchyardDeploymentToml': deployment,
+    }
+    spec = importlib.util.spec_from_file_location(
+        'switchyard_preflight', '/opt/nemoclaw-hermes-config/switchyard-preflight.py')
+    preflight = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preflight)
+    preflight.publish(files)
     # Provision the generated route and its policy before startup, as the image
     # builder does. Keep both integrity anchors consistent; do not bypass the guard.
     route = json.loads(base64.b64decode('${routedGatewayConfigBase64}'))
@@ -435,6 +484,7 @@ try:
     policy_path.write_text(json.dumps(policy))
     provision_config_hashes(config_path.parent, Path('/etc/nemoclaw/hermes.config-hash'))
     environment = dict(os.environ, HERMES_NEMO_RELAY_PLUGINS_TOML='${HERMES_RELAY_PLUGINS_FILE}')
+    environment[preflight.EXPECTED_ENV] = preflight.fingerprint(files)
     for key in ('NVIDIA_INFERENCE_API_KEY', 'OPENAI_API_KEY'):
         environment[key] = 'xapp-OPENSHELL-RESOLVE-ENV-' + key
     os.execve('/usr/local/bin/nemoclaw-start', ['/usr/local/bin/nemoclaw-start'], environment)

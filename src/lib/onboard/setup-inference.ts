@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SandboxReuseHelpers } from "./sandbox-reuse";
 import { rejectRetiredModelRouter } from "../inference/provider-key/contract";
 import type {
   NativeLocalProvider,
@@ -49,6 +50,7 @@ import type { withGatewayRouteMutationLock } from "../inference/gateway-route-mu
 import { getManagedVllmProviderBinding, shouldFrontOllamaWithProxy } from "../inference/local";
 import {
   ensureNativeNvidiaProvider,
+  verifyNativeNvidiaProviderAttachment,
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
@@ -264,6 +266,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   providerExistsInGateway: (name: string, gatewayName: string) => Promise<boolean>;
   run: typeof import("../runner").run;
   updateSandbox: typeof import("../state/registry").reserveSandboxInferenceRoute;
+  getSandboxRecreateObservation?: SandboxReuseHelpers["getSandboxRecreateObservation"];
   // #9110 optional GPU-release seams; omitted by test literals that build deps
   // by hand, so every read below must stay optional-chained.
   getSandbox?: typeof import("../state/registry").getSandbox;
@@ -656,6 +659,35 @@ function releaseSupersededOllamaModel(
   if (authorityRefusal) throw authorityRefusal;
 }
 
+async function verifyNativeNvidiaRecoveryMembership(input: {
+  sandboxName: string | null;
+  gatewayName: string;
+  recordedAttachment: NativeNvidiaProviderAttachment | undefined;
+  credentialValue: string | null;
+  reuseExistingCredential: boolean;
+  deps: SetupInferenceDeps;
+}): Promise<void> {
+  if (
+    !input.recordedAttachment ||
+    input.credentialValue ||
+    !input.reuseExistingCredential ||
+    !input.sandboxName
+  )
+    return;
+  const { getSandboxRecreateObservation, providerAdapter } = input.deps;
+  if (!getSandboxRecreateObservation || !providerAdapter) {
+    throw new Error("Native NVIDIA recovery cannot verify the sandbox attachment.");
+  }
+  const observation = getSandboxRecreateObservation(input.sandboxName, input.gatewayName);
+  if (observation.state === "missing") return;
+  await verifyNativeNvidiaProviderAttachment({
+    adapter: providerAdapter,
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected: input.recordedAttachment,
+  });
+}
+
 async function rejectNativeLocalSetupFailure(input: {
   error: unknown;
   attachment?: NativeLocalProviderAttachment;
@@ -877,6 +909,38 @@ function shouldStageGatewayRouteAfterBackup(
   );
 }
 
+// A native provider attachment bypasses the gateway-wide route, so a source
+// that uses one may leave no published route to capture or restore. Count only
+// an attachment that belongs to the source's recorded provider: an earlier
+// provider switch may have left a stale one on a routed source (#13897).
+function usesNativeProviderAttachment(source: SandboxEntry | null): boolean {
+  if (!source) return false;
+  if (
+    normalizeNativeNvidiaProviderAttachment(source.nativeNvidiaProviderAttachment) !== undefined &&
+    isNativeNvidiaProvider(source.provider)
+  )
+    return true;
+  const provider = source.provider ?? null;
+  const endpointUrl = source.endpointUrl ?? null;
+  const localAttachment = normalizeNativeLocalProviderAttachment(
+    source.nativeLocalProviderAttachment,
+  );
+  if (
+    localAttachment?.provider === provider &&
+    (usesNativeLocalInference(provider, endpointUrl) ||
+      usesNativeLocalInferenceForAgent(source.agent, provider, endpointUrl))
+  )
+    return true;
+  try {
+    return (
+      requireHostedProviderAttachment(source.nativeHostedProviderAttachment, source.provider) !==
+      undefined
+    );
+  } catch {
+    return false;
+  }
+}
+
 function createGatewayRouteStager(input: {
   deps: SetupInferenceDeps;
   provider: string;
@@ -889,6 +953,7 @@ function createGatewayRouteStager(input: {
   revalidateSandboxIdentity?: (operation: string) => void;
 }) {
   let stagedRoute: Parameters<OpenShellInferenceRouteMutator["setInferenceRoute"]>[0] | null = null;
+  let stagedSource: SandboxEntry | null = null;
   let deferredReservation:
     | import("./inference-providers/types").DeferredInferenceRouteReservation
     | null = null;
@@ -913,8 +978,10 @@ function createGatewayRouteStager(input: {
   const mutator: OpenShellInferenceRouteMutator = {
     setInferenceRoute: (request) => {
       input.revalidateSandboxIdentity?.("change the OpenShell inference provider route");
-      if (publishedSourceForStaging()) {
+      const source = publishedSourceForStaging();
+      if (source) {
         stagedRoute = request;
+        stagedSource = source;
         return Promise.resolve({ ok: true });
       }
       return input.deps.inferenceRouteMutator.setInferenceRoute(request);
@@ -971,6 +1038,7 @@ function createGatewayRouteStager(input: {
         };
       }
       const request = stagedRoute;
+      const nativeSource = usesNativeProviderAttachment(stagedSource);
       const providerUpserts = [...stagedProviderUpserts];
       return {
         ok: true,
@@ -985,12 +1053,12 @@ function createGatewayRouteStager(input: {
           const before = await input.deps.inferenceRouteObserver.observeInferenceRoute({
             target,
           });
-          if (!before.ok || before.value.state !== "configured") {
+          if (!before.ok || (before.value.state !== "configured" && !nativeSource)) {
             throw new Error(
               `Cannot capture the published inference route on gateway '${input.gatewayName}' before replacement.`,
             );
           }
-          const sourceRoute = before.value.route;
+          const sourceRoute = before.value.state === "configured" ? before.value.route : null;
           try {
             for (const upsert of providerUpserts) {
               const providerResult = await upsert();
@@ -1015,6 +1083,9 @@ function createGatewayRouteStager(input: {
             }
             reserve(deferredReservation ?? undefined);
           } catch (error) {
+            // No sandbox used the unconfigured gateway route, so there is no
+            // published route to restore.
+            if (!sourceRoute) throw error;
             const live = await input.deps.inferenceRouteObserver.observeInferenceRoute({
               target,
             });
@@ -1656,6 +1727,14 @@ export function createSetupInference(
               gatewayName,
               gatewayAuthority,
               recordedAttachment,
+            });
+            await verifyNativeNvidiaRecoveryMembership({
+              sandboxName,
+              gatewayName,
+              recordedAttachment,
+              credentialValue,
+              reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
+              deps,
             });
             nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
               adapter: providerAdapter,

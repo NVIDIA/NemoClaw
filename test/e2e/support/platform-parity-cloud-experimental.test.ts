@@ -120,8 +120,9 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toContain("config get --format yaml");
     expect(script).toContain("config set --key models.default");
     expect(script).toContain("sha256sum /sandbox/.deepagents/config.toml");
-    expect(script).toContain("saved native preferences");
-    expect(script).toContain("use a new sandbox name");
+    expect(script).toContain("backup retains the previous config for manual recovery");
+    expect(script).toContain("recreate the named sandbox");
+    expect(script).toContain("--name <sandbox-name> --fresh --recreate-sandbox");
     expect(script).toContain('NEMOCLAW_COMPAT_MODEL="$model_a"');
     expect(script).toContain('NEMOCLAW_MODEL="$model_a"');
     expect(script).toContain('config_sha_restored" = "$config_sha_before');

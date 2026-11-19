@@ -513,14 +513,14 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         ],
         authScopes: ["operator.admin", "operator.read", "operator.write"],
       },
-      {
+      ...[TUI_SCOPES, [...TUI_SCOPES, "operator.pairing"]].map((pairedScopes) => ({
         clientId: "openclaw-tui",
         clientMode: "ui",
-        pairedScopes: TUI_SCOPES,
-        pairedTokenScopes: TUI_SCOPES,
+        pairedScopes,
+        pairedTokenScopes: pairedScopes,
         authScopes: TUI_SCOPES,
-      },
-    ])("qualifies the exact persisted $clientId state", (profile) => {
+      })),
+    ])("qualifies persisted $clientId with paired scopes $pairedScopes", (profile) => {
       writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem, ...profile });
       expect(observe()).toMatchObject({ kind: "openclaw-pairing" });
       expect(observeSettlement()).toMatchObject({ state: "settled" });

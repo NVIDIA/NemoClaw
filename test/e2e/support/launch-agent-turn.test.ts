@@ -17,7 +17,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { createServer } from "node:net";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -25,6 +24,7 @@ import { wrapExecCommandWithRuntimeEnv } from "../../../src/lib/actions/sandbox/
 import { isSubprocessEnvNameAllowed } from "../../../src/lib/subprocess-env";
 import { testTimeout } from "../../helpers/timeouts";
 import { cleanLaunchState, runLaunchCommand } from "./launch-agent-turn-process.ts";
+import { runPtyMonitorCleanupFixture } from "./launch-agent-turn-pty-cleanup-fixture.ts";
 import {
   LAUNCH_TURN_SCRIPT,
   OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
@@ -75,44 +75,49 @@ interface LaunchFixtureInvocation {
   timeoutMs?: number;
 }
 
-it("reports a residual PTY monitor socket without removing it (#9384)", async () => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-monitor-cleanup-"));
-  const runId = randomUUID().replaceAll("-", "");
-  const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
-  const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
-  const socketPath = join(ptyMonitorRoot, "pty-input-mode.sock");
-  const server = createServer();
-  mkdirSync(ptyMonitorRoot, { mode: 0o700 });
-  chmodSync(ptyMonitorRoot, 0o700);
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(socketPath, resolve);
-  });
-  chmodSync(socketPath, 0o600);
-  try {
-    const cleanup = spawnSync(
-      process.execPath,
-      [
-        "-e",
-        OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-        "cleanup-pty",
-        fixtureRoot,
-        baselinePath,
-        "",
-        ptyMonitorRoot,
-        runId,
-      ],
-      { encoding: "utf8" },
-    );
-    expect(cleanup.status).toBe(2);
-    expect(cleanup.stderr).toContain('"reason":"pty_monitor_socket_still_present"');
-    expect(existsSync(socketPath)).toBe(true);
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    rmSync(fixtureRoot, { force: true, recursive: true });
-    rmSync(ptyMonitorRoot, { force: true, recursive: true });
-  }
-});
+it.each([
+  { scenario: "retired", status: 0, stderr: "", guestRootExists: false, socketExists: false },
+  {
+    scenario: "persistent",
+    status: 2,
+    stderr: '{"reason":"pty_monitor_socket_still_present"}\n',
+    guestRootExists: true,
+    socketExists: true,
+  },
+  {
+    scenario: "changed-root",
+    status: 2,
+    stderr: '{"reason":"pty_monitor_cleanup_failed"}\n',
+    guestRootExists: true,
+    socketExists: false,
+  },
+  {
+    scenario: "changed-socket",
+    status: 2,
+    stderr: '{"reason":"pty_monitor_cleanup_failed"}\n',
+    guestRootExists: true,
+    socketExists: true,
+  },
+  {
+    scenario: "unknown-entry",
+    status: 2,
+    stderr: '{"reason":"pty_monitor_cleanup_unknown_entry"}\n',
+    guestRootExists: true,
+    socketExists: true,
+  },
+] as const)(
+  "checks sandbox PTY retirement when the monitor is $scenario (#9384)",
+  async ({ scenario, ...expected }) => {
+    const result = await runPtyMonitorCleanupFixture(scenario);
+    expect(result).toEqual({
+      ...expected,
+      signal: null,
+      hostMonitorExistedAtStart: false,
+      hostMonitorExists: false,
+    });
+  },
+  testTimeout(10_000),
+);
 
 async function runLaunchSessionFixture(
   mode: FixtureMode,

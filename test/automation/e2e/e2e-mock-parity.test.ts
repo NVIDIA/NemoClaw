@@ -202,6 +202,16 @@ describe("changed live E2E mock parity", () => {
       owner: "test/e2e/live/concurrent-gateway-ports.test.ts",
     },
     {
+      shared: "test/e2e/fixtures/hermes-switchyard-bounds.ts",
+      fastTest: "test/e2e/support/hermes-switchyard-upstream.test.ts",
+      owner: "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
+    },
+    {
+      shared: "test/e2e/fixtures/hermes-switchyard-boundary.ts",
+      fastTest: "test/e2e/support/hermes-switchyard-boundary.test.ts",
+      owner: "test/e2e/live/hermes-e2e.test.ts",
+    },
+    {
       shared: "test/e2e/fixtures/hermes-nvidia-recovery.ts",
       fastTest: "test/e2e/support/hermes-nvidia-recovery.test.ts",
       owner: "test/e2e/live/hermes-inference-switch.test.ts",

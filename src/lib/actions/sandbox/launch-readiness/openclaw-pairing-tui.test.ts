@@ -84,6 +84,44 @@ describe("readiness after a native OpenClaw TUI session", () => {
     expect([fs.readFileSync(pairedPath), fs.readFileSync(authPath)]).toEqual(before);
   });
 
+  function retainPairing() {
+    const device = paired[fixture.deviceId]!;
+    device.scopes.push("operator.pairing");
+    device.approvedScopes.push("operator.pairing");
+    device.tokens.operator.scopes.push("operator.pairing");
+    return device;
+  }
+
+  it("binds retained CLI pairing to the TUI receipt", () => {
+    const fresh = observe();
+    const device = retainPairing();
+    writeState();
+    const retained = observe();
+    expect(retained.deviceIdentitySha256).toBe(fresh.deviceIdentitySha256);
+    expect(retained.pairingStateSha256).not.toBe(fresh.pairingStateSha256);
+    device.scopes.reverse();
+    writeState();
+    expect(observe()).toEqual(retained);
+  });
+
+  it.each(["scopes", "approvedScopes", "token"] as const)(
+    "rejects a retained grant missing pairing from the server %s",
+    (key) => {
+      const device = retainPairing();
+      const scopes = key === "token" ? device.tokens.operator.scopes : device[key];
+      scopes.splice(scopes.indexOf("operator.pairing"), 1);
+      writeState();
+      expect(() => observe()).toThrow(OpenClawPairingQualificationError);
+    },
+  );
+
+  it("rejects retained pairing in the client grant", () => {
+    retainPairing();
+    auth.tokens.operator.scopes.push("operator.pairing");
+    writeState();
+    expect(() => observe()).toThrow(OpenClawPairingQualificationError);
+  });
+
   it("binds the TUI grant in a stable digest distinct from the same CLI identity", () => {
     const tuiReceipt = observe();
     const device = paired[fixture.deviceId]!;
