@@ -2387,7 +2387,8 @@ function migrateDecodedManagedStartupProfile(value: unknown): ManagedStartupProf
   };
 }
 
-function canonicalizeJson(value: unknown): unknown {
+/** Sorted-key JSON normal form shared by the profile transport and legacy receipt readers. */
+export function canonicalizeJson(value: unknown): unknown {
   if (Array.isArray(value)) return mapArrayByIndex(value, (item) => canonicalizeJson(item));
   if (!isPlainObject(value)) return value;
   const result: Record<string, unknown> = {};

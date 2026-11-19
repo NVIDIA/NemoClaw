@@ -4,11 +4,7 @@
 import { Buffer } from "node:buffer";
 
 import { upgradeLegacyTeamsOpenClawWebhookRender } from "../../messaging/channels/teams/contract";
-import {
-  MANAGED_STARTUP_PROFILE_MAX_BYTES,
-  MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES,
-  readStoredManagedStartupProfileMetadata,
-} from "./profile";
+import { canonicalizeJson, readStoredManagedStartupProfileMetadata } from "./profile";
 
 export interface StoredManagedStartupProfile {
   /** The profile as stored, or its current-form equivalent when the stored form was old. */
@@ -21,54 +17,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function sortKeysDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeysDeep);
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort()
-      .map((key) => [key, sortKeysDeep(value[key])]),
-  );
+function encodeCanonical(value: unknown): string {
+  return Buffer.from(JSON.stringify(canonicalizeJson(value)), "utf8").toString("base64url");
 }
-
-const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
-const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
 /**
  * Re-encode a stored profile with its pre-2026.10.5 Teams render converted, or return null.
  *
- * The stored input must be exactly as canonical as the profile reader requires:
- * a canonical unpadded base64url string, strict UTF-8, and sorted compact JSON.
- * Only the one known render difference is converted, so no other malformed
- * transport form can become a valid receipt through this path.
+ * The stored input must already be in canonical form: re-encoding the parsed
+ * value with the profile reader's own canonicalization has to reproduce it
+ * exactly, which rules out padding, the standard alphabet, spare bits,
+ * whitespace, unsorted or duplicate keys and invalid UTF-8. Only the one known
+ * render difference is converted, and the profile reader then validates the
+ * result in full, size limits included.
  */
 function upgradeStoredTeamsRender(encoded: string): string | null {
-  if (
-    typeof encoded !== "string" ||
-    encoded.length === 0 ||
-    Buffer.byteLength(encoded, "ascii") > MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES ||
-    !BASE64URL_RE.test(encoded) ||
-    encoded.length % 4 === 1
-  ) {
-    return null;
-  }
-  const bytes = Buffer.from(encoded, "base64url");
-  if (
-    bytes.length === 0 ||
-    bytes.length > MANAGED_STARTUP_PROFILE_MAX_BYTES ||
-    bytes.toString("base64url") !== encoded
-  ) {
-    return null;
-  }
-  let raw: string;
   let parsed: unknown;
   try {
-    raw = UTF8_DECODER.decode(bytes);
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
   } catch {
     return null;
   }
-  if (JSON.stringify(sortKeysDeep(parsed)) !== raw) return null;
+  if (encodeCanonical(parsed) !== encoded) return null;
   if (!isRecord(parsed) || !isRecord(parsed.messaging) || !isRecord(parsed.messaging.plan)) {
     return null;
   }
@@ -81,8 +51,7 @@ function upgradeStoredTeamsRender(encoded: string): string | null {
     upgraded = true;
     return converted;
   });
-  if (!upgraded) return null;
-  return Buffer.from(JSON.stringify(sortKeysDeep(parsed)), "utf8").toString("base64url");
+  return upgraded ? encodeCanonical(parsed) : null;
 }
 
 /**
