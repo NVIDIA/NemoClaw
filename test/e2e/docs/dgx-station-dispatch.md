@@ -87,5 +87,8 @@ The archive must show automatic installation with extra arguments, the inspected
 Station, llama.cpp, generic GPU and standalone Spark results cannot replace this dispatch evidence.
 
 Retain the complete hosted risk plan for the published candidate and the results for every required selector it records.
-The Spark result supplements the existing inference-routing, network-policy, cloud-onboard, full-e2e and security-posture obligations.
-It does not replace them or any additional trusted requirement.
+The Spark result supplements cloud-onboard, full-e2e, security-posture, inference-routing, network-policy and focused selections such as dgx-station-express.
+The shared entrypoint can select Station even when the change targets Spark.
+Preserve those obligations and every additional trusted requirement.
+A local plan that omits trusted workflow mappings is incomplete.
+Results for another candidate do not qualify the published candidate.
