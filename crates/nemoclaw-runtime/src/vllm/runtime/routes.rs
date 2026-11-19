@@ -9,8 +9,11 @@
 #[cfg(test)]
 mod tests;
 
-use crate::execution::supervisor::{self, Monitors};
-use crate::{CancellationToken, Error};
+#[cfg(test)]
+use crate::CancellationToken;
+use crate::Error;
+#[cfg(test)]
+use crate::execution::supervisor::{self, Monitors, with_filter as supervise};
 use http_body_util::{Either, Full};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode, Uri,
@@ -20,7 +23,6 @@ use hyper::{
     service::service_fn,
 };
 use hyper_util::rt::{TokioIo, TokioTimer};
-use process_wrap::tokio::ChildWrapper;
 use std::{
     convert::Infallible,
     net::{Ipv4Addr, SocketAddr},
@@ -30,7 +32,7 @@ use std::{
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::Semaphore,
-    task::{JoinHandle, JoinSet},
+    task::JoinSet,
 };
 
 /// A client must send a complete request head within this time.
@@ -244,35 +246,5 @@ pub(super) async fn serve(
             let _ = connection.await;
             drop(slot);
         });
-    }
-}
-
-/// Supervise vLLM while the filter serves its published port. The filter stops
-/// only by failing, which leaves vLLM unreachable, so vLLM stops too; when
-/// supervision ends first, the filter stops before this returns.
-pub(super) async fn supervise(
-    policy: supervisor::Policy,
-    child: &mut dyn ChildWrapper,
-    monitors: Monitors<'_>,
-    cancel: &CancellationToken,
-    mut filter: JoinHandle<Infallible>,
-) -> Result<(), Error> {
-    let supervised = tokio::select! {
-        result = supervisor::supervise(policy, &mut *child, monitors, cancel) => Some(result),
-        _ = &mut filter => None,
-    };
-    match supervised {
-        Some(result) => {
-            filter.abort();
-            // Cancellation completes once the listener and connections close.
-            let _ = filter.await;
-            result
-        }
-        None => {
-            supervisor::terminate(child).await;
-            Err(Error::Conflict(
-                "inference route filter failed; managed service stopped; reapply required",
-            ))
-        }
     }
 }

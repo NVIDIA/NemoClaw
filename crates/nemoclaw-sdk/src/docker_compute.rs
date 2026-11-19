@@ -7,6 +7,7 @@ use crate::{Error, backend::Row, compile::Target, config::ImagePullPolicy, manag
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+mod nim;
 
 pub(crate) const VERSION: &str = "4.7.0";
 fn process(target: &Target) -> bool {
@@ -186,6 +187,7 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
         target.address = address(&target.address);
     }
     result.extend(ancillary.into_values());
+    result.extend(nim::targets(raw)?);
     Ok(result)
 }
 fn rewrite(value: &mut Value, old: &str, new: &str) {
@@ -234,7 +236,7 @@ fn container(target: &Target) -> Result<Value, Error> {
         // Desktop rewrites a socket mount's source unless it is the first
         // mount, and the provider orders mounts by its own set hash.
         return Ok(
-            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":endpoint.host_str().ok_or(Error::State("missing gateway host"))?,"protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"}],"volumes":[{"host_path":spec.gateway.engine.strip_prefix("unix://").ok_or(Error::State("gateway requires Unix engine"))?,"container_path":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"unless-stopped","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
+            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":endpoint.host_str().ok_or(Error::State("missing gateway host"))?,"protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"}],"volumes":[{"host_path":crate::config::engine_socket(&spec.gateway.engine).ok_or(Error::State("gateway requires a local engine"))?,"container_path":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"unless-stopped","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
         );
     }
     let process = spec
@@ -278,9 +280,12 @@ fn container(target: &Target) -> Result<Value, Error> {
         attrs["destroy_grace_seconds"] = json!(15);
     }
     if target.kind == "inference_service"
-        && crate::services::installers::vllm::configured_service(&spec)?
-            .authentication
-            .is_some()
+        && match nemoclaw_runtime::RuntimeSpec::decode(spec.runtime_configuration()?)? {
+            nemoclaw_runtime::RuntimeSpec::Vllm(service) => service.authentication.is_some(),
+            nemoclaw_runtime::RuntimeSpec::LlamaCpp(service) => service.authentication.is_some(),
+            nemoclaw_runtime::RuntimeSpec::Nim(service) => service.authentication.is_some(),
+            _ => false,
+        }
     {
         attrs["mounts"].as_array_mut().unwrap().push(
             json!({"type":"volume","source":format!("{}-auth",spec.name),"target":"/credentials"}),
@@ -357,7 +362,16 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                 volume
             }
             "docker_network" => {
-                json!({"name":target.values["name"],"labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"driver":"bridge","ipam_config":[{"subnet":target.values["cidr"],"gateway":crate::config::bridge_address(&target.values["cidr"])?}]})
+                let mut network = json!({"name":target.values["name"],"labels":[{"label":crate::managed::OWNER_LABEL,"value":target.values["owner"]}],"driver":"bridge","ipam_config":[{"subnet":target.values["cidr"],"gateway":crate::config::bridge_address(&target.values["cidr"])?}]});
+                if target
+                    .values
+                    .get("private_backend")
+                    .is_some_and(|v| v == "true")
+                {
+                    network["options"] =
+                        json!({"com.docker.network.bridge.gateway_mode_ipv4":"nat"});
+                }
+                network
             }
             "docker_image" => json!({"name":target.values["name"],"keep_locally":true}),
             _ => json!({"name":target.values["name"]}),
@@ -408,6 +422,52 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
         // not from opaque compiled strings.
         use crate::services::installers::{ollama, vllm};
         let contract = match target.kind.as_str() {
+            vllm::SERVICE_KIND
+                if matches!(
+                    nemoclaw_runtime::RuntimeSpec::decode(spec(target)?.runtime_configuration()?)?,
+                    nemoclaw_runtime::RuntimeSpec::Nim(_)
+                ) =>
+            {
+                use crate::services::installers::nim;
+                Some((
+                    nim::RUNTIME_DATA_SOURCE,
+                    "NEMOCLAW_RUNTIME_SPEC",
+                    with_gpu_count(
+                        crate::hcl_schema::to_hcl(
+                            &nim::runtime_fields()
+                                .map_err(|_| Error::State("NIM runtime has no OpenTofu schema"))?,
+                            &serde_json::to_value(nim::configured_service(&spec(target)?)?)
+                                .map_err(|_| Error::State("cannot encode NIM runtime"))?,
+                        ),
+                        target,
+                    )?,
+                ))
+            }
+            vllm::SERVICE_KIND
+                if matches!(
+                    nemoclaw_runtime::RuntimeSpec::decode(spec(target)?.runtime_configuration()?)?,
+                    nemoclaw_runtime::RuntimeSpec::LlamaCpp(_)
+                ) =>
+            {
+                Some((
+                    crate::services::installers::llama_cpp::RUNTIME_DATA_SOURCE,
+                    "NEMOCLAW_RUNTIME_SPEC",
+                    with_gpu_count(
+                        crate::hcl_schema::to_hcl(
+                            &crate::services::installers::llama_cpp::runtime_fields().map_err(
+                                |_| Error::State("llama.cpp runtime has no OpenTofu schema"),
+                            )?,
+                            &serde_json::to_value(
+                                crate::services::installers::llama_cpp::configured_service(&spec(
+                                    target,
+                                )?)?,
+                            )
+                            .map_err(|_| Error::State("cannot encode llama.cpp runtime"))?,
+                        ),
+                        target,
+                    )?,
+                ))
+            }
             vllm::SERVICE_KIND => Some((
                 vllm::RUNTIME_DATA_SOURCE,
                 "NEMOCLAW_RUNTIME_SPEC",
@@ -585,6 +645,7 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                 .collect::<Vec<_>>()
         );
     }
+    nim::configure(graph, raw)?;
     runtime_image_checks(graph, raw)?;
     Ok(())
 }

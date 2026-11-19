@@ -4,6 +4,8 @@
 use nemoclaw_sdk::config::{InferenceApi, InferenceProviderKind};
 
 pub(crate) const NVIDIA_MODEL: &str = "nvidia/nemotron-3.5-super-vl-120b-a12b";
+/// OpenRouter lists the same model under a shorter identifier.
+pub(crate) const OPENROUTER_MODEL: &str = "nvidia/nemotron-3.5-super-vl";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Branded endpoint preset offered by guided authoring.
@@ -117,14 +119,20 @@ impl ProviderPreset {
     /// observation of access, adapter compatibility, or inference support.
     /// Generic endpoints have no vendor catalog.
     pub fn recommended_models(self) -> &'static [&'static str] {
-        // Adapted from main at 4088879ac07445d4b89fc02c05adcd5fe213cf9d,
+        // Adapted from classic main at 32c42bbad69dca3bb3f4e11ea439c8ce4898d4ff,
         // src/lib/inference/{config,model-prompts}.ts. Keep the v1 preset
-        // defaults first; catalog updates belong to source review, not discovery.
+        // defaults first. Onboarding offers these alone, narrowed to the ones
+        // the endpoint lists; catalog updates belong to source review.
         match self {
-            Self::NvidiaEndpoints => &[NVIDIA_MODEL, "nvidia/nemotron-3-ultra-550b-a55b"],
-            Self::OpenRouter => &[
+            Self::NvidiaEndpoints => &[
                 NVIDIA_MODEL,
                 "nvidia/nemotron-3-ultra-550b-a55b",
+                "nvidia/nemotron-3-super-120b-a12b",
+            ],
+            Self::OpenRouter => &[
+                OPENROUTER_MODEL,
+                "nvidia/nemotron-3-ultra-550b-a55b",
+                "nvidia/nemotron-3-super-120b-a12b",
                 "minimaxai/minimax-m3",
             ],
             Self::OpenAi => &[
@@ -142,10 +150,19 @@ impl ProviderPreset {
                 "gemini-2.5-pro",
                 "gemini-2.5-flash-lite",
             ],
+            // The first ten of classic's Hermes provider list, which is what
+            // its menu shows before "Other".
             Self::Nous => &[
                 "moonshotai/kimi-k2.6",
                 "xiaomi/mimo-v2.5-pro",
                 "xiaomi/mimo-v2.5",
+                "tencent/hy3-preview",
+                "anthropic/claude-opus-4.7",
+                "anthropic/claude-opus-4.6",
+                "anthropic/claude-sonnet-4.6",
+                "anthropic/claude-sonnet-4.5",
+                "anthropic/claude-haiku-4.5",
+                "openai/gpt-5.5",
             ],
             Self::OpenAiCompatible | Self::AnthropicCompatible => &[],
         }
@@ -173,7 +190,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
             endpoint: "https://openrouter.ai/api/v1",
             credential: "OPENROUTER_API_KEY",
             custom_endpoint: false,
-            default_model: Some(NVIDIA_MODEL),
+            default_model: Some(OPENROUTER_MODEL),
             key_url: Some("https://openrouter.ai/workspaces/default/keys"),
         },
         ProviderPreset::OpenAi => ProviderProfile {

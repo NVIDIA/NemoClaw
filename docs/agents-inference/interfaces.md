@@ -98,7 +98,7 @@ Apply prints this command for each interface that an agent's configuration enabl
 
 OpenClaw's Control UI and Hermes's API server and dashboard are served by the agent's Fabric runtime inside its sandbox, on loopback ports that you choose.
 Fabric's adapters start them, generate their tokens, and stop them with the runtime; NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
-The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/docs/integrations/harness/openclaw/openclaw-dashboard.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/docs/integrations/harness/hermes/hermes.mdx#select-execution-paths) document each interface's behavior.
+The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/openclaw/openclaw-dashboard.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/hermes/hermes.mdx#select-execution-paths) document each interface's behavior.
 
 ### Enable an Interface
 
@@ -163,7 +163,7 @@ The gateway selection follows [Select the Gateway and Workspace](#select-the-gat
 1. Run the forward in its own terminal and keep it running.
 2. Read the token with the `Token` command, in another terminal with the same selection.
    The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
-   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
+   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes or OpenClaw, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
    The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user; stopping the runtime removes it.
    After the runtime restarts, apply prints the new path; read the token again.
 3. Sign in:
@@ -207,7 +207,7 @@ OpenShell opens the pseudo-terminal of `openshell sandbox exec --tty` and hands 
 ### Hermes's Terminal UI
 
 Hermes's `terminal` interface attaches Hermes's terminal UI to the backend that serves browser chat, which the agent's runtime starts.
-Fabric marks this interface experimental: its `terminal` setting, the attachment files, and the attach helper may change between Fabric releases without compatibility; see [Fabric's Hermes terminal guide](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/docs/integrations/harness/hermes/hermes-tui.mdx).
+Fabric marks this interface experimental: its `terminal` setting, the attachment files, and the attach helper may change between Fabric releases without compatibility; see [Fabric's Hermes terminal guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/hermes/hermes-tui.mdx).
 Fabric tracks what it takes for the interface to stop being experimental in [NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656).
 Give it the dashboard's port, so that both use one backend process:
 

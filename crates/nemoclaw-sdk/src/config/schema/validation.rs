@@ -370,7 +370,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                     "engine",
                     // Docker's socket is the default for a Docker runtime only;
                     // the Podman rule below requires an explicit socket.
-                    json!({"anyOf": [{"const":""},{"pattern":"^unix:///"}], "default": c::GATEWAY_ENGINE}),
+                    json!({"anyOf": [{"const":""},{"pattern":"^(unix:///|npipe:////\\./pipe/)"}], "default": c::GATEWAY_ENGINE}),
                 ),
                 (
                     "networkCIDR",

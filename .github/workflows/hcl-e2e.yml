@@ -14,7 +14,7 @@ on:
   workflow_call:
     inputs:
       target:
-        description: RTX PRO 6000 by default. Station requires a manual dispatch; Spark is not qualified yet.
+        description: RTX PRO 6000 by default, or the qualified Station. Spark is not qualified yet.
         type: string
         default: rtx-pro-6000
       hosted:
@@ -54,6 +54,10 @@ on:
         description: Also run the cases that use NVIDIA hosted inference.
         type: boolean
         default: true
+      jobs:
+        description: Comma-separated case IDs on this target; empty selects every case on the target.
+        type: string
+        default: ""
 
 # The case jobs pull a v1 commit's pushed images when CI / Bundle names one.
 permissions:
@@ -68,8 +72,8 @@ env:
   CARGO_INCREMENTAL: "0"
   TARGET: ${{ inputs.target || 'rtx-pro-6000' }}
   TEST_PLATFORM: linux_amd64
-  CANDIDATE: hcl-candidate-${{ github.run_id }}-${{ github.run_attempt }}
-  SOURCES: hcl-image-sources-${{ github.run_id }}-${{ github.run_attempt }}
+  CANDIDATE: hcl-candidate-${{ inputs.target || 'rtx-pro-6000' }}-${{ github.run_id }}-${{ github.run_attempt }}
+  SOURCES: hcl-image-sources-${{ inputs.target || 'rtx-pro-6000' }}-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   # Each case's documents say where it runs, whether it reads the NVIDIA API
@@ -91,6 +95,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check copied-PR admission
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ $GITHUB_REF_NAME == pull-request/* ]]; then
+            number=${GITHUB_REF_NAME#pull-request/}
+            [[ $number =~ ^[1-9][0-9]*$ ]] || exit 1
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$number" | jq -e --arg sha "$GITHUB_SHA" '
+              .state == "open" and .draft == false and .base.ref == "v1" and .head.sha == $sha
+            ' > /dev/null
+            # A manual run must also identify the bot's admission, not just a branch with that name.
+            if [[ $GITHUB_EVENT_NAME == workflow_dispatch ]]; then
+              gh api "repos/$GITHUB_REPOSITORY/activity?ref=$GITHUB_REF&per_page=1" |
+                jq -e --arg sha "$GITHUB_SHA" '
+                  length == 1 and .[0].after == $sha and .[0].actor.login == "copy-pr-bot[bot]" and
+                  (.[0].activity_type | IN("branch_creation", "push", "force_push"))
+                ' > /dev/null
+            else
+              [[ $GITHUB_ACTOR == 'copy-pr-bot[bot]' ]] || exit 1
+            fi
+          elif [[ $GITHUB_EVENT_NAME == workflow_dispatch ]]; then
+            [[ $GITHUB_REF == refs/heads/v1 ]] || exit 1
+          fi
       - name: Select target
         id: target
         env:
@@ -99,7 +126,8 @@ jobs:
           case "$TARGET" in
             rtx-pro-6000) runner=linux-amd64-gpu-rtxpro6000-latest-1 platform=linux_amd64 ;;
             dgx-station)
-              [[ -z $TESTS && $GITHUB_EVENT_NAME == workflow_dispatch ]] || exit 1
+              [[ -z $TESTS ]] || exit 1
+              [[ $GITHUB_EVENT_NAME == workflow_dispatch || ($GITHUB_EVENT_NAME == push && $GITHUB_ACTOR == 'copy-pr-bot[bot]' && $GITHUB_REF_NAME == pull-request/*) ]] || exit 1
               runner=colossus-gb300 platform=linux_arm64 ;;
             dgx-spark) echo 'DGX Spark is not qualified yet.' >&2; exit 1 ;;
             *) echo "Unknown target: $TARGET" >&2; exit 1 ;;
@@ -123,6 +151,7 @@ jobs:
           CASES: ${{ inputs.cases }}
           HOSTED: ${{ inputs.hosted }}
           TESTS: ${{ inputs.tests }}
+          JOBS: ${{ inputs.jobs }}
         run: |
           if [[ -n $TESTS ]]; then
             tar -xf .build/ci/lifecycle-inputs.tar .build/ci/nemoclaw-build
@@ -136,9 +165,16 @@ jobs:
           fi
           runtimes=$("$tool" images runtimes)
           if [[ $TARGET == dgx-station ]]; then
-            # Manual case inputs; they are absent from automatic case discovery.
-            CASES='{"runners":{"gpu":["dgx-station-openclaw-nemotron"]},"nvidia_key":[]}'
-            runtimes='{"dgx-station-openclaw-nemotron":["vllm"]}'
+            CASES=$(jq -c '.runners.gpu = .runners["dgx-station"] | .runners.hosted = []' <<< "$CASES")
+          fi
+          if [[ -n $JOBS ]]; then
+            CASES=$(jq -ce --arg jobs "$JOBS" '
+              ($jobs | split(",")) as $ids |
+              (.runners.gpu + (if env.HOSTED == "true" then .runners.hosted else [] end)) as $known |
+              if all($ids[]; . as $id | $known | index($id) != null) then
+                .runners |= with_entries(.value |= map(select(. as $id | $ids | index($id) != null)))
+              else error("Select known case IDs on the chosen target") end
+            ' <<< "$CASES")
           fi
           {
             echo "cases=$CASES"
@@ -146,10 +182,10 @@ jobs:
             echo "runtimes=$runtimes"
           } >> "$GITHUB_OUTPUT"
           "$tool" images fetch
-          # Only the Ollama image has sources; vllm has none. Tar keeps the
-          # mode and time that images fetch gave them, which the image's layers
-          # retain and artifact transfer drops.
-          tar -cf "$RUNNER_TEMP/image-sources.tar" .build/image-sources/ollama
+          # Only the Ollama and llama.cpp images have sources; vllm has none.
+          # Tar keeps the mode and time that images fetch gave them, which the
+          # images' layers retain and artifact transfer drops.
+          tar -cf "$RUNNER_TEMP/image-sources.tar" .build/image-sources/ollama .build/image-sources/llama-cpp
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.SOURCES }}
@@ -211,6 +247,18 @@ jobs:
       NEMOCLAW_HCL_CASE: ${{ matrix.case }}
       NEMOCLAW_TEST_BUNDLE: ${{ github.workspace }}/dist/${{ needs.cases.outputs.platform }}
     steps:
+      - name: Recheck the copied PR head
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=${GITHUB_REF_NAME#pull-request/}
+          [[ $number =~ ^[1-9][0-9]*$ ]] || exit 1
+          printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN" | \
+            curl --fail --silent --show-error --config - "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pulls/$number" | \
+            jq -e --arg sha "$GITHUB_SHA" '
+            .state == "open" and .draft == false and .base.ref == "v1" and .head.sha == $sha
+          ' > /dev/null
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -362,6 +410,7 @@ jobs:
           sed -i "${bindings[@]}" -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id nc-fabric:openclaw)#" \
             -e "s#nc-fabric-hermes@sha256:0\{64\}#nc-fabric@$(id nc-fabric:hermes)#" \
             -e "s#nc-prototype-vllm@sha256:0\{64\}#nc-prototype-vllm@$(id nc-prototype-vllm:rust-v1)#" \
+            -e "s#nc-prototype-llama-cpp@sha256:0\{64\}#nc-prototype-llama-cpp@$(id nc-prototype-llama-cpp:rust-v1)#" \
             -e "s#nc-prototype-ollama@sha256:a\{64\}#nc-prototype-ollama@$(id nc-prototype-ollama:rust-v1)#" \
             -e "s#^  uid: .*#  uid: $(cat /proc/sys/kernel/random/uuid)#" \
             "$document"

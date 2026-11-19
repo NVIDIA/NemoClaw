@@ -144,7 +144,7 @@ An SDK document or a ready authoring result does not establish successful deploy
 
 ## Observations and Consumer Responsibilities
 
-An SDK `DiscoveryQuery` names a read of the target by everything that determines its answer, and [`DiscoveryObservations`](../../crates/nemoclaw-sdk/src/discovery.rs) holds what each query returned: engine, hardware, image, inference endpoint, gateway, and credential-availability observations.
+An SDK `DiscoveryQuery` names a read of the target by everything that determines its answer, and [`DiscoveryObservations`](../../crates/nemoclaw-sdk/src/discovery.rs) holds what each query returned: engine, hardware, image, an engine's agent images, inference endpoint, gateway, and credential-availability observations.
 Each observation is keyed by its query, so an observation about one engine, image, or endpoint is never read as one about another, and a lookup by a query of one kind returns that kind's observation type.
 A read that could not be made is recorded as an unknown observation with its reason, so it stays distinct from a query never asked and is not repeated on every pass.
 `nemoclaw_discovery::observe` reads the real target; tests build or deserialize recorded observations, so decisions can be tested for any hardware without owning it.
@@ -156,7 +156,10 @@ A runtime they offer becomes the suggestion when it is the only one, and choosin
 A runtime no engine answered for gets no engine, and the target assessment's first reason says so unless an engine is authored.
 Hosts are built from the engines they named and what each answered, and one recorded host in `tests/fixtures/observations` pins the replay format.
 Hardware and gateway observations do not affect questions or readiness yet.
-`resolve_with_observations` supplements current model suggestions with the matching inference observation and assesses target compatibility with `assess_target`.
+`resolve_with_observations` applies the matching inference observation to the current model suggestions and assesses target compatibility with `assess_target`.
+A provider preset with a recommended list offers only the recommended models the endpoint lists, since an endpoint's catalog carries no tool-calling metadata.
+An endpoint with no recommended list, or one that lists none of the recommended models, offers what it lists.
+A settled model the endpoint does not list adds an informational note that does not echo the identifier.
 An empty `DiscoveryObservations` leaves compatibility unverified.
 Observations do not silently replace authored values.
 `delegate_remaining` is an explicit bulk answer transition gated by an accepted harness, compatible current target observations, and an advertised model. `JourneyResolution::credentials()` states whether each checked credential reference is set, not set, or unreadable; a reference never checked has no entry, and none blocks delegation. A reachable catalog that requires an absent key supplies an informational note, clears model suggestions, and defers the catalog gate under the `inference:catalog:credential` diagnostic field. Individual model entry stays available, and the note does not bypass the bulk model check. Denied authentication, missing observations, and other catalog failures remain blocking.
@@ -172,7 +175,7 @@ It prints a preview with explicit frontiers and limits, rather than storing a se
 - String selectors remain the public guidance language even though resolved answer operations are typed internally.
 - Question dependencies are code policy; there is no general declarative dependency graph.
 - Native model questions depend on complete SDK projection, and target prerequisites currently cover engine and image compatibility.
-- Target observations never change questions; they only assess compatibility, and they need an SDK-valid document.
+- Target observations assess compatibility and supply suggestions, such as the runtime, models, and local agent images. They also shape two answers: choosing a runtime writes the engine that answered for it, and `JourneyState::answer_single_agent_images` records the image when exactly one local image installs the harness.
 - Journey state is an in-memory run; the public API has no persisted session or decision history format.
 
 The [prototype design](onboarding-journeys.md#prototype-decisions-and-limits) owns these limits, their inspection criteria, and its open design questions.

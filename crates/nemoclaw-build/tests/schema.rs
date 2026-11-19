@@ -76,7 +76,12 @@ fn bundle_rejects_a_builder_compiled_from_different_source_inputs() {
         fs::copy(repository.join(name), root.path().join(name)).unwrap();
     }
     fs::create_dir(root.path().join("crates")).unwrap();
-    for name in ["image/ollama", "image/supervisor", "image/vllm"] {
+    for name in [
+        "image/llama-cpp",
+        "image/ollama",
+        "image/supervisor",
+        "image/vllm",
+    ] {
         fs::create_dir_all(root.path().join(name)).unwrap();
     }
     fs::write(root.path().join("crates/changed.rs"), "changed source\n").unwrap();

@@ -144,7 +144,7 @@ impl Source {
             || storage.owner != owner
             || published != endpoint
             || !private
-            || (local && !storage.engine.starts_with("unix:///"))
+            || (local && crate::engine_socket(&storage.engine).is_none())
             || !name.is_some_and(|name| {
                 regex::Regex::new(r"^[a-z][a-z0-9-]*$")
                     .unwrap()

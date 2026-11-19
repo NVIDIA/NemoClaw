@@ -53,6 +53,7 @@ Start with the failed phase; apply readiness, endpoint reachability, and a nativ
 | Interrupted apply | Resolve the cause and reapply the original YAML with its retained state |
 | Kubernetes or OpenShift apply fails when Helm's wait times out | Read the gateway's log as [Diagnose a Kubernetes Gateway Startup Failure](#diagnose-a-kubernetes-gateway-startup-failure) shows |
 | Plan, apply, or destroy names the gateway's Helm release that the state does not record | Follow [recovery from an unfinished Helm install](../build-deploy/usage.md#recover-from-an-unfinished-helm-install): if the release is this deployment's, remove it with `helm uninstall`, then rerun |
+| `managed gateway container NAME is not running` | Plan, apply, and destroy read the deployment's sandboxes and other objects through the gateway, so they stop before any change while its Docker container is stopped, for example after `docker stop` or `docker kill`. Run the `docker --host ENGINE start NAME` command that the error names, then rerun the operation. A gateway that was killed can leave its sandboxes in `Error`; the next plan replaces them, as [current limits](../resources/limits.md#data-and-cleanup) describe |
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
 | `adapter/<id> compatibility rejected` | Read the named sandbox and field; fix or remove that interface setting, or choose an adapter that declares it, then plan again. See [enabling an interface](../agents-inference/interfaces.md#enable-an-interface) |
 | `the adapter does not accept this model field` | Read the authored route path. Remove the named tuning or `extensions` field, or choose an adapter that accepts it, then plan again. Planning checks bundled adapter support for `maxTokens`, `temperature`, and `topP`, including their extension forms |
@@ -60,7 +61,7 @@ Start with the failed phase; apply readiness, endpoint reachability, and a nativ
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](../agents-inference/interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
 | A plan replaces a sandbox because `sandbox exited` | OpenShell reports that the sandbox exited; read why with `openshell logs SANDBOX --source sandbox`. Applying replaces it, deleting its files and history; see [replacing workloads](../build-deploy/usage.md#replace-workloads-after-an-unusable-runtime) |
 | `runtime_unavailable` | The runtime stopped while its sandbox runs, for example after its gateway restarted. Plan and apply again: the plan updates the agent because `agent runtime is not running`, and apply starts a new runtime in the same sandbox. If the plan shows no change, read why with `openshell logs SANDBOX --source sandbox` and follow the [whole-deployment replacement procedure](../build-deploy/usage.md#replace-workloads-after-an-unusable-runtime), including loss of sandbox files and history |
-| `state_in_use` | Another runtime, or native processes that outlived one, still own the agent's kept state under `/sandbox/artifacts`, for example in another sandbox that mounts the same volume, so Fabric started no runtime. Stop them, or replace the sandbox that runs them, then apply again |
+| `state_in_use` | Another runtime, or native processes that outlived one, still own the agent's kept state under `/sandbox/artifacts`, for example in another sandbox that mounts the same volume, so Fabric started no runtime. Apply already stops the agent's previous runtime in its own sandbox first. Stop the others, or replace the sandbox that runs them, then apply again |
 | `runtime_busy` | The agent was handling a request, so Fabric didn't stop its runtime and nothing changed. Run the apply or destroy again after the request finishes |
 
 OpenShell can add paths of its own, such as read-only `/var/log`, when it loads a sandbox policy.
@@ -169,6 +170,25 @@ If startup requires a different image or policy, change it and apply; that repla
 A failed first apply can be [destroyed](../build-deploy/usage.md#destroy) when the retained state accounts for its resource identities.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
+
+### Continue After `session_recovery_required`
+
+An agent that [keeps its state](../build-deploy/state.md#agent-files) keeps one native conversation across its invocations.
+When an invocation doesn't finish, for example because the model timed out, the adapter can't tell what that turn did.
+Every later invocation then returns `result.status: failed` with `result.error.code: session_recovery_required`, even after the model answers again.
+The runtime keeps running, and the agent's native interfaces, such as OpenClaw's Control UI, still answer.
+
+First check what the unfinished turn could have changed, such as workspace files or requests to external services.
+Then send the next request with `acknowledge_recovery`, selecting the gateway and workspace as for [invoking an agent](../agents-inference/interfaces.md#invoke-an-agent):
+
+```sh
+openshell sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent AGENT --runtime-id RUNTIME_ID --request - <<'JSON'
+{"input": "Continue.", "acknowledge_recovery": true}
+JSON
+```
+
+Requests with `--input` work again after that one succeeds.
+NemoClaw can't send the acknowledgment itself ([current limits](../resources/limits.md#agents-and-integrations)).
 
 ## Inspect an OpenShell Sandbox Failure
 

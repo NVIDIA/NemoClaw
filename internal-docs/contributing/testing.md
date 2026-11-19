@@ -361,7 +361,7 @@ Documentation previews publish only for PRs targeting `v1`.
 | Workflow | Checks |
 |---|---|
 | CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; each platform's jobs start with their test layer, such as `linux_amd64 / Contract tests 1 of 1` or `linux_amd64 / E2E / E2E Docker tests` |
-| CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
+| CI / Images | `Build / linux_arm64`, `Build / linux_amd64`; beside them, `Build / llama.cpp runtime / linux_arm64` and `Build / llama.cpp runtime / linux_amd64` build the llama.cpp runtime image and run its server's and supervisor's version commands |
 | CI / Dependencies | `Policy`, `Python scripts` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
@@ -449,9 +449,8 @@ The worker compiles nothing and writes JUnit timings under `target/nextest/integ
 
 ### Windows
 
-Windows has no Unix sockets for fake container engines, so tests reach them over SSH through the fake relay `nemoclaw-fixture-ssh`, which forwards `ssh://127.0.0.1:PORT` to the fixture's loopback port.
-[`Fixture::engine`](../../crates/test-support/http.rs) serves the engine on a Unix socket where one exists and otherwise installs the relay as `ssh` beside the test executable.
-The `contract` and `integration` steps also put the relay first on `PATH` as `ssh`, so the providers and CLI that OpenTofu and the SDK start reach it too.
+[`Fixture::engine`](../../crates/test-support/http.rs) serves a fake engine where the platform's local engines listen: a Unix socket, or on Windows a named pipe, `npipe:////./pipe/NAME`, which the providers and CLI that OpenTofu and the SDK start reach too.
+Tests that need an SSH engine reach a fixture's loopback port through the fake relay `nemoclaw-fixture-ssh`, which forwards `ssh://127.0.0.1:PORT`; on Windows, the `contract` and `integration` steps put it first on `PATH` as `ssh`.
 Use `Fixture::engine` for a fake engine so that the test runs on every platform; compile a test that needs a Unix-only fixture only on Unix with `#[cfg(unix)]`.
 
 ### Live Suites
@@ -480,7 +479,7 @@ Only the hosted and GPU jobs receive the key, and a GPU case receives it only wh
 `E2E Kubernetes (kind) tests` runs only HCL cases, so it is skipped when none is selected; `cargo ci live-docker` and `live-kind` take the selection as `--hcl-cases`, and without it run every case placed on them.
 
 Whenever the plan selects a hosted case, Linux AMD64 runs it as `linux_amd64 / E2E / E2E HCL CASE`, from the same test archive, bundle, and live images as the live suites, except on a fork's pull request, which cannot use the inference secret.
-On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts, so a pull request never runs them.
+On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse `pull_request` jobs. Separately, [Live / V1 PR hardware](../../.github/workflows/pr-self-hosted.yml) consumes bot-admitted copied PR branches and runs the affected qualified hardware cases for open, non-draft v1 PRs. Those runs remain outside merge requirements; see [hardware dispatch](live-tests.md#dgx-station-on-colossus).
 Live / HCL's `Cases` job lists the cases and fetches the model runtime images' pinned sources, and each case's job runs the same test archive, bundle, and live images as the hosted cases, which the GPU runner can run because CI / Bundle builds them on Ubuntu 22.04. Each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services.
 Dispatch Live / HCL to run the hosted or GPU cases alone: without CI / Bundle's artifacts, its `Build` job builds the bundle, test executable, and agent images on Ubuntu 22.04 from the dispatched branch.
 A `dgx-station` dispatch skips `Build`, and the Station case's job builds them on the Station runner before it runs the case: two machines share that runner's label, and Actions artifacts move the 1 GB candidate at 3-8 MB/s there.

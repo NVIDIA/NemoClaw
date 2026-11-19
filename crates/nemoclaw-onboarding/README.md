@@ -46,8 +46,9 @@ cargo run -p nemoclaw-onboarding -- examples/onboarding/openclaw.yaml --output m
 While you answer, `nemoclaw onboard` reads, without changing anything:
 
 - the Docker and Podman engines that answer on this machine, to suggest a runtime and target the gateway at its engine;
+- at the image question, the images on the gateway's engine whose label installs the chosen harness, to suggest the newest by digest, or else link the [build instructions](../../docs/build-deploy/build.md#build-agent-images);
 - the selected agent image, to check that it provides the chosen harness;
-- the selected route's model catalog, to suggest models;
+- the selected route's model catalog, to offer a vendor's recommended models the endpoint lists (or the endpoint's own models when the vendor has none) and to note a chosen model it does not list;
 - for a managed gateway, the engine's prerequisites.
 
 It needs no bundle, runs no OpenTofu, and neither pulls images nor starts containers.

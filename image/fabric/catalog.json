@@ -505,11 +505,54 @@
             "type": "object"
           }
         },
+        "plugins": {
+          "agent_installed": {
+            "supported": false
+          },
+          "bundled": {
+            "supports_disable": true,
+            "supports_enable": true
+          },
+          "duplicates": {
+            "supported_policies": [
+              "reject"
+            ]
+          },
+          "external": {
+            "provisions_dependencies": false,
+            "requires_explicit_enable": true
+          }
+        },
         "requirements": {},
         "runner": {
           "module": "nemo_fabric_adapters.hermes.adapter"
         },
         "settings_schema": {
+          "$defs": {
+            "pluginEntry": {
+              "additionalProperties": false,
+              "properties": {
+                "capabilities": {
+                  "description": "Capabilities granted to the plugin, such as tools.override, written to plugins.entries.<id>.granted_capabilities. Hermes ignores ids it doesn't know.",
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "uniqueItems": true
+                },
+                "config": {
+                  "description": "The plugin's own settings, written to plugins.entries.<id>.settings.",
+                  "type": "object"
+                },
+                "enabled": {
+                  "description": "Turn the plugin on or off. true makes start fail unless Hermes loads it.",
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": false,
           "allOf": [
@@ -690,9 +733,109 @@
               "minimum": 1,
               "type": "integer"
             },
+            "plugins": {
+              "additionalProperties": false,
+              "description": "Hermes plugins, translated to Hermes's native plugins section in config.yaml. A plugin id may appear in only one section. The other fields are Hermes's own plugin controls and are written as they are. Plugins the agent installs itself are not supported.",
+              "properties": {
+                "auto_apply": {
+                  "description": "Whether the update check applies Git plugin updates unattended. Hermes's default is false.",
+                  "type": "boolean"
+                },
+                "auto_update_check_hours": {
+                  "description": "Hours between read-only plugin update checks; 0 disables them. Hermes's default is 24.",
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "bundled": {
+                  "additionalProperties": false,
+                  "description": "Plugins that ship with Hermes.",
+                  "properties": {
+                    "entries": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/pluginEntry"
+                      },
+                      "description": "Plugins that ship with Hermes, keyed by plugin key or name, such as security-guidance or browser/firecrawl. enabled: true makes start fail unless Hermes loads the plugin; enabled: false turns off one Hermes loads by default. Start fails if the plugin doesn't ship with Hermes.",
+                      "propertyNames": {
+                        "minLength": 1
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "clone_timeout_seconds": {
+                  "description": "Seconds for one plugin Git clone, fetch, or checkout. Hermes's default is 300.",
+                  "exclusiveMinimum": 0,
+                  "maximum": 3600,
+                  "type": "number"
+                },
+                "external": {
+                  "additionalProperties": false,
+                  "description": "Plugins with user-prepared code and dependencies.",
+                  "properties": {
+                    "entries": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/pluginEntry"
+                      },
+                      "description": "Plugins from those folders, keyed by manifest name. A path alone doesn't enable a plugin; with enabled set to true, start fails unless Hermes loads it.",
+                      "propertyNames": {
+                        "minLength": 1
+                      },
+                      "type": "object"
+                    },
+                    "paths": {
+                      "description": "Plugin folders, each holding plugin.yaml and the plugin's code, such as plugins mounted on a volume. The adapter links each into the Hermes home's plugins folder under its manifest name at start and unlinks it at stop. Relative paths resolve against the NeMo Fabric base directory; start fails if one doesn't exist. Python dependencies must already be importable.",
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array",
+                      "uniqueItems": true
+                    }
+                  },
+                  "type": "object"
+                },
+                "hook_callback_timeout": {
+                  "description": "Seconds for one in-process plugin hook callback; 0 means no cap. Hermes's default is 30.",
+                  "maximum": 600,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "host": {
+                  "additionalProperties": false,
+                  "description": "Hermes's plugin-host settings.",
+                  "properties": {
+                    "launcher": {
+                      "description": "Command prefix the plugin host runs under, such as a sandbox runner.",
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                },
+                "isolation": {
+                  "description": "Run third-party Python plugins inside Hermes or in Hermes's plugin-host process. Hermes's default is in_process.",
+                  "enum": [
+                    "in_process",
+                    "host"
+                  ],
+                  "type": "string"
+                },
+                "load_timeout_seconds": {
+                  "description": "Seconds for one plugin's import and registration at load; 0 means no deadline. Hermes's default is 10.",
+                  "maximum": 600,
+                  "minimum": 0,
+                  "type": "number"
+                }
+              },
+              "type": "object"
+            },
             "plugins_enabled": {
               "default": [],
-              "description": "Hermes plugin identifiers to enable.",
+              "description": "Hermes plugin keys or names to turn on; prefer plugins.bundled or plugins.external. Start fails when an identifier is absent or did not load.",
               "items": {
                 "minLength": 1,
                 "type": "string"
@@ -867,9 +1010,11 @@
             "models.max_tokens",
             "instructions.system",
             "runtime.max_turns",
+            "tools.definitions",
             "tools.enabled",
             "tools.blocked",
             "mcp",
+            "mcp.auth.service_account",
             "skills"
           ],
           "system_instruction_modes": [
@@ -1165,6 +1310,29 @@
                   "default": {},
                   "description": "Mapping of Deep Agents tool names to human-in-the-loop interrupt policies; omitted tools run without an interrupt."
                 },
+                "middleware": {
+                  "default": [],
+                  "description": "Custom LangChain middleware for the main agent, applied in list order before NeMo Fabric's tool policy and telemetry middleware.",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "ref": {
+                        "description": "Import path of an installed LangChain AgentMiddleware subclass, as package.module:Class.",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "settings": {
+                        "description": "Keyword arguments passed to the middleware class constructor.",
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "ref"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
                 "subagents": {
                   "default": [],
                   "description": "Caller-defined declarative or asynchronous subagents; the built-in general-purpose subagent remains available by default.",
@@ -1200,6 +1368,40 @@
           "required": [],
           "type": "object"
         },
+        "skills": {
+          "directory_loading": {
+            "discovery": {
+              "depth_limit": {
+                "kind": "fixed",
+                "levels": 1
+              },
+              "nested_skills": "stop_at_skill",
+              "traversal": "immediate_children"
+            },
+            "parsing": {
+              "frontmatter_errors": "reject",
+              "name_fallback": "none",
+              "required_frontmatter_fields": [
+                "name",
+                "description"
+              ]
+            },
+            "skill_file": "SKILL.md",
+            "supported_entries": [
+              "skill",
+              "folder"
+            ]
+          },
+          "duplicates": {
+            "name_source": "frontmatter",
+            "native": "Each entry is a Deep Agents skills source and the later source wins, so the copy from the later entry loads.",
+            "supported_policies": [
+              "reject",
+              "first_wins",
+              "last_wins"
+            ]
+          }
+        },
         "telemetry": {
           "providers": {
             "native": {
@@ -1216,6 +1418,30 @@
               ]
             }
           }
+        },
+        "tool_definition_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "python",
+              "description": "A tool implemented in an installed Python package."
+            },
+            "ref": {
+              "description": "Import path of a LangChain BaseTool instance or BaseTool subclass, as package.module:attribute.",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "settings": {
+              "description": "Keyword arguments passed to a BaseTool subclass constructor; must be empty for a BaseTool instance.",
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "ref"
+          ],
+          "type": "object"
         }
       },
       "provenance": [
@@ -1557,6 +1783,7 @@
             ]
           },
           "service": true,
+          "session_resume": true,
           "streaming": false,
           "updates": false
         },
@@ -1568,6 +1795,7 @@
             "models.top_p",
             "models.max_tokens",
             "instructions.system",
+            "runtime.keep_state",
             "tools.enabled",
             "tools.blocked",
             "mcp",
@@ -1579,6 +1807,30 @@
         },
         "contract_version": "fabric.adapter/v1alpha2",
         "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "description": "OpenClaw's request adapter for the custom provider at base_url, written as models.providers.<provider>.api. Requires base_url; when omitted, the custom provider uses openai-completions.",
+                "enum": [
+                  "openai-completions",
+                  "openai-responses",
+                  "openai-chatgpt-responses",
+                  "anthropic-messages",
+                  "google-generative-ai",
+                  "google-interactions",
+                  "google-vertex",
+                  "github-copilot",
+                  "bedrock-converse-stream",
+                  "ollama",
+                  "pi-messages",
+                  "azure-openai-responses"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
           "usage": {
             "additionalProperties": false,
             "properties": {
@@ -1677,11 +1929,58 @@
           ],
           "type": "object"
         },
+        "plugins": {
+          "agent_installed": {
+            "requires_keep_state": true
+          },
+          "bundled": {
+            "supports_disable": true,
+            "supports_enable": true
+          },
+          "duplicates": {
+            "supported_policies": [
+              "reject"
+            ]
+          },
+          "external": {
+            "provisions_dependencies": false,
+            "requires_explicit_enable": true
+          }
+        },
         "requirements": {},
         "runner": {
-          "module": "nemo_fabric_adapters.openclaw.adapter"
+          "module": "nemo_fabric_adapters.openclaw.adapter",
+          "stop_timeout_seconds": 30
         },
         "settings_schema": {
+          "$defs": {
+            "pluginEntry": {
+              "additionalProperties": false,
+              "properties": {
+                "config": {
+                  "description": "The plugin's own configuration, checked by OpenClaw against the plugin's schema.",
+                  "type": "object"
+                },
+                "enabled": {
+                  "description": "Turn the plugin on or off. true makes start fail unless OpenClaw loads it.",
+                  "type": "boolean"
+                },
+                "hooks": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "allowConversationAccess": {
+                      "type": "boolean"
+                    },
+                    "allowPromptInjection": {
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": false,
           "dependentSchemas": {
@@ -1794,7 +2093,7 @@
               "properties": {
                 "dashboard": {
                   "additionalProperties": false,
-                  "description": "OpenClaw's Control UI. After the Gateway starts, the adapter writes its sign-in token to <artifact root>/.fabric/openclaw/runtimes/<runtime-id>/interfaces/dashboard.token.",
+                  "description": "OpenClaw's Control UI. After the Gateway starts, the adapter writes its sign-in token to <state_dir>/interfaces/dashboard.token with runtime.keep_state, or <artifact root>/.fabric/openclaw/runtimes/<runtime-id>/interfaces/dashboard.token for ephemeral state.",
                   "properties": {
                     "enabled": {
                       "default": true,
@@ -1844,32 +2143,72 @@
             },
             "plugins": {
               "additionalProperties": false,
-              "description": "Native OpenClaw plugin controls for NeMo Fabric-owned Gateways. Only authored fields are written; attached Gateways reject them.",
+              "description": "OpenClaw plugins for NeMo Fabric-owned Gateways, translated to OpenClaw's native plugins section. A plugin id may appear in only one section, and fabric-shared-config is reserved for the adapter. Attached Gateways reject plugin settings.",
               "properties": {
-                "entries": {
+                "bundled": {
                   "additionalProperties": false,
+                  "description": "Plugins that ship with OpenClaw.",
                   "properties": {
-                    "memory-core": {
-                      "additionalProperties": false,
+                    "entries": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/pluginEntry"
+                      },
+                      "description": "Plugins that ship with OpenClaw, keyed by plugin id. With enabled set to true, start fails unless OpenClaw loads the plugin.",
                       "properties": {
-                        "config": {
-                          "additionalProperties": false,
+                        "fabric-shared-config": false,
+                        "memory-core": {
+                          "$ref": "#/$defs/pluginEntry",
                           "properties": {
-                            "dreaming": {
-                              "additionalProperties": false,
+                            "config": {
                               "properties": {
-                                "enabled": {
-                                  "description": "Whether the memory-core plugin runs scheduled dreaming.",
-                                  "type": "boolean"
+                                "dreaming": {
+                                  "properties": {
+                                    "enabled": {
+                                      "description": "Whether the memory-core plugin runs scheduled dreaming.",
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "type": "object"
                                 }
                               },
                               "type": "object"
                             }
-                          },
-                          "type": "object"
+                          }
                         }
                       },
+                      "propertyNames": {
+                        "minLength": 1
+                      },
                       "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "external": {
+                  "additionalProperties": false,
+                  "description": "Plugins with user-prepared code and dependencies.",
+                  "properties": {
+                    "entries": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/pluginEntry"
+                      },
+                      "description": "Plugins from those folders, keyed by plugin id. A path alone doesn't enable a plugin; with enabled set to true, start fails unless OpenClaw loads it.",
+                      "properties": {
+                        "fabric-shared-config": false
+                      },
+                      "propertyNames": {
+                        "minLength": 1
+                      },
+                      "type": "object"
+                    },
+                    "paths": {
+                      "description": "Plugin folders OpenClaw loads, each with its built code and node_modules, such as plugins mounted on a volume. Relative paths are resolved from the NeMo Fabric base directory; start fails if one doesn't exist.",
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array",
+                      "uniqueItems": true
                     }
                   },
                   "type": "object"
@@ -1904,8 +2243,8 @@
               "type": "number"
             },
             "shutdown_timeout_seconds": {
-              "default": 5,
-              "description": "Maximum graceful Gateway shutdown time before forced termination.",
+              "default": 15,
+              "description": "Maximum graceful Gateway shutdown time before forced termination. NeMo Fabric allows 30 seconds for the complete adapter stop. Leave time for cleanup within that limit.",
               "exclusiveMinimum": 0,
               "type": "number"
             },
@@ -1937,6 +2276,32 @@
                 "toolSearch": {
                   "description": "Whether OpenClaw compacts large tool catalogs behind search tools.",
                   "type": "boolean"
+                },
+                "web": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "fetch": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "ssrfPolicy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "allowIpv6UniqueLocalRange": {
+                              "description": "Whether web_fetch, image, and pdf may connect to addresses in fc00::/7. Set it only behind a fake-IP proxy that owns that range and enforces its own destination policy.",
+                              "type": "boolean"
+                            },
+                            "allowRfc2544BenchmarkRange": {
+                              "description": "Whether web_fetch, image, and pdf may connect to addresses in 198.18.0.0/15. Set it only behind a fake-IP proxy that owns that range and enforces its own destination policy.",
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
                 }
               },
               "type": "object"
@@ -2648,8 +3013,8 @@
       ]
     }
   ],
-  "fabric_revision": "135147a0fe6ce6bc2ebf21fa1068d1bd5af71780",
+  "fabric_revision": "0dfdb25425f131d323d18a1372e9dde7826c9995",
   "schema_version": 2,
-  "source_sha256": "ef8d058019151e4d51f456020432005d46b632cf4b8bda1f431559298bf92e84",
+  "source_sha256": "e588495823579fce99fd87089e77a288fd3674a7a0a35d57e3af4f55e0909d88",
   "targets": []
 }
