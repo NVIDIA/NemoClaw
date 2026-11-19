@@ -7,7 +7,8 @@ Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
 For a first deployment, follow [get started](../get-started/first-deployment.md).
 When copying an [example](../../examples), assign a fresh UUID and replace endpoints and image pins with values for your resources.
 Keep the matching bundle and the same state directory throughout the deployment.
-On a Windows client, set the gateway target's `engine`, such as `spec.gateway.target.docker.engine`, to a local engine's named pipe, such as Docker Desktop's `npipe:////./pipe/docker_engine` or a Podman machine's `npipe:////./pipe/podman-machine-default`, or to an `ssh://` engine for an external gateway. A managed gateway on a pipe binds `/var/run/docker.sock` in the engine's Linux VM. See [engine connection limits](../../internal-docs/design/execution-targets.md#connections-and-identity).
+On a Windows client, set the gateway target's `engine`, such as `spec.gateway.target.docker.engine`, to a local engine's named pipe, such as Docker Desktop's `npipe:////./pipe/docker_engine` or a Podman machine's `npipe:////./pipe/podman-machine-default`, or to an `ssh://` engine for an external gateway. A managed gateway on a pipe binds `/var/run/docker.sock` in the engine's Linux VM.
+On macOS, a managed gateway on Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's default socket also binds `/var/run/docker.sock` in the engine's VM; on another socket, it binds the socket's own path. See [engine connection limits](../../internal-docs/design/execution-targets.md#connections-and-identity).
 
 From the directory containing your YAML, preview the changes.
 Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.

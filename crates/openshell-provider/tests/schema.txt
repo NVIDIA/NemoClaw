@@ -137,6 +137,7 @@ resource openshell_sandbox (version 2)
   exited: string, computed
   gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
+  gpu_count: number, optional
   id: string, computed
   image: string, required
   launch_json: string, required

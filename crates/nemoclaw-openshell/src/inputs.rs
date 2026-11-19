@@ -89,6 +89,7 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
         "sandbox" => vec![
             input("policy", "policy_json", policy_input()),
             input("driver_config", "driver_config_json", Shape::Json),
+            input("gpu_count", "gpu_count", Shape::Number),
             input(
                 "service",
                 "services_json",

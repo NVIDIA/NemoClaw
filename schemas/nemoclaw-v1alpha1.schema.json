@@ -441,7 +441,7 @@
             }
           ],
           "default": "unix:///var/run/docker.sock",
-          "description": "The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM.",
+          "description": "The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket.",
           "type": "string",
           "x-nemoclaw-default-rule": "Omitted or empty selects Docker's default socket."
         },
@@ -2549,7 +2549,7 @@
       "description": "A managed gateway container on a local rootless Linux Podman engine. Podman's socket depends on the user, so engine has no default.",
       "properties": {
         "engine": {
-          "description": "The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM.",
+          "description": "The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket.",
           "minLength": 1,
           "pattern": "^(unix:///|npipe:////\\./pipe/)",
           "type": "string",
@@ -3228,6 +3228,12 @@
           "description": "OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.",
           "type": "object"
         },
+        "gpus": {
+          "description": "GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
         "harness": {
           "$ref": "#/$defs/Harness",
           "description": "Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation."
@@ -3580,10 +3586,10 @@
               "type": "string"
             },
             "engine": {
-              "description": "Local Docker Unix socket. Omission uses the managed gateway engine.",
-              "pattern": "^unix:///[^?#\\x00]*$",
+              "description": "Local Docker engine: a Unix socket, or on Windows a named pipe such as `npipe:////./pipe/docker_engine`. Omission uses the managed gateway engine.",
+              "pattern": "^(unix:///[^?#\\x00]*|npipe:////\\./pipe/[A-Za-z0-9._-]+)$",
               "type": "string",
-              "x-nemoclaw-error": "proxy engine must be a local Unix socket"
+              "x-nemoclaw-error": "proxy engine must be a local Unix socket or named pipe"
             },
             "image": {
               "description": "Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.",

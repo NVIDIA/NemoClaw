@@ -62,7 +62,7 @@ pub(crate) fn constrain_schema(
         proxy,
         "engine",
         serde_json::json!({
-            "x-nemoclaw-error": "proxy engine must be a local Unix socket"
+            "x-nemoclaw-error": "proxy engine must be a local Unix socket or named pipe"
         }),
     );
 }
@@ -95,11 +95,10 @@ impl OllamaProxy {
         use crate::config::validation::require;
         crate::config::schema::validate_service("ollamaProxy", self)?;
         require(
-            self.engine.as_ref().is_none_or(|engine| {
-                engine.starts_with("unix:///")
-                    && crate::config::validate_engine_endpoint(engine).is_ok()
-            }),
-            "proxy engine must be a local Unix socket",
+            self.engine
+                .as_deref()
+                .is_none_or(|engine| crate::config::engine_socket(engine).is_some()),
+            "proxy engine must be a local Unix socket or named pipe",
         )?;
         // Sandboxes reach the proxy's endpoint, which OpenShell checks; the
         // proxy itself connects to its upstream.

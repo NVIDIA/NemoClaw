@@ -146,6 +146,9 @@ fn targets_with_plans(
             serde_json::to_string(&crate::image_runtime::policy_input(document, sandbox)?)
                 .expect("policy input"),
         );
+        if let Some(gpus) = sandbox.gpus {
+            values.insert("gpu_count".into(), gpus.to_string());
+        }
         if let Some(config) = &sandbox.driver_config {
             values.insert(
                 "driver_config_json".into(),

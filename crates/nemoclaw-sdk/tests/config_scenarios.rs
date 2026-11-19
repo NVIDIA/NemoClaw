@@ -305,16 +305,6 @@ fn serving_profile_provenance_is_not_supported_yet() {
 }
 
 #[test]
-fn sandbox_gpu_selection_is_not_supported_yet() {
-    let desired = DesiredState::openclaw().sandbox_gpu();
-    let result = Document::parse(desired.yaml().as_bytes());
-    assert!(
-        result.is_err(),
-        "configuration must reject unsupported sandbox GPU selection"
-    );
-}
-
-#[test]
 fn host_mounts_are_not_supported_yet() {
     let desired = DesiredState::openclaw().host_mount();
     let result = Document::parse(desired.yaml().as_bytes());
@@ -461,11 +451,6 @@ impl DesiredState {
         let target = &mut self.value["spec"]["gateway"]["target"];
         let key = target.as_object().unwrap().keys().next().unwrap().clone();
         &mut target[key]
-    }
-
-    fn sandbox_gpu(mut self) -> Self {
-        self.target()["gpu"] = json!({"required": true, "device": "nvidia.com/gpu=0"});
-        self
     }
 
     fn host_mount(mut self) -> Self {

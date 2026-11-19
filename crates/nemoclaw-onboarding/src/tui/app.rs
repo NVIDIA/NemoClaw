@@ -150,6 +150,10 @@ impl JourneyWizard {
     }
 
     fn changed(&mut self) {
+        // An image question the engine's images settle is answered here, so a
+        // later question never shows it and going back skips it.
+        self.state
+            .answer_single_agent_images(&self.capabilities, &self.observations);
         *self.resolution.get_mut() = None;
         *self.configuration.get_mut() = None;
         // A changed review starts at its target verdict again.

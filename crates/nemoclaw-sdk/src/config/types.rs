@@ -201,7 +201,7 @@ impl Default for ManagedTarget {
 pub struct LocalTarget {
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM.
+    /// The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket.
     pub engine: String,
     #[serde(rename = "port", skip_serializing_if = "is_zero_port")]
     #[schemars(default)]
@@ -442,6 +442,10 @@ pub struct Sandbox {
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
     /// OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.
     pub driver_config: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u32", range(min = 1))]
+    /// GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none.
+    pub gpus: Option<u32>,
     #[serde(
         rename = "serviceExposures",
         default,
