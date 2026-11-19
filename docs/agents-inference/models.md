@@ -26,7 +26,10 @@ No image is published by this operation.
 The [Qwen3-4B case](../../crates/nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml) shows the complete desired-state shape with a pinned 2.50 GB Q4_K_M GGUF, 32768 context tokens and a 12 GiB GPU budget.
 Its image references are CI placeholders and must be replaced with candidate-built digests.
 On ARM64 GB10 Spark with OpenShell 0.1.9 and the b12375 image, Qwen answered a routed arithmetic request correctly and passed missing/wrong-key inference refusal, authenticated inference, unchanged plan/reapply and teardown.
-That run used a 32 GiB host reserve; the case's AMD64 dedicated-GPU settings need separate qualification.
+That Spark run used a 32 GiB host reserve.
+The AMD64 L40S case was separately qualified with its 12 GiB GPU budget and 28 GiB host reserve: the maintained lifecycle scenario passed, and a fresh deployment answered exactly `FOUR`, rejected missing/wrong inference keys, accepted the correct key, and passed unchanged plan/reapply with preserved agent identity and teardown.
+The tested L40S host used OpenShell 0.1.9, Linux 6.8, Docker 29.10 with the containerd image store and NVIDIA's proprietary 580.178.04 kernel module.
+On that VM, the 580 open-module configuration failed CUDA initialization even outside Docker; Docker 27 separately failed OpenShell's numeric UID/GID archive upload. Those configurations do not inherit the successful qualification.
 The earlier Muse configuration has lifecycle qualification on AMD64/L40S and ARM64/GB10 Spark with OpenShell 0.1.9, 32768 context tokens, one slot and a 32 GiB serving budget.
 That historical qualification used an image built on Classic NemoClaw's llama-server image, llama.cpp revision `8e7f22b67ef4667b4ddd50230771287f328cfb3f`, and doesn't cover the b12375 image or Qwen case.
 Classic's experimental Spark recipe does not qualify this case.
