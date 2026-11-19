@@ -28,6 +28,8 @@ import { requireLaunchSemanticHealth } from "../../actions/sandbox/launch-readin
 import { loadAgent } from "../../agent/defs";
 import { saveCredential } from "../../credentials/store";
 import { createRegisteredSandboxIdentityRevalidation } from "../sandbox-recreate-transaction";
+import { observeSwitchyardPreflight } from "./preflight";
+import { switchyardPreflightFixture } from "../../../../test/support/switchyard-preflight";
 
 const routing = createHermesSwitchyardRoutingIntent({
   efficient: { provider: "nvidia-prod", model: "nvidia/nano" },
@@ -845,8 +847,17 @@ describe("Switchyard provider bindings", () => {
       },
     };
     const inferenceProbe = vi.fn();
+    const preflight = switchyardPreflightFixture({ routing, bindings });
     const deps = {
       switchyardProviderAdapter: f.input.adapter,
+      switchyardPreflight: (
+        entry: Parameters<typeof observeSwitchyardPreflight>[0],
+        name: string,
+      ) =>
+        observeSwitchyardPreflight(entry, name, {
+          ...preflight.deps,
+          providerAdapter: f.input.adapter,
+        }),
       gatewayHealth: async () => true,
       forwardsHealthy: () => true,
       inferenceProbe,
@@ -863,7 +874,7 @@ describe("Switchyard provider bindings", () => {
       );
     await expect(check()).resolves.toBeUndefined();
     f.providers.delete(bindings.providers[0].providerName);
-    await expect(check()).rejects.toThrow("provider binding");
+    await expect(check()).rejects.toThrow("preflight failed (providers)");
     expect(inferenceProbe).not.toHaveBeenCalled();
   });
 

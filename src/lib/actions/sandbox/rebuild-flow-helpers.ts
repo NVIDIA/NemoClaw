@@ -76,10 +76,12 @@ export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 export type RebuildLiveState = {
   staleRecovery: boolean;
   staleRegistrySnapshot: ReturnType<typeof loadRegistry> | null;
+  observedPhase?: string | null;
   terminalPhase?: boolean;
+  notReadyPhase?: boolean;
 };
 
-/** Select complete stopped native state for supported fresh terminal-state rebuilds. */
+/** Select complete stopped native state for supported fresh not-ready or terminal rebuilds. */
 export async function prepareRebuildStoppedAgentState(
   entry: RebuildSandboxEntry,
   liveState: RebuildLiveState,
@@ -87,7 +89,8 @@ export async function prepareRebuildStoppedAgentState(
   getSandbox: Parameters<typeof snapshotBackup.prepareStoppedAgentState>[1],
 ): Promise<PreparedStoppedNativeState | null> {
   if (
-    !liveState.terminalPhase ||
+    (!liveState.terminalPhase &&
+      !(liveState.notReadyPhase && liveState.observedPhase === "Stopped")) ||
     liveState.staleRecovery ||
     hasRecoveryManifest ||
     !["openclaw", "langchain-deepagents-code"].includes(entry.agent ?? "openclaw")
@@ -245,7 +248,9 @@ export async function resolveRebuildLiveState(
     return {
       staleRecovery: false,
       staleRegistrySnapshot: null,
+      observedPhase: liveSource.phase,
       ...(liveSource.readiness === "terminal" ? { terminalPhase: true } : {}),
+      ...(liveSource.readiness === "not_ready" ? { notReadyPhase: true } : {}),
     };
 
   const reconciled = await getReconciledSandboxGatewayState(sandboxName);
@@ -562,6 +567,7 @@ export async function backupSandboxStateForRebuild(
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
   stoppedNativeState?: PreparedStoppedNativeState,
+  requestedDcodeAutoApprovalMode?: RebuildSandboxEntry["dcodeAutoApprovalMode"],
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
@@ -707,6 +713,26 @@ export async function backupSandboxStateForRebuild(
         `  Incomplete snapshot retained for manual inspection and cleanup only: ${backup.manifest.backupPath}`,
       );
       console.error("  It is excluded from automatic rebuild recovery.");
+    }
+    if (sb.agent === "langchain-deepagents-code") {
+      console.error("  No replacement was created. Requested capability changes were not applied.");
+      const previousMode =
+        sb.dcodeAutoApprovalMode === "thread-opt-in" ? "thread-opt-in" : "disabled";
+      console.error(
+        `  Previous DCode auto-approval capability remains configured as ${previousMode}.`,
+      );
+      if (
+        requestedDcodeAutoApprovalMode === "disabled" &&
+        previousMode === "thread-opt-in" &&
+        !backup.unreachable
+      ) {
+        console.error(
+          `  Auto approval was not disabled. The original sandbox retains its previous capability. To stop execution, run \`${CLI_NAME} ${sandboxName} stop\`.`,
+        );
+        console.error(
+          "  Stopping suspends execution without disabling Auto approval; restarting retains the previous capability.",
+        );
+      }
     }
     console.error("  Aborting rebuild to prevent data loss.");
     bail("Failed to back up sandbox state.");

@@ -968,7 +968,12 @@ describe("sandbox build context staging", () => {
                 path.join("opt", "mcp-tool-discovery-runtime", "dist", "mcp-tool-discovery.mjs"),
               ],
               [
-                "managed-startup-direct-image-runtime.bundle",
+                name === "hermes"
+                  ? path.relative(
+                      reviewedRuntimeSource,
+                      path.join(repoRoot, "agents/hermes/managed-startup-image-runtime.bundle"),
+                    )
+                  : "managed-startup-direct-image-runtime.bundle",
                 path.join("out", "managed-startup-image-runtime.cjs"),
               ],
             ] as const) {

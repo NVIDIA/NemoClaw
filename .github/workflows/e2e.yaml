@@ -5450,6 +5450,10 @@ jobs:
       - name: Reuse or refresh reviewed audit evidence before the offline build
         uses: ./.github/actions/ci-reviewed-npm-audit
         with:
+          sdk-admission-token: ${{ github.token }}
+          sdk-admission-pr-number: ${{ inputs.pr_number }}
+          sdk-admission-candidate-sha: ${{ env.CHECKOUT_SHA }}
+          sdk-admission-base-sha: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA }}
           target-root: ${{ github.workspace }}/.candidate-runtime
           report-dir: artifacts/reviewed-npm-audit
           cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache

@@ -716,6 +716,43 @@ function validSqliteEventRow(row) {
   );
 }
 
+function sqliteEventRowDiagnostic(row) {
+  // Fixed enums, booleans and capped byte counts keep the complete diagnostic below 1 KiB.
+  const valueType = (value) => {
+    if (value === null) return "null";
+    const type = typeof value;
+    return ["string", "number", "bigint", "boolean", "object", "undefined"].includes(type)
+      ? type
+      : "other";
+  };
+  const sessionIdString = typeof row.sessionId === "string";
+  const eventJsonString = typeof row.eventJson === "string";
+  const sessionIdBytes = sessionIdString ? Buffer.byteLength(row.sessionId) : null;
+  const eventJsonBytes = eventJsonString ? Buffer.byteLength(row.eventJson) : null;
+  return {
+    diagnosticVersion: 1,
+    phase: mode === "baseline" ? "baseline" : "qualify",
+    types: {
+      sessionId: valueType(row.sessionId),
+      seq: valueType(row.seq),
+      eventJson: valueType(row.eventJson),
+    },
+    checks: {
+      sessionIdString,
+      sessionIdNonempty: sessionIdString && row.sessionId.length > 0,
+      sessionIdWithin512Bytes: sessionIdString && sessionIdBytes <= 512,
+      seqSafeInteger: Number.isSafeInteger(row.seq),
+      seqNonnegative: typeof row.seq === "number" && row.seq >= 0,
+      eventJsonString,
+      eventJsonWithin16MiB: eventJsonString && eventJsonBytes <= 16 * 1024 * 1024,
+    },
+    lengths: {
+      sessionIdBytesCapped: sessionIdString ? Math.min(sessionIdBytes, 513) : null,
+      eventJsonBytesCapped: eventJsonString ? Math.min(eventJsonBytes, 16 * 1024 * 1024 + 1) : null,
+    },
+  };
+}
+
 function sqliteSessionStoreStats(missingReason) {
   let stats;
   try {
@@ -787,7 +824,8 @@ function readExistingSqliteTranscriptSnapshot(before) {
   );
   const sessions = new Map();
   for (const row of rows) {
-    requireEvidence(validSqliteEventRow(row), "sqlite_session_record_invalid");
+    const valid = validSqliteEventRow(row);
+    requireEvidence(valid, "sqlite_session_record_invalid", valid ? {} : sqliteEventRowDiagnostic(row));
     const events = sessions.get(row.sessionId) ?? [];
     events.push({ seq: row.seq, eventJson: row.eventJson });
     sessions.set(row.sessionId, events);
@@ -1103,7 +1141,7 @@ function removeBaseline() {
   finish(0);
 }
 
-function removePtyMonitorRoot() {
+async function removePtyMonitorRoot() {
   let before;
   try {
     before = fs.lstatSync(ptyMonitorRoot, { bigint: true });
@@ -1111,26 +1149,53 @@ function removePtyMonitorRoot() {
     if (error && error.code === "ENOENT") finish(0);
     finish(2, "pty_monitor_cleanup_failed");
   }
-  if (
-    !before.isDirectory() ||
-    before.isSymbolicLink() ||
-    before.uid !== BigInt(process.getuid()) ||
-    (before.mode & 0o777n) !== 0o700n
-  ) {
-    finish(2, "pty_monitor_cleanup_failed");
-  }
-  let names;
-  try {
-    names = fs.readdirSync(ptyMonitorRoot).sort();
-  } catch {
-    finish(2, "pty_monitor_cleanup_failed");
-  }
   const allowedNames = ["pty-input-mode.sock"];
-  if (names.some((name) => !allowedNames.includes(name))) {
-    finish(2, "pty_monitor_cleanup_unknown_entry");
-  }
-  if (names.includes("pty-input-mode.sock")) {
-    finish(2, "pty_monitor_socket_still_present");
+  const retirementDeadline = Date.now() + 5_000;
+  let current = before;
+  let socketBefore;
+  for (;;) {
+    if (
+      !sameIdentity(before, current) ||
+      !current.isDirectory() ||
+      current.isSymbolicLink() ||
+      current.uid !== BigInt(process.getuid()) ||
+      (current.mode & 0o777n) !== 0o700n
+    ) {
+      finish(2, "pty_monitor_cleanup_failed");
+    }
+    let names;
+    try {
+      names = fs.readdirSync(ptyMonitorRoot).sort();
+    } catch {
+      finish(2, "pty_monitor_cleanup_failed");
+    }
+    if (names.some((name) => !allowedNames.includes(name))) {
+      finish(2, "pty_monitor_cleanup_unknown_entry");
+    }
+    let socket;
+    try {
+      socket = fs.lstatSync(ptyMonitorSocketPath, { bigint: true });
+    } catch (error) {
+      if (error && error.code === "ENOENT") break;
+      finish(2, "pty_monitor_cleanup_failed");
+    }
+    if (
+      !socket.isSocket() ||
+      socket.uid !== BigInt(process.getuid()) ||
+      (socket.mode & 0o777n) !== 0o600n ||
+      socket.nlink !== 1n ||
+      (socketBefore && !sameIdentity(socketBefore, socket))
+    ) {
+      finish(2, "pty_monitor_cleanup_failed");
+    }
+    socketBefore ??= socket;
+    if (Date.now() >= retirementDeadline) finish(2, "pty_monitor_socket_still_present");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    try {
+      current = fs.lstatSync(ptyMonitorRoot, { bigint: true });
+    } catch {
+      finish(2, "pty_monitor_cleanup_failed");
+    }
   }
   let after;
   try {
@@ -1388,7 +1453,9 @@ try {
   else if (mode === "input-mode") qualifyTuiInputMode();
   else if (mode === "qualify") qualifyTurns();
   else if (mode === "cleanup-baseline") removeBaseline();
-  else if (mode === "cleanup-pty") removePtyMonitorRoot();
+  else if (mode === "cleanup-pty") {
+    removePtyMonitorRoot().catch(() => finish(2, "pty_monitor_cleanup_failed"));
+  }
   else finish(2, "mode_invalid");
 } catch {
   finish(2, "verifier_failed");
@@ -1432,13 +1499,6 @@ remove_pty_monitor() {
   session_evidence cleanup-pty
 }
 
-wait_for_pty_monitor_exit() {
-  for _ in {1..100}; do
-    [[ ! -S "$pty_monitor_root/pty-input-mode.sock" ]] && return
-    sleep 0.05
-  done
-}
-
 cleanup() {
   local original_status=$?
   local cleanup_status=0
@@ -1461,7 +1521,6 @@ cleanup() {
     tail -c 2048 "$evidence_error" >&2 || true
     cleanup_status=1
   fi
-  wait_for_pty_monitor_exit
   if ! (remove_pty_monitor) >/dev/null 2>"$evidence_error"; then
     echo "launch PTY monitor cleanup failed" >&2
     tail -c 2048 "$evidence_error" >&2 || true
@@ -1727,7 +1786,6 @@ fi
 if ! remove_session_baseline >/dev/null 2>"$evidence_error"; then
   fail_launch_session "launch could not remove the structured session baseline"
 fi
-wait_for_pty_monitor_exit
 if ! remove_pty_monitor >/dev/null 2>"$evidence_error"; then
   fail_launch_session "launch could not remove the PTY monitor"
 fi

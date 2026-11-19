@@ -345,6 +345,7 @@ ADMIN_REQUEST_SCOPES = ['operator.admin', 'operator.pairing', 'operator.write']
 ADMIN_PAIRED_TOKEN_SCOPES = ['operator.admin', 'operator.pairing', 'operator.read', 'operator.write']
 ADMIN_AUTH_TOKEN_SCOPES = ['operator.admin', 'operator.read', 'operator.write']
 TUI_SCOPES = ['operator.admin', 'operator.approvals', 'operator.read', 'operator.write']
+TUI_SCOPES_WITH_PAIRING = [*TUI_SCOPES, 'operator.pairing']
 ALLOW_CANONICAL_PENDING = ${mode === "ordinary-settlement" || mode === "repair-settlement" ? "True" : "False"}
 ORDINARY_SETTLEMENT = ${mode === "ordinary-settlement" ? "True" : "False"}
 REPORT_CANONICAL_PENDING = ${mode === "repair-settlement" ? "True" : "False"}
@@ -920,13 +921,15 @@ try:
         and exact_string_set(paired_operator.get('scopes'), ADMIN_PAIRED_TOKEN_SCOPES)
         and exact_string_set(auth_operator.get('scopes'), ADMIN_AUTH_TOKEN_SCOPES)
     )
-    # The native TUI reuses the local device identity and records its own
-    # already-approved grants. Observe that exact settled profile without
-    # approving a pending request or changing either credential view.
-    tui_settled = tui_client and all(
-        exact_string_set(view, TUI_SCOPES) for view in (
-            paired_device.get('scopes'), paired_device.get('approvedScopes'),
-            paired_operator.get('scopes'), auth_operator.get('scopes'),
+    # After CLI pairing, the native TUI retains operator.pairing in all three
+    # server-side records. Its client credential still records only the TUI grant.
+    tui_server_scopes = (
+        TUI_SCOPES_WITH_PAIRING if exact_string_set(paired_device.get('scopes'), TUI_SCOPES_WITH_PAIRING)
+        else TUI_SCOPES
+    )
+    tui_settled = tui_client and exact_string_set(auth_operator.get('scopes'), TUI_SCOPES) and all(
+        exact_string_set(view, tui_server_scopes) for view in (
+            paired_device.get('scopes'), paired_device.get('approvedScopes'), paired_operator.get('scopes'),
         )
     )
     settled = baseline_settled or admin_settled or tui_settled
@@ -981,8 +984,8 @@ try:
         : "if not settled:\n        reject()"
     }
 
-    projected_request_scopes = TUI_SCOPES if tui_settled else ADMIN_REQUEST_SCOPES if admin_settled else (TOKEN_SCOPES if explicit_read_grant else REQUEST_SCOPES)
-    projected_paired_token_scopes = TUI_SCOPES if tui_settled else ADMIN_PAIRED_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
+    projected_request_scopes = tui_server_scopes if tui_settled else ADMIN_REQUEST_SCOPES if admin_settled else (TOKEN_SCOPES if explicit_read_grant else REQUEST_SCOPES)
+    projected_paired_token_scopes = tui_server_scopes if tui_settled else ADMIN_PAIRED_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
     projected_auth_token_scopes = TUI_SCOPES if tui_settled else ADMIN_AUTH_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
     projection = {
         'deviceIdentitySha256': device_identity_sha256,

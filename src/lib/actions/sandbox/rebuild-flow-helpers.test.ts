@@ -69,6 +69,83 @@ function makeBail(): (msg: string, code?: number) => never {
 describe("stopped rebuild capture selection", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it("uses provider-verified stopped capture when gateway readiness is not-ready", async () => {
+    const capture = { sandboxName: "alpha", agentName: "openclaw" } as never;
+    const prepare = vi.spyOn(snapshotBackup, "prepareStoppedAgentState").mockResolvedValue(capture);
+    const entry = { name: "alpha", agent: "openclaw" };
+
+    await expect(
+      prepareRebuildStoppedAgentState(
+        entry,
+        {
+          observedPhase: "Stopped",
+          notReadyPhase: true,
+          staleRecovery: false,
+          staleRegistrySnapshot: null,
+        },
+        false,
+        () => entry,
+      ),
+    ).resolves.toBe(capture);
+    expect(prepare).toHaveBeenCalledWith("alpha", expect.any(Function));
+  });
+
+  it.each(["Deleting", "Provisioning"])(
+    "does not capture a non-ready source while OpenShell reports %s",
+    async (observedPhase) => {
+      const prepare = vi.spyOn(snapshotBackup, "prepareStoppedAgentState");
+      const entry = { name: "alpha", agent: "openclaw" };
+
+      await expect(
+        prepareRebuildStoppedAgentState(
+          entry,
+          {
+            observedPhase,
+            notReadyPhase: true,
+            staleRecovery: false,
+            staleRegistrySnapshot: null,
+          },
+          false,
+          () => entry,
+        ),
+      ).resolves.toBeNull();
+      expect(prepare).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      {
+        observedPhase: "Stopped",
+        notReadyPhase: true,
+        staleRecovery: true,
+        staleRegistrySnapshot: null,
+      },
+      false,
+    ],
+    [
+      {
+        observedPhase: "Stopped",
+        notReadyPhase: true,
+        staleRecovery: false,
+        staleRegistrySnapshot: null,
+      },
+      true,
+    ],
+  ])(
+    "does not capture a stopped source when recovery state is stale or retained",
+    async (state, hasRecoveryManifest) => {
+      const prepare = vi.spyOn(snapshotBackup, "prepareStoppedAgentState");
+      const entry = { name: "alpha", agent: "openclaw" };
+
+      await expect(
+        prepareRebuildStoppedAgentState(entry, state, hasRecoveryManifest, () => entry),
+      ).resolves.toBeNull();
+
+      expect(prepare).not.toHaveBeenCalled();
+    },
+  );
+
   it("leaves stopped Hermes on the bounded start, capture, and restop fallback", async () => {
     const prepare = vi.spyOn(snapshotBackup, "prepareStoppedAgentState");
 
@@ -752,6 +829,48 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     vi.restoreAllMocks();
   });
 
+  it.each([
+    ["thread-opt-in", "disabled", true],
+    ["thread-opt-in", undefined, false],
+    ["disabled", "disabled", false],
+    ["disabled", "thread-opt-in", false],
+    ["thread-opt-in", "thread-opt-in", false],
+  ] as const)(
+    "reports the previous %s capability when backup refuses requested mode %s",
+    async (mode, requestedMode, expectedStopAdvice) => {
+      const entry = { ...makeSandboxEntry(), dcodeAutoApprovalMode: mode };
+      backupSpy.mockReturnValue({
+        ...makeBackupResult(),
+        success: false,
+        manifest: null,
+        error: "SQLite inspection failed (sqlite-query)",
+      });
+      await expect(
+        backupSandboxStateForRebuild(
+          "alpha",
+          entry,
+          false,
+          vi.fn(),
+          makeBail(),
+          undefined,
+          requestedMode,
+        ),
+      ).rejects.toThrow("Failed to back up sandbox state");
+      const output = errorSpy.mock.calls.flat().join("\n");
+      expect(output).toContain(
+        "No replacement was created. Requested capability changes were not applied.",
+      );
+      expect(output).toContain(
+        `Previous DCode auto-approval capability remains configured as ${mode}.`,
+      );
+      expect(output.includes("Auto approval was not disabled.")).toBe(expectedStopAdvice);
+      expect(output.includes("To stop execution, run `nemoclaw alpha stop`.")).toBe(
+        expectedStopAdvice,
+      );
+      expect(entry.dcodeAutoApprovalMode).toBe(mode);
+    },
+  );
+
   it("aborts when backup fails completely", async () => {
     backupSpy.mockReturnValue({
       success: false,
@@ -1057,9 +1176,20 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     startSpy.mockReturnValue(null);
 
     await expect(
-      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+      backupSandboxStateForRebuild(
+        "alpha",
+        { ...makeSandboxEntry(), dcodeAutoApprovalMode: "thread-opt-in" },
+        false,
+        () => undefined,
+        makeBail(),
+        undefined,
+        "disabled",
+      ),
     ).rejects.toThrow("bail: Failed to back up sandbox state.");
     expect(backupStartedSpy).not.toHaveBeenCalled();
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain(
+      "The original sandbox retains its previous capability",
+    );
   });
 
   it("aborts and still returns the container to stopped when the retried backup also fails", async () => {
@@ -1218,7 +1348,15 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     });
 
     await expect(
-      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+      backupSandboxStateForRebuild(
+        "alpha",
+        { ...makeSandboxEntry(), dcodeAutoApprovalMode: "thread-opt-in" },
+        false,
+        () => undefined,
+        makeBail(),
+        undefined,
+        "disabled",
+      ),
     ).rejects.toThrow(
       "bail: Could not return the sandbox's recovered container to its stopped state.",
     );
@@ -1236,6 +1374,8 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     // The ordinary backup-failure diagnostic must not run: it would imply the
     // sandbox was left in its original stopped state.
     expect(reported).not.toContain("Failed to back up sandbox state.");
+    expect(reported).not.toContain("The original sandbox retains its previous capability");
+    expect(reported).not.toContain("To stop execution, run `nemoclaw alpha stop`.");
   });
 
   it("aborts a successful recovered backup when the container cannot return to stopped", async () => {
