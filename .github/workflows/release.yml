@@ -187,8 +187,6 @@ jobs:
     # Secure Signing's federated credential trusts this environment, whose
     # deployment rule admits only release tags.
     environment: release-signing
-    # The job checks out nothing: no code from the tag runs with signing
-    # access, and the bundle is data.
     permissions:
       actions: read
       contents: read
@@ -197,6 +195,12 @@ jobs:
       run:
         shell: pwsh
     steps:
+      # Only the v1 controller's files run with signing access; the tag's
+      # bundle is data.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.security-controller.outputs.revision }}
+          persist-credentials: false
       - name: Require the signing configuration
         env:
           AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
@@ -223,47 +227,57 @@ jobs:
           path: ${{ runner.temp }}/ci
       - name: Unpack the bundle
         run: tar -xf "$env:RUNNER_TEMP/ci/bundle.tar" -C "$env:RUNNER_TEMP"
+      # NVIDIA signs only the programs it builds on Windows; OpenTofu and the
+      # Docker provider stay as upstream ships them, and the Helm provider keeps
+      # HashiCorp's signature. The signing action reads paths relative to its
+      # catalog, which stays outside the uploaded bundle.
+      - name: Select the programs NVIDIA signs
+        shell: bash
+        run: |
+          bash .github/scripts/signing-inventory.sh "$RUNNER_TEMP/dist/windows_amd64" windows_amd64 > "$RUNNER_TEMP/inventory.tsv"
+          awk -F'\t' '$1 == "nvidia" { print "windows_amd64/" $2 }' "$RUNNER_TEMP/inventory.tsv" | tr '/' '\134' > "$RUNNER_TEMP/dist/nvidia.txt"
+          test -s "$RUNNER_TEMP/dist/nvidia.txt"
       - name: Sign in to Azure
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      # Appending keeps HashiCorp's signature as the Helm provider's primary
-      # one and nests NVIDIA's; the other executables get NVIDIA's as primary.
-      - name: Sign the executables
+      - name: Sign NVIDIA's programs
         uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
-          files-folder: ${{ runner.temp }}\dist\windows_amd64
-          files-folder-filter: exe
-          files-folder-recurse: true
+          files-catalog: ${{ runner.temp }}\dist\nvidia.txt
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
-          append-signature: true
-      # /all checks the Helm provider's nested signature too, and /tw fails an
-      # untimestamped one, which stops verifying when its certificate expires.
-      # The output, which names each signer, is the release's evidence.
-      - name: Verify every signature
+      # Check NVIDIA's signatures and HashiCorp's on the Helm provider. /tw
+      # fails an untimestamped signature, which stops verifying when its
+      # certificate expires. The output, which names each signer, is the
+      # release's evidence.
+      - name: Verify the signatures
         run: |
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
             Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
-          $executables = @(Get-ChildItem "$env:RUNNER_TEMP\dist\windows_amd64" -Recurse -Filter *.exe)
-          if ($executables.Count -eq 0) {
-            Write-Output '::error::The Windows bundle holds no executables.'
-            exit 1
-          }
           $log = "$env:RUNNER_TEMP\windows_amd64.verification.txt"
+          $checked = 0
           $failed = $false
-          foreach ($file in $executables) {
-            & $signtool.FullName verify /pa /all /tw /v $file.FullName | Tee-Object -FilePath $log -Append
+          foreach ($line in Get-Content "$env:RUNNER_TEMP\inventory.tsv") {
+            $signer, $path = $line -split "`t", 2
+            if ($signer -eq 'none') { continue }
+            $checked++
+            $file = Join-Path "$env:RUNNER_TEMP\dist\windows_amd64" $path
+            & $signtool.FullName verify /pa /all /tw /v $file | Tee-Object -FilePath $log -Append
             if ($LASTEXITCODE -ne 0) {
-              Write-Output "::error::$($file.FullName) has no valid timestamped signature."
+              Write-Output "::error::$path has no valid timestamped signature from $signer."
               $failed = $true
             }
+          }
+          if ($checked -eq 0) {
+            Write-Output '::error::The Windows bundle holds no signed programs.'
+            exit 1
           }
           if ($failed) { exit 1 }
       - name: Upload the signed bundle

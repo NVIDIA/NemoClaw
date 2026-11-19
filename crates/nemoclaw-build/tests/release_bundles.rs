@@ -163,10 +163,7 @@ impl Github {
     /// file, which artifact transfer leaves without its executable mode, and
     /// the output of its signature check.
     fn sign(&self, platform: &str, file: &str, contents: &str) {
-        let path = self.signed().join(platform).join(file);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, contents).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        self.upload(platform, file, contents);
         let mut log = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -177,6 +174,14 @@ impl Github {
             format!("Successfully verified: {file}\n").as_bytes(),
         )
         .unwrap();
+    }
+
+    /// A file of the bundle a signing job uploads without signing it.
+    fn upload(&self, platform: &str, file: &str, contents: &str) {
+        let path = self.signed().join(platform).join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, contents).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     fn signed(&self) -> PathBuf {
@@ -687,8 +692,12 @@ fn a_release_candidate_may_stay_unsigned() {
 #[test]
 fn the_evidence_records_each_archive_its_signed_executables_and_their_checks() {
     let github = final_release();
+    // Each signing job uploads the whole bundle: OpenTofu is signed on macOS
+    // and left as upstream ships it on Windows.
     github.sign("windows_amd64", &cli(), "signed windows_amd64");
+    github.upload("windows_amd64", "libexec/tofu", "upstream tofu");
     github.sign("darwin_arm64", &cli(), "signed darwin_arm64");
+    github.sign("darwin_arm64", "libexec/tofu", "signed tofu");
 
     let output = github.stage();
     assert!(output.status.success(), "{}", report(&output));
@@ -716,14 +725,24 @@ fn the_evidence_records_each_archive_its_signed_executables_and_their_checks() {
             "darwin_arm64" | "windows_amd64" => {
                 let directory = tempfile::tempdir().unwrap();
                 let bundle = extract(&archives, FINAL, platform, directory.path());
+                let mut signed = vec![cli()];
+                let mut checks = format!("Successfully verified: {}\n", cli());
+                if platform == "darwin_arm64" {
+                    signed.push("libexec/tofu".into());
+                    checks.push_str("Successfully verified: libexec/tofu\n");
+                }
+                let signed: Vec<_> = signed
+                    .iter()
+                    .map(|path| json!({ "path": path, "sha256": sha256(&bundle.join(path)) }))
+                    .collect();
                 assert_eq!(
                     entry["signed"],
-                    json!([{ "path": cli(), "sha256": sha256(&bundle.join(cli())) }]),
-                    "{platform}'s signed executable is the archived one"
+                    json!(signed),
+                    "{platform}'s signed programs are the archived ones"
                 );
                 assert_eq!(
                     entry["signature_verification"],
-                    format!("Successfully verified: {}\n", cli()),
+                    checks.as_str(),
                     "{platform}'s signing job's check"
                 );
             }
@@ -750,6 +769,109 @@ fn the_evidence_records_each_archive_its_signed_executables_and_their_checks() {
         notes.contains("release-evidence.json"),
         "the notes point to the evidence: {notes}"
     );
+}
+
+/// A bundle directory holding each program at its Windows path.
+fn windows_programs(extra: &[&str]) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    for name in WINDOWS_PROGRAMS
+        .iter()
+        .map(|(_, name)| *name)
+        .chain(extra.iter().copied())
+    {
+        let path = directory.path().join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, name).unwrap();
+    }
+    let license = directory.path().join("licenses/helm-provider-LICENSE");
+    fs::create_dir_all(license.parent().unwrap()).unwrap();
+    fs::write(license, "license").unwrap();
+    directory
+}
+
+/// Each program at its Windows path, with whose signature it carries there.
+const WINDOWS_PROGRAMS: [(&str, &str); 9] = [
+    ("nvidia", "bin/nemoclaw.exe"),
+    ("none", "libexec/tofu.exe"),
+    (
+        "hashicorp",
+        "providers/registry.opentofu.org/hashicorp/helm/3.3.0/windows_amd64/terraform-provider-helm_v3.3.0_x5.exe",
+    ),
+    (
+        "none",
+        "providers/registry.opentofu.org/kreuzwerker/docker/4.7.0/windows_amd64/terraform-provider-docker_v4.7.0.exe",
+    ),
+    (
+        "nvidia",
+        "providers/registry.opentofu.org/nvidia/fabric/0.1.0/windows_amd64/terraform-provider-fabric_v0.1.0.exe",
+    ),
+    (
+        "nvidia",
+        "providers/registry.opentofu.org/nvidia/host/0.1.0/windows_amd64/terraform-provider-host_v0.1.0.exe",
+    ),
+    (
+        "nvidia",
+        "providers/registry.opentofu.org/nvidia/ollama/0.1.0/windows_amd64/terraform-provider-ollama_v0.1.0.exe",
+    ),
+    (
+        "nvidia",
+        "providers/registry.opentofu.org/nvidia/openshell/0.1.0/windows_amd64/terraform-provider-openshell_v0.1.0.exe",
+    ),
+    (
+        "nvidia",
+        "providers/registry.opentofu.org/nvidia/vllm/0.1.0/windows_amd64/terraform-provider-vllm_v0.1.0.exe",
+    ),
+];
+
+fn inventory(bundle: &Path, platform: &str) -> Output {
+    Command::new("/bin/bash")
+        .args(["--noprofile", "--norc", "-e"])
+        .arg(repository().join(".github/scripts/signing-inventory.sh"))
+        .arg(bundle)
+        .arg(platform)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn nvidia_signs_its_own_programs_everywhere_and_opentofu_and_the_docker_provider_only_on_macos() {
+    let bundle = windows_programs(&[]);
+    let output = inventory(bundle.path(), "windows_amd64");
+    assert!(output.status.success(), "{}", report(&output));
+    let expected: String = WINDOWS_PROGRAMS
+        .iter()
+        .map(|(signer, name)| format!("{signer}\t{name}\n"))
+        .collect();
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+
+    // The same programs on macOS: NVIDIA signs OpenTofu and the Docker
+    // provider too, and the Helm provider keeps HashiCorp's signature.
+    let output = inventory(bundle.path(), "darwin_arm64");
+    assert!(output.status.success(), "{}", report(&output));
+    let expected: String = WINDOWS_PROGRAMS
+        .iter()
+        .map(|(signer, name)| {
+            let signer = if *signer == "none" { "nvidia" } else { signer };
+            format!("{signer}\t{name}\n")
+        })
+        .collect();
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+}
+
+#[test]
+fn a_program_the_signing_inventory_does_not_classify_stops_signing() {
+    let bundle = windows_programs(&["libexec/kubectl.exe"]);
+    for platform in ["windows_amd64", "darwin_arm64"] {
+        let output = inventory(bundle.path(), platform);
+        let report = report(&output);
+        assert!(!output.status.success(), "{platform}: {report}");
+        assert!(
+            report.contains("libexec/kubectl.exe isn't in the signing inventory"),
+            "{platform}: the error names the program: {report}"
+        );
+    }
 }
 
 const NVIDIA_TEAM: &str = "NVTEAM1234";

@@ -67,8 +67,8 @@ A job's `if:` can't read an environment's variables, so the repository variable 
 
 | Platform | Signing job |
 |---|---|
-| `windows_amd64` | Signs every `.exe` through Azure Artifact Signing, appending NVIDIA's signature to the Helm provider's HashiCorp signature, and checks each with `signtool verify /pa /all /tw`. Needs the environment's `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_ARTIFACT_SIGNING_ENDPOINT`, `AZURE_ARTIFACT_SIGNING_ACCOUNT`, and `AZURE_ARTIFACT_SIGNING_PROFILE` variables. |
-| `darwin_arm64` | Checks that every executable is notarized and signed by the Apple team in the environment's `APPLE_TEAM_ID` variable, or by HashiCorp's team `D38WU7D763` for the Helm provider. It doesn't sign yet, so listing `darwin_arm64` stops staging until the signing step lands. |
+| `windows_amd64` | Signs the programs the [inventory](#program-inventory) assigns to NVIDIA on Windows through Azure Artifact Signing, and checks them and the Helm provider's HashiCorp signature with `signtool verify /pa /all /tw`. Needs the environment's `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_ARTIFACT_SIGNING_ENDPOINT`, `AZURE_ARTIFACT_SIGNING_ACCOUNT`, and `AZURE_ARTIFACT_SIGNING_PROFILE` variables. |
+| `darwin_arm64` | Checks that every program is notarized and signed as the [inventory](#program-inventory) assigns: by the Apple team in the environment's `APPLE_TEAM_ID` variable, or by HashiCorp's team `D38WU7D763` for the Helm provider. It doesn't sign yet, so listing `darwin_arm64` stops staging until the signing step lands. |
 
 Staging puts the signed executables in their bundles with the bundles' file modes, records their new hashes in `manifest.json` with `nemoclaw-build reseal`, and then writes `SHA256SUMS`.
 When a listed platform's signing job fails, staging stops before it drafts the release.
@@ -95,7 +95,7 @@ It records:
 
 - `version`, `commit`, and `run`: the tag, its commit, and the staging run's URL.
 - `signing`: whether the release required signing, which of `darwin_arm64` and `windows_amd64` are unsigned, and the exception's reason, if one applied.
-- `archives`: each archive's SHA-256, its signed executables with their SHA-256, and the output of the signing job's signature checks.
+- `archives`: each archive's SHA-256, the programs NVIDIA signed in it with their SHA-256, and the output of the signing job's signature checks.
 - `verification`: the output of `sha256sum --check --strict SHA256SUMS` over the final archives. Before it publishes a final release, the workflow adds the output of `gh attestation verify` for each archive and `SHA256SUMS`.
 
 [`record-cli-signing.sh`](../../.github/scripts/record-cli-signing.sh) applies the signing rule and writes the record.
@@ -104,18 +104,23 @@ It records:
 
 Each bundle holds these programs; everything else in it is data: `manifest.json`, the configuration schema, and licenses.
 
-| Program | Bundle path | Built by | Upstream provenance |
-|---|---|---|---|
-| `nemoclaw` | `bin/` | NVIDIA, from this repository | Not applicable |
-| NemoClaw providers `openshell`, `fabric`, `vllm`, `ollama`, `host` | `providers/registry.opentofu.org/nvidia/` | NVIDIA, from this repository | Not applicable |
-| OpenTofu 1.13.9, `tofu` | `libexec/` | OpenTofu | `SHA256SUMS` and each archive have GPG and Sigstore cosign signatures. The macOS program has only an ad hoc signature; the Windows program has no Authenticode signature. |
-| Docker provider 4.7.0, `kreuzwerker/docker` | `providers/registry.opentofu.org/kreuzwerker/docker/` | kreuzwerker | `SHA256SUMS` is GPG-signed with key `F31236BA85096E3AE22A8C660DCE698927DAF8EC`. The macOS program has only an ad hoc signature; the Windows program has no Authenticode signature. |
-| Helm provider 3.3.0, `hashicorp/helm` | `providers/registry.opentofu.org/hashicorp/helm/` | HashiCorp | `SHA256SUMS` is GPG-signed with key `C874011F0AB405110D02105534365D9472D7468F`. The macOS program has a Developer ID signature from team `D38WU7D763`; the Windows program has a timestamped Authenticode signature from HashiCorp, Inc. |
+| Program | Bundle path | Built by | Upstream provenance | macOS signature | Windows signature |
+|---|---|---|---|---|---|
+| `nemoclaw` | `bin/` | NVIDIA, from this repository | Not applicable | NVIDIA | NVIDIA |
+| NemoClaw providers `openshell`, `fabric`, `vllm`, `ollama`, `host` | `providers/registry.opentofu.org/nvidia/` | NVIDIA, from this repository | Not applicable | NVIDIA | NVIDIA |
+| OpenTofu 1.13.9, `tofu` | `libexec/` | OpenTofu | `SHA256SUMS` and each archive have GPG and Sigstore cosign signatures. Upstream ships only an ad hoc macOS signature and no Authenticode signature. | NVIDIA | None, as upstream ships it |
+| Docker provider 4.7.0, `kreuzwerker/docker` | `providers/registry.opentofu.org/kreuzwerker/docker/` | kreuzwerker | `SHA256SUMS` is GPG-signed with key `F31236BA85096E3AE22A8C660DCE698927DAF8EC`. Upstream ships only an ad hoc macOS signature and no Authenticode signature. | NVIDIA | None, as upstream ships it |
+| Helm provider 3.3.0, `hashicorp/helm` | `providers/registry.opentofu.org/hashicorp/helm/` | HashiCorp | `SHA256SUMS` is GPG-signed with key `C874011F0AB405110D02105534365D9472D7468F`. | HashiCorp's Developer ID, team `D38WU7D763`, notarized | HashiCorp's timestamped Authenticode signature |
 
 The build checks each upstream archive against its SHA-256 pin in [`versions.json`](../../versions.json); the Docker and Helm provider pins were checked against their GPG-signed `SHA256SUMS` when they were set.
 The upstream signature details were read from the release files for these versions.
-The Windows signing job signs every `.exe`, the third-party programs included, and the macOS check expects NVIDIA's signature on every program except the Helm provider.
-Whether NVIDIA should sign third-party programs is still open: a separate investigation checks whether NemoClaw needs them signed to run on macOS and Windows.
+
+The last two columns are the [signing decision](https://github.com/NVIDIA/NemoClaw/issues/14621): NVIDIA signs the programs it builds on both platforms, and the Helm provider keeps HashiCorp's signatures.
+On macOS, extracting a browser download quarantines every program, and Gatekeeper checks each quarantined program NemoClaw starts, so ad hoc signed programs stall; NVIDIA therefore signs OpenTofu and the Docker provider there too.
+Signing them needs Product Security's approval, after their upstream provenance is checked and they are scanned.
+On Windows, SmartScreen doesn't check programs that another program starts, so OpenTofu and the Docker provider stay unsigned; whether Smart App Control accepts them still needs a Windows host ([#14639](https://github.com/NVIDIA/NemoClaw/issues/14639)).
+
+[`signing-inventory.sh`](../../.github/scripts/signing-inventory.sh) holds this decision: both signing jobs and the evidence record select programs through it, and it fails on a program it doesn't classify, so a new program needs a decision before it can ship.
 
 ## Test a Staged Release
 

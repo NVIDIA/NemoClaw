@@ -9,9 +9,9 @@
 # ARCHIVES/release-evidence.json, and NOTES, the release notes' paragraph about
 # signing.
 #
-# SIGNED/<platform> holds a platform's executables when its signing job passed,
-# and SIGNED/<platform>.verification.txt the output of that job's signature
-# checks. A final release, whose tag has no prerelease suffix such as -rc1,
+# SIGNED/<platform> holds a platform's bundle when its signing job passed, with
+# the programs signing-inventory.sh assigns to NVIDIA signed, and
+# SIGNED/<platform>.verification.txt the output of that job's signature checks. A final release, whose tag has no prerelease suffix such as -rc1,
 # needs signed darwin_arm64 and windows_amd64 executables. The only way to stage
 # one without them is the RELEASE_UNSIGNED_EXCEPTION repository variable set to
 # `<tag>:<reason>` for exactly this tag. Linux has no OS code signing; a final
@@ -48,8 +48,8 @@ for platform in linux_arm64 linux_amd64 darwin_arm64 windows_amd64; do
   files='[]'
   verification=null
   if [ -d "$signed/$platform" ]; then
-    files=$(cd "$signed/$platform" &&
-      find . -type f \( -path './bin/*' -o -path './libexec/*' -o -path './providers/*' \) | sed 's|^\./||' | sort |
+    inventory=$(bash "$(dirname "$0")/signing-inventory.sh" "$signed/$platform" "$platform")
+    files=$(cd "$signed/$platform" && awk -F'\t' '$1 == "nvidia" { print $2 }' <<< "$inventory" |
       xargs -r sha256sum -- | jq -Rn '[inputs | capture("^(?<sha256>[0-9a-f]{64})  (?<path>.+)$") | {path, sha256}]')
     verification=$(jq -Rs . < "$signed/$platform.verification.txt")
   fi
