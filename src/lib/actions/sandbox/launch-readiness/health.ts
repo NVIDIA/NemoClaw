@@ -7,18 +7,18 @@ import {
   observeSandboxOnGateway,
   type SandboxRecreateObserver,
 } from "../../../onboard/sandbox-recreate-probe";
+import {
+  observeSwitchyardPreflight,
+  switchyardStateForEntry,
+} from "../../../onboard/switchyard/preflight";
 import type { OpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter";
 import { recordedRegisteredInferenceProviderAttachment } from "../../../inference/native-provider/registered";
 import { normalizeNativeLocalProviderAttachment } from "../../../inference/native-local/contract";
 import {
   SwitchyardProviderBindingError,
   assertSwitchyardInferenceAuthority,
-  validateSwitchyardBindingState,
 } from "../../../hermes-switchyard-routing";
-import {
-  readSwitchyardManagedStartupProfile,
-  verifySwitchyardProviderBindings,
-} from "../../../onboard/switchyard/bindings";
+import { readSwitchyardManagedStartupProfile } from "../../../onboard/switchyard/bindings";
 
 import {
   verifyNativeLocalStatusAttachment,
@@ -28,7 +28,6 @@ import {
 } from "../inference-route-health";
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
-import { createCliOpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
 import {
   OPENSHELL_PROBE_TIMEOUT_MS,
@@ -86,6 +85,7 @@ export type LaunchReadinessObservationStage =
 
 export interface LaunchReadinessHealthDeps {
   switchyardProviderAdapter?: OpenShellProviderAdapter;
+  switchyardPreflight?: typeof observeSwitchyardPreflight;
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
   capture?: LaunchReadinessBoundCapture;
@@ -132,10 +132,6 @@ export function createBoundLaunchReadinessDeps(
   return createBoundReadinessObservations({
     capture,
     commandExecutor,
-    providerAdapter: createCliOpenShellProviderAdapter({
-      run: (args, options) => capture(args, options),
-      defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    }),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
       isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, { commandExecutor }),
@@ -265,6 +261,14 @@ export function hasRecordedNativeNvidiaAttachment(entry: SandboxEntry): boolean 
   );
 }
 
+function launchSwitchyardState(entry: SandboxEntry) {
+  try {
+    return switchyardStateForEntry(entry);
+  } catch {
+    throw new LaunchReadinessObservationError("config");
+  }
+}
+
 export async function requireNativeInferenceHealth(input: {
   sandboxName: string;
   gatewayName: string;
@@ -272,6 +276,7 @@ export async function requireNativeInferenceHealth(input: {
   entry: SandboxEntry;
   deps: LaunchReadinessHealthDeps;
   allowTransientNvidiaInvocation?: boolean;
+  switchyardBaseline?: string;
 }): Promise<boolean> {
   let profileSwitchyard = null;
   if (
@@ -317,36 +322,15 @@ export async function requireNativeInferenceHealth(input: {
     if (!result.ok) throw new LaunchReadinessObservationError("health", "inference request");
     return true;
   }
-  if (input.entry.hermesSwitchyard || profileSwitchyard) {
-    let state: ReturnType<typeof validateSwitchyardBindingState>;
-    try {
-      state = validateSwitchyardBindingState(input.entry.hermesSwitchyard);
-    } catch (error) {
-      if (error instanceof SwitchyardProviderBindingError)
-        throw new LaunchReadinessObservationError("config");
-      throw error;
+  if (launchSwitchyardState(input.entry)) {
+    if (input.entry.gatewayName !== input.gatewayName) throw new LaunchReadinessEvidenceError();
+    const observe = input.deps.switchyardPreflight ?? observeSwitchyardPreflight;
+    const deps = { providerAdapter: input.deps.switchyardProviderAdapter };
+    const before =
+      input.switchyardBaseline ?? (await observe(input.entry, input.sandboxName, deps));
+    if ((await observe(input.entry, input.sandboxName, deps)) !== before) {
+      throw new LaunchReadinessObservationError("identity");
     }
-    if (
-      (input.agentName ?? input.entry.agent) !== "hermes" ||
-      input.entry.gatewayName !== input.gatewayName ||
-      input.entry.provider !== state.routing.capable.provider ||
-      input.entry.model !== state.routing.capable.model ||
-      !profileSwitchyard ||
-      JSON.stringify(profileSwitchyard) !== JSON.stringify(state)
-    )
-      throw new LaunchReadinessEvidenceError();
-    await verifySwitchyardProviderBindings({
-      routing: state.routing,
-      expected: state.bindings,
-      sandboxName: input.sandboxName,
-      target: { kind: "named", gatewayName: input.gatewayName },
-      adapter:
-        input.deps.switchyardProviderAdapter ??
-        createCliOpenShellProviderAdapter({ defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS }),
-      providerNames: Object.fromEntries(
-        state.bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
-      ),
-    });
     return true;
   }
   if (input.entry.nativeLocalProviderAttachment !== undefined) {
@@ -432,6 +416,12 @@ export async function requireLaunchSemanticHealth(
   inferenceConfigured: boolean,
   deps: LaunchReadinessHealthDeps,
 ): Promise<void> {
+  const switchyardBaseline = launchSwitchyardState(entry)
+    ? await (deps.switchyardPreflight ?? observeSwitchyardPreflight)(entry, sandboxName, {
+        providerAdapter: deps.switchyardProviderAdapter,
+      })
+    : undefined;
+
   if (agentName === "langchain-deepagents-code" && !inferenceConfigured) {
     recordLaunchReadinessObservationFailure(deps, "inference-route");
     throw new LaunchReadinessEvidenceError();
@@ -520,6 +510,7 @@ export async function requireLaunchSemanticHealth(
           agentName,
           entry,
           deps,
+          switchyardBaseline,
         });
         if (native) return;
         fallbackToGeneric = true;

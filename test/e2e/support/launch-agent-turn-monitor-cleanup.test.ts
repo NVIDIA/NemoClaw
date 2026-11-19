@@ -41,110 +41,40 @@ async function monitorFixture() {
   };
 }
 
-async function runWait(
-  fixture: Awaited<ReturnType<typeof monitorFixture>>,
-  onProbe?: () => void,
-  expireWait = false,
-) {
-  const waitFunction = LAUNCH_TURN_SCRIPT.match(
-    /wait_for_pty_monitor_exit\(\) \{[\s\S]*?\n\}/,
-  )?.[0];
-  assert.ok(waitFunction, "Launch monitor wait function is missing");
-  // The host path is absent while the sandbox path holds a real Unix socket.
+async function runCleanup(fixture: Awaited<ReturnType<typeof monitorFixture>>) {
   const child = spawn(
-    "bash",
+    process.execPath,
     [
-      "-c",
-      `
-session_evidence() {
-  printf 'sandbox-probe\n'
-  "$NODE_EXECUTABLE" -e "$EVIDENCE_SCRIPT" "$1" /sandbox/.openclaw/agents/main/sessions \
-    "$BASELINE_PATH" '' "$SANDBOX_MONITOR_ROOT" "$RUN_ID"
-}
-${waitFunction}
-pty_monitor_root="$SANDBOX_MONITOR_ROOT/absent-host-path"
-wait_for_pty_monitor_exit
-`,
+      "-e",
+      OPENCLAW_SESSION_EVIDENCE_SCRIPT,
+      "cleanup-pty",
+      "/sandbox/.openclaw/agents/main/sessions",
+      `/tmp/nemoclaw-launch-session-${fixture.runId}.json`,
+      "",
+      fixture.root,
+      fixture.runId,
     ],
-    {
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        NODE_EXECUTABLE: process.execPath,
-        EVIDENCE_SCRIPT: expireWait
-          ? `let clockReads = 0;
-Object.defineProperty(globalThis, "performance", {
-  value: { now: () => clockReads++ === 0 ? 0 : 5_000 },
-});
-${OPENCLAW_SESSION_EVIDENCE_SCRIPT}`
-          : OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-        BASELINE_PATH: `/tmp/nemoclaw-launch-session-${fixture.runId}.json`,
-        SANDBOX_MONITOR_ROOT: fixture.root,
-        RUN_ID: fixture.runId,
-      },
-    },
+    { detached: true, stdio: ["ignore", "pipe", "pipe"] },
   );
   let stderr = "";
-  let sawProbe = false;
-  child.stdout.once("data", () => onProbe?.());
   const result = await superviseChild(child, {
     timeoutMs: 8_000,
     killGraceMs: 1_000,
-    onStdout: () => {
-      sawProbe = true;
-    },
     onStderr: (chunk) => {
       stderr += chunk;
     },
   });
-  return { ...result, stderr, sawProbe };
+  return { ...result, stderr };
 }
-
-it("waits for the sandbox monitor socket when the host path is absent", async () => {
-  const fixture = await monitorFixture();
-  let closeTimer: ReturnType<typeof setTimeout> | undefined;
-  let closePromise: Promise<void> | undefined;
-  try {
-    const result = await runWait(fixture, () => {
-      closeTimer = setTimeout(() => {
-        closePromise = fixture.close();
-      }, 150);
-    });
-    await closePromise;
-    expect(result.timedOut).toBe(false);
-    expect(result.exitCode).toBe(0);
-    expect(result.sawProbe).toBe(true);
-    expect(existsSync(fixture.socket)).toBe(false);
-    expect(existsSync(fixture.root)).toBe(true);
-  } finally {
-    clearTimeout(closeTimer);
-    await closePromise;
-    await fixture.cleanup();
-  }
-});
-
-it("rejects a persistent sandbox monitor socket without removing it", async () => {
-  const fixture = await monitorFixture();
-  try {
-    const result = await runWait(fixture, undefined, true);
-    expect(result.timedOut).toBe(false);
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain('"reason":"pty_monitor_socket_still_present"');
-    expect(existsSync(fixture.socket)).toBe(true);
-  } finally {
-    await fixture.cleanup();
-  }
-});
 
 it("accepts an already absent sandbox monitor socket", async () => {
   const fixture = await monitorFixture();
   try {
     await fixture.close();
-    const result = await runWait(fixture);
+    const result = await runCleanup(fixture);
     expect(result.timedOut).toBe(false);
     expect(result.exitCode).toBe(0);
-    expect(result.sawProbe).toBe(true);
+    expect(existsSync(fixture.root)).toBe(false);
   } finally {
     await fixture.cleanup();
   }
@@ -155,17 +85,17 @@ it("rejects a non-socket entry at the sandbox monitor path", async () => {
   try {
     await fixture.close();
     writeFileSync(fixture.socket, "unexpected", { mode: 0o600 });
-    const result = await runWait(fixture);
+    const result = await runCleanup(fixture);
     expect(result.timedOut).toBe(false);
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain('"reason":"pty_socket_invalid"');
+    expect(result.stderr).toContain('"reason":"pty_monitor_cleanup_failed"');
     expect(existsSync(fixture.socket)).toBe(true);
   } finally {
     await fixture.cleanup();
   }
 });
 
-it("preserves a failed monitor wait when later cleanup succeeds", async () => {
+it("preserves a failed monitor cleanup when host cleanup succeeds", async () => {
   const fixture = await monitorFixture();
   try {
     await fixture.close();
@@ -185,8 +115,7 @@ last_evidence_status=3
 provider_unavailable_candidate=1
 NEMOCLAW_LAUNCH_RUN_ID=fixture
 remove_session_baseline() { return 0; }
-wait_for_pty_monitor_exit() { return 2; }
-remove_pty_monitor() { return 0; }
+remove_pty_monitor() { return 2; }
 ${cleanup}
 trap cleanup EXIT
 exit 1
@@ -209,7 +138,7 @@ exit 1
     });
     expect(result.timedOut).toBe(false);
     expect(result.exitCode).toBe(1);
-    expect(stderr).toContain("launch PTY monitor wait failed");
+    expect(stderr).toContain("launch PTY monitor cleanup failed");
     expect(stderr).toContain("launch-cleanup=completed status=1");
     expect(stderr).not.toContain("launch-failure=provider-unavailable");
     expect(existsSync(sessionDir)).toBe(false);

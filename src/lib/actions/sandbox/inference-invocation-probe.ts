@@ -5,6 +5,7 @@ import {
   normalizeRegisteredInferenceProviderAttachment,
   type RegisteredInferenceProviderAttachment,
 } from "../../inference/config";
+import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 
 import { managedDcodeRequiresNonemptyContent } from "../../inference/managed-dcode/identity";
 import {
@@ -458,4 +459,21 @@ export async function probeSandboxInferenceInvocation(
     ...(timedOut ? { timedOut: true as const } : {}),
     endpoint: resolveSandboxInferenceInvocationEndpoint(input),
   };
+}
+
+/**
+ * True only when the inference request itself was declined with a transient
+ * gateway or availability status, so sending it again is worthwhile.
+ *
+ * Credential, model, malformed-response, and unavailable-probe failures stay
+ * terminal. A curl-confirmed timeout is transient even without an HTTP status.
+ */
+export function isTransientInferenceInvocationFailure(
+  invocation: SandboxInferenceInvocationResult | null,
+): boolean {
+  if (invocation === null || invocation.ok) return false;
+  return (
+    (invocation.timedOut === true && invocation.httpStatus === null) ||
+    (invocation.httpStatus !== null && RETRIABLE_HTTP_PROBE_STATUSES.has(invocation.httpStatus))
+  );
 }

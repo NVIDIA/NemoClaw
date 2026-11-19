@@ -268,11 +268,20 @@ export async function createExtraGatewayProvider(
     env: NodeJS.ProcessEnv;
     profilePath?: string;
     credentialEnv?: string;
+    purpose?: "switchyard-peer";
   },
 ): Promise<void> {
   assertProviderName(providerName);
-  const credentialEnv = options.credentialEnv ?? EXTRA_PROVIDER_CREDENTIAL_ENV;
-  const profilePath = options.profilePath ?? EXTRA_PROVIDER_PROFILE;
+  const credentialEnv =
+    options.credentialEnv ??
+    (options.purpose === "switchyard-peer"
+      ? "NEMOCLAW_E2E_SWITCHYARD_PEER_TOKEN"
+      : EXTRA_PROVIDER_CREDENTIAL_ENV);
+  const profilePath =
+    options.profilePath ??
+    (options.purpose === "switchyard-peer"
+      ? path.join(import.meta.dirname, "provider-profiles", "nemoclaw-e2e-switchyard-peer-v1.yaml")
+      : EXTRA_PROVIDER_PROFILE);
   if (!CREDENTIAL_ENV.test(credentialEnv)) throw new Error("Unsafe fixture credential environment");
   const credential = options.env[credentialEnv];
   if (!credential) {

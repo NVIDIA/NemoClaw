@@ -4,6 +4,7 @@
 """Qualify the selected judge through the packaged router before Hermes admits traffic."""
 
 import asyncio
+import importlib.util
 import os
 import signal
 import stat
@@ -160,10 +161,19 @@ def qualify(models, *, relay, runtime_factory, timeout_seconds=40):
                         os.environ[PLUGINS_ENV] = previous
 
 
+def preflight():
+    spec = importlib.util.spec_from_file_location(
+        "switchyard_preflight", "/opt/nemoclaw-hermes-config/switchyard-preflight.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.startup()
+
+
 def main():
     """Bound this process independently of asynchronous cancellation and native shutdown."""
     signal.alarm(45)
     try:
+        preflight()
         plugins = read_configuration(PLUGINS_PATH)
         dynamic = plugins["plugins"]["dynamic"]
         if len(dynamic) != 1 or dynamic[0]["config"]["switchyard_config_path"] != DEPLOYMENT_PATH:

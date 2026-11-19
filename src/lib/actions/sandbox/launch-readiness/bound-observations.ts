@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-import type { OpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter";
+import { observeSwitchyardPreflight } from "../../../onboard/switchyard/preflight";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
 import { executeSandboxExecCommand } from "../../../adapters/sandbox/command-transport";
 import { probeSandboxInferenceInvocation } from "../inference-invocation-probe";
@@ -22,15 +22,20 @@ import {
 
 /** Retain the caller's command owner for registered-provider readiness. */
 function createBoundRegisteredReadinessDeps(
-  adapter: OpenShellProviderAdapter,
+  capture: LaunchReadinessBoundCapture,
   commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+  timeoutMs: number,
 ): Pick<LaunchReadinessHealthDeps, "verifyRegisteredAttachment" | "inferenceInvocationProbe"> {
   const boundExecutor: OpenShellSandboxBufferedCommandExecutor = {
     runBuffered: ({ environment: _ambientEnvironment, ...request }) =>
       commandExecutor.runBuffered(request),
   };
   return {
-    verifyRegisteredAttachment: (input) => verifyRegisteredStatusAttachment(input, adapter),
+    verifyRegisteredAttachment: (input) =>
+      verifyRegisteredStatusAttachment(input, undefined, {
+        run: capture,
+        defaultTimeoutMs: timeoutMs,
+      }),
     inferenceInvocationProbe: (input) =>
       runSandboxInferenceInvocationProbe(
         input,
@@ -65,7 +70,6 @@ export function createLaunchReadinessInferenceRouteObserver(
 type BoundObservationOwners = {
   capture: LaunchReadinessBoundCapture;
   commandExecutor: OpenShellSandboxBufferedCommandExecutor;
-  providerAdapter: OpenShellProviderAdapter;
   observeSandbox: SandboxRecreateObserver;
   gatewayHealth: NonNullable<LaunchReadinessHealthDeps["gatewayHealth"]>;
   forwardsHealthy: NonNullable<LaunchReadinessHealthDeps["forwardsHealthy"]>;
@@ -76,9 +80,9 @@ type BoundObservationOwners = {
 export function createBoundReadinessObservations(
   owners: BoundObservationOwners,
 ): LaunchReadinessHealthDeps & { observeSandbox: SandboxRecreateObserver } {
-  const { capture, commandExecutor, providerAdapter } = owners;
+  const { capture, commandExecutor } = owners;
   return {
-    ...createBoundRegisteredReadinessDeps(providerAdapter, commandExecutor),
+    ...createBoundRegisteredReadinessDeps(capture, commandExecutor, owners.timeoutMs),
     capture: (args, options) =>
       capture(args, {
         ...options,
@@ -86,7 +90,10 @@ export function createBoundReadinessObservations(
         timeout: options?.timeout ?? owners.timeoutMs,
       }),
     inferenceRouteObserver: createLaunchReadinessInferenceRouteObserver(capture),
-    switchyardProviderAdapter: providerAdapter,
+    switchyardPreflight: (entry, sandboxName) =>
+      observeSwitchyardPreflight(entry, sandboxName, {
+        providerCommand: capture,
+      }),
     observeSandbox: owners.observeSandbox,
     gatewayHealth: owners.gatewayHealth,
     forwardsHealthy: owners.forwardsHealthy,

@@ -252,6 +252,25 @@ describe("verifyDeployment", () => {
     expect(infDiag?.hint).not.toContain("0.0.0.0");
   });
 
+  it("keeps Switchyard preflight recovery guidance separate from HTTP server errors (#13864)", async () => {
+    const result = await verifyDeployment(
+      "my-sandbox",
+      chain,
+      makeDeps({
+        probeInferenceInvocation: async () => ({
+          ok: false,
+          detail: "Preflight failed; no inference request was sent.",
+        }),
+      }),
+      { ...NO_RETRY, inferenceRouteContext: { switchyardEntry: { agent: "hermes" } } },
+    );
+    const diagnostic = result.diagnostics.find((item) => item.link === "inference");
+    expect(diagnostic?.hint).toContain("Switchyard");
+    expect(diagnostic?.detail).toContain("no inference request was sent");
+    expect(diagnostic?.hint).not.toContain("HTTP 5xx");
+    expect(diagnostic?.hint).not.toContain("host.openshell.internal");
+  });
+
   it("messaging failure is a warning, not a blocker", async () => {
     const deps = makeDeps({
       getMessagingChannels: () => ["slack", "discord"],

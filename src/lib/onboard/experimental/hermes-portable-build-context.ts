@@ -56,6 +56,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/host/managed-tool-gateway-matrix.json",
   "agents/hermes/image-build-probes.py",
   "agents/hermes/install-switchyard.py",
+  "agents/hermes/install-switchyard.py",
   // Dockerfile copies the policy into build-time and runtime locations.
   "agents/hermes/managed_policy.py",
   "agents/hermes/managed_policy.py",
@@ -82,6 +83,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/sharp-security-probes.mts",
   "agents/hermes/start.sh",
   "agents/hermes/startup-completion.py",
+  "agents/hermes/switchyard-preflight.py",
   "agents/hermes/validate-cli-adapter.py",
   "agents/hermes/validate-env-secret-boundary.py",
   "nemoclaw-blueprint/",
