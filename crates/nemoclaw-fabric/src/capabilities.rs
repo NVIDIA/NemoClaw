@@ -76,11 +76,11 @@ fn overall(checks: &[CapabilityCheck]) -> Support {
 }
 
 /// Whether an image can run a configuration's harness: it provides the
-/// selected adapter, that adapter declares the interfaces the configuration
-/// sets, and an explicit filesystem policy lets that adapter read its files. Whether the image's Fabric runtime is compatible is Fabric's to
-/// report when the agent starts. Whether the
-/// harness accepts the configuration is Fabric's to decide, inside the sandbox
-/// when the agent is configured.
+/// selected adapter, Fabric's own compatibility check accepts the configuration
+/// against that adapter's descriptor, and an explicit filesystem policy lets the
+/// adapter read its files. Whether the image's Fabric runtime is compatible is
+/// Fabric's to report when the agent starts, as is a workflow whose target the
+/// image's catalog doesn't describe.
 pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> CompatibilityReport {
     let adapter_id = request
         .configuration
