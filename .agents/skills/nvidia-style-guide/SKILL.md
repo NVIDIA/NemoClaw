@@ -1,6 +1,6 @@
 ---
 name: nvidia-style-guide
-description: NVIDIA's house style for voice and tone, capitalization, punctuation, numbers, dates, units, links, lists, tables, trademarks, and technical writing, including the NVIDIA Technical Blog's writing guidance. Use when writing or reviewing prose that WRITING.md covers.
+description: NVIDIA's house style for voice and tone, capitalization, punctuation, numbers, dates, units, links, lists, tables, trademarks, and technical writing, including the NVIDIA Technical Blog's writing guidance and the Technical Documentation Writing Guide's conventions, which take precedence in technical documentation. Use when writing or reviewing prose that WRITING.md covers.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -8,12 +8,15 @@ description: NVIDIA's house style for voice and tone, capitalization, punctuatio
 
 # NVIDIA Style Guidelines
 
-Adapted from the NVIDIA Style Guidelines SharePoint page, last modified 2026-09-16 and retrieved 2026-11-19, and the NVIDIA Technical Blog Writing and Style Guide, retrieved 2026-11-19; both are NVIDIA-internal.
+Adapted from the NVIDIA Style Guidelines SharePoint page, last modified 2026-09-16 and retrieved 2026-11-19, the NVIDIA Technical Blog Writing and Style Guide, retrieved 2026-11-19, and the Technical Documentation Writing Guide Confluence pages, retrieved 2026-11-19; all three are NVIDIA-internal.
 Changes from the style guidelines page: converted to Markdown, with hyperlinks taken from the rendered page; text in the page's three images (the Voice and Tone comparison, the PACE table, and the annotated headings diagram) transcribed and marked as such; monospace applied to code-like examples in the Formatting table and punctuation examples, following the page's own rules.
 Links to NVIDIA-internal resources on SharePoint, Google Docs, and Confluence are removed, and those resources are named in plain text.
+The Technical Documentation Writing Guide's Style Guide Cheat Sheet is included as [Technical documentation conventions](#technical-documentation-conventions), and the rest of that guide is in [technical-documentation.md](technical-documentation.md).
 Writing guidance from the Technical Blog guide is added to the matching sections and marked *(Technical Blog guide)*, with its examples labeled Correct and Incorrect; its publishing procedures (turnaround times, word counts, WordPress formatting, author accounts, featured images, categories, tags, and social media assets) are omitted.
 The wording is otherwise the sources'.
 [WRITING.md](../../../WRITING.md) adds the rules specific to this repository.
+
+In technical documentation, the [Technical documentation conventions](#technical-documentation-conventions) take precedence over the rest of this guide where they differ, such as on contractions, em dashes, heading case, and “see” compared to “refer to.”
 
 ## At-a-Glance
 
@@ -68,6 +71,7 @@ The words we choose and the tone we adopt give our audience an immediate impress
     - [Procedures](#procedures)
     - [Readability](#readability)
     - [Synonyms](#synonyms)
+    - [Technical documentation conventions](#technical-documentation-conventions)
     - [Tone and voice](#tone-and-voice)
     - [UI text](#ui-text)
   - [Trademarks](#trademarks)
@@ -109,7 +113,7 @@ Teams might have guidelines and best practices for their own authoring environme
 
 - **Corporate Blog:** Style Guide: NVIDIA Blog
 - **Technical Blog:** NVIDIA Technical Blog Writing and Style Guide (available to external authors); its writing guidance is included under [Technical Content](#technical-content)
-- **Software Documentation:** Technical Documentation Writing Guide
+- **Software Documentation:** Technical Documentation Writing Guide; its conventions are included as [Technical documentation conventions](#technical-documentation-conventions), and the rest of the guide is in [technical-documentation.md](technical-documentation.md)
 - **Hardware Documentation:** NVIDIA Style Guide for Technical Publication
 
 NVIDIA has access to the following tools for content quality checking, each of which uses the NVIDIA terminology list:
@@ -231,6 +235,8 @@ Capitalization varies with the particular style used on the content platform, ti
 
 Avoid using quotes (“example”), inverted commas (‘example’), ampersands (&), and exclamation marks (!).
 
+*(Technical Documentation Writing Guide)* In technical documentation, use title case consistently for headings. Refer to [Technical documentation conventions](#technical-documentation-conventions).
+
 #### CTA Button
 
 CTAs are written in title case (Learn More, Register Now, Read Blog, and so on) and "Labels" (Features, Benefits, Resources, Tips and Tricks, and so on) should be written in title case with no punctuation.
@@ -268,6 +274,8 @@ Use mixed or title case for copy in tables.
 ### Contractions
 
 Use contractions to increase the conversational tone.
+
+*(Technical Documentation Writing Guide)* In technical documentation, do not use contractions. Refer to [Technical documentation conventions](#technical-documentation-conventions).
 
 - ✅ **Correct:** It’s important to understand how it works in the context of generative AI.
 - ❌ **Incorrect:** It is important to understand how it works in the context of generative AI.
@@ -685,6 +693,8 @@ Use one em dash on each side of a phrase embedded in a sentence or to set off a 
 
 Avoid using an em dash in place of a bullet character in a list or to indicate an empty cell in a table.
 
+*(Technical Documentation Writing Guide)* In technical documentation, use commas or parentheses instead of em dashes. Refer to [Technical documentation conventions](#technical-documentation-conventions).
+
 ##### En dash (–)
 
 Use an en dash (–) to indicate a range of numbers, such as inclusive values, dates, or pages.
@@ -892,7 +902,7 @@ Technical content is usually more complex than marketing content. This section d
 Individual teams might have style guides specific to an authoring environment or role.
 
 - **Technical Blog:** NVIDIA Technical Blog Writing and Style Guide (available externally); its writing guidance is included in this section and marked *(Technical Blog guide)*
-- **Software Documentation:** Technical Documentation Writing Guide
+- **Software Documentation:** Technical Documentation Writing Guide; its conventions are included as [Technical documentation conventions](#technical-documentation-conventions), and the rest of the guide is in [technical-documentation.md](technical-documentation.md)
 
 The Technical Blog guide also recommends [Common Errors in Technical Writing](http://www.ece.ucdavis.edu/~jowens/commonerrors.html) and [Get It Write](https://getitwriteonline.com/blog/).
 
@@ -1036,6 +1046,101 @@ Use academic or formal conjunctive adverbs sparingly:
 #### Synonyms
 
 For clarity, use the same term throughout a piece of technical writing. Include synonyms only to connect industry-standard terms with NVIDIA-specific or more relevant terms.
+
+#### Technical documentation conventions
+
+*(Technical Documentation Writing Guide: Style Guide Cheat Sheet)* These content engineering style conventions differ slightly from the broader corporate guidance.
+In technical documentation, they take precedence over the rest of this guide.
+[technical-documentation.md](technical-documentation.md) has the rest of the Technical Documentation Writing Guide: the writing process, writing for a global audience, voice and tone, and grammar rules.
+
+The following table provides guidance on words and styles to avoid.
+
+| Topic | Avoid | Required | Notes |
+| --- | --- | --- | --- |
+| Accessibility wording | see | refer to | Prefer wording that works better for visual accessibility. |
+| Ampersands | & | and | Do not use ampersands in body text or titles. |
+| Bulleted lists | bold term: definition bullets | plain bullets | Reserve bold-plus-colon bullets for glossary-style content. |
+| Company name | Nvidia | NVIDIA | Use all caps for the company and products. |
+| Contractions | don’t | do not | Use full forms in technical docs. |
+| Dashes | em dashes | commas or parentheses | Em dashes can read as AI-generated or stylistically inconsistent. |
+| Headings | inconsistent casing | Title Case | Use title case consistently. |
+| Hyphenation | excessive hyphenation | command line, command-line output | Hyphenate only when grammar requires it. |
+| Latin abbreviations | e.g., i.e., via, etc. | for example, that is, using | Prefer plain English. |
+| Lists with commas | A, B and C | A, B, and C | Use the Oxford comma. |
+| Long descriptions | long bullets | tables | Use a table when definitions or descriptions are lengthy. |
+| Modals | may | can | Use “can” when you mean capability or expected behavior. |
+| Numbers | 4 nodes | spell out under 10 | Keep numerals for literal values or parameters. |
+| Politeness markers | please | direct instruction | Avoid “please” in technical documentation. |
+| Positional references | above, below | previous, prior, following, preceding | Use precise relative references instead of page-position language. |
+| Sequence wording | once | after | Prefer after when sequence is the intent. |
+| Step headings | Step 1 - Running Your Server | task title | Do not use titles to denote steps. |
+| Title punctuation | quotes, ampersands, colons, exclamation marks | plain titles | Do not punctuate titles this way. |
+
+##### Brand and naming
+
+Use NVIDIA, not Nvidia, when referring to the company or products.
+
+##### Grammar and usage
+
+- Avoid Latin terms such as e.g., etc., i.e., and via.
+  - Use “for example,” not “e.g.”
+  - Use “and so on,” not “etc.”
+  - Use “that is,” not “i.e.”
+  - Use “using,” “through,” or “by,” not “via.”
+- Avoid excessive hyphenation.
+- Use **after** instead of **once** when sequence is the intent.
+- Use **which** and **that** correctly. Refer to [Relative Pronouns](technical-documentation.md#relative-pronouns).
+
+##### Lists and tables
+
+- Do not use bold text and colons in bulleted lists unless you are creating a glossary or defining terms.
+- If descriptions or definitions are lengthy, use a table instead of dense bullets.
+- If a series contains more than three items, or the items are long, consider a bulleted list for readability.
+
+If a list starts turning into mini paragraphs, convert it into a table or split it into a short intro plus bullets.
+
+##### Numbers and punctuation
+
+- Spell out numbers under 10 unless you are referring to a specific value or parameter.
+- Place punctuation correctly with quotations.
+- Use the Oxford comma in a list of three or more items.
+- Add a comma after an introductory phrase.
+- If a sentence is long or complex, rewrite it as two sentences.
+
+Examples:
+
+- ✅ **Correct:** This uses four nodes.
+- ❌ **Incorrect:** This uses 4 nodes.
+- ✅ **Correct:** Google includes Mail, Calendar, People, and Tasks.
+- ✅ **Correct:** With WhatsApp, you can call any phone.
+
+##### Titles and headings
+
+- Use title case consistently throughout the document.
+- Do not use quotes, inverted commas, ampersands, colons, or exclamation marks in titles.
+- Do not use titles to denote steps.
+
+Examples:
+
+- ✅ **Correct:** Getting Started With Cluster Setup
+- ❌ **Incorrect:** Tutorial: Generic Get Started Guide
+- ❌ **Incorrect:** Step 1 - Running Your Server
+
+##### Word choice and tone
+
+- Do not use contractions.
+- Do not use ampersands.
+- Avoid marketing speak and jargon.
+- Avoid “please” and “see.”
+- Use “refer to” instead of “see.”
+- Use “can” instead of “may” whenever possible.
+
+Examples:
+
+- ❌ **Incorrect:** See the following section.
+- ✅ **Correct:** Refer to the following section.
+- ❌ **Incorrect:** The installation may take up to 20 minutes.
+- ✅ **Correct:** The installation can take up to 20 minutes.
 
 #### Tone and voice
 
