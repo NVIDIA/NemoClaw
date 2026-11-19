@@ -18,12 +18,30 @@ fn inference_removal_retains_cache_and_requires_authenticated_storage() {
             "qwen",
             "docker_volume.inference_storage_inference_qwen",
         ),
+        (
+            include_str!("../../../../nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml"),
+            "qwen",
+            "docker_volume.inference_storage_inference_qwen",
+        ),
+        (
+            include_str!("../../../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml"),
+            "local-nim",
+            "docker_volume.inference_storage_inference_local-nim",
+        ),
     ] {
         for authenticated in [false, true] {
             let mut document = Document::parse(fixture.as_bytes()).unwrap();
             let service = document.spec.services.get_mut(name).unwrap();
             match service {
                 ServiceDefinition::Vllm(service) => {
+                    service.authentication =
+                        authenticated.then_some(super::vllm::ServiceAuthentication::Bearer)
+                }
+                ServiceDefinition::LlamaCpp(service) => {
+                    service.authentication =
+                        authenticated.then_some(super::vllm::ServiceAuthentication::Bearer)
+                }
+                ServiceDefinition::Nim(service) => {
                     service.authentication =
                         authenticated.then_some(super::vllm::ServiceAuthentication::Bearer)
                 }

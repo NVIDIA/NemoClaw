@@ -36,6 +36,42 @@ fn identity(repository: &str, revision: &str) -> Result<(), Error> {
     .validate()
 }
 impl Client {
+    /// Download one pinned file through the snapshot transport. The caller
+    /// bounds and verifies the streamed bytes before committing them.
+    pub async fn download(
+        &self,
+        repository: &str,
+        revision: &str,
+        file: &str,
+    ) -> Result<reqwest::Response, Error> {
+        Manifest {
+            repository: repository.into(),
+            revision: revision.into(),
+            files: vec![File {
+                name: file.into(),
+                size: 1,
+                sha256: "0".repeat(64),
+            }],
+        }
+        .validate()?;
+        let mut url =
+            reqwest::Url::parse(&self.base_url).map_err(|_| failure("invalid model origin"))?;
+        url.path_segments_mut()
+            .map_err(|_| failure("invalid model origin"))?
+            .extend(repository.split('/'))
+            .extend(["resolve", revision])
+            .extend(file.split('/'));
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .map_err(|_| failure("model download failed"))?;
+        if response.status() != reqwest::StatusCode::OK {
+            return Err(failure("model download rejected"));
+        }
+        Ok(response)
+    }
     pub async fn bounded(&self, url: reqwest::Url, limit: usize) -> Result<Vec<u8>, Error> {
         let mut response = self
             .http
