@@ -28,3 +28,22 @@ workflows run `test/package-contract/onboard/hermes-policy-cleanup.test.ts` agai
 Hermes image. Its disposable, network-disabled container lacks DAC override and proves root deletion
 denial and successful policy promotion followed by owner deletion for `0700` and `3770` parents.
 The existing Hermes inference-switch E2E owns full rebuild and credential-preservation evidence.
+
+## Switchyard preflight
+
+Managed routing retains an expected configuration fingerprint in the startup environment.
+The three protected routing files must match it before each gateway launch, including recovery.
+Publication validates the proposed deployment with the installed Hermes/Relay/Switchyard loader
+before replacing files. An exclusive publication lock conflicts with the startup supervisor's
+shared lock. Interrupted publication fails closed and is not repaired automatically.
+
+`switchyard-preflight.py` checks the pinned package, protected files, scoped credential references,
+and the gateway PID/start identity. Native initialization and shutdown validate the complete
+deployment without a model request. The existing judge qualifier separately sends its bounded
+qualification request. These checks establish expected startup inputs, not gateway activation.
+
+Host onboarding, connect readiness, and status combine this observation with fresh provider and
+effective-policy reads. They compare observations before accepting verification. Status and
+onboarding identify the direct capable-provider request separately from routing preflight; that
+request does not establish adaptive routing. No successful result is retained across a restart.
+Missing, changed, or unavailable evidence blocks verification without changing provider state.
