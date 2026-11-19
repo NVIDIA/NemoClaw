@@ -215,11 +215,14 @@ impl JourneyWizard {
             .expect("submit requires an active question");
         let previous = self.state.clone();
         let answered = self.state.answer(&self.capabilities, question.id(), answer);
-        if answered.is_ok() {
-            self.history.push(previous);
+        if answered.is_err() {
+            // A rejected answer leaves the state as it was; choosing the
+            // image here would replace the question the user is answering.
+            self.invalidate();
         }
-        self.changed();
         answered?;
+        self.history.push(previous);
+        self.changed();
         self.selected = 0;
         self.selection_changed = false;
         self.custom_answer = false;

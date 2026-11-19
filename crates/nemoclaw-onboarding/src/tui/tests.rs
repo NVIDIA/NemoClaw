@@ -1683,6 +1683,23 @@ fn going_back_from_the_question_after_a_chosen_image_asks_for_the_image() {
     );
 }
 
+/// A rejected entry at the reopened image question keeps the question open,
+/// rather than bringing back the image the user went back to replace.
+#[test]
+fn a_rejected_image_at_the_reopened_question_keeps_it_open() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[HERMES_IMAGE]));
+    wizard.back();
+    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+    assert!(
+        wizard
+            .submit(Some(serde_json::json!("hermes:latest")))
+            .is_err()
+    );
+    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+}
+
 #[test]
 fn an_image_the_engine_could_not_list_is_still_asked() {
     let mut wizard = at_the_image_question("nvidia.fabric.hermes");

@@ -175,7 +175,7 @@ It prints a preview with explicit frontiers and limits, rather than storing a se
 - String selectors remain the public guidance language even though resolved answer operations are typed internally.
 - Question dependencies are code policy; there is no general declarative dependency graph.
 - Native model questions depend on complete SDK projection, and target prerequisites currently cover engine and image compatibility.
-- Target observations assess compatibility and supply suggestions, such as the runtime, engine, models, and local agent images. They change an answer only when exactly one local image installs the harness, which `JourneyState::answer_single_agent_images` records as the image answer.
+- Target observations assess compatibility and supply suggestions, such as the runtime, models, and local agent images. They also shape two answers: choosing a runtime writes the engine that answered for it, and `JourneyState::answer_single_agent_images` records the image when exactly one local image installs the harness.
 - Journey state is an in-memory run; the public API has no persisted session or decision history format.
 
 The [prototype design](onboarding-journeys.md#prototype-decisions-and-limits) owns these limits, their inspection criteria, and its open design questions.
