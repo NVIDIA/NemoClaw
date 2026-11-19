@@ -70,7 +70,7 @@ Replace the following illustrative values before planning:
 | `metadata.uid` | The fresh UUID; keep it for this deployment's lifetime. |
 | `metadata.name` | A label for this deployment. |
 | `spec.gateway.endpoint` | The existing gateway's client-reachable endpoint. |
-| `spec.gateway.engine` | The Docker or Podman engine containing the selected image; match `spec.gateway.runtime.provider`. |
+| `spec.gateway.target.docker.engine` | The Docker engine containing the selected image; name a Podman engine under `target.podman` instead. |
 | `spec.inferenceProviders.local.endpoint` | The inference base URL reachable by the gateway. |
 | `spec.inferenceProviders.local.provider` and `.api` | The endpoint's protocol and API; the example uses `openai` with `openai-responses`. |
 | `spec.sandboxes.assistant.image.ref` | The immutable image reference from the build. |

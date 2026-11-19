@@ -107,7 +107,7 @@ cp "$EXAMPLE" "$RUN_DIR/deployment.yaml"
 ```
 
 1. `metadata.uid` → `$UID_`; `metadata.name` → `verify-$AGENT-$TARGET`.
-2. `spec.gateway.endpoint` → `http://127.0.0.1:$GATEWAY_PORT`; `spec.gateway.networkCIDR` → `$SUBNET`.
+2. `spec.gateway.target.docker.port` → `$GATEWAY_PORT`; `spec.gateway.target.docker.networkCIDR` → `$SUBNET`.
 3. Every `image.ref` and service `image` with a zero digest → the built references (`$IMAGE` for the sandbox).
 4. The inference source's edits from the target file, such as replacing `services` and `inferenceProviders`.
 5. The agent file's edits, such as `serviceExposures` and `harness.settings`.
