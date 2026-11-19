@@ -648,6 +648,7 @@ async function enrichFromPolicy(
     ...(provider.exists === true && provider.id ? { providerId: provider.id } : {}),
     ...(denyTools.length > 0 && entry.source !== "legacy-registry" ? { denyTools } : {}),
     ...(policyConflict ? { policyConflict } : {}),
+    ...(endpointConflict ? { policyEndpointConflict: true } : {}),
   };
 }
 

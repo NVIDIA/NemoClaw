@@ -57,6 +57,7 @@ import {
   inspectLegacyBridgeState,
   inspectPolicyOnlyMcpEntry,
   inspectSourceBridgeState,
+  joinMcpEntriesToOpenShell,
 } from "./mcp-bridge-source";
 
 const sandbox = {
@@ -438,6 +439,47 @@ network_policies:
       (await inspectSourceBridgeState(sandbox, runtimeSelection)).bridges.github.policyConflict,
     ).toContain("differs from live policy endpoint");
   });
+
+  it.each([
+    ["matching endpoint", "api.githubcopilot.com", 443, "/mcp/", undefined],
+    ["different host", "other.example.com", 443, "/mcp/", true],
+    ["different path", "api.githubcopilot.com", 443, "/renamed", true],
+    ["different port", "api.githubcopilot.com", 8443, "/mcp/", true],
+  ])(
+    "retains endpoint identity with invalid denied tools and a %s",
+    async (_label, host, port, endpointPath, conflict) => {
+      mocks.capturePolicy.mockResolvedValue(`network_policies:
+  mcp_bridge_github:
+    endpoints:
+      - host: ${host}
+        port: ${port}
+        path: ${endpointPath}
+        protocol: mcp
+        allowed_ips: ["8.8.8.8"]
+        deny_rules:
+          - method: tools/call
+            tool: "invalid selector!"
+`);
+      const bridges = await joinMcpEntriesToOpenShell(
+        sandbox,
+        {
+          github: {
+            server: "github",
+            agent: "openclaw",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            policyName: "mcp-bridge-github",
+          },
+        },
+        runtimeSelection,
+      );
+      expect(bridges.github.policyConflict).toBe(
+        "Live policy contains invalid denied-tool selectors.",
+      );
+      expect(bridges.github.policyEndpointConflict).toBe(conflict);
+      expect(bridges.github.allowedIps).toEqual(["8.8.8.8"]);
+    },
+  );
 
   it("redacts credentials and strips terminal controls from source-read failures", async () => {
     mocks.executeSandboxExecCommand.mockReturnValue({

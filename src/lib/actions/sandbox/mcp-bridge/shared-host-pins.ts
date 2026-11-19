@@ -64,14 +64,14 @@ export function alignMcpTargetWithSharedHostPins(options: {
   const recovery = `Before removing registrations with \`nemoclaw ${sandboxName} mcp remove <server>\`, follow https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers#rotate-a-credential to record current denied-tool selectors and re-export the affected credential variables. Removal preserves providers. Perform explicit provider cleanup only after confirming no other sandbox uses them. Re-add with the recorded selectors.`;
   const groups = new Map<string, PinGroup>();
   for (const entry of Object.values(bridges)) {
-    if (
-      entry.server === server ||
-      entry.policyConflict ||
-      !entry.allowedIps?.length ||
-      endpointAuthority(entry.url) !== authority
-    ) {
-      continue;
+    if (entry.server === server) continue;
+    if (entry.policyEndpointConflict) {
+      return {
+        ok: false,
+        message: `MCP server '${server}' was not ${action}: the live policy endpoint for managed server '${entry.server}' differs from its registered URL. Resolve that conflict before reconciling address pins on ${authority}. ${recovery}`,
+      };
     }
+    if (!entry.allowedIps?.length || endpointAuthority(entry.url) !== authority) continue;
     const pins = sortedPins(entry.allowedIps);
     const key = pins.join(",");
     const group = groups.get(key) ?? { pins, servers: [], trustedPrivate: false };

@@ -106,9 +106,17 @@ describe("source-backed MCP denied-tool policy updates", () => {
     ["shared public pins", false, false],
     ["trusted-private sibling", true, false],
     ["conflicting sibling pins", false, true],
+    ["sibling with invalid denied tools", false, false, true],
+    ["sibling with endpoint path drift", false, false, false, true],
   ])(
     "refuses a public-pin refresh that would diverge from %s",
-    async (_label, trustedPrivate, conflicting) => {
+    async (
+      _label,
+      trustedPrivate,
+      conflicting,
+      policyConflict = false,
+      endpointConflict = false,
+    ) => {
       const sibling: McpSourceEntry = {
         ...entry,
         server: "peer",
@@ -117,6 +125,10 @@ describe("source-backed MCP denied-tool policy updates", () => {
         policyName: "mcp-bridge-peer",
         url: "https://mcp.example.test/peer",
         env: ["PEER_TOKEN"],
+        ...(policyConflict
+          ? { policyConflict: "Live policy contains invalid denied-tool selectors." }
+          : {}),
+        ...(endpointConflict ? { policyEndpointConflict: true } : {}),
         ...(trustedPrivate
           ? { trustedPrivateHost: "mcp.example.test", allowedIps: ["10.20.30.40"] }
           : {}),
@@ -300,9 +312,29 @@ describe("source-backed MCP denied-tool policy updates", () => {
     ["trusted-private sibling on clear", [], ["10.20.30.40"], true, false],
     ["invalid public sibling pins on replace", ["delete_*"], ["127.0.0.1"], false, false],
     ["invalid public sibling pins on clear", [], ["127.0.0.1"], false, false],
+    ["sibling with invalid denied tools on replace", ["delete_*"], ["9.9.9.9"], false, true, true],
+    ["sibling with invalid denied tools on clear", [], ["9.9.9.9"], false, true, true],
+    [
+      "sibling with endpoint path drift on replace",
+      ["delete_*"],
+      ["9.9.9.9"],
+      false,
+      false,
+      false,
+      true,
+    ],
+    ["sibling with endpoint path drift on clear", [], ["9.9.9.9"], false, false, false, true],
   ])(
     "rejects denied-tool changes before mutation with %s",
-    async (_label, denyTools, pins, privatePeer, conflict) => {
+    async (
+      _label,
+      denyTools,
+      pins,
+      privatePeer,
+      conflict,
+      policyConflict = false,
+      endpointConflict = false,
+    ) => {
       const peer = {
         ...entry,
         server: "peer",
@@ -312,6 +344,10 @@ describe("source-backed MCP denied-tool policy updates", () => {
         providerId: "22222222-3333-4444-8555-666666666666",
         policyName: "mcp-bridge-peer",
         allowedIps: pins,
+        ...(endpointConflict ? { policyEndpointConflict: true } : {}),
+        ...(policyConflict
+          ? { policyConflict: "Live policy contains invalid denied-tool selectors." }
+          : {}),
         ...(privatePeer ? { trustedPrivateHost: "mcp.example.test" } : {}),
       };
       const bridges = {
@@ -321,6 +357,7 @@ describe("source-backed MCP denied-tool policy updates", () => {
           ? {
               third: {
                 ...peer,
+                policyConflict: undefined,
                 server: "third",
                 url: "https://mcp.example.test/third",
                 env: ["THIRD_TOKEN"],

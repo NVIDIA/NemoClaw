@@ -98,16 +98,85 @@ describe("MCP shared-host address pins", () => {
     expect(aligned).toMatchObject({ ok: true, reusedFrom: ["one", "three"] });
   });
 
-  it("ignores the server being added and servers whose live policy points elsewhere", () => {
+  it("ignores the server being added and unpinned siblings without endpoint conflicts", () => {
     const aligned = align(
       {
         two: entry("two", { allowedIps: ["9.9.9.9"] }),
-        stale: entry("stale", { allowedIps: ["4.4.4.4"], policyConflict: "URL differs" }),
         unpinned: entry("unpinned", { allowedIps: undefined }),
       },
       ["1.1.1.1"],
     );
     expect(aligned).toEqual({ ok: true, target: { addresses: ["1.1.1.1"] }, reusedFrom: [] });
+  });
+
+  it.each(["add", "update", "refresh"] as const)(
+    "refuses %s when a sibling's live endpoint differs only by path",
+    (operation) => {
+      const refused = alignMcpTargetWithSharedHostPins({
+        operation,
+        sandboxName: "alpha",
+        server: "two",
+        url: "https://mcp.example.test/two",
+        target: { addresses: ["1.1.1.1"] },
+        bridges: {
+          one: entry("one", {
+            policyConflict: "Agent URL differs from live policy endpoint at /renamed.",
+            policyEndpointConflict: true,
+          }),
+        },
+      });
+      expect(refused.ok).toBe(false);
+      expect(refused.ok ? "" : refused.message).toMatch(
+        /live policy endpoint.*'one'.*Resolve.*conflict.*mcp\.example\.test:443/,
+      );
+    },
+  );
+
+  it.each([{ url: "https://other.example.test/one" }, { allowedIps: undefined }])(
+    "refuses unresolved live authority before filtering sibling $url / $allowedIps",
+    (overrides) => {
+      const refused = align({ one: entry("one", { ...overrides, policyEndpointConflict: true }) }, [
+        "1.1.1.1",
+      ]);
+      expect(refused.ok).toBe(false);
+    },
+  );
+
+  it.each(["add", "update", "refresh"] as const)(
+    "rejects %s when a sibling with invalid denied tools records conflicting pins",
+    (operation) => {
+      const refused = alignMcpTargetWithSharedHostPins({
+        operation,
+        sandboxName: "alpha",
+        server: "two",
+        url: "https://mcp.example.test/two",
+        target: { addresses: ["1.1.1.1"] },
+        bridges: {
+          one: entry("one"),
+          three: entry("three", {
+            allowedIps: ["9.9.9.9"],
+            policyConflict: "Live policy contains invalid denied-tool selectors.",
+          }),
+        },
+      });
+      expect(refused.ok).toBe(false);
+      expect(refused.ok ? "" : refused.message).toMatch(
+        /'one': 8\.8\.8\.8; 'three': 9\.9\.9\.9.*nemoclaw alpha mcp remove <server>/,
+      );
+    },
+  );
+
+  it("reuses public pins despite a sibling's invalid denied tools", () => {
+    expect(
+      align(
+        {
+          one: entry("one", {
+            policyConflict: "Live policy contains invalid denied-tool selectors.",
+          }),
+        },
+        ["1.1.1.1"],
+      ),
+    ).toEqual({ ok: true, target: { addresses: ["8.8.8.8"] }, reusedFrom: ["one"] });
   });
 
   it("names the servers and pins when existing servers already disagree", () => {
@@ -129,6 +198,7 @@ describe("MCP shared-host address pins", () => {
       url: "https://mcp.corp.example/one",
       allowedIps: ["10.20.30.40"],
       trustedPrivateHost: "mcp.corp.example",
+      policyConflict: "Live policy contains invalid denied-tool selectors.",
     });
     const privateTarget = align(
       { one: privateSibling },
@@ -196,7 +266,11 @@ describe("MCP shared-host address pins", () => {
 });
 
 describe("mcp add on a host that rotates DNS answers (#13800)", () => {
-  function runAdd(options: { siblings: Record<string, unknown>; dnsAnswer: string }) {
+  function runAdd(options: {
+    siblings: Record<string, unknown>;
+    dnsAnswer: string;
+    livePolicy?: Record<string, unknown>;
+  }) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-shared-host-"));
     const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
     const script = `
@@ -214,6 +288,8 @@ const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
+const livePolicy = ${JSON.stringify(options.livePolicy ?? null)};
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
 let appliedTarget;
 let mutated = false;
@@ -248,8 +324,17 @@ replace(provider, "waitForAttachedMcpCredential", () => "v1");
 replace(processRecovery, "restartSandboxGateway", () => ({
   ok: true, restarted: true, healthPassed: true, forwardRecovered: true,
 }));
-replace(sourceState, "inspectSourceBridgeState", () => ({
-  bridges: ${JSON.stringify(options.siblings)}, sources: { native: {}, legacy: {} },
+if (livePolicy) {
+  replace(policies, "captureRecordedSandboxBasePolicy", async () => JSON.stringify(livePolicy));
+  replace(providerInspection, "inspectMcpProvider", async () => ({
+    credentialKeys: null, exists: false, id: null, resourceVersion: null, type: null,
+  }));
+}
+replace(sourceState, "inspectSourceBridgeState", async (sandbox, runtimeSelection) => ({
+  bridges: livePolicy
+    ? await sourceState.joinMcpEntriesToOpenShell(sandbox, ${JSON.stringify(options.siblings)}, runtimeSelection)
+    : ${JSON.stringify(options.siblings)},
+  sources: { native: {}, legacy: {} },
 }));
 registry.registerSandbox({
   name: "alpha", agent: "openclaw", gatewayName: "nemoclaw-9090", gatewayPort: 9090,
@@ -306,17 +391,65 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     const outcome = runAdd({
       siblings: { one: sibling("one", ["8.8.8.8"]) },
       dnsAnswer: "8.8.4.4",
+      livePolicy: {
+        network_policies: {
+          mcp_bridge_one: {
+            endpoints: [
+              {
+                host: "mcp.example.test",
+                port: 443,
+                path: "/mcp/one",
+                protocol: "mcp",
+                allowed_ips: ["8.8.8.8"],
+              },
+            ],
+          },
+        },
+      },
     });
     expect(outcome.message).toBeNull();
     expect(outcome.appliedAddresses).toEqual(["8.8.8.8"]);
   });
 
-  it(
-    "fails before changing anything when the existing servers disagree",
+  it.each([
+    ["path", { host: "mcp.example.test", port: 443, path: "/renamed" }],
+    ["host", { host: "other.example.test", port: 443, path: "/mcp/one" }],
+    ["port", { host: "mcp.example.test", port: 8443, path: "/mcp/one" }],
+  ] as const)(
+    "refuses before mutation when the joined live sibling has %s drift",
     { timeout: 40_000 },
-    () => {
+    (_kind, endpoint) => {
       const outcome = runAdd({
-        siblings: { one: sibling("one", ["8.8.8.8"]), three: sibling("three", ["9.9.9.9"]) },
+        siblings: { one: sibling("one", ["8.8.8.8"]) },
+        dnsAnswer: "1.1.1.1",
+        livePolicy: {
+          network_policies: {
+            mcp_bridge_one: {
+              endpoints: [{ ...endpoint, protocol: "mcp", allowed_ips: ["8.8.8.8"] }],
+            },
+          },
+        },
+      });
+      expect(outcome, JSON.stringify(outcome)).toMatchObject({
+        mutated: false,
+        appliedAddresses: null,
+        message: expect.stringMatching(/not added.*live policy endpoint.*'one'.*Resolve.*conflict/),
+      });
+    },
+  );
+
+  it.each([undefined, "Live policy contains invalid denied-tool selectors."])(
+    "fails before changing anything when existing servers disagree (policy conflict: %s)",
+    { timeout: 40_000 },
+    (policyConflict) => {
+      const outcome = runAdd({
+        siblings: {
+          one: sibling("one", ["8.8.8.8"]),
+          three: {
+            ...sibling("three", ["9.9.9.9"]),
+            ...(policyConflict ? { policyConflict } : {}),
+          },
+        },
         dnsAnswer: "8.8.4.4",
       });
       expect(outcome.message).toMatch(/'one': 8\.8\.8\.8; 'three': 9\.9\.9\.9/);
