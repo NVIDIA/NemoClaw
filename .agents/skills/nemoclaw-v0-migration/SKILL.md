@@ -45,7 +45,7 @@ V0 prints `Config export failed (<categories>).` and then one line per finding:
 
 Each finding names a V0 capability the export cannot carry, such as messaging, host mounts, sandbox GPU, custom or locally built images, OpenClaw image input, or Hermes OAuth.
 Don't change the V0 deployment to make the export pass.
-For each finding, tell the user what it means and where v1 stands, using the [task map](../../../docs/get-started/migration.md#map-the-user-task) and [limits](../../../docs/resources/limits.md).
+For each finding, tell the user what it means and where v1 stands, using the [task map](../../../docs/get-started/migration.md#mapping-the-user-task) and [limits](../../../docs/resources/limits.md).
 Some diagnostics name a way to get an export, such as onboarding a new V0 sandbox without the capability; relay it, and leave the choice to the user, since it changes what they migrate.
 Otherwise, if the user still wants v1, start a new document with `nemoclaw onboard` or from an [example](../../../examples), and stop here: without an export, this skill has nothing to start from.
 
@@ -98,7 +98,7 @@ The v1 deployment must not share an identity, port, network, or state with V0 or
 v1 publishes no agent images yet ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)), so the user supplies one:
 
 - **An image they already have.** Ask for its digest reference. `plan` checks that its Fabric label provides the harness.
-- **A local build.** With the user's consent, build it from this checkout on a host of the image's platform, as [build agent images](../../../docs/build-deploy/build.md#build-agent-images) describes:
+- **A local build.** With the user's consent, build it from this checkout on a host of the image's platform, as [build agent images](../../../docs/build-deploy/build.md#building-agent-images) describes:
 
   ```sh
   cargo images build --platform linux/arm64 openclaw   # or hermes; linux/amd64 on AMD64
@@ -208,7 +208,7 @@ When the plan is complete, give the user:
 - the final YAML and a diff from the export;
 - each report line and what you did with it: written, already handled, or lost;
 - the state directory, gateway port, subnet, and image;
-- the next steps: `apply`, then the verification in [migration](../../../docs/get-started/migration.md#evaluate-v1-beside-the-existing-deployment).
+- the next steps: `apply`, then the verification in [migration](../../../docs/get-started/migration.md#evaluating-v1-beside-the-existing-deployment).
 
 Apply only when the user asks.
 

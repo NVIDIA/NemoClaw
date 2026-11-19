@@ -33,7 +33,7 @@ Hardware requirements come from the recipe or an explicit service hardware contr
 Named profiles check GPU family and compute capability separately from memory capacity; failed or incomplete observations stop the operation.
 Collectors preserve unsupported framebuffer counters without inferring a memory architecture.
 Hardware identity does not select device placement or parallelism.
-See [hardware profiles](../../docs/agents-inference/models.md#choose-a-hardware-profile) for memory accounting, supported configurations, and qualification limits.
+See [hardware profiles](../../docs/agents-inference/models.md#choosing-a-hardware-profile) for memory accounting, supported configurations, and qualification limits.
 
 A new backend or hardware profile normally adds a module and tests for its configuration.
 A new crate requires a dependency or deployment boundary and a consumer.
@@ -57,7 +57,7 @@ The loading deadline is separate from download and preparation limits.
 The [supervisor](../../crates/nemoclaw-runtime/src/execution/supervisor.rs) distinguishes pressure, observation failures, closed sample streams, and operator trips so recovery addresses the cause.
 A protective stop retains data and bindings and must not trigger an automatic restart loop that repeats the same memory demand.
 Explicit apply may restart or replace disposable compute; the runtime rechecks capacity before serving.
-See [runtime recovery](../../docs/agents-inference/models.md#diagnose-and-recover-a-stopped-runtime) for operator steps.
+See [runtime recovery](../../docs/agents-inference/models.md#diagnosing-and-recovering-a-stopped-runtime) for operator steps.
 
 ## Why Fabric Owns the Agent Process
 

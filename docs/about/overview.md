@@ -7,14 +7,16 @@ NemoClaw manages agent deployments from desired-state YAML. You can preview and 
 
 ## What You Can Do
 
-The inspected v1 implementation supports these workflows; use a bundle and agent image built from the same source revision as your configuration.
+The inspected v1 implementation supports these workflows.
+Use a bundle and agent image built from the same source revision as your configuration.
 
 - [Deploy an OpenClaw agent](../get-started/first-deployment.md) with an existing gateway and model endpoint, then send a native request to verify the reply.
-- [Manage multiple sandboxes](../build-deploy/usage.md#configure-sandboxes-and-inference), each with one agent, and connect them to hosted or managed inference providers.
+- [Manage multiple sandboxes](../build-deploy/usage.md#configuring-sandboxes-and-inference), each with one agent, and connect them to hosted or managed inference providers.
 - [Plan, apply, export, and destroy](../build-deploy/usage.md) resources, with retained state for recovery and separate cleanup for persistent data.
 - [Use the Rust SDK](../references/sdk.md) to integrate deployment operations, or [deploy to Kubernetes or OpenShift](../build-deploy/kubernetes.md) when the cluster prerequisites are available.
 
-The CLI does not invoke agents, manage channels, or take snapshots. An apply checks configuration and runtime readiness, not a model response. Refer to [native agent access](../agents-inference/agents.md#choose-native-access) and [current limits](../resources/limits.md) before choosing a workflow. v1 has no published release or support policy established by these sources; refer to [Release Notes](release-notes.md).
+The CLI doesn't invoke agents, manage channels, or take snapshots. An apply checks configuration and runtime readiness, not a model response. Refer to [native agent access](../agents-inference/agents.md#choosing-native-access) and [current limits](../resources/limits.md) before choosing a workflow. v1 has no published release or support policy established by these sources.
+Refer to [Release Notes](release-notes.md).
 
 ## Where to Start
 

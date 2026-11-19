@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Review Image Licenses
+# Reviewing Image Licenses
 
 Publishing a v1 image redistributes every component in it, so each image's licenses must allow that before a final release ([#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
 This page states when an image needs open-source review board (OSRB) sign-off, how to review a release's images, and the result for release candidate `v0.1.0-rc10`.
@@ -18,7 +18,7 @@ An image needs OSRB sign-off when it contains any of these:
 
 NVIDIA proprietary components, such as CUDA libraries, need no OSRB sign-off under this rule; their own license's redistribution terms still apply.
 
-## Review a Release
+## Reviewing a Release
 
 1. Download every platform's SPDX asset and `sboms.json` from the release draft, as [SBOM assets](releases.md#sbom-assets) describes.
 2. Classify each package by its declared license expression: take the most permissive choice of an `OR`, and the most restrictive term of an `AND`.
