@@ -98,7 +98,7 @@ export function printRetainedBackupLocation(sandboxName: string): void {
   }
   if (backupPath) {
     console.error(
-      `  Your files are preserved in the backup at: ${backupPath} (native-home.tar holds the agent home and workspace). Copy it somewhere safe before any manual cleanup.`,
+      `  Latest backup found at: ${backupPath} (native-home.tar should hold the agent home and workspace). NemoClaw has not checked that the archive is intact. Copy the directory somewhere safe and verify it before any manual cleanup.`,
     );
   } else {
     console.error(
