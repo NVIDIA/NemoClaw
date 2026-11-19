@@ -66,7 +66,7 @@ fn staging_lists_the_selected_catalog_instead_of_its_own_bake_output() {
     assert!(
         outputs
             .lines()
-            .any(|line| line == "names=candidate-only hermes ollama-proxy vllm ollama"),
+            .any(|line| line == "names=candidate-only hermes ollama-proxy vllm ollama llama-cpp"),
         "{outputs}"
     );
     assert!(!outputs.contains("controller-only"), "{outputs}");

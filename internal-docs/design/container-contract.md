@@ -13,6 +13,7 @@ Scope update: San Dang deferred protected-file delivery and accepted literal app
 This approach does not protect credentials from configuration, state, or Docker inspection.
 Accountable NemoClaw maintainer: San Dang.
 Validation: focused compiler and provider tests, existing inference lifecycle tests, and separate VoiceClaw qualification under [#12570](https://github.com/NVIDIA/NemoClaw/issues/12570).
+Protected credential delivery ([#12569](https://github.com/NVIDIA/NemoClaw/issues/12569)) and that VoiceClaw qualification were later closed as not planned.
 This decision does not authorize image publication, live deployment, or a claim of VoiceClaw support.
 
 ## Status
@@ -76,9 +77,9 @@ environment:
 
 The application reads `APP_API_KEY` directly from its process environment.
 NemoClaw does not resolve `${APP_API_KEY}` from the caller's environment or accept `env` reference objects in this map.
-There is no generic `secrets` field, credential publisher, or protected-file mount in this phase.
+There is no generic `secrets` field, credential publisher, or protected-file mount.
 
-Putting a credential here is a temporary plaintext approach, not secret storage.
+A credential put here is plaintext, not secret storage.
 The value enters YAML, compiled plans/state, exports, and Docker container configuration; the application and engine administrators can read it.
 Literal values are not automatically registered as protected credential references, so do not rely on diagnostic redaction.
 Replace placeholders only in private local configuration; never commit real values or share resulting plans, state, exports, or logs.

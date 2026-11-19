@@ -13,7 +13,7 @@ mod fixture;
 mod ssh;
 mod storage;
 
-pub use endpoint::validate_engine_endpoint;
+pub use endpoint::{engine_socket, validate_engine_endpoint};
 #[cfg(feature = "client")]
 pub use engine::{Direct, Engine, Engines, archive, is_missing, optional, remote};
 #[cfg(feature = "client")]

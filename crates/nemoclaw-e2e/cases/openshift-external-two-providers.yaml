@@ -3,8 +3,8 @@
 
 # Two agents on an external gateway that runs OpenShell's driver for
 # OpenShift, with two hosted providers: an OpenClaw agent whose default route
-# uses the Anthropic Messages API and whose second route uses NVIDIA, and a
-# Hermes agent on NVIDIA. Each sandbox names the runner's metadata bundle image.
+# uses a hosted OpenAI-compatible endpoint and whose second route uses NVIDIA,
+# and a Hermes agent on NVIDIA. Each sandbox names the runner's metadata bundle image.
 # The runner points the gateway and both inference endpoints at its fixtures,
 # without the gateway's credential and TLS.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
@@ -29,8 +29,7 @@ spec:
       endpoint: https://integrate.api.nvidia.com/v1
       credential: {env: NVIDIA_INFERENCE_API_KEY}
     hosted:
-      provider: anthropic
-      api: anthropic-messages
+      provider: openai
       endpoint: https://hosted.example/v1
       credential: {env: HOSTED_API_KEY}
   inferences:
@@ -49,7 +48,7 @@ spec:
     assistant:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: fixture/agent@sha256:69b972f683bb2afc04a6a5239a8339ec3cf3f91cc8a45059995d8abb535c04ea
+        ref: fixture/agent@sha256:87a7076351ffcdc14adaec868bafd5a8c7f07776936c29070ad01a4ca8b50dab
       network:
         tier: isolated
       harness:
@@ -60,7 +59,7 @@ spec:
     researcher:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: fixture/agent@sha256:69b972f683bb2afc04a6a5239a8339ec3cf3f91cc8a45059995d8abb535c04ea
+        ref: fixture/agent@sha256:87a7076351ffcdc14adaec868bafd5a8c7f07776936c29070ad01a4ca8b50dab
       network:
         tier: isolated
       harness:

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# An OpenShift gateway with an Anthropic Messages and an NVIDIA provider.
+# An OpenShift gateway with a hosted OpenAI-compatible provider and an NVIDIA provider.
 # The gateway uses no engine, so nothing is mocked.
 
 # Declare the fixtures before the deployment's first plan reads them.
@@ -45,21 +45,21 @@ run "verify" {
   assert {
     condition = alltrue([
       for binding in [
-        openshell_inference.inference_hosted-0b74148034a2425c901bb05b,
-        openshell_inference.inference_nvidia-014ad9187f57f9721df2d501,
-        openshell_inference.inference_nvidia-aa97a63553a1861cc17ff966,
+        openshell_inference.inference_hosted-f9f2138dd8539e7ea3847ea7,
+        openshell_inference.inference_nvidia-b7726902d0141805e7fc7f77,
+        openshell_inference.inference_nvidia-6c3cf467236c85f79c9a4c59,
       ] :
       module.observed.registrations[binding.registration].credentials == { (binding.sandbox_env) = "env:${binding.server.credential_env}" }
       && contains(values(module.observed.registrations[binding.registration].config), binding.server.endpoint)
-    ]) && openshell_inference.inference_hosted-0b74148034a2425c901bb05b.api == "anthropic-messages"
+    ]) && openshell_inference.inference_hosted-f9f2138dd8539e7ea3847ea7.api == "openai-completions"
     error_message = "A registration's API, base URL, or credential differs from its provider."
   }
 
-  # The OpenClaw sandbox names the Anthropic binding and one NVIDIA binding;
+  # The OpenClaw sandbox names the hosted binding and one NVIDIA binding;
   # the Hermes sandbox names only its own NVIDIA binding.
   assert {
     condition = (
-      contains(module.observed.agents.assistant.providers, openshell_inference.inference_hosted-0b74148034a2425c901bb05b.registration)
+      contains(module.observed.agents.assistant.providers, openshell_inference.inference_hosted-f9f2138dd8539e7ea3847ea7.registration)
       && length(module.observed.agents.assistant.providers) == 2
       && length(module.observed.agents.researcher.providers) == 1
       && length(setintersection(module.observed.agents.assistant.providers, module.observed.agents.researcher.providers)) == 0
@@ -67,12 +67,12 @@ run "verify" {
     error_message = "A sandbox names another agent's binding or misses its own."
   }
 
-  # OpenClaw starts with both routes, Anthropic by default; Hermes with one.
+  # OpenClaw starts with both routes, the hosted one by default; Hermes with one.
   assert {
     condition = (
       module.observed.agents.assistant.start.configuration == jsondecode(terraform_data.agent_assistant.input)
       && module.observed.agents.researcher.start.configuration == jsondecode(terraform_data.agent_researcher.input)
-      && module.observed.agents.assistant.start.configuration.models.smart.api_key_env == openshell_inference.inference_hosted-0b74148034a2425c901bb05b.sandbox_env
+      && module.observed.agents.assistant.start.configuration.models.smart.api_key_env == openshell_inference.inference_hosted-f9f2138dd8539e7ea3847ea7.sandbox_env
       && module.observed.agents.assistant.start.configuration.models.default == module.observed.agents.assistant.start.configuration.models.smart
       && module.observed.http.requests == []
     )

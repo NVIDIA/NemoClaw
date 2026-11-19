@@ -4,7 +4,8 @@
 //! OpenTofu, and the real Docker provider, against a fake Docker engine and
 //! the OpenShell fixture gateway. The `tofu test` scenarios mock the Docker
 //! provider, so they cannot show what it creates, replaces, or deletes, or
-//! the provider errors that a failed readiness check reports.
+//! the provider errors that a failed readiness check reports. They also
+//! check the error that names a stopped managed gateway container.
 //!
 //! The engine keeps what the Docker provider creates. Each application
 //! container's health is scripted by name: an HTTP status sequence, a
@@ -909,4 +910,52 @@ async fn apply_refuses_removal_and_destroy_deletes_owned_applications_keeping_ot
     s.apply().await.unwrap();
     assert_one_container_each(&s);
     s.assert_no_unexpected_requests();
+}
+
+/// A stopped managed gateway container stops plan, apply, and destroy before
+/// any change, with an error that names the container and how to start it.
+/// A gateway that is unreachable while its container runs keeps OpenTofu's
+/// error: only the container's observed state selects the new one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake Docker engine and OpenShell fixture"]
+async fn a_stopped_gateway_container_is_named_with_how_to_start_it() {
+    let s = Scenario::new().await;
+    s.apply().await.unwrap();
+    let (containers, mutations) = (s.containers(), s.mutations());
+    let name = format!("{}-gateway", s.prefix);
+    let engine = s.document["spec"]["gateway"]["engine"].as_str().unwrap();
+    let start = format!("`docker --host {engine} start {name}`");
+
+    // A gateway whose container runs fails a read with a transport error.
+    s.gateway.state.lock().unwrap().fail_read = Some(("sandbox", tonic::Code::Unavailable));
+    let error = failure(s.apply().await);
+    assert!(error.contains("observation transport failed"), "{error}");
+    assert!(!error.contains(&start), "{error}");
+
+    // The engine reports the container stopped, as after `docker stop`, and
+    // the gateway's API refuses connections.
+    s.gateway.state.lock().unwrap().fail_read = None;
+    s.gateway.stop();
+    {
+        let mut host = s.host.lock().unwrap();
+        let gateway = host.engine.container(&name).unwrap();
+        gateway["State"] = json!({"Status":"exited","Running":false,"ExitCode":137});
+    }
+    let planned = s.deployment.plan(&s.parsed(), &s.cancel).await;
+    let applied = s.apply().await;
+    let destroyed = s.deployment.destroy(&s.cancel).await;
+    for (operation, result) in [
+        ("plan", planned),
+        ("apply", applied),
+        ("destroy", destroyed),
+    ] {
+        let error = failure(result);
+        assert!(
+            error.contains(&format!("managed gateway container {name} is not running")),
+            "{operation}: {error}"
+        );
+        assert!(error.contains(&start), "{operation}: {error}");
+    }
+    assert_eq!(s.containers(), containers);
+    assert_eq!(s.mutations(), mutations);
 }

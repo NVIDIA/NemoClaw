@@ -2,8 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 name: CI / Bundle
 on:
+  # A version tag's run builds bundles that report the tag as their version,
+  # which Release / Stage attaches to the tag's release.
   push:
     branches: [v1]
+    tags: ["v0.1.*"]
   # Stacked v1 PRs target feature branches, so do not filter by base branch.
   pull_request:
   workflow_dispatch:

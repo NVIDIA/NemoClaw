@@ -5,7 +5,9 @@ use super::{
     app::JourneyWizard,
     labels::{label, terminal_text},
     logo::BrandImage,
-    terminal::{ask_target, credential_probe, local_engine_probe, model_catalog_probe},
+    terminal::{
+        agent_images_probe, ask_target, credential_probe, local_engine_probe, model_catalog_probe,
+    },
 };
 use crate::{Source, load_journey};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -18,8 +20,8 @@ use nemoclaw_sdk::{
     CancellationToken, Error,
     config::{ComputeDriver, Document},
     discovery::{
-        CredentialRequest, DiscoveryObservation, DiscoveryQuery, DiscoveryRequest,
-        EngineObservation, ObservationStatus,
+        AgentImagesObservation, AgentImagesRequest, CredentialRequest, DiscoveryObservation,
+        DiscoveryQuery, DiscoveryRequest, EngineObservation, ObservationStatus,
     },
     inference_discovery::{CredentialObservation, EndpointObservation},
 };
@@ -29,7 +31,7 @@ use serde_json::Value;
 #[test]
 fn a_tall_terminal_keeps_the_full_wordmark_on_questions() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
     let mut terminal = Terminal::new(TestBackend::new(120, 50)).unwrap();
@@ -47,7 +49,7 @@ fn a_tall_terminal_keeps_the_full_wordmark_on_questions() {
 #[test]
 fn a_short_terminal_and_the_review_show_a_one_line_wordmark() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
     let question = screen(&wizard, 120, 40);
@@ -70,7 +72,7 @@ fn a_short_terminal_and_the_review_show_a_one_line_wordmark() {
 #[test]
 fn compatible_terminal_keeps_the_brand_image_beside_the_wordmark() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let wizard = JourneyWizard::new(capabilities, state);
     for (height, beside) in [(50, "██╔██╗"), (30, "NEMOCLAW")] {
         let mut terminal = Terminal::new(TestBackend::new(120, height)).unwrap();
@@ -99,7 +101,7 @@ fn compatible_terminal_keeps_the_brand_image_beside_the_wordmark() {
 #[test]
 fn narrow_terminal_asks_for_resize_instead_of_clipping_questions() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
     let mut terminal = Terminal::new(TestBackend::new(70, 20)).unwrap();
@@ -112,7 +114,7 @@ fn narrow_terminal_asks_for_resize_instead_of_clipping_questions() {
 #[test]
 fn review_scroll_reveals_later_yaml_without_changing_the_document() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     for _ in 0..40 {
         wizard.advance();
@@ -297,7 +299,7 @@ fn wizard_uses_the_shared_resolver_for_an_sdk_form_choice() {
 #[test]
 fn enter_uses_the_supplied_choice_suggestion() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.advance();
     assert_eq!(
@@ -317,7 +319,7 @@ fn enter_uses_the_supplied_choice_suggestion() {
 #[test]
 fn back_restores_the_previous_answer_without_rewriting_the_template() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let harness = "/spec/sandboxes/assistant/harness/kind";
     let original = state.values().pointer(harness).cloned();
     let mut wizard = JourneyWizard::new(capabilities, state);
@@ -366,7 +368,7 @@ fn a_template_sandbox_keeps_its_name_in_questions_and_text() {
 #[test]
 fn optional_question_can_be_omitted_through_the_new_wizard() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     for _ in 0..30 {
         if wizard
@@ -391,7 +393,7 @@ fn optional_question_can_be_omitted_through_the_new_wizard() {
 #[test]
 fn default_path_reaches_a_valid_document_through_the_new_wizard() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     for _ in 0..40 {
         wizard.advance();
@@ -419,13 +421,39 @@ fn default_path_reaches_a_valid_document_through_the_new_wizard() {
     assert!(wizard.document().is_ok());
 }
 
-/// Accept every suggestion and return the questions in the order asked.
+/// The agent image the tests type, since no default image exists to suggest.
+const AGENT_IMAGE: &str =
+    "nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+/// The default journey with the agent image answered, since the journey has no
+/// default image to suggest.
+fn load_defaults(capabilities: &Capabilities) -> nemoclaw_authoring::JourneyState {
+    let mut state = load_journey(Source::Defaults, capabilities).unwrap();
+    state
+        .answer(
+            capabilities,
+            "/spec/sandboxes/assistant/image/ref",
+            Some(serde_json::json!(AGENT_IMAGE)),
+        )
+        .unwrap();
+    state
+}
+
+/// Accept every suggestion, type the agent image the journey cannot suggest,
+/// and return the questions in the order asked.
 fn questions_until_review(wizard: &mut JourneyWizard) -> Vec<String> {
     wizard.started = true;
     let mut asked = Vec::new();
     for _ in 0..40 {
         if let Some(question) = wizard.question().unwrap() {
             asked.push(question.id().to_owned());
+            if question.id().ends_with("/image/ref") {
+                wizard.submit(Some(serde_json::json!(AGENT_IMAGE))).unwrap();
+                if wizard.accepted {
+                    return asked;
+                }
+                continue;
+            }
         }
         wizard.advance();
         assert!(wizard.error.is_none(), "{asked:?}: {:?}", wizard.error);
@@ -448,9 +476,9 @@ fn default_journey_asks_route_choices_and_leaves_adapter_settings_at_their_defau
             "/metadata/name",
             "/spec/gateway/runtime/provider",
             "inference:preset",
+            "/spec/sandboxes/assistant/image/ref",
             "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
             "/spec/gateway/engine",
-            "/spec/sandboxes/assistant/image/ref",
         ]
     );
 }
@@ -460,7 +488,7 @@ async fn wizard_with_one_docker_engine(
     status: nemoclaw_sdk::discovery::ObservationStatus,
 ) -> JourneyWizard {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let candidate = DiscoveryRequest {
         engine: "unix:///home/me/.colima/docker.sock".into(),
         compute_driver: ComputeDriver::Docker,
@@ -518,7 +546,7 @@ async fn the_only_engine_that_answered_is_recorded_without_asking_for_its_socket
 #[test]
 fn a_hermes_run_is_named_after_its_agent() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
     let question = wizard.question().unwrap().unwrap();
@@ -541,7 +569,7 @@ fn a_hermes_run_is_named_after_its_agent() {
 #[test]
 fn review_summarizes_the_network_tier_it_left_at_its_default() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     questions_until_review(&mut wizard);
     let yaml = wizard.saved_yaml().unwrap();
@@ -575,7 +603,7 @@ fn review_text(wizard: &JourneyWizard) -> Vec<String> {
 /// `deployment.yaml`. This machine answered for no engine.
 fn reviewing_wizard_with(harness: &str) -> JourneyWizard {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state)
         .with_local_engine_candidates(vec![])
         .with_output("deployment.yaml".into());
@@ -607,7 +635,7 @@ fn at_120x40_the_review_shows_the_agent_model_and_image_without_scrolling() {
         "Model nvidia/nemotron-3.5-super-vl-120b-a12b · NVIDIA Endpoints",
         "API key NVIDIA_API_KEY",
         "Runs on Docker on this machine",
-        "Image default image · not checked",
+        format!("Image {AGENT_IMAGE} · not checked").as_str(),
         "Network Isolated: only the model endpoint",
         "File deployment.yaml",
         "Configuration file",
@@ -615,7 +643,7 @@ fn at_120x40_the_review_shows_the_agent_model_and_image_without_scrolling() {
         assert!(text.contains(row), "{row:?} is not on screen: {screen}");
     }
     assert!(
-        text.find("Image default image") < text.find("Configuration file"),
+        text.find(&format!("Image {AGENT_IMAGE}")) < text.find("Configuration file"),
         "{screen}"
     );
     // The saved file's details stay in the YAML, not the summary.
@@ -694,7 +722,7 @@ fn a_template_with_search_and_grants_summarizes_both() {
 #[test]
 fn the_runtime_menu_names_each_runtime_and_offers_no_omit() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
     for _ in 0..5 {
@@ -729,7 +757,7 @@ fn the_runtime_menu_names_each_runtime_and_offers_no_omit() {
 #[test]
 fn default_journey_saves_the_reviewed_deployment_without_unasked_sdk_defaults() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     questions_until_review(&mut wizard);
     let yaml = wizard.saved_yaml().unwrap();
@@ -753,7 +781,7 @@ fn default_journey_saves_the_reviewed_deployment_without_unasked_sdk_defaults() 
 #[test]
 fn saved_yaml_keeps_the_sdk_field_order_and_values() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     questions_until_review(&mut wizard);
     let saved = wizard.saved_yaml().unwrap();
@@ -772,7 +800,7 @@ fn saved_yaml_keeps_the_sdk_field_order_and_values() {
 #[test]
 fn review_builds_the_saved_configuration_once_until_the_journey_changes() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     questions_until_review(&mut wizard);
     wizard.accepted = false;
@@ -798,7 +826,7 @@ fn review_builds_the_saved_configuration_once_until_the_journey_changes() {
 #[test]
 fn a_configuration_that_cannot_be_saved_says_why_and_keeps_the_review_open() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     questions_until_review(&mut wizard);
     wizard.accepted = false;
@@ -841,7 +869,7 @@ fn a_template_value_is_saved_even_when_it_matches_the_sdk_default() {
 #[test]
 fn review_shows_the_configuration_that_will_be_saved() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     questions_until_review(&mut wizard);
     wizard.accepted = false;
@@ -857,7 +885,7 @@ fn review_shows_the_configuration_that_will_be_saved() {
 fn another_harness_omits_its_optional_settings_and_asks_required_ones() {
     let capabilities = Capabilities::available();
     let harness = "/spec/sandboxes/assistant/harness/kind";
-    let mut state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut state = load_defaults(&capabilities);
     state
         .answer(
             &capabilities,
@@ -928,7 +956,7 @@ fn from_template_section(wizard: &JourneyWizard) -> Option<Vec<String>> {
 #[test]
 fn default_journey_suggests_its_own_name_and_lists_nothing_from_a_template() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
     wizard.advance();
@@ -1093,7 +1121,7 @@ fn example_reaches_review(relative: &str) {
 #[test]
 fn an_unchanged_journey_resolves_once_until_an_answer_or_observation_changes_it() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.advance();
     let first = wizard.question().unwrap().unwrap();
@@ -1149,7 +1177,7 @@ mod example_journeys {
 #[test]
 fn offline_vendor_menu_selects_a_catalog_alternative() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     for _ in 0..12 {
         if wizard
@@ -1191,7 +1219,7 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
         inference_discovery::{AuthenticationStatus, EndpointObservation},
     };
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     for _ in 0..12 {
         if wizard
@@ -1224,16 +1252,25 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
             source: "fixture".into(),
             reachable: Some(true),
             authentication: AuthenticationStatus::Accepted,
-            models: vec!["vendor/discovered".into()],
+            models: vec![
+                "nvidia/nemotron-3-ultra-550b-a55b".into(),
+                "vendor/discovered".into(),
+            ],
             api_verified: false,
         }),
     );
     let question = wizard.question().unwrap().unwrap();
-    assert!(
-        question
-            .choices()
-            .contains(&serde_json::json!("vendor/discovered"))
+    // The endpoint lists a model that is not recommended, so only the
+    // recommended model it lists is offered.
+    assert_eq!(
+        question.choices(),
+        [serde_json::json!("nvidia/nemotron-3-ultra-550b-a55b")]
     );
+    let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    let screen = terminal.backend().to_string();
+    assert!(!screen.contains("vendor/discovered"), "{screen}");
+    assert!(screen.contains("Type another model"), "{screen}");
     wizard.selected = question.choices().len();
     wizard.selection_changed = true;
     wizard.advance();
@@ -1246,10 +1283,79 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
     );
 }
 
+#[tokio::test]
+async fn a_key_typed_while_the_model_catalog_is_read_does_not_choose_from_the_resolved_menu() {
+    let capabilities = Capabilities::available();
+    let state = load_defaults(&capabilities);
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    for _ in 0..12 {
+        if wizard
+            .question()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|question| question.allows_custom_answer())
+        {
+            break;
+        }
+        wizard.advance();
+    }
+    let query = model_catalog_probe(&wizard).unwrap();
+    let shown = wizard.question().unwrap().unwrap().suggestion().cloned();
+    // The endpoint answers slowly and lists only a model other than the
+    // suggestion on screen, so the resolved menu suggests a different one.
+    let document = wizard
+        .state()
+        .resolve(&wizard.capabilities)
+        .unwrap()
+        .assessment()
+        .document()
+        .unwrap()
+        .clone();
+    let request = inference_request_for_document(&document, wizard.state().current_route())
+        .unwrap()
+        .unwrap();
+    let read = {
+        let request = request.clone();
+        async move |_: Vec<DiscoveryQuery>, _: &CancellationToken| {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            Ok(DiscoveryObservations::new().with(
+                DiscoveryQuery::Inference(request),
+                DiscoveryObservation::Inference(EndpointObservation {
+                    status: ObservationStatus::Available,
+                    reason: None,
+                    source: "fixture".into(),
+                    reachable: Some(true),
+                    authentication:
+                        nemoclaw_sdk::inference_discovery::AuthenticationStatus::Accepted,
+                    models: vec!["nvidia/nemotron-3-ultra-550b-a55b".into()],
+                    api_verified: false,
+                }),
+            ))
+        }
+    };
+    let enter = crossterm::event::Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let mut queue = std::collections::VecDeque::new();
+    assert!(
+        ask_target(
+            &mut wizard,
+            read,
+            vec![query],
+            &CancellationToken::new(),
+            &mut queue,
+            || Ok(Some(enter.clone())),
+        )
+        .await
+        .unwrap()
+    );
+    let resolved = wizard.question().unwrap().unwrap();
+    assert_ne!(resolved.suggestion().cloned(), shown);
+    assert!(queue.is_empty(), "{queue:?}");
+}
+
 #[test]
 fn tui_preserves_podman_as_an_authored_target_choice() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     for _ in 0..5 {
         if wizard
@@ -1287,7 +1393,7 @@ struct RecordedHost {
 #[tokio::test]
 async fn enter_accepts_the_runtime_this_machine_can_run_and_targets_its_engine() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     // Only Podman answered when this machine was read, but the template says Docker.
     let host: RecordedHost = serde_json::from_str(include_str!(
         "../../../../crates/nemoclaw-authoring/tests/fixtures/observations/podman-only.json"
@@ -1418,6 +1524,94 @@ async fn unreachable(
     Ok(observed)
 }
 
+const DOCKER_ENGINE: &str = "unix:///home/me/.colima/docker.sock";
+const HERMES_IMAGE: &str =
+    "nc-fabric@sha256:1111111111111111111111111111111111111111111111111111111111111111";
+
+/// The default journey for `harness` on a machine whose one Docker engine
+/// answered, at the sandbox image question.
+fn at_the_image_question(harness: &str) -> JourneyWizard {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let candidate = DiscoveryRequest {
+        engine: DOCKER_ENGINE.into(),
+        compute_driver: ComputeDriver::Docker,
+    };
+    let mut wizard = JourneyWizard::new(capabilities, state)
+        .with_local_engine_candidates(vec![candidate.clone()]);
+    wizard.remember(DiscoveryObservations::new().with(
+        DiscoveryQuery::Engine(candidate),
+        DiscoveryObservation::Engine(engine_observation(ObservationStatus::Available)),
+    ));
+    wizard.started = true;
+    wizard.submit(Some(serde_json::json!(harness))).unwrap();
+    for _ in 0..12 {
+        if wizard
+            .question()
+            .unwrap()
+            .is_some_and(|question| question.id().ends_with("/image/ref"))
+        {
+            return wizard;
+        }
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    }
+    panic!("the journey did not reach the image question");
+}
+
+/// The engine's images that install the harness asked about.
+fn agent_images(references: &[&str]) -> DiscoveryObservation {
+    DiscoveryObservation::AgentImages(AgentImagesObservation {
+        status: ObservationStatus::Available,
+        reason: None,
+        references: references
+            .iter()
+            .map(|reference| (*reference).into())
+            .collect(),
+    })
+}
+
+#[test]
+fn the_image_question_suggests_the_local_image_that_installs_the_chosen_harness() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).expect("the image question reads the engine's images");
+    assert_eq!(
+        query,
+        DiscoveryQuery::AgentImages(AgentImagesRequest {
+            engine: DOCKER_ENGINE.into(),
+            adapter_id: "nvidia.fabric.hermes".into(),
+        })
+    );
+    wizard.record(query, agent_images(&[HERMES_IMAGE]));
+    assert_eq!(
+        agent_images_probe(&wizard),
+        None,
+        "the images are read once"
+    );
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(
+        question.suggestion(),
+        Some(&serde_json::json!(HERMES_IMAGE))
+    );
+    assert_eq!(question.choices(), [serde_json::json!(HERMES_IMAGE)]);
+}
+
+#[test]
+fn without_a_local_image_for_the_harness_the_image_question_says_how_to_build_one() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[]));
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(question.suggestion(), None);
+    let note = question
+        .note()
+        .expect("the question says why it suggests no image");
+    assert!(
+        note.contains("https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images"),
+        "{note}"
+    );
+}
+
 /// Ask the target without a terminal: nobody types during the read.
 async fn ask(wizard: &mut JourneyWizard, queries: Vec<DiscoveryQuery>) -> bool {
     ask_target(
@@ -1435,7 +1629,7 @@ async fn ask(wizard: &mut JourneyWizard, queries: Vec<DiscoveryQuery>) -> bool {
 #[tokio::test]
 async fn a_new_questionnaire_asks_which_engines_this_machine_has_exactly_once() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let candidates = [
         "unix:///home/me/.colima/docker.sock",
         "unix:///run/user/501/podman/podman.sock",
@@ -1465,7 +1659,7 @@ async fn a_new_questionnaire_asks_which_engines_this_machine_has_exactly_once() 
 #[tokio::test]
 async fn the_model_catalog_is_asked_when_the_model_question_comes_and_only_once() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     assert_eq!(model_catalog_probe(&wizard), None, "no model question yet");
 
@@ -1531,16 +1725,14 @@ async fn credentials_are_checked_when_review_opens_and_only_once() {
 fn a_target_onboarding_did_not_read_is_not_checked_without_asking_for_action() {
     let wizard = reviewing_wizard_with("nvidia.fabric.hermes");
     assert!(wizard.resolution().unwrap().target_assessment().is_none());
-    assert_eq!(
-        foreground_after(&wizard, "default image · "),
-        super::view::MUTED
-    );
+    // The image is too long to share a line with its verdict on this screen.
+    assert_eq!(foreground_of(&wizard, "not checked"), super::view::MUTED);
 }
 
 #[test]
 fn questions_do_not_check_credentials() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
     for _ in 0..40 {
@@ -1563,7 +1755,7 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
         ),
     ] {
         let capabilities = Capabilities::available();
-        let state = load_journey(Source::Defaults, &capabilities).unwrap();
+        let state = load_defaults(&capabilities);
         let mut wizard =
             JourneyWizard::new(capabilities, state).with_local_engine_candidates(vec![]);
         wizard.record(
@@ -1810,14 +2002,15 @@ async fn engine_question_says_why_it_has_no_suggestion_when_no_engine_answered()
 /// engine the document names was read as `engine`.
 fn reviewing_wizard(engine: EngineObservation) -> JourneyWizard {
     let capabilities = Capabilities::available();
-    let mut state = load_journey(Source::Defaults, &capabilities).unwrap();
-    // The document is complete once the agent and its name are chosen.
+    let mut state = load_defaults(&capabilities);
+    // The document is complete once the agent, its name, and its image are chosen.
     for (id, answer) in [
         (
             "/spec/sandboxes/assistant/harness/kind",
             "nvidia.fabric.openclaw",
         ),
         ("/metadata/name", "openclaw"),
+        ("/spec/sandboxes/assistant/image/ref", AGENT_IMAGE),
     ] {
         state
             .answer(&capabilities, id, Some(serde_json::json!(answer)))
@@ -1936,7 +2129,8 @@ fn review_opens_with_the_unverified_target_and_every_reason_above_the_yaml() {
         let screen = screen(&wizard, width, height);
         let text = flat(&screen);
         for expected in [
-            "Image default image · not checked",
+            "Image nc-fabric@sha256:",
+            "not checked",
             "No docker engine answered on this machine.",
             "The selected engine remains unverified.",
             "The selected image's Fabric capabilities have not been observed.",
@@ -1966,7 +2160,8 @@ fn a_target_conflict_blocks_saving_and_says_why_on_the_review() {
             text.find("Target: Conflict") < text.find("Agent OpenClaw"),
             "{screen}"
         );
-        assert!(text.contains("Image default image · conflict"), "{screen}");
+        assert!(text.contains("Image nc-fabric@sha256:"), "{screen}");
+        assert!(text.contains("conflict"), "{screen}");
         assert!(
             text.contains("The selected engine does not meet gateway prerequisites."),
             "{screen}"
@@ -2107,7 +2302,7 @@ fn review_opens_at_the_top_after_going_back_and_returning() {
 #[test]
 fn the_default_harness_menu_offers_openclaw_then_hermes() {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.advance();
     let question = wizard.question().unwrap().unwrap();
@@ -2138,7 +2333,7 @@ fn type_text(wizard: &mut JourneyWizard, text: &str) {
 /// The default journey at the question `id`, accepting every suggestion before it.
 fn wizard_at(id: &str) -> JourneyWizard {
     let capabilities = Capabilities::available();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let state = load_defaults(&capabilities);
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
     for _ in 0..20 {

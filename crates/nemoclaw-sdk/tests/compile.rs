@@ -402,9 +402,12 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
                 .kind
                 .as_str()
         );
-        // The pinned Fabric has no per-model API field (#13320); the adapter
-        // selects the protocol from the model's provider.
-        assert!(configuration["models"]["default"].get("api").is_none());
+        // OpenClaw's descriptor declares a model API, so the provider's goes
+        // with the model.
+        assert_eq!(
+            configuration["models"]["default"]["api"],
+            "openai-completions"
+        );
         assert_eq!(configuration["models"]["default"]["provider"], "openai");
         assert!(graph["output"]["discovery"]["value"].is_object());
     }

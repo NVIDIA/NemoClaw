@@ -277,7 +277,7 @@ pub struct PolicyMiddleware {
     pub endpoints: PolicyMiddlewareEndpoints,
 }
 
-/// Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax.
+/// Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax, without a port.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyMiddlewareEndpoints {

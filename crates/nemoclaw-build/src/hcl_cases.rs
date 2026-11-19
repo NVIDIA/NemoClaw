@@ -19,6 +19,8 @@ pub const SCENARIOS: &str = "crates/nemoclaw-e2e/tests/e2e/hcl/tests";
 /// The variable through which a case reads the NVIDIA API key, which only
 /// the hosted and GPU jobs provide.
 pub const NVIDIA_KEY: &str = "NVIDIA_INFERENCE_API_KEY";
+/// The qualified Station case reuses the GTC document rather than a second copy.
+pub const STATION_CASE: &str = "dgx-station-openclaw-nemotron";
 
 /// Where a live case runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
@@ -32,6 +34,8 @@ pub enum Runner {
     Hosted,
     /// Live / HCL on the NVIDIA GPU runner.
     Gpu,
+    /// The qualified ARM64 GB300 runner, separate from the generic GPU runner.
+    DgxStation,
     /// An OpenShift cluster, such as OpenShift Local, where the case runs by
     /// hand: no CI job has one.
     #[serde(rename = "openshift")]
@@ -46,15 +50,17 @@ impl Runner {
             Runner::LiveKind => "live-kind",
             Runner::Hosted => "hosted",
             Runner::Gpu => "gpu",
+            Runner::DgxStation => "dgx-station",
             Runner::OpenShift => "openshift",
         }
     }
 
-    pub const ALL: [Runner; 5] = [
+    pub const ALL: [Runner; 6] = [
         Runner::LiveDocker,
         Runner::LiveKind,
         Runner::Hosted,
         Runner::Gpu,
+        Runner::DgxStation,
         Runner::OpenShift,
     ];
 }
@@ -69,6 +75,12 @@ pub struct Needs {
 
 /// A case's document and scenario.
 pub fn files(id: &str) -> [String; 2] {
+    if id == STATION_CASE {
+        return [
+            "examples/gtc-dc/openclaw-dgx-station.yaml".into(),
+            format!("crates/nemoclaw-e2e/tests/e2e/hcl/manual/{id}.tftest.hcl"),
+        ];
+    }
     [
         format!("{DOCUMENTS}/{id}.yaml"),
         format!("{SCENARIOS}/{id}.tftest.hcl"),
@@ -92,6 +104,12 @@ pub fn live(root: &Path) -> Result<BTreeSet<String>> {
         if root.join(document).is_file() {
             ids.insert(id.to_owned());
         }
+    }
+    if files(STATION_CASE)
+        .iter()
+        .all(|path| root.join(path).is_file())
+    {
+        ids.insert(STATION_CASE.into());
     }
     Ok(ids)
 }
@@ -156,7 +174,10 @@ pub fn placements(root: &Path) -> Result<BTreeMap<String, Needs>> {
     documents(root)?
         .into_iter()
         .map(|(id, document)| {
-            let needed = needs(&document).map_err(|error| format!("the {id} case: {error}"))?;
+            let mut needed = needs(&document).map_err(|error| format!("the {id} case: {error}"))?;
+            if id == STATION_CASE {
+                needed.runner = Runner::DgxStation;
+            }
             Ok((id, needed))
         })
         .collect()

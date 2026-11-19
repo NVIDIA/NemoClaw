@@ -166,7 +166,7 @@ fn the_chart_publishes_an_exposed_gateway_at_its_endpoint() {
         let values = chart_values(&input(endpoint, node_port()));
         assert_eq!(
             values["service"],
-            json!({"type": "NodePort", "nodePort": port, "metricsPort": 0})
+            json!({"type": "NodePort", "nodePort": port})
         );
         assert_eq!(values["pkiInitJob"][field], json!([host]));
         assert!(values.get("openshiftRoute").is_none(), "{values}");

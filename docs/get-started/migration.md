@@ -4,7 +4,7 @@
 # Assess Migration from an Earlier Version
 
 The desired-state SDK, schema, and state format do not promise compatibility with the earlier product.
-The current CLI has no general state adoption or migration command.
+The current CLI has no general state adoption or migration command; [#14580](https://github.com/NVIDIA/NemoClaw/issues/14580) tracks a documented path from the earlier product's configuration export to a v1 deployment.
 Keep the earlier deployment's tooling, configuration, and state while evaluating a separate v1 deployment.
 
 NemoClaw has no upgrade, native-data transfer or rollback procedure: native data belongs to the harness, and moving its storage belongs to the platform.
@@ -22,13 +22,14 @@ Choose the current owner of the task rather than translating earlier CLI command
 | Imperative inference or sandbox changes | [Desired-state lifecycle](../build-deploy/usage.md), with explicit update/replacement limits |
 | Export configuration (`config export`) | `nemoclaw export`; see [CLI reference](../references/cli.md) and [state](../build-deploy/state.md) |
 | Configure agents, dashboards, tools, or heartbeats | [Agent runtimes](../agents-inference/agents.md) and [interfaces](../agents-inference/interfaces.md) |
+| Run custom tools and applications used by the agent inside its sandbox | Package tools and dependencies in a [derived agent image](../build-deploy/derived-images.md); use [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes) for scripts and persistent data. Configure and verify background-service startup and restart separately. |
 | Integrate the TypeScript lifecycle package | [Rust SDK](../references/sdk.md); no compatible TypeScript package is provided |
-| Install policy presets, approve network requests interactively, or explain policy to an agent | Declare the [isolated preset or an explicit policy](../security/sandbox-network.md#choose-a-policy); managed approval and explanation: [#12651](https://github.com/NVIDIA/NemoClaw/issues/12651) |
+| Install policy presets, approve network requests interactively, or explain policy to an agent | Declare the [isolated preset or an explicit policy](../security/sandbox-network.md#choose-a-policy); managed approval and explanation are not planned ([#12651](https://github.com/NVIDIA/NemoClaw/issues/12651)); OpenShell's policy advisor owns both |
 | Use Okta/Entra runtime identity and OAuth refresh | [Register an OpenShell OAuth-refresh provider](../agents-inference/oauth-refresh.md); its manual attachments and refresh material are outside exported deployment YAML |
 | Snapshot, restore, upload/download, or transfer history | The platform owns backup and transfer of [mounted agent-data volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes); native conversation continuity has harness-specific limits |
-| Manage messaging, MCP servers, or arbitrary plugins | Messaging: [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037); MCP servers: [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137); see [additional agent integrations](../agents-inference/agents.md#additional-agent-integrations) |
-| Provision a model router, managed NIM/llama.cpp, or distributed inference | Model Router and llama.cpp: [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); managed NIM: [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649) |
-| Install a telemetry collector or reuse Deep Agents trace-export setup | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144); [Hermes Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) writes trace artifacts in the sandbox |
+| Manage messaging, MCP servers, or arbitrary plugins | Messaging: [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037); NemoClaw doesn't manage MCP servers; see [additional agent integrations](../agents-inference/agents.md#additional-agent-integrations) |
+| Provision a model router, managed NIM/llama.cpp, or distributed inference | Managed NIM and llama.cpp: [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); NemoClaw has no Model Router |
+| Install a telemetry collector or reuse Deep Agents trace-export setup | NemoClaw doesn't provision collectors or export Deep Agents traces; [Hermes Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) writes trace artifacts in the sandbox |
 
 ## Keep Deployment Identities Separate
 

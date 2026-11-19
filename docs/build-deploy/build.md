@@ -8,7 +8,7 @@ Native bundles also require Protocol Buffers compiler 36.2.
 Native builds also require a C toolchain for TLS dependencies.
 Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.2`; `cargo ci` finds it there.
 Other Cargo commands, including the bundle builder's `cargo run`, find only a compiler on `PATH`; otherwise set `PROTOC` to `.tools/protoc-36.2/bin/protoc` or another protoc 36.2.
-[versions.json](../../versions.json) records tool versions, download checksums, and the SDK's image pins: the default agent image, which `image.ref` replaces, and the gateway, sandbox runtime, and supervisor images, which documents do not name.
+[versions.json](../../versions.json) records tool versions, download checksums, and the SDK's image pins: the gateway, sandbox runtime, and supervisor images, which documents do not name.
 The SDK generates its artifact constants from that manifest at build time.
 A Docker or Podman deployment keeps the gateway image pin of the bundle that created it; see [the change path](usage.md#choose-the-change-path) before operating it with a bundle built from a different pin.
 
@@ -61,7 +61,7 @@ There is no v1 `uninstall` command or package-manager installation to reverse in
 
 Before removing a bundle, identify every deployment using it and keep a verified copy wherever its original tooling is still needed for recovery or teardown.
 Finish any operation using that bundle.
-If retiring a deployment too, follow [destroy and retention](usage.md#destroy) first, then [Remove Retained Resources](usage.md#remove-retained-resources), keeping its state for anything that procedure does not cover ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+If retiring a deployment too, follow [destroy and retention](usage.md#destroy) first, then [Remove Retained Resources](usage.md#remove-retained-resources), keeping its state for anything that procedure does not cover.
 Then remove that dedicated bundle directory using your host's file manager and remove only its `bin` entry from your shell's `PATH` configuration.
 Open a new terminal and check `command -v nemoclaw` on a POSIX shell, or `Get-Command nemoclaw` in PowerShell, to identify any remaining installation.
 
@@ -95,7 +95,8 @@ docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes.<name>.image.ref`.
-Examples that omit `image` use the generic default agent image pin from `versions.json`.
+Every sandbox requires `image.ref`; no default agent image is published.
+`nemoclaw onboard` suggests such a reference when the gateway's engine holds an image whose label installs the chosen harness.
 Select an explicit image containing the chosen Fabric adapter; a harness identifier does not select a different image.
 The selected image must still exist on the compute daemon.
 The sandbox compute daemon must have access to that exact image.
@@ -170,8 +171,11 @@ Selecting this artifact does not qualify GPU inference on the host.
 
 A model that needs preparation tools or patches uses an image its recipe's authors build; see [inline recipes](../agents-inference/recipes.md).
 
-`docker buildx bake ollama` builds the [managed Ollama](../agents-inference/inference.md#run-managed-ollama) image, and `docker buildx bake runtimes` builds both.
-Run `cargo images fetch` first: it places the Ollama license that the image retains, as `versions.json` pins it.
+`docker buildx bake ollama` builds the [managed Ollama](../agents-inference/inference.md#run-managed-ollama) image.
+`docker buildx bake llama-cpp` builds the llama.cpp image: llama.cpp's CUDA 13.5 server image with the supervisor added, which no service runs yet.
+Its CUDA 13.5, like the vLLM image's CUDA 13.0, needs NVIDIA driver 580 or newer.
+`docker buildx bake runtimes` builds all three.
+Run `cargo images fetch` first: it places the Ollama and llama.cpp licenses that the images retain, as `versions.json` pins them.
 Use the `NAME@sha256:DIGEST` reference that `docker image inspect` prints for `spec.services.<name>.image`.
 Builds use fixed timestamps, so rebuilding the same sources keeps the same digest.
 Do not substitute a mutable tag or a digest copied from another build.
@@ -184,7 +188,7 @@ The archive contains the runtime crate, its standalone workspace manifest and pr
 It excludes the SDK, provider, OpenShell, Fabric, onboarding, and agent images.
 Each runtime image retains the archive, the license, its own Dockerfile and notice, and the supervisor's Dockerfile under `/opt/nemoclaw/source/`.
 
-The [vLLM notice](../../image/vllm/NOTICE.md) and [Ollama notice](../../image/ollama/NOTICE.md) identify retained sources and licenses.
+The [vLLM notice](../../image/vllm/NOTICE.md), [Ollama notice](../../image/ollama/NOTICE.md), and [llama.cpp notice](../../image/llama-cpp/NOTICE.md) identify retained sources and licenses.
 
 Generated bundles, build inputs, and images are ignored by Git.
 Model snapshots and prepared data belong to the deployment’s persistent volume, outside the build context.

@@ -31,8 +31,10 @@ use std::{
 /// ignores interrupts, records its process ID in `root.apply-pid`, and sleeps
 /// 30 s; both exec `sleep` so that an interrupt reaches the sleeping process,
 /// because a shell that waits for a child can lose it),
-/// `planning` (`ok` or `fail`, for `plan`), `state` (the `show -json` state), and the name
-/// of a saved plan (the `show -json PLAN` plan). A `show` without a control file
+/// `planning` (`ok` or `fail`, for `plan`), `state` (the `show -json` state),
+/// `outputs` (lines a successful apply prints after its events, such as
+/// OpenTofu's final `outputs` message), and the name of a saved plan (the
+/// `show -json PLAN` plan). A `show` without a control file
 /// prints an empty state or plan. An `apply` that finds the saved record,
 /// `intent.json`, creates the control file `root.record-at-apply`. Each call
 /// saves its environment as `root.SUBCOMMAND.environment`.
@@ -63,7 +65,9 @@ case "$1" in
     case "$mode" in
       block|stubborn) exec sleep 30 ;;
       fail) printf 'provider failed\n' >&2; exit 1 ;;
-      *) printf '{"version":4,"resources":[]}\n' > terraform.tfstate ;;
+      *)
+        if [ -f "$control/$stage.outputs" ]; then cat "$control/$stage.outputs"; fi
+        printf '{"version":4,"resources":[]}\n' > terraform.tfstate ;;
     esac ;;
   *) printf 'unexpected command\n' >&2; exit 64 ;;
 esac
@@ -119,7 +123,8 @@ impl Scripted {
         self.path("control")
     }
 
-    /// Set a control file: `STAGE.apply`, `STAGE.state`, or `STAGE.PLAN`.
+    /// Set a control file: `STAGE.apply`, `STAGE.planning`, `STAGE.state`,
+    /// `STAGE.outputs`, or `STAGE.PLAN`.
     pub fn set(&self, name: &str, text: impl AsRef<[u8]>) {
         fs::write(self.control().join(name), text).unwrap();
     }

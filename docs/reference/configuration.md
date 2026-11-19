@@ -426,7 +426,7 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 |---|---|---|---|---|
 | `config` | any JSON value | No | — | OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets. |
 | `endpoint` | string | No | `"http://127.0.0.1:17681"` | Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://HOST:PORT` with an explicit nonzero port and no trailing slash. Providers forward free local ports of their own to the owned gateway. Without `kubernetes.expose`, the host is `127.0.0.1` and this port is not bound. With it, the endpoint is the lowercase DNS name or IPv4 address and port other clients dial, and the gateway certificate names its host. Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS endpoint and port: 127.0.0.1 without kubernetes.expose, or the address clients dial with it. |
-| `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes. With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes. |
+| `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed local gateway engine: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket. Excluded by kubernetes. With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes. |
 | `kubernetes` | [ManagedKubernetes](#managedkubernetes) | No | — | Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
@@ -514,7 +514,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `metadata` | [FileRef](#fileref) | No | — | Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead. |
-| `ref` | string | For Kubernetes sandboxes | — | Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Kubernetes and OpenShift require an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
+| `ref` | string | Yes | — | Immutable image reference, pinned by SHA-256 digest. Required on every runtime; build one as described in the agent image build instructions. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 
 ## ImagePullPolicy
 
@@ -1119,7 +1119,7 @@ Paths:
 
 ## PolicyMiddlewareEndpoints
 
-Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax.
+Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax, without a port.
 
 Guide: [Sandbox policy](../security/sandbox-network.md).
 
@@ -1290,7 +1290,7 @@ Paths:
 | `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation. |
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `image` | [Image](#image) | For Kubernetes sandboxes | — | Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
+| `image` | [Image](#image) | Yes | — | Immutable agent image that contains the selected Fabric adapter and, on Kubernetes, is compatible with the gateway's runtime user and group IDs. Required: no default image is published. |
 | `inferenceProviders` | map of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes through providerRef. Names must not shadow deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
@@ -1436,7 +1436,7 @@ Managed authentication proxy for an external Ollama daemon and model.
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell. |
-| `engine` | string | No | — | Local Docker Unix socket. Omission uses the managed gateway engine. Constraints: pattern `^unix:///[^?#\x00]*$`. |
+| `engine` | string | No | — | Local Docker engine: a Unix socket, or on Windows a named pipe such as `npipe:////./pipe/docker_engine`. Omission uses the managed gateway engine. Constraints: pattern `^(unix:///[^?#\x00]*\|npipe:////\./pipe/[A-Za-z0-9._-]+)$`. |
 | `image` | string | Yes | — | Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollamaProxy"`. |

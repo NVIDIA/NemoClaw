@@ -24,12 +24,10 @@ pub trait HostObserver: Send + Sync {
 
 /// Collector for the existing qualified local-host topology. This does not
 /// infer locality from a socket or provide a fallback for remote observers.
-#[cfg(unix)]
 pub(crate) struct LocalHost {
     /// The `nvidia-smi` program to run.
     pub(crate) nvidia_smi: std::path::PathBuf,
 }
-#[cfg(unix)]
 impl Default for LocalHost {
     fn default() -> Self {
         Self {
@@ -37,7 +35,6 @@ impl Default for LocalHost {
         }
     }
 }
-#[cfg(unix)]
 #[async_trait::async_trait]
 impl HostObserver for LocalHost {
     async fn observe(&self, engine: &Engine, gpu: Option<&str>) -> Result<HostObservation, Error> {

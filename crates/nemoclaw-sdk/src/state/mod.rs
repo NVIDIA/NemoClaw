@@ -21,7 +21,7 @@ use std::{
 /// release refuses state another release wrote instead of misreading it.
 pub(crate) const RECORD_FORMAT: (u32, &str) = (
     26,
-    "beb3394f4a03d1c1548de0f2d99ec4deb8b95c815bedd26de9c80ef8ee98c511",
+    "30998b9c933ebd701cdd7192977f2dc572295dfe338194fb59e747cbbc4fbf6d",
 );
 pub(crate) const RECORD_VERSION: u32 = RECORD_FORMAT.0;
 
