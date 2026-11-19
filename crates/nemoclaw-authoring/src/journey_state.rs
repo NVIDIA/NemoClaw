@@ -329,18 +329,15 @@ impl JourneyState {
     /// image, the read of the images on the gateway's engine that install the
     /// sandbox's harness, once both are authored.
     pub fn agent_images_request(&self, question: &str) -> Option<AgentImagesRequest> {
-        let sandbox = question
+        // The journey has one sandbox, so its harness is the one asked about.
+        question
             .strip_prefix("/spec/sandboxes/")?
             .strip_suffix("/image/ref")?;
-        let text = |path: &str| {
-            let value = self.authored.values.pointer(path)?.as_str()?;
-            (!value.is_empty()).then(|| value.to_owned())
-        };
-        let adapter_id =
-            sandbox_harness_kind(&self.authored.values, &format!("/spec/sandboxes/{sandbox}"))
-                .filter(|kind| !kind.is_empty())?;
-        Some(AgentImagesRequest {
-            engine: text(GATEWAY_ENGINE_PATH)?,
+        let values = &self.authored.values;
+        let engine = values.pointer(GATEWAY_ENGINE_PATH)?.as_str()?;
+        let adapter_id = harness_kind(values)?;
+        (!engine.is_empty() && !adapter_id.is_empty()).then(|| AgentImagesRequest {
+            engine: engine.to_owned(),
             adapter_id: adapter_id.to_owned(),
         })
     }
@@ -433,5 +430,5 @@ use decision_record::DecisionRecord;
 use journey_position::JourneyPosition;
 use paths::{
     agent_path, escape_pointer, harness_kind, harness_path, native_value, routes_path,
-    sandbox_harness_kind, scalar_question, settings_path,
+    scalar_question, settings_path,
 };

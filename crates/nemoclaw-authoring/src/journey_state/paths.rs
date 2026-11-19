@@ -40,13 +40,8 @@ pub(super) fn agent_path(values: &Value) -> Option<String> {
 }
 
 pub(super) fn harness_path(values: &Value) -> Option<String> {
-    sandbox_harness_path(values, &sandbox_path(values)?)
-}
-
-/// The harness the sandbox at `path` uses: its `harnessRef` target or its
-/// inline harness.
-pub(super) fn sandbox_harness_path(values: &Value, path: &str) -> Option<String> {
-    let sandbox = values.pointer(path)?;
+    let path = sandbox_path(values)?;
+    let sandbox = values.pointer(&path)?;
     if let Some(reference) = sandbox.get("harnessRef").and_then(Value::as_str) {
         let escaped = reference.replace('~', "~0").replace('/', "~1");
         let path = format!("/spec/harnesses/{escaped}");
@@ -56,13 +51,6 @@ pub(super) fn sandbox_harness_path(values: &Value, path: &str) -> Option<String>
         .get("harness")
         .is_some()
         .then(|| format!("{path}/harness"))
-}
-
-/// The harness kind of the sandbox at `path`.
-pub(super) fn sandbox_harness_kind<'a>(values: &'a Value, path: &str) -> Option<&'a str> {
-    values
-        .pointer(&format!("{}/kind", sandbox_harness_path(values, path)?))
-        .and_then(Value::as_str)
 }
 
 pub(super) fn harness_kind(values: &Value) -> Option<&str> {

@@ -214,14 +214,10 @@ impl JourneyState {
         }
     }
 
-    /// Answer each sandbox image question that `observations` settle: exactly
-    /// one image on the engine installs the harness, and the document names no
-    /// other. The image is then the sandbox's, and the review shows it.
-    /// Questions that several images, none, or an unread engine leave open, and
-    /// ones a template or an earlier answer already gave another image, stay.
-    /// So does the image of a sandbox while its harness question, the runtime
-    /// question or the engine question is open: the harness, runtime or engine
-    /// chosen next would leave an image that does not belong to it.
+    /// Answer the sandbox image question with the one image the engine holds
+    /// for the harness, unless the document names another. The read depends
+    /// on the harness, the runtime and the engine, so it waits until none of
+    /// their questions is open.
     pub fn answer_single_agent_images(
         &mut self,
         capabilities: &Capabilities,
@@ -230,44 +226,34 @@ impl JourneyState {
         let Ok(resolution) = self.resolve(capabilities) else {
             return;
         };
+        let open = |id: &str| resolution.questions().iter().any(|open| open.id() == id);
+        if open(RUNTIME_PROVIDER)
+            || open(GATEWAY_ENGINE_PATH)
+            || harness_question(&self.authored.values).is_some_and(|id| open(&id))
+        {
+            return;
+        }
         for question in resolution.questions() {
-            let asked = |id: &str| resolution.questions().iter().any(|open| open.id() == id);
-            let harness_open = question
-                .id()
-                .strip_suffix("/image/ref")
-                .is_some_and(|sandbox| asked(&format!("{sandbox}/harness/kind")));
-            if harness_open || asked(RUNTIME_PROVIDER) || asked(GATEWAY_ENGINE_PATH) {
+            let Some(observed) = self
+                .agent_images_request(question.id())
+                .and_then(|request| observations.get(&request))
+                .filter(|observed| observed.status == ObservationStatus::Available)
+            else {
                 continue;
-            }
-            let Some(only) = self.single_agent_image(question.id(), observations) else {
+            };
+            let [only] = observed.references.as_slice() else {
                 continue;
             };
             if self
                 .authored
                 .values
                 .pointer(question.id())
-                .is_some_and(|named| named.as_str() != Some(&only))
+                .is_some_and(|named| named.as_str() != Some(only))
             {
                 continue;
             }
             // A reference the schema rejects leaves the question to its user.
-            let _ = self.answer(capabilities, question.id(), Some(Value::String(only)));
-        }
-    }
-
-    /// The only image `observations` list for the sandbox image question
-    /// `question`, when the read succeeded.
-    pub fn single_agent_image(
-        &self,
-        question: &str,
-        observations: &DiscoveryObservations,
-    ) -> Option<String> {
-        let observed = observations
-            .get(&self.agent_images_request(question)?)
-            .filter(|observed| observed.status == ObservationStatus::Available)?;
-        match observed.references.as_slice() {
-            [only] => Some(only.clone()),
-            _ => None,
+            let _ = self.answer(capabilities, question.id(), Some(Value::String(only.clone())));
         }
     }
 
