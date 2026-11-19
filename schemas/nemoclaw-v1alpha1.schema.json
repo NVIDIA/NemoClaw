@@ -2954,6 +2954,12 @@
           "description": "OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.",
           "type": "object"
         },
+        "gpus": {
+          "description": "GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
         "harness": {
           "$ref": "#/$defs/Harness",
           "description": "Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation."

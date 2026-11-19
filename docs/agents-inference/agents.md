@@ -189,6 +189,35 @@ The YAML `kind: api` integration creates a full-access REST rule for the endpoin
 For OAuth-refresh credentials, use an [operator-managed OpenShell provider](oauth-refresh.md).
 NemoClaw does not wrap its refresh contract, and manual sandbox attachments affect drift checks.
 
+## GPU Access for Agent Tools
+
+`gpus` asks OpenShell for that many GPUs for the programs the agent runs in its sandbox:
+
+```yaml
+spec:
+  sandboxes:
+    assistant:
+      gpus: 1
+```
+
+Merge this fragment into a complete deployment configuration.
+OpenShell picks the devices and refuses the sandbox when its compute driver cannot provide them: Docker needs CDI enabled, and Kubernetes needs nodes with allocatable `nvidia.com/gpu`.
+To pick specific GPUs on Docker or Podman, also list their CDI names in `driverConfig`, one for each requested GPU; `nvidia-ctk cdi list` prints the names:
+
+```yaml
+spec:
+  sandboxes:
+    assistant:
+      gpus: 1
+      driverConfig:
+        docker:
+          cdi_devices: ["nvidia.com/gpu=1"]
+```
+
+Kubernetes takes only the count.
+The request gives the sandbox's programs device access, not CUDA libraries; provide those in the agent image or on a read-only [mounted volume](../build-deploy/state.md#keep-agent-files-on-mounted-volumes).
+Changing `gpus` replaces the sandbox and its agent, so keep files that must survive on mounted volumes.
+
 ## Skills on a Mounted Volume
 
 Fabric passes the skills in `fabric_agent`'s `skills` block to the harness.
