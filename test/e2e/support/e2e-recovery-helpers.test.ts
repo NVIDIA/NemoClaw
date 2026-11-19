@@ -156,63 +156,81 @@ function buildGateway(runner: CommandRunner): GatewayClient {
   return new GatewayClient(host, sandbox);
 }
 
+const REMOVED_GATEWAY_STATUS =
+  "Error:   × Unknown gateway 'nemoclaw'.\n" +
+  "  │ Register it first: openshell gateway add <endpoint> --name nemoclaw\n" +
+  "  │ Or list available gateways: openshell gateway select\n\n";
+
 describe("GatewayClient recovery helpers (#2701)", () => {
-  it("gateway client proves registration, listener, and host runtime are removed", async () => {
-    const runner = new ScriptedRunner();
-    const privateRuntimeEnv = { ...process.env, HOME: "/private/export-home" };
-    runner.queue({ exitCode: 1, stderr: "No active gateway" });
-    runner.queue({ exitCode: 1 });
-    runner.queue({ exitCode: 1 });
-    runner.queue({ exitCode: 0 });
-    const gateway = new GatewayClient(
-      new HostCliClient(runner, { cliPath: "nemoclaw" }),
-      new SandboxClient(runner),
-    );
+  it.each(["No active gateway", REMOVED_GATEWAY_STATUS])(
+    "proves registration, listener, and host runtime are removed: %s",
+    async (stderr) => {
+      const runner = new ScriptedRunner();
+      const privateRuntimeEnv = { ...process.env, HOME: "/private/export-home" };
+      runner.queue({ exitCode: 1, stderr });
+      runner.queue({ exitCode: 1 });
+      runner.queue({ exitCode: 1 });
+      runner.queue({ exitCode: 0 });
+      const gateway = new GatewayClient(
+        new HostCliClient(runner, { cliPath: "nemoclaw" }),
+        new SandboxClient(runner),
+      );
 
-    await gateway.expectRemoved("nemoclaw", {
-      artifactName: "final-gateway",
-      env: privateRuntimeEnv,
-      gatewayPort: 18_080,
-    });
+      await gateway.expectRemoved("nemoclaw", {
+        artifactName: "final-gateway",
+        env: privateRuntimeEnv,
+        gatewayPort: 18_080,
+      });
 
-    expect(runner.calls.map(({ command, args }) => [command, args])).toEqual([
-      ["openshell", ["status"]],
-      ["lsof", ["-ti", ":18080", "-sTCP:LISTEN"]],
-      ["sh", expect.any(Array)],
-      ["docker", ["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]],
-      ["true", []],
-    ]);
-    expect(runner.calls[0].options).toMatchObject({
-      artifactName: "final-gateway-status",
-      env: { OPENSHELL_GATEWAY: "nemoclaw" },
-    });
-    expect(runner.calls[1].options).toMatchObject({
-      artifactName: "final-gateway-listener",
-    });
-    expect(
-      runner.calls.slice(2).every((call) => call.options?.env?.HOME === privateRuntimeEnv.HOME),
-    ).toBe(true);
-  });
+      expect(runner.calls.map(({ command, args }) => [command, args])).toEqual([
+        ["openshell", ["status"]],
+        ["lsof", ["-ti", ":18080", "-sTCP:LISTEN"]],
+        ["sh", expect.any(Array)],
+        ["docker", ["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]],
+        ["true", []],
+      ]);
+      expect(runner.calls[0].options).toMatchObject({
+        artifactName: "final-gateway-status",
+        env: { OPENSHELL_GATEWAY: "nemoclaw" },
+      });
+      expect(runner.calls[1].options).toMatchObject({
+        artifactName: "final-gateway-listener",
+      });
+      expect(
+        runner.calls.slice(2).every((call) => call.options?.env?.HOME === privateRuntimeEnv.HOME),
+      ).toBe(true);
+    },
+  );
 
-  it("gateway client rejects an inconclusive listener absence probe", async () => {
-    const runner = new ScriptedRunner();
-    runner.queue({ exitCode: 1, stderr: "Status: Disconnected\nGateway: nemoclaw" });
-    runner.queue({ exitCode: 1, stderr: "lsof: command unavailable" });
-    const gateway = new GatewayClient(
-      new HostCliClient(runner, { cliPath: "nemoclaw" }),
-      new SandboxClient(runner),
-    );
+  it.each(["Status: Disconnected\nGateway: nemoclaw", REMOVED_GATEWAY_STATUS])(
+    "rejects an inconclusive listener absence probe after status: %s",
+    async (stderr) => {
+      const runner = new ScriptedRunner();
+      runner.queue({ exitCode: 1, stderr });
+      runner.queue({ exitCode: 1, stderr: "lsof: command unavailable" });
+      const gateway = new GatewayClient(
+        new HostCliClient(runner, { cliPath: "nemoclaw" }),
+        new SandboxClient(runner),
+      );
 
-    await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
-      "gateway listener still exists or could not be disproved on port 8080",
-    );
-  });
+      await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
+        "gateway listener still exists or could not be disproved on port 8080",
+      );
+    },
+  );
 
   it.each([
     { exitCode: 0, stdout: "Status: Connected\nGateway: nemoclaw" },
     { exitCode: 127, stderr: "openshell: command not found" },
     { exitCode: 2, stderr: "Gateway nemoclaw not found: unknown status" },
     { exitCode: 1, stderr: "configuration file does not exist" },
+    { exitCode: 1, stderr: REMOVED_GATEWAY_STATUS.replaceAll("nemoclaw", "other") },
+    { exitCode: 1, stderr: REMOVED_GATEWAY_STATUS + "permission denied" },
+    { exitCode: 1, stderr: REMOVED_GATEWAY_STATUS, stdout: "unexpected output" },
+    { exitCode: 1, stderr: REMOVED_GATEWAY_STATUS, timedOut: true },
+    { exitCode: 1, stderr: REMOVED_GATEWAY_STATUS, signal: "SIGTERM" as const },
+    { exitCode: 0, stderr: REMOVED_GATEWAY_STATUS },
+    { exitCode: 1, stderr: "Unknown gateway 'nemoclaw'." },
   ])("rejects status that does not prove gateway disconnection: %j", async (status) => {
     const runner = new ScriptedRunner();
     runner.queue(status);
@@ -231,7 +249,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
     { exitCode: 0, stdout: "unexpected inventory response" },
   ])("refuses an inconclusive runtime observation after listener absence: %j", async (failure) => {
     const runner = new ScriptedRunner();
-    runner.queue({ exitCode: 1, stderr: "No active gateway" });
+    runner.queue({ exitCode: 1, stderr: REMOVED_GATEWAY_STATUS });
     runner.queue({ exitCode: 1 });
     runner.queue({ exitCode: 1 });
     runner.queue(failure);

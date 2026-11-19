@@ -258,13 +258,23 @@ export class GatewayClient {
       timeoutMs: options.timeoutMs ?? 30_000,
     });
     const statusText = `${status.stdout}\n${status.stderr}`;
+    // OpenShell 0.1.9 rejects an explicit gateway after its registration is removed.
+    // This proves registration absence only; listener and runtime checks still follow.
+    const registrationRemoved =
+      status.exitCode === 1 &&
+      status.stdout.trim() === "" &&
+      status.stderr.trim() ===
+        `Error:   × Unknown gateway '${gatewayName}'.\n` +
+          `  │ Register it first: openshell gateway add <endpoint> --name ${gatewayName}\n` +
+          "  │ Or list available gateways: openshell gateway select";
     if (
       (status.exitCode !== 0 && status.exitCode !== 1) ||
       status.timedOut ||
       status.signal !== null ||
-      !/disconnected|no (?:active )?gateway|connection refused|gateway[^\n]*(?:does not exist|not found)/iu.test(
-        statusText,
-      )
+      (!registrationRemoved &&
+        !/disconnected|no (?:active )?gateway|connection refused|gateway[^\n]*(?:does not exist|not found)/iu.test(
+          statusText,
+        ))
     ) {
       throw new Error(`openshell status did not prove gateway '${gatewayName}' disconnected.`);
     }
