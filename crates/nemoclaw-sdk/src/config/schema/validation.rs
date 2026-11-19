@@ -435,7 +435,7 @@ fn targets(defs: &mut serde_json::Map<String, Value>, normalized: bool) {
         (
             "DockerTarget",
             json!({
-                "anyOf": [{"const": ""}, {"pattern": "^unix:///"}],
+                "anyOf": [{"const": ""}, {"pattern": "^(unix:///|npipe:////\\./pipe/)"}],
                 "default": c::GATEWAY_ENGINE,
                 "x-nemoclaw-default-rule": "Omitted or empty selects Docker's default socket."
             }),
@@ -445,8 +445,8 @@ fn targets(defs: &mut serde_json::Map<String, Value>, normalized: bool) {
             "PodmanTarget",
             json!({
                 "minLength": 1,
-                "pattern": "^unix:///",
-                "x-nemoclaw-error": "target.podman.engine must name the local Podman API service socket, such as unix:///run/user/1000/podman/podman.sock"
+                "pattern": "^(unix:///|npipe:////\\./pipe/)",
+                "x-nemoclaw-error": "target.podman.engine must name the local Podman API service socket, such as unix:///run/user/1000/podman/podman.sock, or on Windows a Podman machine's named pipe, such as npipe:////./pipe/podman-machine-default"
             }),
             "A managed gateway container on a local rootless Linux Podman engine. Podman's socket depends on the user, so engine has no default.",
         ),

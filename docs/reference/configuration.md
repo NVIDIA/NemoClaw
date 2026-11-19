@@ -289,7 +289,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `engine` | string | No | `"unix:///var/run/docker.sock"` | Unix socket of the local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox. Constraints: `""` or pattern `^unix:///`. Omitted or empty selects Docker's default socket. |
+| `engine` | string | No | `"unix:///var/run/docker.sock"` | The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM. Constraints: `""` or pattern `^(unix:///\|npipe:////\./pipe/)`. Omitted or empty selects Docker's default socket. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before local container creation: IfNotPresent, the default, or Never. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 of the network the gateway and its sandboxes share. Constraints: `""` or pattern `/24$`. Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
 | `port` | integer | No | `17681` | Loopback TCP port the gateway listens on, from 1024 through 65535. NemoClaw and the OpenShell CLI reach the gateway at `http://127.0.0.1:PORT`. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
@@ -1079,7 +1079,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `engine` | string | Yes | — | Unix socket of the local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox. Constraints: pattern `^unix:///`; minimum characters 1. |
+| `engine` | string | Yes | — | The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM. Constraints: pattern `^(unix:///\|npipe:////\./pipe/)`; minimum characters 1. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before local container creation: IfNotPresent, the default, Never, or Always, which contacts the registry before creation or restart. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 of the network the gateway and its sandboxes share. Constraints: `""` or pattern `/24$`. Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
 | `port` | integer | No | `17681` | Loopback TCP port the gateway listens on, from 1024 through 65535. NemoClaw and the OpenShell CLI reach the gateway at `http://127.0.0.1:PORT`. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |

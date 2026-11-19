@@ -21,7 +21,8 @@ pub(crate) enum ProgressMode {
 #[derive(Parser)]
 #[command(
     name = "nemoclaw",
-    version,
+    // A bundle's CLI reports the bundle's version, which the build tool sets.
+    version = option_env!("NEMOCLAW_BUNDLE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
     about = "Manage an agent deployment from desired state"
 )]
 pub(crate) struct Cli {

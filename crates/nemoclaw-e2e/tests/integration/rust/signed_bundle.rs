@@ -50,16 +50,23 @@ fn sign(unsigned: &Path, signed: &Path) {
     Bundle::open(signed).unwrap();
 }
 
-/// `tofu init -upgrade` keeps a provider version already installed from the
-/// previous bundle's directory, so the deployment goes on running the unsigned
-/// providers while that bundle exists. Once it's gone, OpenTofu refuses the
-/// signed providers: their hashes differ from those the dependency lock file
-/// recorded for the same versions. This records that open problem (#14628); when the SDK
-/// handles it, this test should show the signed bundle applying on its own.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn a_deployment_from_an_unsigned_bundle_fails_on_the_lock_file_once_only_the_signed_bundle_remains()
- {
+/// The files under `directory`, by path relative to it, following links.
+fn files(directory: &Path, prefix: &Path, found: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        let relative = prefix.join(path.file_name().unwrap());
+        if fs::metadata(&path).unwrap().is_dir() {
+            files(&path, &relative, found);
+        } else {
+            found.push(relative);
+        }
+    }
+}
+
+/// Applies with the unsigned bundle, then with the signed one, keeping or
+/// deleting the unsigned bundle in between, and checks that OpenTofu runs the
+/// signed providers.
+async fn upgrade(keep_unsigned: bool) {
     let directory = tempfile::tempdir().unwrap();
     let unsigned = directory.path().join("unsigned");
     copy(
@@ -81,33 +88,42 @@ async fn a_deployment_from_an_unsigned_bundle_fails_on_the_lock_file_once_only_t
         .apply(&document, &cancel)
         .await
         .unwrap();
-    let lock = fs::read_to_string(state.join(".terraform.lock.hcl")).unwrap();
+    if !keep_unsigned {
+        fs::remove_dir_all(&unsigned).unwrap();
+    }
 
-    let upgraded = Deployment::new(&state, &signed)
-        .apply(&document, &cancel)
-        .await;
-    assert!(
-        upgraded.is_ok(),
-        "the upgrade applies while the unsigned bundle exists: {upgraded:?}"
-    );
-    assert_eq!(
-        fs::read_to_string(state.join(".terraform.lock.hcl")).unwrap(),
-        lock,
-        "the lock file keeps the unsigned providers' hashes"
-    );
-
-    fs::remove_dir_all(&unsigned).unwrap();
-    let error = Deployment::new(&state, &signed)
+    Deployment::new(&state, &signed)
         .apply(&document, &cancel)
         .await
-        .unwrap_err()
-        .to_string();
-    // OpenTofu wraps its diagnostics.
-    let error = error.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        error.contains(
-            "doesn't match any of the checksums previously recorded in the dependency lock file"
-        ),
-        "OpenTofu refuses the signed providers: {error}"
-    );
+        .unwrap();
+
+    // OpenTofu runs the providers it installed for the deployment, at the
+    // bundle's paths under .terraform/providers.
+    let installed = state.join(".terraform/providers");
+    let mut providers = Vec::new();
+    files(&signed.join("providers"), Path::new(""), &mut providers);
+    providers.retain(|provider| installed.join(provider).exists());
+    assert!(!providers.is_empty(), "OpenTofu installed no providers");
+    for provider in providers {
+        assert!(
+            fs::read(installed.join(&provider)).unwrap()
+                == fs::read(signed.join("providers").join(&provider)).unwrap(),
+            "{} isn't the signed bundle's",
+            provider.display()
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn a_deployment_from_an_unsigned_bundle_runs_the_signed_providers_while_the_unsigned_bundle_remains()
+ {
+    upgrade(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn a_deployment_from_an_unsigned_bundle_applies_with_the_signed_providers_once_the_unsigned_bundle_is_gone()
+ {
+    upgrade(false).await;
 }

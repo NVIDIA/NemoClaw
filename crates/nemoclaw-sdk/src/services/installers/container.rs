@@ -184,7 +184,7 @@ impl Service {
         let gateway = document.spec.gateway.managed()?;
         require(
             gateway.compute_driver() == crate::config::ComputeDriver::Docker
-                && gateway.engine().starts_with("unix:///"),
+                && crate::config::engine_socket(gateway.engine()).is_some(),
             "container requires a managed local Docker gateway",
         )?;
         Ok(gateway)

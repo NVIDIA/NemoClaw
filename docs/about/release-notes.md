@@ -28,10 +28,32 @@ Agents:
 - OpenClaw's `web_fetch` reaches hosts that the sandbox's network policy allows ([#14537](https://github.com/NVIDIA/NemoClaw/issues/14537)).
 - OpenClaw keeps its native home in `/sandbox/artifacts`, as Hermes does; see [agent files](../build-deploy/state.md#agent-files).
 
+Releases:
+
+- A release's CLI reports the release's version: for `v0.1.0-rc12`, `nemoclaw --version` prints `nemoclaw 0.1.0-rc12`, and the bundle's `manifest.json` says `0.1.0-rc12`.
+  Before, they said `0.1.0` and `0.1.0-dev.<hash>`.
+  A bundle built from any other checkout, including one with uncommitted changes, still reports `0.1.0-dev.<hash>`, where the hash names its source files.
+
 Installation:
 
 - [Install the CLI](../get-started/install.md) covers installing, upgrading, and uninstalling a release's CLI from its `nemoclaw-TAG-PLATFORM.tar.gz` archive, checked against `SHA256SUMS`.
 - The [support matrix](#support-matrix) lists the platforms, gateway runtimes, model services, harnesses, and GPUs, and what CI runs on each.
+- Each operation installs the providers of the bundle that runs it, replacing `.terraform/providers` and `.terraform.lock.hcl` in the state directory.
+  Before, with a bundle whose providers had the same versions but other bytes, such as a signed build of the same commit, a deployment kept running the previous bundle's providers while that bundle existed; once it was gone, plan, apply, and destroy failed because the providers didn't match the checksums in the dependency lock file ([#14628](https://github.com/NVIDIA/NemoClaw/issues/14628)).
+
+Images:
+
+- Releases stage a llama.cpp runtime image, `llama-cpp`, beside the vLLM and Ollama images; no service runs it yet.
+  It adds the supervisor to llama.cpp's CUDA 13.5 server image from release b12375, whose ARM64 and AMD64 builds carry kernels for GB300 (`sm_103`) and GB10 (`sm_121a`).
+  CUDA 13.5 needs NVIDIA driver 580 or newer; see [build a runtime image](../build-deploy/build.md#build-a-runtime-image).
+
+Windows clients:
+
+- The CLI on Windows reaches a local Docker Desktop or Podman engine through its named pipe, such as `npipe:////./pipe/docker_engine`, and hides typed credentials at its prompts.
+  It plans, applies, and destroys a deployment with an external gateway whose `spec.gateway.target.docker.engine` or `spec.gateway.target.podman.engine` is that pipe or an `ssh://` engine ([#14631](https://github.com/NVIDIA/NemoClaw/issues/14631)).
+- A managed local gateway also runs from a Windows client: set `spec.gateway.target.docker.engine` to Docker Desktop's named pipe or `spec.gateway.target.podman.engine` to a Podman machine's, and the gateway container binds `/var/run/docker.sock` in the engine's Linux VM, where Docker Desktop serves its engine and a Podman machine links its rootful or rootless API socket.
+  On Windows, `nemoclaw onboard` offers the pipe the Docker client selects, otherwise `npipe:////./pipe/docker_engine`, and the default Podman machine's `npipe:////./pipe/podman-machine-default` ([#14632](https://github.com/NVIDIA/NemoClaw/issues/14632)).
+  No Windows host has run a deployment; see [current limits](../resources/limits.md#platforms-models-and-placement).
 
 Gateways:
 
@@ -395,7 +417,7 @@ Each release attaches the CLI for these platforms; [install the CLI](../get-star
 | Linux ARM64 | `linux_arm64` | Yes | Docker and kind suites |
 | Linux AMD64 | `linux_amd64` | Yes | Docker and kind suites, the cases on NVIDIA hosted inference, and the GPU cases |
 | macOS ARM64 | `darwin_arm64` | Yes | None |
-| Windows AMD64 | `windows_amd64` | No: [deployment planning requires a Unix client](../build-deploy/usage.md) | None |
+| Windows AMD64 | `windows_amd64` | Yes, through a local engine's named pipe or SSH; no Windows host has run a deployment | None |
 
 The builder also accepts `darwin_amd64`, but no release attaches it and CI doesn't build it.
 
@@ -406,7 +428,7 @@ Sandboxes and model services run on Linux engines or clusters; the agent and run
 | `spec.gateway.target` | Accepted | Live tests in CI |
 |---|---|---|
 | `docker` | Managed or external gateway; managed vLLM, Ollama, and container services | Docker suite, the cases on NVIDIA hosted inference, and the GPU cases |
-| `podman` | Managed rootless gateway on a local Linux engine, or external gateway; model services only on a Docker host through [SSH placement](../agents-inference/remote-service.md) | None |
+| `podman` | Managed rootless gateway on a local Linux engine or, from a Windows client, a Podman machine, or external gateway; model services only on a Docker host through [SSH placement](../agents-inference/remote-service.md) | None |
 | `kubernetes` | Managed or external gateway, with external inference endpoints | kind suite |
 | `openshift` | Managed or external gateway, with external inference endpoints | None; [run by hand](../../internal-docs/contributing/live-tests.md#openshift-gateway) on OpenShift Local |
 

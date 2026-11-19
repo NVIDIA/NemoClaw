@@ -1,15 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::Spec;
-#[cfg(unix)]
 use crate::ObservationError;
 use crate::config::ComputeDriver;
 use crate::{Error, docker::Engine};
 use bollard::models::ContainerInspectResponse;
-#[cfg(any(unix, test))]
 use serde_json::Value;
 
-#[cfg(any(unix, test))]
 fn no_capabilities(native: &Value, id: &str) -> Result<(), Error> {
     if native.get("Id").and_then(Value::as_str) != Some(id)
         || ["EffectiveCaps", "BoundingCaps"].iter().any(|key| {
@@ -31,47 +28,39 @@ impl Engine {
         spec: &Spec,
         name: &str,
     ) -> Result<Option<ContainerInspectResponse>, Error> {
-        let container = self.container(name).await?;
+        let mut container = self.container(name).await?;
         if spec.compute_driver != ComputeDriver::Podman || container.is_none() {
             return Ok(container);
         }
-        #[cfg(unix)]
+        let observed = container.as_mut().unwrap();
+        let id = observed.id.as_deref().ok_or(ObservationError::Incomplete)?;
+        if id.len() != 64 || !id.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return Err(ObservationError::Incomplete.into());
+        }
+        // Podman's compatibility API expands CapDrop=ALL into engine defaults.
+        // Check the native effective/bounding sets rather than guessing defaults.
+        let native = self.podman_json(&format!("containers/{id}/json")).await?;
+        no_capabilities(&native, id)?;
+        observed
+            .host_config
+            .as_mut()
+            .ok_or(ObservationError::Incomplete)?
+            .cap_drop = Some(vec!["ALL".into()]);
+        if let Some(limits) = observed
+            .host_config
+            .as_mut()
+            .and_then(|h| h.ulimits.as_mut())
         {
-            let mut container = container;
-            let observed = container.as_mut().unwrap();
-            let id = observed.id.as_deref().ok_or(ObservationError::Incomplete)?;
-            if id.len() != 64 || !id.bytes().all(|c| c.is_ascii_hexdigit()) {
-                return Err(ObservationError::Incomplete.into());
-            }
-            // Podman's compatibility API expands CapDrop=ALL into engine defaults.
-            // Check the native effective/bounding sets rather than guessing defaults.
-            let native = self.podman_json(&format!("containers/{id}/json")).await?;
-            no_capabilities(&native, id)?;
-            observed
-                .host_config
-                .as_mut()
-                .ok_or(ObservationError::Incomplete)?
-                .cap_drop = Some(vec!["ALL".into()]);
-            if let Some(limits) = observed
-                .host_config
-                .as_mut()
-                .and_then(|h| h.ulimits.as_mut())
-            {
-                for limit in limits {
-                    if let Some(name) = limit.name.as_mut() {
-                        *name = name
-                            .strip_prefix("RLIMIT_")
-                            .unwrap_or(name)
-                            .to_ascii_lowercase();
-                    }
+            for limit in limits {
+                if let Some(name) = limit.name.as_mut() {
+                    *name = name
+                        .strip_prefix("RLIMIT_")
+                        .unwrap_or(name)
+                        .to_ascii_lowercase();
                 }
             }
-            Ok(container)
         }
-        #[cfg(not(unix))]
-        Err(Error::Conflict(
-            "local Podman requires a Unix socket platform",
-        ))
+        Ok(container)
     }
 }
 

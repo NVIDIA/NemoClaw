@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Release staging attaches the CLI bundles that CI / Bundle checked at the
-//! tagged commit, with the executables the signing jobs signed. Its scripts run
+//! tag, with the executables the signing jobs signed. Its scripts run
 //! here against a fake GitHub and fake signing tools.
 
 use nemoclaw_sdk::bundle::{self, Bundle, Manifest};
@@ -25,25 +25,35 @@ const PLATFORMS: [&str; 4] = [
     "windows_amd64",
 ];
 
-/// Answers `gh run list` from $FAKE_GITHUB/runs.json, and a run's artifact list
-/// from $FAKE_GITHUB/RUN/artifacts.json.
+/// Answers `gh run list` from $FAKE_GITHUB/runs.json, newest first, `gh run
+/// watch` with the run's conclusion, and a run's artifact list from
+/// $FAKE_GITHUB/RUN/artifacts.json.
 const FAKE_GH: &str = r#"#!/bin/sh
 set -eu
 filter=
+branch=
 endpoint=
 command=$1
 shift
 while [ $# -gt 0 ]; do
   case "$1" in
     --jq) filter=$2; shift ;;
-    --repo | --workflow | --commit | --json) shift ;;
+    --branch) branch=$2; shift ;;
+    --repo | --workflow | --commit | --json | --interval) shift ;;
     --*) ;;
     *) endpoint="$endpoint $1" ;;
   esac
   shift
 done
 case "$command$endpoint" in
-  "run list") exec jq -r "$filter" "$FAKE_GITHUB/runs.json" ;;
+  "run list")
+    jq --arg branch "$branch" '[.[] | select($branch == "" or .headBranch == $branch)]' \
+      "$FAKE_GITHUB/runs.json" | jq -r "$filter"
+    exit 0 ;;
+  "run watch "*)
+    jq -e --argjson run "${endpoint##* }" 'any(.[]; .databaseId == $run and .conclusion == "success")' \
+      "$FAKE_GITHUB/runs.json" > /dev/null
+    exit 0 ;;
   api\ repos/NVIDIA/NemoClaw/actions/runs/*/artifacts*)
     run=$(printf '%s\n' "$endpoint" | sed -n 's|.*actions/runs/\([0-9]*\)/artifacts.*|\1|p')
     exec jq -r "$filter" "$FAKE_GITHUB/$run/artifacts.json" ;;
@@ -94,15 +104,27 @@ impl Github {
         self.root.path().join("github")
     }
 
-    /// A CI / Bundle run at COMMIT whose artifacts are (name, the bundled
-    /// `nemoclaw`'s contents), each holding a bundle as CI packs it.
-    fn run(&mut self, id: u64, event: &str, conclusion: &str, artifacts: &[(String, String)]) {
-        self.runs.push(json!({
-            "databaseId": id,
-            "event": event,
-            "conclusion": conclusion,
-            "url": format!("https://github.com/NVIDIA/NemoClaw/actions/runs/{id}"),
-        }));
+    /// A CI / Bundle run at COMMIT of `branch`, a branch or tag, newer than the
+    /// runs before it, whose artifacts are (name, the bundled `nemoclaw`'s
+    /// contents), each holding a bundle as CI packs it.
+    fn run(
+        &mut self,
+        id: u64,
+        event: &str,
+        branch: &str,
+        conclusion: &str,
+        artifacts: &[(String, String)],
+    ) {
+        self.runs.insert(
+            0,
+            json!({
+                "databaseId": id,
+                "event": event,
+                "headBranch": branch,
+                "conclusion": conclusion,
+                "url": format!("https://github.com/NVIDIA/NemoClaw/actions/runs/{id}"),
+            }),
+        );
         for (name, contents) in artifacts {
             let platform = PLATFORMS
                 .iter()
@@ -345,17 +367,25 @@ fn assert_checksums_verify(archives: &Path) {
 }
 
 #[test]
-fn each_platform_archive_holds_the_bundle_from_the_passing_ci_run_at_the_commit() {
+fn each_platform_archive_holds_the_bundle_from_the_latest_ci_run_at_the_tag() {
     let mut github = Github::new();
-    github.run(12, "pull_request", "success", &bundles("pull request", 1));
-    github.run(11, "push", "failure", &bundles("failed run", 1));
+    github.run(11, "push", "v1", "success", &bundles("untagged", 1));
+    github.run(
+        12,
+        "pull_request",
+        "feature",
+        "success",
+        &bundles("pull request", 1),
+    );
+    github.run(13, "push", VERSION, "failure", &bundles("failed run", 1));
     let mut passing = bundles("first attempt", 1);
     passing.extend(bundles("rerun", 2));
     passing.push((
         format!("bundle-part-windows_amd64-{COMMIT}-2-cli"),
         "part".into(),
     ));
-    github.run(13, "push", "success", &passing);
+    github.run(14, "workflow_dispatch", VERSION, "success", &passing);
+    github.run(15, "push", "v1", "success", &bundles("untagged rerun", 1));
 
     let output = github.stage();
     assert!(output.status.success(), "{}", report(&output));
@@ -366,7 +396,7 @@ fn each_platform_archive_holds_the_bundle_from_the_passing_ci_run_at_the_commit(
         assert_eq!(
             contents,
             format!("rerun {platform}"),
-            "{platform}'s archive holds the passing push run's latest bundle"
+            "{platform}'s archive holds the latest run's latest bundle"
         );
         assert_eq!(
             mode & 0o111,
@@ -380,7 +410,7 @@ fn each_platform_archive_holds_the_bundle_from_the_passing_ci_run_at_the_commit(
 #[test]
 fn signed_executables_replace_the_checked_ones_and_the_staged_bundle_still_opens() {
     let mut github = Github::new();
-    github.run(13, "push", "success", &bundles("checked", 1));
+    github.run(13, "push", VERSION, "success", &bundles("checked", 1));
     github.sign("windows_amd64", &cli(), "signed windows_amd64");
     github.sign("darwin_arm64", &cli(), "signed darwin_arm64");
 
@@ -413,17 +443,48 @@ fn signed_executables_replace_the_checked_ones_and_the_staged_bundle_still_opens
 }
 
 #[test]
-fn staging_fails_when_only_a_pull_request_run_passed_at_the_commit() {
+fn staging_fails_when_ci_has_not_run_at_the_tag() {
     let mut github = Github::new();
-    github.run(12, "pull_request", "success", &bundles("pull request", 1));
-    github.run(11, "push", "failure", &bundles("failed run", 1));
+    github.run(11, "push", "v1", "success", &bundles("untagged", 1));
+    github.run(
+        12,
+        "pull_request",
+        "feature",
+        "success",
+        &bundles("pull request", 1),
+    );
 
     let output = github.stage();
     let report = report(&output);
     assert!(!output.status.success(), "staging fails: {report}");
     assert!(
-        report.contains("::error::") && report.contains(COMMIT),
-        "the error names the commit: {report}"
+        report.contains("::error::") && report.contains(VERSION),
+        "the error names the tag: {report}"
+    );
+    assert!(
+        !github.archives().join("SHA256SUMS").exists(),
+        "nothing is staged"
+    );
+}
+
+#[test]
+fn staging_fails_when_the_latest_ci_run_at_the_tag_failed() {
+    let mut github = Github::new();
+    github.run(11, "push", VERSION, "success", &bundles("earlier run", 1));
+    github.run(
+        12,
+        "workflow_dispatch",
+        VERSION,
+        "failure",
+        &bundles("failed run", 1),
+    );
+
+    let output = github.stage();
+    let report = report(&output);
+    assert!(!output.status.success(), "staging fails: {report}");
+    assert!(
+        report.contains("::error::https://github.com/NVIDIA/NemoClaw/actions/runs/12 failed"),
+        "the error names the failed run: {report}"
     );
     assert!(
         !github.archives().join("SHA256SUMS").exists(),
@@ -434,7 +495,7 @@ fn staging_fails_when_only_a_pull_request_run_passed_at_the_commit() {
 #[test]
 fn staging_fails_naming_each_platform_whose_checked_bundle_expired() {
     let mut github = Github::new();
-    github.run(13, "push", "success", &bundles("checked", 1));
+    github.run(13, "push", VERSION, "success", &bundles("checked", 1));
     github.expire(13, &format!("bundle-linux_amd64-{COMMIT}-1"));
 
     let output = github.stage();

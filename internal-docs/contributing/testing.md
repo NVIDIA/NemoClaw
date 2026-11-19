@@ -361,7 +361,7 @@ Documentation previews publish only for PRs targeting `v1`.
 | Workflow | Checks |
 |---|---|
 | CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; each platform's jobs start with their test layer, such as `linux_amd64 / Contract tests 1 of 1` or `linux_amd64 / E2E / E2E Docker tests` |
-| CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
+| CI / Images | `Build / linux_arm64`, `Build / linux_amd64`; beside them, `Build / llama.cpp runtime / linux_arm64` and `Build / llama.cpp runtime / linux_amd64` build the llama.cpp runtime image and run its server's and supervisor's version commands |
 | CI / Dependencies | `Policy`, `Python scripts` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
@@ -449,9 +449,8 @@ The worker compiles nothing and writes JUnit timings under `target/nextest/integ
 
 ### Windows
 
-Windows has no Unix sockets for fake container engines, so tests reach them over SSH through the fake relay `nemoclaw-fixture-ssh`, which forwards `ssh://127.0.0.1:PORT` to the fixture's loopback port.
-[`Fixture::engine`](../../crates/test-support/http.rs) serves the engine on a Unix socket where one exists and otherwise installs the relay as `ssh` beside the test executable.
-The `contract` and `integration` steps also put the relay first on `PATH` as `ssh`, so the providers and CLI that OpenTofu and the SDK start reach it too.
+[`Fixture::engine`](../../crates/test-support/http.rs) serves a fake engine where the platform's local engines listen: a Unix socket, or on Windows a named pipe, `npipe:////./pipe/NAME`, which the providers and CLI that OpenTofu and the SDK start reach too.
+Tests that need an SSH engine reach a fixture's loopback port through the fake relay `nemoclaw-fixture-ssh`, which forwards `ssh://127.0.0.1:PORT`; on Windows, the `contract` and `integration` steps put it first on `PATH` as `ssh`.
 Use `Fixture::engine` for a fake engine so that the test runs on every platform; compile a test that needs a Unix-only fixture only on Unix with `#[cfg(unix)]`.
 
 ### Live Suites

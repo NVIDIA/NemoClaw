@@ -407,7 +407,12 @@ fn target(platform: &str) -> Result<&'static str> {
 /// resolves features for every bundle package either way, so that a part of
 /// the bundle compiles its dependencies as the whole bundle does and reuses
 /// their cached builds.
-fn build(executables: &[&str], target: &str, configure: &dyn Fn(&mut Command)) -> Result<()> {
+fn build(
+    executables: &[&str],
+    target: &str,
+    version: &str,
+    configure: &dyn Fn(&mut Command),
+) -> Result<()> {
     let root = std::env::current_dir()?;
     let mut command = cargo();
     configure(&mut command);
@@ -428,6 +433,7 @@ fn build(executables: &[&str], target: &str, configure: &dyn Fn(&mut Command)) -
     command
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env("CARGO_TARGET_DIR", root.join("target"))
+        .env("NEMOCLAW_BUNDLE_VERSION", version)
         .env(
             "RUSTFLAGS",
             format!("--remap-path-prefix={}=/workspace", root.display()),
@@ -467,13 +473,14 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
             .ok_or("missing Helm provider platform pin")?,
     )
     .await?;
-    let version = nemoclaw_build::BUILDER_SOURCE_VERSION.to_owned();
-    nemoclaw_build::verify_source_version(&version, &sources()?)?;
+    let source = nemoclaw_build::BUILDER_SOURCE_VERSION;
+    nemoclaw_build::verify_source_version(source, &sources()?)?;
+    let version = nemoclaw_build::bundle_version(Path::new("."), source);
     let target = target(platform)?;
     if !prebuilt {
-        build(&[], target, &|_| {})?;
+        build(&[], target, &version, &|_| {})?;
     }
-    nemoclaw_build::verify_source_version(&version, &sources()?)?;
+    nemoclaw_build::verify_source_version(source, &sources()?)?;
     fs::create_dir_all("dist")?;
     let temporary = tempfile::tempdir_in("dist")?;
     let root = temporary.path();
@@ -574,7 +581,7 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
             platform,
         )?);
     nemoclaw_build::schema::add_to_bundle(root, &mut manifest)?;
-    nemoclaw_build::verify_source_version(&version, &sources()?)?;
+    nemoclaw_build::verify_source_version(source, &sources()?)?;
     fs::write(
         root.join("manifest.json"),
         serde_json::to_vec_pretty(&manifest)?,

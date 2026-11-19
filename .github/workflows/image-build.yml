@@ -147,3 +147,42 @@ jobs:
           echo >> "$GITHUB_STEP_SUMMARY"
           echo "Pushed $(wc -l < .build-image-list) images in $(( $(date +%s) - total )) s." >> "$GITHUB_STEP_SUMMARY"
           docker logout ghcr.io
+  # The llama.cpp runtime image builds beside the agent images, off their
+  # path, and runs its server's and the supervisor's version commands.
+  llama-cpp:
+    name: llama.cpp runtime / ${{ matrix.platform }}
+    if: inputs.run
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux_arm64
+            runner: ubuntu-24.04-arm
+          - platform: linux_amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Require a successful validation plan
+        env:
+          PLAN_RESULT: ${{ inputs.plan }}
+        run: test "$PLAN_RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The images job saves them.
+      - name: Restore the verified image sources
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build/downloads
+          key: image-sources-v1-${{ hashFiles('versions.json') }}
+      - name: Fetch the pinned image sources
+        run: cargo images fetch
+      # The classic image store loads the image; the containerd one's BuildKit
+      # rejects rewrite-timestamp with unpack=false.
+      - name: Build the llama.cpp runtime image
+        run: docker buildx bake llama-cpp
+      - name: Run the server's and the supervisor's version commands
+        run: |
+          docker run --rm --entrypoint /app/llama-server nc-prototype-llama-cpp:rust-v1 --version
+          docker run --rm nc-prototype-llama-cpp:rust-v1 --version

@@ -201,7 +201,7 @@ impl Default for ManagedTarget {
 pub struct LocalTarget {
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Unix socket of the local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox.
+    /// The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM.
     pub engine: String,
     #[serde(rename = "port", skip_serializing_if = "is_zero_port")]
     #[schemars(default)]

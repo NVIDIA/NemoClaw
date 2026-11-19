@@ -90,8 +90,6 @@ output "status" {{
     assert!(output.contains("filesystem_read"), "{output}");
 }
 
-// Its managed gateway needs a local engine, which only Unix clients reach.
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn compiled_discovery_requires_the_image_runtime_metadata() {

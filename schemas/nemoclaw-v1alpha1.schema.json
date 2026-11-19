@@ -437,11 +437,11 @@
               "const": ""
             },
             {
-              "pattern": "^unix:///"
+              "pattern": "^(unix:///|npipe:////\\./pipe/)"
             }
           ],
           "default": "unix:///var/run/docker.sock",
-          "description": "Unix socket of the local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox.",
+          "description": "The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM.",
           "type": "string",
           "x-nemoclaw-default-rule": "Omitted or empty selects Docker's default socket."
         },
@@ -2549,11 +2549,11 @@
       "description": "A managed gateway container on a local rootless Linux Podman engine. Podman's socket depends on the user, so engine has no default.",
       "properties": {
         "engine": {
-          "description": "Unix socket of the local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox.",
+          "description": "The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM.",
           "minLength": 1,
-          "pattern": "^unix:///",
+          "pattern": "^(unix:///|npipe:////\\./pipe/)",
           "type": "string",
-          "x-nemoclaw-error": "target.podman.engine must name the local Podman API service socket, such as unix:///run/user/1000/podman/podman.sock"
+          "x-nemoclaw-error": "target.podman.engine must name the local Podman API service socket, such as unix:///run/user/1000/podman/podman.sock, or on Windows a Podman machine's named pipe, such as npipe:////./pipe/podman-machine-default"
         },
         "imagePullPolicy": {
           "$ref": "#/$defs/ImagePullPolicy",

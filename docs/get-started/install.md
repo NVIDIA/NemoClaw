@@ -24,7 +24,7 @@ The archive for release `TAG`, such as `v0.1.0-rc12`, is `nemoclaw-TAG-PLATFORM.
 | macOS ARM64 | `darwin_arm64` | Apple silicon; CI tests on macOS 15 |
 | Windows AMD64 | `windows_amd64` | Windows 10 version 1803 or later, or Windows Server 2019 or later, which include `tar` |
 
-On Windows, the CLI can't connect to a local Docker or Podman engine or read hidden credential input, and [deployment planning requires a Unix client](../build-deploy/usage.md); use a Linux or macOS client to deploy.
+On Windows, the CLI reaches a local Docker Desktop or Podman engine through its named pipe, such as `npipe:////./pipe/docker_engine`, and [deploys](../build-deploy/usage.md) with a managed or an external gateway; no Windows host has run a deployment yet ([#14639](https://github.com/NVIDIA/NemoClaw/issues/14639)).
 The executables are neither signed nor notarized; see [current limits](../resources/limits.md#installation-and-releases).
 Use the CLI with the agent and runtime images that the same release lists by digest; [compatibility](../references/compatibility.md#use-one-release-together) explains why.
 

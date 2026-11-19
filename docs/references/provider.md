@@ -295,7 +295,7 @@ These types name the engine or cluster they use instead of taking a gateway `ref
 `openshell_gateway_storage` and `openshell_podman_gateway` take the gateway's `name`, `compute_driver` (`docker` or `podman`), `engine`, `image`, and `network_cidr`, optional `owner` and `generation`, generated during apply when omitted and kept in state, and optional `image_pull_policy`:
 
 - `name` is `nc-`, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
-- `engine` is a local Unix engine socket; Podman requires its API service socket.
+- `engine` is a local engine's Unix socket or, on Windows, its named pipe, such as `npipe:////./pipe/docker_engine`; Podman requires its API service socket or its machine's pipe.
 - `image` must be the bundle's gateway image pin, which generated graphs supply; documents do not name it.
 - `network_cidr` is a private IPv4 `/24`.
 
