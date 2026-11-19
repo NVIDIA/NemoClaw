@@ -15,7 +15,7 @@ It provides guided onboarding, managed inference, network policy, managed integr
 **Supported agents:**
 
 - [OpenClaw](https://openclaw.ai) (default)
-- [Hermes](https://get-hermes.ai/)
+- [Hermes Agent](https://hermes-agent.nousresearch.com/)
 - [LangChain Deep Agents Code](https://docs.langchain.com/oss/python/deepagents/code/overview)
 
 For capabilities, architecture, security controls, and the full feature list, see the [NemoClaw documentation](https://docs.nvidia.com/nemoclaw/latest/).
