@@ -17,8 +17,8 @@ export function formatRetainedSandboxRecoveryMessage(input: {
   if (!input.sandboxIdentityFingerprint) {
     return (
       createAttemptEvidence +
-      `OpenShell did not return a sandbox carrying this create attempt's label for '${input.sandboxName}' on gateway '${input.gatewayName}', ` +
-      "so NemoClaw cannot confirm that this attempt created the sandbox. " +
+      `NemoClaw could not confirm one exact durable sandbox identity for this create attempt's label on '${input.sandboxName}' through gateway '${input.gatewayName}', ` +
+      "so it cannot confirm that this attempt created the sandbox. " +
       `Do not delete the sandbox by mutable name. Run '${cliName()} ${input.sandboxName} destroy'; it can clear retained recovery only after OpenShell confirms absence.`
     );
   }

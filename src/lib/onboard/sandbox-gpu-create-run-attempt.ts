@@ -911,7 +911,7 @@ export function createSandboxGpuCreateAttemptRunner(
       if (failure.kind === "sandbox_create_incomplete") {
         console.warn("");
         console.warn(
-          `  Create stream exited with code ${createResult.status} after sandbox was created.`,
+          `  Create stream exited with code ${createResult.status}; its output reported a created sandbox, which is not yet confirmed.`,
         );
         console.warn("  Checking whether the sandbox reaches Ready state...");
       } else if (

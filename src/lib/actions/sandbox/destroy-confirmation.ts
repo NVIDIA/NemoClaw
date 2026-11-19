@@ -91,7 +91,10 @@ export function printRetainedBackupLocation(sandboxName: string): void {
   try {
     backupPath = getLatestBackup(sandboxName)?.backupPath ?? null;
   } catch {
-    backupPath = null;
+    console.error(
+      `  NemoClaw could not read the rebuild-backups directory for '${sandboxName}', so it cannot say whether a backup exists. Check the directory permissions before any manual cleanup.`,
+    );
+    return;
   }
   if (backupPath) {
     console.error(

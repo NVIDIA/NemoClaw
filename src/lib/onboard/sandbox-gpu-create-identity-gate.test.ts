@@ -1183,7 +1183,7 @@ describe("created sandbox identity gate", () => {
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringMatching(
         new RegExp(
-          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\. OpenShell did not return a sandbox carrying this create attempt's label for 'alpha' on gateway 'nemoclaw'`,
+          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\. NemoClaw could not confirm one exact durable sandbox identity for this create attempt's label on 'alpha' through gateway 'nemoclaw'`,
           "u",
         ),
       ),
