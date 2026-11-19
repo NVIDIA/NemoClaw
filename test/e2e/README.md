@@ -533,7 +533,7 @@ The endpoint fixture owns the synthetic credential; OpenShell retains the provid
 The test does not contact an additional hosted provider.
 Archive and route source tests own reference preservation and rejection.
 This live check owns the replacement process's use of the archived custom reference.
-The existing `hermes-inference-switch` selector runs it; no new target or matrix entry is added.
+The existing `hermes-inference-switch` selector runs it when the archive sanitizer or managed route writer changes; no new target or matrix entry is added.
 In the native NVIDIA branch, each of the two native-local probes and two custom hosted probes makes one attempt.
 The custom sequence permits 30 seconds for address resolution, three minutes for registration, five minutes for rebuild, and 150 seconds per turn.
 Those command limits total 810 seconds; they do not establish a worst-case bound for the whole test.

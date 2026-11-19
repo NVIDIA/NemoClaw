@@ -14,6 +14,33 @@ import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import { PUBLIC_NVIDIA_SWITCH_MODEL } from "../live/public-nvidia-switch-provider.ts";
 
 describe("inference-switch catalogue boundary", () => {
+  it.each([
+    "src/lib/state/sandbox.ts",
+    "src/lib/hermes-managed-route.ts",
+    "src/lib/inference/native-provider/custom.ts",
+  ])("selects the hosted Hermes rebuild owner when %s changes (#14300)", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "hermes-inference-switch",
+    );
+    const plan = buildE2eWorkflowPlan(
+      {},
+      {
+        changedFiles: [changedFile],
+        gatewayRuntimes: ["docker", "podman"],
+      },
+    );
+    expect(
+      Object.values(plan.catalogueMatrices)
+        .flat()
+        .filter((row) => row.id === "hermes-inference-switch")
+        .map((row) => row.execution_id)
+        .sort(),
+    ).toEqual([
+      "hermes-inference-switch-native-nvidia-docker",
+      "hermes-inference-switch-native-nvidia-podman",
+    ]);
+  });
+
   it("selects native-local enforcement coverage when IPv6 evidence changes (#13544)", () => {
     expect(
       catalogueTargetsForChangedFiles(["test/e2e/fixtures/native-local-ipv6-evidence.ts"]).map(

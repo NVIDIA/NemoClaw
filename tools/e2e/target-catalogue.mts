@@ -996,6 +996,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     runnerComparison: true,
     shard: "native-nvidia",
     owningPaths: [
+      "src/lib/state/sandbox.ts",
+      "src/lib/hermes-managed-route.ts",
+      "src/lib/inference/native-provider/custom.ts",
       "src/lib/actions/inference-set.ts",
       "src/lib/inference/native-nvidia/index.ts",
       "managed-inference/provider-profiles/nemoclaw-nvidia-inference-v1.yaml",

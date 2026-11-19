@@ -45,6 +45,7 @@ import { isObjectRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
 import {
   hermesManagedRouteReference,
+  hermesRegisteredRoute,
   type HermesRegisteredRoute,
 } from "../hermes-managed-route.js";
 import { shellQuote } from "../runner.js";
@@ -3131,10 +3132,7 @@ function backupNativeSandboxState(
       archivePath,
       maxBytes,
       options.deadlineMs,
-      {
-        provider: sandbox?.provider,
-        endpointUrls: [sandbox?.endpointUrl, sandbox?.nativeHostedProviderAttachment?.endpointUrl],
-      },
+      hermesRegisteredRoute(sandbox ?? {}),
     );
     if (sanitationFailure) {
       rmSync(backupPath, { recursive: true, force: true });
