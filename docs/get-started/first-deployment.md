@@ -1,15 +1,16 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Deploy Your First OpenClaw Agent
+# Deploying Your First OpenClaw Agent
 
-In this tutorial, you configure one OpenClaw sandbox with an existing OpenShell gateway and inference endpoint.
+In this tutorial, you configure one OpenClaw sandbox with an existing NVIDIA OpenShell gateway and inference endpoint.
 You then plan the deployment, apply it, and send one request to the agent.
 The commands use the v1 source-built tools and the [OpenClaw example at implementation revision `637bdb6276`](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/examples/openclaw.yaml).
 Keep the bundle and generated schema from the source revision used to build the image.
-A successful apply starts a runtime; only an invocation checks whether the agent replies.
+A successful apply starts a runtime.
+Only an invocation checks whether the agent replies.
 
-## Prepare the Tools and Services
+## Preparing the Tools and Services
 
 Complete the [first-deployment prerequisites](prerequisites.md#before-the-first-deployment).
 You need a gateway you can operate, an endpoint that serves a known model, the matching OpenShell CLI, Docker Buildx, and `jq` for reading the runtime ID.
@@ -30,7 +31,8 @@ Use a separate worktree at the pinned implementation revision. Do not mix its ex
    git worktree add --detach ../nemoclaw-v1 637bdb6276309ea71d1f1fcb68fff518fe2db926
    ```
 
-   Choose another unused directory if `../nemoclaw-v1` exists. Do not replace an existing worktree.
+   Choose another unused directory if `../nemoclaw-v1` exists.
+   Don't replace an existing worktree.
 
 3. Enter that worktree.
 
@@ -40,11 +42,14 @@ Use a separate worktree at the pinned implementation revision. Do not mix its ex
 
 4. Prepare the build tools using `docs/build-deploy/build.md` in this worktree ([pinned build prerequisites](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md)).
 
-   Its `rust-toolchain.toml` pins Rust 1.99.1. A native bundle also requires Protocol Buffers compiler 36.2 and a C toolchain.
+   Its `rust-toolchain.toml` pins Rust 1.99.1.
+   A native bundle also requires Protocol Buffers compiler 36.2 and a C toolchain.
 
 5. Build the native bundle using the [pinned bundle instructions](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md#build-a-native-bundle).
 
-   Keep this bundle unchanged for the deployment. If you rebuild it, keep the original bundle for recovery. This exercise uses source-built tools rather than release downloads or an installer.
+   Keep this bundle unchanged for the deployment.
+   If you rebuild it, keep the original bundle for recovery.
+   This exercise uses source-built tools rather than release downloads or an installer.
 
 6. Add the bundle's CLI to `PATH`.
 
@@ -72,15 +77,17 @@ Use a separate worktree at the pinned implementation revision. Do not mix its ex
    docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
    ```
 
-   The result is a `NAME@sha256:DIGEST` reference. An image build does not start an agent or prove that a model will reply.
+   The result is a `NAME@sha256:DIGEST` reference.
+   An image build doesn't start an agent or prove that a model will reply.
 
 11. Record that immutable reference for the deployment YAML.
 
 12. Make the image available to the gateway's sandbox compute daemon and the engine named in the YAML for image inspection.
 
-## Configure One Deployment
+## Configuring One Deployment
 
-Configure the copied example from the pinned worktree. Keep the deployment identity and state directory for the lifetime of this exercise.
+Configure the copied example from the pinned worktree.
+Keep the deployment identity and state directory for the lifetime of this exercise.
 
 1. Create a deployment directory in the pinned worktree.
 
@@ -102,21 +109,28 @@ Configure the copied example from the pinned worktree. Keep the deployment ident
 
 4. Edit `.local/first-deployment/deployment.yaml` using that UUID.
 
-   Keep the example's provider key `local`, sandbox key `assistant`, and agent name `main` for this exercise. Replace these illustrative values before planning:
+   Keep the example's provider key `local`, sandbox key `assistant`, and agent name `main` for this exercise.
+   Replace these illustrative values before planning:
 
    | YAML path | Your value |
    |---|---|
-   | `metadata.uid` | The fresh UUID; keep it for this deployment's lifetime. |
+   | `metadata.uid` | The fresh UUID. Keep it for this deployment's lifetime. |
    | `metadata.name` | A label for this deployment. |
    | `spec.gateway.endpoint` | The existing gateway's client-reachable endpoint. |
-   | `spec.gateway.engine` | The Docker or Podman engine containing the selected image; match `spec.gateway.runtime.provider`. |
+   | `spec.gateway.engine` | The Docker or Podman engine containing the selected image. Match `spec.gateway.runtime.provider`. |
    | `spec.inferenceProviders.local.endpoint` | The inference base URL reachable by the gateway. |
-   | `spec.inferenceProviders.local.provider` and `.api` | The endpoint's protocol and API; the example uses `openai` with `openai-responses`. |
+   | `spec.inferenceProviders.local.provider` and `.api` | The endpoint's protocol and API. The example uses `openai` with `openai-responses`. |
    | `spec.sandboxes.assistant.image.ref` | The immutable image reference from the build. |
    | `spec.sandboxes.assistant.agent.inference.routes[0].overrides.model` | The exact model ID the endpoint serves. |
    | `spec.sandboxes.assistant.agent.inference.routes[0].overrides.maxTokens` | A limit supported by the selected model, or remove this optional override. |
 
-   Keep `spec.gateway.management: external`; this deployment does not manage the gateway or inference server. The gateway's engine is used for image inspection, not ownership. For other fields, use `docs/reference/configuration.md` generated in the pinned worktree alongside its schema. The linked [field reference](../reference/configuration.md) belongs to the documentation checkout and can describe a newer revision. Refer to [inference configuration](../agents-inference/inference.md) for task-specific choices.
+   Keep `spec.gateway.management: external`.
+   This deployment doesn't manage the gateway or inference server.
+   NemoClaw uses the external gateway's engine for image inspection.
+   Using that engine doesn't transfer ownership of the gateway.
+   For other fields, use `docs/reference/configuration.md` generated in the pinned worktree alongside its schema.
+   The linked [field reference](../reference/configuration.md) belongs to the documentation checkout and can describe a newer revision.
+   Refer to [inference configuration](../agents-inference/inference.md) for task-specific choices.
 
 5. Update the editor schema comment in the copied file to `../../schemas/nemoclaw-v1alpha1.schema.json`.
 
@@ -129,9 +143,13 @@ Configure the copied example from the pinned worktree. Keep the deployment ident
 
 7. If you added a key reference, supply `INFERENCE_API_KEY` through a protected environment facility to the client running plan and apply.
 
-   Do not place its value in YAML. The caller supplies the key; OpenShell retains the installed value for routing, and the upstream operator controls revocation. Use HTTPS for a credentialed inference endpoint. Follow [credential ownership](../build-deploy/usage.md#configuration-and-credentials) for gateway authentication.
+   Don't place its value in YAML.
+   The caller supplies the key.
+   OpenShell retains the installed value for routing, and the upstream operator controls revocation.
+   Use HTTPS for a credentialed inference endpoint.
+   Follow [credential ownership](../build-deploy/usage.md#configuration-and-credentials) for gateway authentication.
 
-## Plan and Apply
+## Planning and Applying
 
 A plan previews changes without invoking inference. Apply can create a workspace, provider registration, and sandbox, and start the agent runtime. Apply checks configuration and readiness, not whether the model replies.
 
@@ -151,19 +169,25 @@ A plan previews changes without invoking inference. Apply can create a workspace
    nemoclaw apply -o json --progress off --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml
    ```
 
-   If apply fails, keep the YAML, original bundle, and full state directory. Follow [recovery guidance](../build-deploy/usage.md#recover-an-interrupted-operation) before retrying or removing anything.
+   If apply fails, keep the YAML, original bundle, and full state directory.
+   Follow [recovery guidance](../build-deploy/usage.md#recovering-an-interrupted-operation) before retrying or removing anything.
 
-## Send a Verification Request
+## Sending a Verification Request
 
-A successful apply is not a model reply. The OpenShell CLI needs its own gateway authentication; YAML credential references do not configure its profile. This request can incur inference charges and add to the agent's conversation history.
+A successful apply isn't a model reply.
+The OpenShell CLI needs its own gateway authentication.
+YAML credential references don't configure its profile.
+This request can incur inference charges and add to the agent's conversation history.
 
-1. [Select the gateway](../agents-inference/interfaces.md#select-the-gateway-and-workspace) in the client terminal using the plan or apply result. For an authenticated gateway, follow the linked profile procedure. For a plaintext loopback gateway only, clear the profile selector as follows.
+1. [Select the gateway](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace) in the client terminal using the plan or apply result.
+   For an authenticated gateway, follow the linked profile procedure.
+   For a plaintext loopback gateway only, clear the profile selector as follows.
 
    ```sh
    unset OPENSHELL_GATEWAY
    ```
 
-   Do not use plaintext for an authenticated remote gateway.
+   Don't use plaintext for an authenticated remote gateway.
 
 2. For a plaintext loopback gateway, set its reported endpoint in that terminal.
 
@@ -185,7 +209,8 @@ A successful apply is not a model reply. The OpenShell CLI needs its own gateway
    RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml | jq -er '.agents.assistant.runtimeId') || exit 1
    ```
 
-   Plan changes no runtime resources. If this lookup fails, stop and inspect the apply result instead of invoking with an empty ID.
+   Plan changes no runtime resources.
+   If this lookup fails, stop and inspect the apply result instead of invoking with an empty ID.
 
 5. Invoke the agent named `main`.
 
@@ -197,11 +222,15 @@ A successful apply is not a model reply. The OpenShell CLI needs its own gateway
 
 6. Check the command exit status.
 
-7. Check `result.status` in the JSON response. A successful invocation has `result.status: succeeded`.
+7. Check `result.status` in the JSON response.
+   A successful invocation has `result.status: succeeded`.
 
-8. Inspect `result.output` for the adapter's reply. Do not assume every adapter returns the same output shape. A reply verifies this endpoint, model, and request, not general model quality or tool reliability. The v1 source and opt-in tests do not establish success on your hosts.
+8. Inspect `result.output` for the adapter's reply.
+   Don't assume every adapter returns the same output shape.
+   A reply verifies this endpoint, model, and request, not general model quality or tool reliability.
+   The v1 source and opt-in tests don't establish success on your hosts.
 
-## Preview and Remove the Deployment
+## Previewing and Removing the Deployment
 
 Destroy does not prompt. It deletes the sandbox's writable files and conversation history. The external gateway and inference service remain with their operators. Local state and some resources can remain after destroy.
 
@@ -221,15 +250,16 @@ Destroy does not prompt. It deletes the sandbox's writable files and conversatio
    nemoclaw destroy --state-dir .local/first-deployment/state
    ```
 
-   If teardown fails, retain the state directory and [resume with the same state](../build-deploy/usage.md#destroy).
+   If teardown fails, retain the state directory and [resume with the same state](../build-deploy/usage.md#destroying).
 
-5. Review [retention and explicit cleanup](../build-deploy/usage.md#remove-retained-resources) before removing the state directory or revoking upstream credentials.
+5. Review [retention and explicit cleanup](../build-deploy/usage.md#removing-retained-resources) before removing the state directory or revoking upstream credentials.
 
-6. Remove the caller-owned `INFERENCE_API_KEY` environment value if you supplied one. This does not revoke the upstream key.
+6. Remove the caller-owned `INFERENCE_API_KEY` environment value if you supplied one.
+   This doesn't revoke the upstream key.
 
 ## Next Steps
 
-After verifying the request and cleaning up or retaining your test deployment, use the relevant guide for routine operations.
+After verifying the request and cleaning up or retaining your test deployment, use the relevant guide for routine operations:
 
 - [Change or recover a deployment](../build-deploy/usage.md#updates-and-recovery).
 - [Choose another inference configuration](../agents-inference/inference.md).

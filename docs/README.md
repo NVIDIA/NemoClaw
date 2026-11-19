@@ -18,18 +18,18 @@ Start with the product overview, then use the architecture and ecosystem guides 
 | Distinguish upstream responsibilities | [Ecosystem](about/ecosystem.md) |
 | Check v1 development status and changes | [Release Notes](about/release-notes.md) |
 
-## Get Started
+## Getting Started
 
 Check the prerequisites before following the first deployment; migration is a separate path for existing users.
 
 | Reader goal | Guide |
 |---|---|
 | Check client, runtime, and model-host requirements | [Prerequisites](get-started/prerequisites.md) |
-| Install, upgrade, or uninstall a release's CLI | [Install the CLI](get-started/install.md) |
+| Install, upgrade, or uninstall a release's CLI | [Installing the CLI](get-started/install.md) |
 | Deploy OpenClaw with existing gateway and inference services | [First deployment](get-started/first-deployment.md) |
 | Assess a move from an earlier version | [Migration](get-started/migration.md) |
 
-## Build and Deploy
+## Building and Deploying
 
 Choose the guide for the artifact or deployment operation you need to perform.
 

@@ -1,13 +1,13 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Use the Rust SDK
+# Using the Rust SDK
 
 `nemoclaw-sdk` owns the same operations used by the CLI.
 Callers supply a verified runtime bundle, a persistent state directory, and a cancellation token.
 The SDK runs bundled OpenTofu and its provider as child processes; it is not an embedded OpenTofu engine.
 
-## Build a Local Application
+## Building a Local Application
 
 Use a path dependency on this checkout; the crate is marked `publish = false` and these instructions do not assume a registry release.
 Use the Rust toolchain from [the build guide](../build-deploy/build.md), and build a matching native bundle before making deployment calls.
@@ -24,7 +24,7 @@ The SDK build also needs the pinned Protocol Buffers compiler and native C toolc
 An application outside this workspace resolves its own dependencies and lockfile.
 Keep its SDK checkout, built bundle, and input schema matched; the `v1alpha1` API string alone does not establish compatibility.
 
-## Preview a Deployment
+## Previewing a Deployment
 
 The program below reads `deployment.yaml`, uses the state directory `.local/deployment`, and selects a Linux ARM64 bundle.
 Replace the bundle path with the matching target or a preserved complete bundle.
@@ -72,7 +72,7 @@ Provider downloads reach the callback through a local channel; updates can be dr
 Callbacks run synchronously; keep them short.
 A timed step reports when it returns, including cooperative cancellation; dropping its future does not emit a completed event.
 
-## Choose the Lifecycle Operation
+## Choosing the Lifecycle Operation
 
 Select the SDK call for the effect you need; keep the same state directory and bundle across operations.
 
@@ -88,7 +88,7 @@ Use the same state directory across CLI and SDK operations for this deployment, 
 Each operation holds the deployment lock; schedule callers so they do not operate concurrently on that state.
 Apply computes its own checked plan; passing a previous preview is not part of the API.
 
-## Discover Before Authoring or Planning
+## Discovering Before Authoring or Planning
 
 `discovery::plan_queries(&document)` returns the target reads a plan makes for a document, each a `DiscoveryQuery` that names everything that determines its answer.
 The [`nemoclaw-discovery`](../../crates/nemoclaw-discovery/src/lib.rs) crate answers queries directly with `observe`, without OpenTofu, a bundle, or deployment state; the provider's data sources call the same read functions during a plan.
@@ -113,7 +113,7 @@ Deployment planning already refreshes selected resources and gateway metadata th
 Reuse those observations and retained bindings for ownership, drift, and storage decisions; a separate unowned-resource scan cannot authorize adoption.
 The [provider reference](provider.md#discovery-ownership) defines data-source inputs, sources, limitations, and unknown results for each category.
 
-## Configure a Discovered Fabric Harness
+## Configuring a Discovered Fabric Harness
 
 `HarnessKind` is an opaque canonical Fabric adapter identifier, with no named Rust variants or aliases.
 Set `harness.kind` to the descriptor's exact `adapter_id`, such as `nvidia.fabric.openclaw`.
@@ -123,7 +123,7 @@ Parser acceptance does not establish installation, compatibility or readiness.
 Supply an explicit immutable sandbox image containing the generic launcher and selected Fabric adapter.
 Every sandbox requires `image.ref`; the SDK has no default image and no per-adapter image lookup.
 Optional `harness.settings` carries a JSON object, including nested values, to Fabric's `harness.settings` unchanged.
-The agent's and the harness's [Fabric sections](../agents-inference/agents.md#configure-the-agent-and-the-harness) reach Fabric unchanged, but cannot replace deployment-owned identities, models, workspace paths or artifact paths.
+The agent's and the harness's [Fabric sections](../agents-inference/agents.md#configuring-the-agent-and-the-harness) reach Fabric unchanged, but cannot replace deployment-owned identities, models, workspace paths or artifact paths.
 Model `overrides.settings` likewise passes native settings through without interpretation.
 These fields contain configuration and credential references, not inline secrets.
 Fabric owns their schemas, validation and native mapping.
@@ -133,7 +133,7 @@ Fabric discovers and dispatches installed adapters; NemoClaw does not resolve de
 Image labels support passive planning, and installed Fabric discovery governs execution.
 The bundled snapshot supplies offline candidates only.
 
-## Read Plan Discovery and Resource Inventory
+## Reading Plan Discovery and Resource Inventory
 
 `plan(&document, &cancel)` returns `OperationResult.discovery` when observations or inventory are available.
 The report reuses the checked OpenTofu plan and retained bindings; it does not scan for unowned resources or authorize adoption.
@@ -166,7 +166,7 @@ The SDK copies those advisories into `OperationResult.unverified`, retaining ful
 A complete resource plan does not establish healthy services or working inference.
 Apply still enforces its service readiness gates, including on unchanged deployments.
 
-## Resolve Credentials in an Application
+## Resolving Credentials in an Application
 
 `with_secrets` supplies an application-owned `Secrets` implementation; the default resolves nonempty environment variables.
 The resolver receives reference names, including gateway TLS references whose values must be file paths.
@@ -197,7 +197,7 @@ Attach it with `deployment.with_secrets(Arc::new(ApplicationSecrets(values)))`, 
 The application owns how that map is obtained, who can read it, and its lifetime in memory.
 The resolver does not revoke credentials installed in OpenShell or erase generated keys in retained runtime storage; see [credential ownership](../security/security.md#credentials-and-authentication).
 
-## Handle Failure and Cancellation
+## Handling Failure and Cancellation
 
 Errors retain observation uncertainty and redact resolved values.
 Cancellation leaves state available for explicit reconciliation; it does not delete resources or stop the independent DGX Spark memory supervisor.

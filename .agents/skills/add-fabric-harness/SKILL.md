@@ -17,7 +17,7 @@ Deliver one pull request, titled like `feat: add the OpenCode agent image`.
 ## 1. Gather the Inputs
 
 - **Adapter ID** from Fabric, such as `nvidia.fabric.opencode`, and a short **harness name** for the image and example, lowercase and hyphenated, such as `opencode`.
-- **Fabric revision.** NemoClaw pins one Fabric revision for every image. If the pin predates the adapter, bump it first, in its own pull request: the URL and SHA-256 of `fabric.tar.gz` under `imageSources.fabric` in [`versions.json`](../../../versions.json), then [regenerate the bundled catalog](../../../internal-docs/contributing/agent-image-maintenance.md#regenerate-the-bundled-catalog). The SDK learns adapter IDs and descriptors from that catalog; it needs no code change.
+- **Fabric revision.** NemoClaw pins one Fabric revision for every image. If the pin predates the adapter, bump it first, in its own pull request: the URL and SHA-256 of `fabric.tar.gz` under `imageSources.fabric` in [`versions.json`](../../../versions.json), then [regenerate the bundled catalog](../../../internal-docs/contributing/agent-image-maintenance.md#regenerating-the-bundled-catalog). The SDK learns adapter IDs and descriptors from that catalog; it needs no code change.
 - **The adapter's descriptor** (`*.fabric-adapter.json` in Fabric's source at that revision): its runner command and `requirements.binaries` name the runtime the image must carry.
 - **Its packaging:** a Python adapter with a Fabric extra, or anything else, such as a TypeScript adapter or a native agent.
 
@@ -49,7 +49,7 @@ The stage:
 - A row in [the harness reference](../../../docs/references/fabric-harnesses.md).
 - A row in [the agent state table](../../../docs/build-deploy/state.md) for what the adapter keeps in `/sandbox/artifacts`, from the adapter's source at the pinned revision.
 - The adapter's display name in [the onboarding text](../../../crates/nemoclaw-onboarding/src/tui/text.json), if it isn't there.
-- The image in [the release package list](../../../internal-docs/contributing/releases.md#provision-the-packages).
+- The image in [the release package list](../../../internal-docs/contributing/releases.md#provisioning-the-packages).
 
 ## 5. Validate
 
@@ -60,5 +60,5 @@ The stage:
 
 ## 6. Hand Over Release Packaging
 
-Before the next release candidate, a maintainer must create `ghcr.io/nvidia/nemoclaw/v1/<name>` as an internal package and grant this repository's Actions write access, as [releases](../../../internal-docs/contributing/releases.md#provision-the-packages) describes.
+Before the next release candidate, a maintainer must create `ghcr.io/nvidia/nemoclaw/v1/<name>` as an internal package and grant this repository's Actions write access, as [releases](../../../internal-docs/contributing/releases.md#provisioning-the-packages) describes.
 The staging workflow refuses to run until every release package exists, so say so in the pull request.
