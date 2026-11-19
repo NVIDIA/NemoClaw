@@ -178,7 +178,8 @@ jobs:
           key: image-sources-v1-${{ hashFiles('versions.json') }}
       - name: Fetch the pinned image sources
         run: cargo images fetch
-      - uses: ./.github/actions/containerd-store
+      # The classic image store loads the image; the containerd one's BuildKit
+      # rejects rewrite-timestamp with unpack=false.
       - name: Build the llama.cpp runtime image
         run: docker buildx bake llama-cpp
       - name: Run the server's and the supervisor's version commands
