@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! A managed local gateway on a Windows client's named-pipe engine. The client
-//! reaches Docker Desktop or a Podman machine through the pipe, and the gateway
-//! container, which runs in that engine's Linux VM, binds the VM's
-//! `/var/run/docker.sock`.
+//! The engine socket a managed local gateway binds as `/var/run/docker.sock`.
+//! An engine in a Linux VM, behind a Windows client's named pipe or a macOS
+//! client's forwarded Unix socket, serves containers its socket in the VM.
 
 use nemoclaw_sdk::{
     compile::{Generations, compile, runtime_targets},
@@ -50,39 +49,73 @@ fn gateway_spec(document: &Document) -> Spec {
     Spec::from_gateway_row(&target.kind, &target.values).unwrap()
 }
 
+/// The socket the managed gateway's container binds as `/var/run/docker.sock`:
+/// for Docker, the gateway container's volume in the graph OpenTofu applies;
+/// for Podman, the bind in the container the provider creates.
+fn bound_socket(driver: &str, engine: &str) -> String {
+    let mut value: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric.yaml")).unwrap();
+    value["spec"]["gateway"] =
+        json!({"management": "managed", "runtime": {"provider": driver}, "engine": engine});
+    let document = parse(&value);
+    if driver == "docker" {
+        let graph = compile(&document, &generations(), "0.1.0").unwrap();
+        // OpenTofu's Docker provider reaches the engine at the client's address.
+        assert_eq!(graph["provider"]["docker"][0]["host"], engine);
+        let volumes = &graph["resource"]["docker_container"]["managed_gateway_runtime"]["volumes"];
+        assert_eq!(volumes[0]["container_path"], VM_SOCKET);
+        return volumes[0]["host_path"].as_str().unwrap().into();
+    }
+    gateway_spec(&document)
+        .container("/owned")
+        .unwrap()
+        .host_config
+        .unwrap()
+        .mounts
+        .unwrap()
+        .into_iter()
+        .find(|mount| mount.target.as_deref() == Some(VM_SOCKET))
+        .and_then(|mount| mount.source)
+        .unwrap()
+}
+
 #[test]
 fn a_managed_gateway_on_a_named_pipe_binds_the_engine_vm_docker_socket() {
     for (driver, pipe) in [("docker", DOCKER_DESKTOP), ("podman", PODMAN_MACHINE)] {
-        let mut value: Value =
-            serde_saphyr::from_str(include_str!("../../../examples/fabric.yaml")).unwrap();
-        value["spec"]["gateway"] =
-            json!({"management": "managed", "runtime": {"provider": driver}, "engine": pipe});
-        let document = parse(&value);
-        let spec = gateway_spec(&document);
-        let mounts = spec
-            .container("/owned")
-            .unwrap()
-            .host_config
-            .unwrap()
-            .mounts
-            .unwrap();
-        assert!(
-            mounts
-                .iter()
-                .any(|mount| mount.source.as_deref() == Some(VM_SOCKET)
-                    && mount.target.as_deref() == Some(VM_SOCKET)),
-            "{driver}: the gateway must bind the VM's engine socket: {mounts:?}"
+        assert_eq!(bound_socket(driver, pipe), VM_SOCKET, "{driver}");
+    }
+}
+
+/// On macOS every engine runs in a Linux VM, and the client's socket is the
+/// forwarded end of the engine's socket there. Docker Desktop, Colima, Rancher
+/// Desktop and a Podman machine serve their engine to containers at
+/// `/var/run/docker.sock` in the VM. On other clients, and for a socket that
+/// names none of these engines, the gateway binds the socket's own path.
+#[test]
+fn a_managed_gateway_binds_the_engine_socket_of_the_macos_vm_behind_its_unix_socket() {
+    let macos = cfg!(target_os = "macos");
+    for (driver, engine, in_vm) in [
+        ("docker", "unix:///Users/me/.docker/run/docker.sock", macos),
+        ("docker", "unix:///Users/me/.colima/default/docker.sock", macos),
+        ("docker", "unix:///Users/me/.colima/docker.sock", macos),
+        ("docker", "unix:///Users/me/.config/colima/work/docker.sock", macos),
+        ("docker", "unix:///Users/me/.rd/docker.sock", macos),
+        (
+            "podman",
+            "unix:///var/folders/xy/abc/T/podman/podman-machine-default-api.sock",
+            macos,
+        ),
+        ("docker", "unix:///var/run/docker.sock", false),
+        ("docker", "unix:///Users/me/.lima/docker/sock/docker.sock", false),
+        ("docker", "unix:///home/me/.docker/desktop/docker.sock", false),
+        ("podman", "unix:///run/user/501/podman/podman.sock", false),
+    ] {
+        let own = engine.strip_prefix("unix://").unwrap();
+        assert_eq!(
+            bound_socket(driver, engine),
+            if in_vm { VM_SOCKET } else { own },
+            "{engine}"
         );
-        if driver == "docker" {
-            // OpenTofu's Docker provider reaches the engine through the pipe,
-            // and the gateway container it creates binds the VM's socket.
-            let graph = compile(&document, &generations(), "0.1.0").unwrap();
-            assert_eq!(graph["provider"]["docker"][0]["host"], pipe);
-            assert_eq!(
-                graph["resource"]["docker_container"]["managed_gateway_runtime"]["volumes"],
-                json!([{"host_path": VM_SOCKET, "container_path": VM_SOCKET}])
-            );
-        }
     }
 }
 
