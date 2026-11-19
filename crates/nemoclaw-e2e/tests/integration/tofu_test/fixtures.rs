@@ -282,8 +282,7 @@ impl Fixtures {
     /// provider alias and image addresses, which test files name. Elsewhere
     /// the engine is `ssh://127.0.0.1:PORT`, which the `nemoclaw-fixture-ssh`
     /// relay that the integration step puts on `PATH` as `ssh` forwards; only
-    /// image reads use it there, because managed Docker gateway storage needs
-    /// a local engine socket.
+    /// image reads use it there, because a managed gateway needs a local engine.
     pub async fn start() -> Self {
         let gateway = openshell::Fixture::start().await;
         let mut shared = Shared {
@@ -384,9 +383,9 @@ impl Fixtures {
                 gateway.tls = None;
                 (Some(&mut gateway.engine), shared.engine_endpoint.as_str())
             }
-            // Managed gateway storage takes only a local engine socket. Every
-            // platform compiles the Unix socket, so the Docker alias a test
-            // file names stays the same; these scenarios run only on Unix.
+            // A managed gateway needs a local engine. Every platform compiles
+            // the Unix socket, so the Docker alias a test file names stays the
+            // same; these scenarios run only on Unix.
             gateway => (
                 gateway.as_managed_mut().map(|managed| &mut managed.engine),
                 MANAGED_ENGINE,
