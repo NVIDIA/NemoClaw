@@ -4,7 +4,7 @@
 # Stage a release from a semver tag such as v0.1.0-rc1 on the v1 branch. Promote
 # the images CI checked on the tagged history to v1/<image>:<tag>, build the runtime
 # images, and create a draft release listing every digest, with the CLI bundles
-# CI / Bundle built and checked at the tagged commit. The protected
+# CI / Bundle built and checked at the tag. The protected
 # publisher stays disabled until v1 signoff; no job changes package visibility.
 # Nothing pushes to a package an
 # administrator hasn't created as internal: packages a workflow creates inherit

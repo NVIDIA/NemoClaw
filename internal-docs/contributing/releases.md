@@ -45,10 +45,20 @@ Only users with push access see a draft release, and the `v1` packages stay inte
 
 ## CLI Bundles
 
-Staging attaches each platform's bundle as the latest passing push or manual run of [CI / Bundle](../../.github/workflows/rust.yml) at the tagged commit built and checked it, without rebuilding: `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, `darwin_arm64`, and `windows_amd64`, which extracts to `dist/<platform>`.
+Pushing the tag also starts [CI / Bundle](../../.github/workflows/rust.yml) at the tag, and staging waits for it.
+Staging attaches each platform's bundle as the latest push or manual run of CI / Bundle at the tag built and checked it, without rebuilding: `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, `darwin_arm64`, and `windows_amd64`, which extracts to `dist/<platform>`.
 `SHA256SUMS` lists their SHA-256 checksums.
-Pull request runs build a merge commit, so they don't count.
+A bundle built from a clean checkout of a version tag reports the tag without its `v` as its version, in `nemoclaw --version` and its `manifest.json`, so the bundles of a run at the same commit without the tag don't count.
+Any other bundle reports `0.1.0-dev.<hash>`, where the hash names its source files.
 The executables are neither signed nor notarized yet ([#14621](https://github.com/NVIDIA/NemoClaw/issues/14621)).
+
+If CI / Bundle fails at the tag, staging fails before it pushes release images or drafts the release; rerun the failed jobs, then the staging workflow.
+CI keeps a run's bundles for 7 days; after that, staging names the missing platforms.
+Run CI / Bundle at the tag again, and rerun the staging workflow once it passes:
+
+```sh
+gh workflow run rust.yml --ref v0.1.0-rc1
+```
 
 ### Signing
 
@@ -65,19 +75,6 @@ When a listed platform's signing job fails, staging stops before it drafts the r
 
 Don't list a platform before [#14628](https://github.com/NVIDIA/NemoClaw/issues/14628) is fixed: signing changes the bytes of providers whose versions stay the same, such as the Docker provider, and a deployment created with an unsigned bundle then fails on its dependency lock file.
 
-CI keeps the bundles of a `v1` push or manual run for 7 days.
-Before tagging a commit, check that CI / Bundle passed at it in a `push` or `workflow_dispatch` run within that window:
-
-```sh
-gh run list --workflow rust.yml --commit <full commit hash> --status success
-```
-
-Without such a run, staging fails before it pushes release images or drafts the release, and names the missing platforms.
-Run CI / Bundle at the tag, and rerun the staging workflow once it passes:
-
-```sh
-gh workflow run rust.yml --ref v0.1.0-rc1
-```
 
 ## Test a Staged Release
 
