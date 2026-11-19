@@ -52,7 +52,7 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 |----------|--------|---------------|
 | Brave Search | `brave` | OpenClaw |
 | Claude Code CLI | `claude-code` | OpenClaw and Hermes |
-| Homebrew packages | `brew-balanced` for Balanced; `brew` for Open or explicit broader access | OpenClaw and Hermes |
+| Homebrew packages | `brew-balanced` for Balanced; `brew` for Open or explicit broader access | OpenClaw |
 | Discord messaging | `discord` | OpenClaw and Hermes |
 | GitHub and GitHub API | `github` | OpenClaw and Hermes |
 | Gmail IMAP and SMTP | `gmail` | OpenClaw and Hermes |
@@ -375,7 +375,9 @@ If `uv` is installed somewhere else in the sandbox, add a custom preset for that
 
 ### Homebrew Specifics
 
-The sandbox base image includes Homebrew (Linuxbrew).
+<AgentOnly variant="openclaw">
+
+The OpenClaw sandbox base image includes Homebrew (Linuxbrew).
 Balanced supplies its network access through `brew-balanced`; Open supplies it through `brew`.
 Adding `brew-balanced` alone does not narrow an existing `brew` grant.
 Balanced defaults preserve existing grants. To explicitly narrow an older `brew` grant, remove it before adding the restricted preset:
@@ -399,6 +401,15 @@ $$nemoclaw my-assistant exec -- bash -lc '<formula-command>'
 ```
 
 You do not need to bootstrap Homebrew, install build dependencies, or source `brew shellenv` inside the sandbox.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+The Hermes sandbox image does not include Homebrew, so `brew` is not on the sandbox `PATH`.
+The `brew` and `brew-balanced` presets only grant network egress to the Homebrew endpoints; adding either one does not install the binary.
+Use the `npm` or `pypi` presets for the package route the Hermes image supports, or install Homebrew inside the sandbox before relying on the Homebrew endpoints.
+
+</AgentOnly>
 
 ## Model Pricing
 
