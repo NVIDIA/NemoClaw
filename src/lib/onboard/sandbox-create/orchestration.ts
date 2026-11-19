@@ -1109,35 +1109,52 @@ type CreatedHermesCredentialEnvReconciliationDeps = {
  * Reconcile credentials rendered by an older managed Hermes image before
  * onboarding reports success. A changed env file is not effective until the
  * native Hermes gateway restarts and passes its health probe.
+ *
+ * A pre-recreate state restore also replaces the env file that the running
+ * gateway started from. The archive omits the machine-local API_SERVER_KEY, so
+ * the restored file has none until Hermes startup mints one. Restart the
+ * gateway after a restore, as rebuild does, so it mints a key for this sandbox
+ * and serves the restored state.
  */
 export async function reconcileCreatedHermesCredentialEnvironment(
   input: {
     readonly sandboxName: string;
     readonly plan: SandboxMessagingPlan | null;
+    readonly restoredHermesState?: boolean;
   },
   deps: CreatedHermesCredentialEnvReconciliationDeps,
   recordRecovery: () => void,
 ): Promise<void> {
   return runAsyncWithPostCreateRecovery(async () => {
-    if (input.plan?.agent !== "hermes") return;
-
-    deps.revalidateSandboxIdentity(
-      `reconciling Hermes messaging credentials for sandbox '${input.sandboxName}'`,
-    );
-    const reconciliation = deps.reconcileCredentialEnv(input.plan, deps.revalidateSandboxIdentity);
-    deps.revalidateSandboxIdentity(
-      `confirming Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
-    );
-    if (!reconciliation.changed) return;
+    const restoredHermesState = input.restoredHermesState === true;
+    let credentialsChanged = false;
+    if (input.plan?.agent === "hermes") {
+      deps.revalidateSandboxIdentity(
+        `reconciling Hermes messaging credentials for sandbox '${input.sandboxName}'`,
+      );
+      const reconciliation = deps.reconcileCredentialEnv(
+        input.plan,
+        deps.revalidateSandboxIdentity,
+      );
+      deps.revalidateSandboxIdentity(
+        `confirming Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
+      );
+      credentialsChanged = reconciliation.changed;
+    }
+    if (!credentialsChanged && !restoredHermesState) return;
 
     const restart = await deps.restartGateway(input.sandboxName, deps.revalidateSandboxIdentity);
     if (!restart || restart.status !== 0) {
       throw new Error(
-        `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the native Hermes restart failed.`,
+        credentialsChanged
+          ? `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the native Hermes restart failed.`
+          : `Hermes state was restored for sandbox '${input.sandboxName}', but the native Hermes restart failed; the restored state has no Hermes API key until the gateway restarts. Run '${cliName()} ${input.sandboxName} gateway restart'.`,
       );
     }
     deps.revalidateSandboxIdentity(
-      `completing Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
+      credentialsChanged
+        ? `completing Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`
+        : `completing Hermes restored-state restart for sandbox '${input.sandboxName}'`,
     );
   }, recordRecovery);
 }
@@ -4008,6 +4025,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               {
                 sandboxName,
                 plan: plannedMessagingState?.plan ?? null,
+                restoredHermesState: agent?.name === "hermes" && restoreBackupPath !== null,
               },
               createHermesCredentialEnvReconciliationRuntime(
                 (args, options) => runOpenshell([...args], options),
