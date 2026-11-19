@@ -32,6 +32,7 @@ import {
   REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
 } from "./openshell-gateway-upgrade-fixture.mts";
+import { REBUILD_OPENCLAW_TARGET_TIMEOUT_MINUTES } from "./rebuild-openclaw-timeout-contract.mts";
 import { SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES } from "./sandbox-survival-timeout-contract.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
@@ -1469,11 +1470,13 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       "test/e2e/live/openclaw-stopped-recovery.ts",
       "test/e2e/live/openclaw-restoration.ts",
+      "tools/e2e/rebuild-openclaw-timeout-contract.mts",
     ],
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
-    timeoutMinutes: 45,
+    timeoutMinutes: REBUILD_OPENCLAW_TARGET_TIMEOUT_MINUTES,
+    prAdvisorSelectable: true,
     installMode: "credential-free",
     restoreCli: true,
     exposeCliBin: true,

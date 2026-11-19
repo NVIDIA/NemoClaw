@@ -94,9 +94,9 @@ The native `mcp_servers` map in that snapshot is authoritative, including direct
 
 The `/sandbox/.deepagents` directory contains Deep Agents Code runtime state and initially generated configuration.
 NemoClaw generates the initial `config.toml`, and native preference saves can update it.
-Rebuild and named recreation restore the saved native home, including those preferences.
+For a managed image, recreation for a verified provider or model change keeps the replacement's generated configuration and retains the previous file in the backup.
 Current images keep managed route and upstream provider metadata in protected, root-owned files outside the native home.
-To change the provider or model without restoring existing preferences, follow [Validate a Different Deep Agents Selection](../../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+To change the provider or model, follow [Recreate a Deep Agents Sandbox](../../inference/manage-inference/switch-providers#recreate-a-deep-agents-sandbox).
 
 The managed Deep Agents image deliberately omits raw provider and service credentials from generated configuration.
 OpenShell-owned credential stores and host-only secrets remain outside the native home/workspace transfer. The native `.deepagents/.mcp.json` must contain only supported URLs and OpenShell resolver placeholders for managed entries.
