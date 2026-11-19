@@ -30,7 +30,7 @@ This operation publishes no image.
 The [Qwen3-4B case](../../crates/nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml) shows the complete desired-state shape with a pinned 2.50 GB Q4_K_M GGUF, 32,768 context tokens, and a 12 GiB GPU budget.
 Its image references are CI placeholders.
 Replace them with candidate-built digests.
-Use a Linux host with GPU-enabled Docker, an NVIDIA driver compatible with the pinned image, and a kernel that passes OpenShell's sandbox capability checks.
+Use a Linux host with GPU-enabled Docker, an NVIDIA driver compatible with the pinned image, and a kernel that passes NVIDIA OpenShell's sandbox capability checks.
 Match the service's hardware and memory requirements to the selected host.
 The [qualification record in #14556](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) identifies tested source revisions, images, and host configurations.
 Other GGUFs, general tool use, cross-host restoration, and Classic host settings need separate qualification.
@@ -39,7 +39,8 @@ The first implementation serves one model on one CUDA GPU, with full GPU-layer o
 `serving.batchTokens` and `microBatchTokens` control batching.
 `reasoningStrength` optionally supplies the native template argument.
 There are no arbitrary launch flags or CPU-fallback controls.
-A GPU budget is admission accounting, not a hard limit on llama.cpp's allocator: measure the chosen context, batching, and model on the actual host.
+A GPU budget is admission accounting, not a hard limit on llama.cpp's allocator.
+Measure the chosen context, batching, and model on the actual host.
 Host memory pressure protection remains active.
 
 With `authentication: bearer`, the runtime generates and retains a key in separate credential storage and passes it to llama-server through a private file.
@@ -59,13 +60,13 @@ Delete retained data separately only when you no longer need it.
 
 The `kind: nim` implementation under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) remains a candidate.
 The maintained configuration uses native NVIDIA NIM 2.0.12, a Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context, and a 40 GiB GPU budget.
-The maintained NIM case selects a read/write file assistant, disables bundled skills and native tool search and Code Mode, and requests deterministic sampling with a 2048-token output limit.
+The maintained NIM case selects a read/write file assistant, disables bundled skills and native tool search and Code Mode, and requests deterministic sampling with a 2,048-token output limit.
 The [qualification record in #14556](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) contains the source-specific results and investigation.
 General task reliability, the full tool inventory, the default 8K context, other model and profile combinations, and cross-host restoration remain unqualified.
 Native tool-call acceptance and successful transport don't establish reliable agent tool use.
 The pinned FP8 and NVFP4 checkpoint formats are experimental and don't inherit BF16's recovery or tool qualification.
-The pinned OpenClaw can also request its default OpenAI utility model, which a single-model local endpoint doesn't serve.
-OpenClaw documents `utilityModel` for those auxiliary requests, but the pinned Fabric adapter's settings schema rejects it ([NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679)).
+The pinned OpenClaw might also request its default OpenAI utility model, which a single-model local endpoint doesn't serve.
+OpenClaw documents `utilityModel` for those auxiliary requests, but the pinned NVIDIA NeMo Fabric adapter's settings schema rejects it ([NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679)).
 Don't patch the native image or substitute a model alias to hide that mismatch.
 Other NIM engines and distributed inference are unsupported.
 Distributed inference is outside V0 parity scope.
@@ -148,7 +149,7 @@ Use [external inference configuration](inference.md#prepare-an-external-endpoint
 ## Pin and Serve the Model
 
 Mutable branches and tags are rejected so a later apply can't silently change weights.
-The OpenShell route's model must match `serving.modelName` when declared, or the repository name when it is omitted.
+The OpenShell route's model must match `serving.modelName` when declared, or the repository name when it's omitted.
 
 Choose a scenario from the [NVIDIA DGX Spark examples](../../examples/spark/README.md), including small Pi, multiple agents, shared inference, two local models, and a hosted model.
 The original vLLM configuration without a preparation recipe is [examples/spark/vllm.yaml](../../examples/spark/vllm.yaml).
@@ -376,7 +377,8 @@ The stop detail stays in `/data/status.json`.
 If the cause isn't in the excerpt, read it in the container log.
 The model volume retains `/data/status.json` with `phase`, `detail`, `updated` (UTC timestamp), and `pid`.
 Phases are `initializing`, `downloading`, `preparing`, `loading`, `ready`, and `stopped`.
-Read `detail` with the timestamp: a `ready` file from an earlier container start doesn't prove current readiness.
+Read `detail` with the timestamp.
+A `ready` file from an earlier container start doesn't prove current readiness.
 
 Collect diagnostics on the execution host using Docker access to the same engine selected by the deployment.
 For SSH placement, connect to that host using the already configured SSH identity.

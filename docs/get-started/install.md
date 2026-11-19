@@ -157,5 +157,5 @@ NemoClaw keeps its files in these places:
 | Sandboxes, gateways, model services, and their data | The deployment's Docker or Podman engine, or Kubernetes cluster; see [retained resources](../build-deploy/state.md#understand-the-retained-resources) | Destroy, then removing retained resources |
 | Agent, gateway, and model runtime images | The engine's image store, or the cluster nodes' | The engine's image commands, such as `docker image rm`; NemoClaw doesn't remove them |
 
-The OpenShell CLI keeps its own gateway profiles.
+The NVIDIA OpenShell CLI keeps its own gateway profiles.
 Remove them with OpenShell's commands.

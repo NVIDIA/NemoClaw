@@ -5,7 +5,7 @@
 
 These notes describe the v1 development documentation and its release boundaries.
 v1 has no release yet.
-[#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) tracks the first one.
+Issue [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) tracks the first one.
 The workspace package version alone doesn't establish that a release has been published.
 
 ## Product Changes
@@ -72,7 +72,7 @@ Windows clients:
 
 macOS clients:
 
-- A managed local gateway on Docker Desktop, Colima, Rancher Desktop, or a Podman machine binds `/var/run/docker.sock` in the engine's Linux VM, where each engine serves containers its socket, instead of the client's socket path, such as `~/.docker/run/docker.sock`, which the VM may not serve ([#14640](https://github.com/NVIDIA/NemoClaw/issues/14640)).
+- A managed local gateway on Docker Desktop, Colima, Rancher Desktop, or a Podman machine binds `/var/run/docker.sock` in the engine's Linux VM, where each engine serves containers its socket, instead of the client's socket path, such as `~/.docker/run/docker.sock`, which the VM might not serve ([#14640](https://github.com/NVIDIA/NemoClaw/issues/14640)).
   NemoClaw recognizes each engine by its default socket.
   An engine at another socket, such as a Lima instance's, binds the socket's own path as before.
   See [current limits](../resources/limits.md#platforms-models-and-placement).
@@ -90,7 +90,7 @@ These changes reached `v1` between the `v0.1.0-rc10` and `v0.1.0-rc11` tags.
 
 Agents and interfaces:
 
-- The agent holds Fabric's `instructions`, `tools`, `skills`, `mcp`, and `workflow` sections, and the harness holds `runtime`, `environment`, `discovery`, `telemetry`, and `relay`.
+- The agent holds NVIDIA NeMo Fabric's `instructions`, `tools`, `skills`, `mcp`, and `workflow` sections, and the harness holds `runtime`, `environment`, `discovery`, `telemetry`, and `relay`.
   NemoClaw passes each to Fabric unchanged.
   Sandboxes that share a harness definition through `harnessRef` can give each agent its own instructions, tools, and skills.
   See [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness).
@@ -98,8 +98,8 @@ Agents and interfaces:
   See [reuse policies and grants](../security/sandbox-network.md#reuse-policies-and-grants).
 - A `kind: api` integration, and `openshell_api` in HCL, sends one key to every URL in its `endpoints`, so one registration covers an API spread across hosts.
   `sandboxEnv` (`sandbox_env` in HCL) names the variable the sandbox sees the key in, such as `NVIDIA_API_KEY`.
-  Without it the name stays `NEMOCLAW_API_<NAME>_KEY`.
-  OpenShell reports, during apply, a sandbox whose attached registrations put keys in the same variable.
+  Without it, the name stays `NEMOCLAW_API_<NAME>_KEY`.
+  NVIDIA OpenShell reports, during apply, a sandbox whose attached registrations put keys in the same variable.
   See [key-authenticated APIs](../agents-inference/agents.md#key-authenticated-apis).
 - Apply prints the command that opens Hermes's terminal UI for a Hermes agent that enables Fabric's `terminal` interface, which Fabric marks experimental.
   See [Hermes's terminal UI](../agents-inference/interfaces.md#hermess-terminal-ui).
@@ -137,7 +137,7 @@ Inference and models:
 Kubernetes and OpenShift:
 
 - `gateway.kubernetes.expose.route` publishes a managed OpenShift gateway at `gateway.endpoint` through the OpenShell chart's pass-through Route, for clients such as the OpenShell CLI.
-  Its optional `annotations` reach the Route.
+  `expose.route`'s optional `annotations` reach the Route.
   The gateway certificate names the endpoint's host, and NemoClaw's own commands keep their port forward.
   Plan refuses `expose.route` unless `gateway.runtime.provider` is `openshift` and the endpoint's host is a DNS name.
   See [publishing through an OpenShift Route](../build-deploy/kubernetes.md#through-an-openshift-route).
@@ -243,7 +243,7 @@ Gateways and Kubernetes:
 - `gateway.kubernetes.kubeconfig` and `context` can be omitted together.
   Without them, NemoClaw uses the service account of the pod it runs in.
   See [running NemoClaw in a pod](../build-deploy/kubernetes.md#run-nemoclaw-in-a-pod).
-- `gateway.kubernetes.namespace` can name an existing namespace: NemoClaw binds it by UID and never labels, changes, or deletes it, and refuses a namespace that another deployment created or that is being deleted.
+- `gateway.kubernetes.namespace` can name an existing namespace: NemoClaw binds it by UID and never labels, changes, or deletes it, and refuses a namespace that another deployment created or that's being deleted.
 - NemoClaw no longer reads cluster-wide objects: it doesn't check for a default StorageClass, the Agent Sandbox CRD, or `kube-system`.
   Without a default StorageClass, the gateway install times out in Helm's wait.
 - A managed OpenShift gateway lets OpenShift assign its UID and `fsGroup`.
@@ -444,7 +444,7 @@ The agent and runtime images are built for `linux/arm64` and `linux/amd64`.
 | Service | Live tests in CI |
 |---|---|
 | External endpoint, such as NVIDIA hosted inference | OpenClaw and Hermes on NVIDIA hosted inference, on Linux AMD64; stub endpoints in the Docker and kind suites |
-| Managed vLLM | OpenClaw on the GPU runner, and Nemotron on DGX Station by manual dispatch |
+| Managed vLLM | OpenClaw on the GPU runner, and NVIDIA Nemotron on NVIDIA DGX Station by manual dispatch |
 | Managed Ollama | Hermes on the GPU runner |
 | External Ollama through a managed proxy | None; contract and integration tests run it against fixtures |
 

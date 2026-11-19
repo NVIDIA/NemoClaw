@@ -3,7 +3,7 @@
 
 # Ecosystem
 
-NemoClaw combines deployment management, OpenShell sandbox controls, and NeMo Fabric agent execution.
+NemoClaw combines deployment management, NVIDIA OpenShell sandbox controls, and NVIDIA NeMo Fabric agent execution.
 You use NemoClaw to configure and operate the deployment, then send requests to the running agent through Fabric.
 
 ## Understand Each Component

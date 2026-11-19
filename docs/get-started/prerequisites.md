@@ -15,7 +15,7 @@ Record where each component runs before checking tool and network requirements.
 |---|---|
 | Client running NemoClaw | Matching native bundle, writable deployment state directory, referenced credential and TLS files, and access to the gateway and selected engine |
 | Image build host | The selected image recipe's toolchain and architecture; see [runtime requirements](#runtime-and-inference-requirements) |
-| Sandbox engine host | OpenShell's configured compute daemon and the selected immutable agent image |
+| Sandbox engine host | NVIDIA OpenShell's configured compute daemon and the selected immutable agent image |
 | Inference host | A reachable compatible endpoint, or the tools, image, model storage, and capacity required by the selected managed service |
 
 One machine can fill several roles.
@@ -55,7 +55,7 @@ Keep the bundle unchanged while an operation uses it.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
 `CI / Bundle` builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64.
-That doesn't qualify GPU deployment on every platform.
+These builds and tests don't qualify GPU deployment on every platform.
 
 On Linux, the oldest supported release is Ubuntu 22.04, whose glibc is 2.35.
 `CI / Bundle` builds the Linux bundles there and fails if any bundle executable needs a newer glibc.
@@ -71,7 +71,7 @@ Choose the gateway and model placement that matches the available engine and end
 | Configuration | Requirements and owning guide |
 |---|---|
 | External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API and model, and an immutable sandbox image; see [usage](../build-deploy/usage.md) and [inference](../agents-inference/inference.md) |
-| Fabric agent image | A native Linux ARM64 or AMD64 Docker builder with Buildx, which builds every agent target; see [image prerequisites](../build-deploy/build.md#build-agent-images) |
+| NVIDIA NeMo Fabric agent image | A native Linux ARM64 or AMD64 Docker builder with Buildx, which builds every agent target; see [image prerequisites](../build-deploy/build.md#build-agent-images) |
 | Managed vLLM | Matching runtime image, pinned model revision, and storage and capacity for the selected hardware contract; see [managed models](../agents-inference/models.md) and [AMD64 Nemotron configuration](../agents-inference/models.md#configure-nemotron-on-an-amd64-gpu-host) |
 | Managed Ollama | Matching runtime image, pinned model digest, one NVIDIA GPU, and the same hardware, placement, and capacity contract as vLLM; see [managed Ollama](../agents-inference/inference.md#run-managed-ollama) |
 | Managed rootless Podman gateway | Podman 5 or later, local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](../build-deploy/usage.md#use-a-managed-podman-gateway) |

@@ -41,7 +41,7 @@ See [the SDK configuration projection](../../crates/nemoclaw-sdk/src/fabric_conf
 Plan checks that the selected image provides the harness at NemoClaw's Fabric revision.
 A mismatched revision leaves compatibility unknown.
 Fabric validates the configuration through its installed API when the agent is configured, so a configuration the harness rejects fails during apply.
-[#14148](https://github.com/NVIDIA/NemoClaw/issues/14148) tracks checking it at plan time.
+Issue [#14148](https://github.com/NVIDIA/NemoClaw/issues/14148) tracks checking it at plan time.
 Neither check establishes successful model inference.
 
 ## Choose Native Access
@@ -273,8 +273,8 @@ The `bundled` field selects which of the harness's own skills load.
 Leave it out to keep the harness's default.
 
 To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
-The gateway must allow driver configuration: for a managed gateway, set `allow_driver_config: true` in the driver's table of `spec.gateway.config` when you create the deployment.
-See [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes).
+The gateway must allow driver configuration.
+For a managed gateway, set `allow_driver_config: true` in the driver's table of `spec.gateway.config` when you create the deployment, as [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes) describes.
 For an external gateway, its administrator enables OpenShell's `allow_driver_config`.
 
 Mix the two entry kinds to share a folder of skills between agents and give one agent a skill of its own, with its own mount settings.
@@ -332,7 +332,7 @@ sandboxes:
 ```
 
 The `assistant` agent loads `summarize`, `translate`, and the skill in `review-skill`.
-`researcher` loads `summarize` and `translate`.
+The `researcher` agent loads `summarize` and `translate`.
 
 In HCL, use `openshell_sandbox`'s [`driver_config`](../references/provider.md#openshell-resources-and-data-sources) and `fabric_agent`'s `skills` block, with one `directories` block per entry:
 
@@ -452,7 +452,7 @@ overrides:
 NemoClaw sends the provider's API to any adapter whose Fabric descriptor declares a model `api`.
 Set it in `extensions` only to override that.
 `extensions` holds the model fields the selected adapter declares, and Fabric validates them.
-It can't set a field the deployment already sets.
+`extensions` can't set a field the deployment already sets.
 The SDK preserves each named route plus the `default` role.
 
 Any model or settings update replaces the agent and its sandbox, deleting its writable layer and in-memory conversation.

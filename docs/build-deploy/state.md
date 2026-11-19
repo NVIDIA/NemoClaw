@@ -38,11 +38,11 @@ This exception doesn't accept older formats or skip document, digest, generation
 1. Keep the previous CLI bundle and back up the entire deployment state directory before using the new bundle.
 2. Run `nemoclaw --state-dir <directory> plan <config.yaml>` with the matching desired configuration to inspect the deployment.
    Loading intent alone doesn't rewrite it.
-   The command can refresh other deployment files.
+   The command might refresh other deployment files.
 3. Continue with the normal apply or recovery procedure.
    The next successful intent save writes format 30 and preserves resource identities and unfinished-creation guards.
 
-The format 29 CLI can't read a record after it is saved as format 30.
+The format 29 CLI can't read a record after it's saved as format 30.
 Continue managing that deployment with the new bundle.
 Don't edit the version or restore an old intent file over newer operation state to force a downgrade.
 This upgrade handles NemoClaw intent only.
@@ -52,7 +52,7 @@ It doesn't migrate native conversations, model caches, or resources between host
 
 These paths are inside the sandbox, not the client's deployment state directory.
 Use authenticated [native access](../agents-inference/interfaces.md) for the selected deployment.
-The [SDK's Fabric configuration](../../crates/nemoclaw-sdk/src/fabric_config.rs) sets the working directory to `/sandbox/workspace` and the artifact root to `/sandbox/artifacts`.
+The [SDK's NVIDIA NeMo Fabric configuration](../../crates/nemoclaw-sdk/src/fabric_config.rs) sets the working directory to `/sandbox/workspace` and the artifact root to `/sandbox/artifacts`.
 The [image runtime environment](../../image/fabric/runtime.json) sets `HOME=/sandbox`.
 Native settings can select other locations.
 Inspect the selected harness configuration before collecting files.
@@ -85,7 +85,7 @@ A descriptor in the image catalog alone doesn't establish that a harness is inst
 Replacing or deleting the sandbox, as any agent configuration change does, deletes files in its writable layer.
 Use mounted volumes for files that must survive replacement.
 Retaining files doesn't by itself resume a native conversation.
-Each declared agent runs in its own OpenShell sandbox.
+Each declared agent runs in its own NVIDIA OpenShell sandbox.
 Workspace directories don't further isolate processes within that sandbox.
 
 ### Conversation and Credential Boundaries
@@ -153,7 +153,8 @@ Changing it later replaces a Docker or Podman gateway's container, keeping its d
 OpenShell's admission settings use the same format, such as a replacement label map in an `openshell.drivers.docker.resource_admission.required_labels` table.
 For an external gateway, its administrator enables OpenShell's `allow_driver_config` for the compute driver.
 Mounts default to read-only, so `read_only: false` is required for agent writes.
-Don't mount over `/sandbox` or the image's working directory: OpenShell protects its workspace root and control paths.
+Don't mount over `/sandbox` or the image's working directory.
+OpenShell protects its workspace root and control paths.
 For driver-specific settings and admission labels, follow the pinned OpenShell [Docker](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-docker/README.md), [Podman](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-podman/README.md), or [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-kubernetes/README.md) instructions.
 Kubernetes uses PVCs rather than Docker named volumes.
 
@@ -243,7 +244,7 @@ Files on caller-supplied mounted volumes remain under the platform's control.
 Preserve or retire them separately.
 The [destroy guide](usage.md#destroy) owns the workload removal, retained-storage, and recovery procedure.
 Destroy also deletes the OpenShell workspace.
-Re-applying the same configuration recreates it.
+Reapplying the same configuration recreates it.
 
 Credentials can also remain in retained runtime storage.
 See [managed vLLM authentication](../agents-inference/inference.md#authenticate-a-managed-vllm-service), [Ollama proxy credentials](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy), and [security](../security/security.md) before retiring storage.
@@ -260,7 +261,7 @@ Destroy removes workloads but leaves some bound data and infrastructure for expl
 | Kubernetes sandbox workspace claim | Deleted; under the `Retain` reclaim policy, its volume remains `Released` with the workspace files |
 | Deployment provider profiles and registrations, including declared Brave integration resources | Removed; upstream keys aren't revoked |
 | External gateway, inference service, external Ollama daemon and model, and externally owned engine and network | Remain under their operators' control |
-| OpenShell workspace | Deleted; re-applying the configuration recreates it |
+| OpenShell workspace | Deleted; reapplying the configuration recreates it |
 | Managed vLLM and Ollama process containers and service-owned networks | Removed; model storage remains tracked |
 | Managed model downloads and prepared data | Native Docker volumes retained by default; missing caches can be reconstructed separately from credentials |
 | Managed vLLM credentials | Separate tracked credential volume retained |
@@ -280,7 +281,7 @@ Record those addresses and keep the state directory if you need to account for r
 
 ### Find Retained Docker Objects
 
-On Docker engines, each retained resource consists of Docker objects labelled `nemoclaw.nvidia.com/uid` with the deployment's UID.
+On Docker engines, each retained resource consists of Docker objects labeled `nemoclaw.nvidia.com/uid` with the deployment's UID.
 Their names start with the deployment's workspace, `WS` below: `nc-` followed by the first 16 hexadecimal digits of the SHA-256 digest of `metadata.uid`.
 
 | `plan --destroy` entry | Docker objects |

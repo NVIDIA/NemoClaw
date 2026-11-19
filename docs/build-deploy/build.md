@@ -9,7 +9,7 @@ Native builds also require a C toolchain for TLS dependencies.
 Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.2`.
 `cargo ci` finds it there.
 Other Cargo commands, including the bundle builder's `cargo run`, find only a compiler on `PATH`.
-Otherwise, set `PROTOC` to `.tools/protoc-36.2/bin/protoc` or another protoc 36.2.
+If none is on `PATH`, set `PROTOC` to `.tools/protoc-36.2/bin/protoc` or another protoc 36.2.
 [versions.json](../../versions.json) records tool versions, download checksums, and the SDK's image pins: the gateway, sandbox runtime, and supervisor images, which documents don't name.
 The SDK generates its artifact constants from that manifest at build time.
 A Docker or Podman deployment keeps the gateway image pin of the bundle that created it.
@@ -28,7 +28,7 @@ Run the bundle builder:
 cargo run -p nemoclaw-build -- bundle
 ```
 
-The builder downloads and verifies the pinned OpenTofu, Docker provider, and Helm provider archives, builds the CLI and the NemoClaw, OpenShell, and Fabric providers with the lockfile, and writes `dist/<platform>`.
+The builder downloads and verifies the pinned OpenTofu, Docker provider, and Helm provider archives, builds the CLI and the NemoClaw, NVIDIA OpenShell, and NVIDIA NeMo Fabric providers with the lockfile, and writes `dist/<platform>`.
 The manifest records each shipped file's hash, including the unchanged upstream licenses.
 The SDK verifies the bundle before use.
 A `Deployment` hashes the bundle on its first operation and again only when the manifest or a file it lists is written, replaced, or removed.
@@ -126,7 +126,8 @@ See the [image metadata contract](../../internal-docs/design/fabric-management.m
 Plan requires the selected image's runtime metadata to supply its `fabric-agent-ctl` command, environment, default policy, and executable grants.
 For an external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image.
 NemoClaw doesn't assume the client host's Docker socket.
-This engine is used only for image inspection and doesn't authorize managing the external gateway.
+NemoClaw uses this engine only for image inspection.
+Using it doesn't authorize managing the external gateway.
 A missing image, missing metadata, or omitted external engine stops planning with a diagnostic.
 Load a matching image or rebuild it, then retry.
 
@@ -162,10 +163,11 @@ Common Fabric wheels and base layers are shared.
 Images other than Hermes export dependencies from Fabric's frozen root lock, selecting the Python adapter's extra when present.
 Hermes retains a separate native dependency supplement, described in the [source notice](../../image/NOTICE.md).
 The exact Python base-image pins remain image-build inputs.
-Uv validates installed adapter `Requires-Python` constraints.
+The uv tool validates installed adapter `Requires-Python` constraints.
 The builder verifies archive and wheel hashes, retains upstream archives and local build sources under `/opt/nemoclaw/source/`, and records local source hashes in `/opt/nemoclaw/provenance.json`.
 The [source notice](../../image/NOTICE.md) describes retained sources and licenses.
-Pinned archives and wheels don't make the whole image bit-reproducible: Debian packages still come from the configured repositories.
+Pinned archives and wheels don't make the whole image bit-reproducible.
+Debian packages still come from the configured repositories.
 
 To extend an agent image with your own skills and tools, refer to [derived agent images](derived-images.md).
 
@@ -233,7 +235,7 @@ When the image must be acquired, plan reports compatibility as deferred.
 Apply can pull the image, then checks it before creating storage, networks, or containers.
 Matching labels establish the declared backend, recipe, and authentication, not successful model loading or inference.
 
-An image built by a different NemoClaw revision can carry the right labels yet reject the runtime contract when its runtime starts, after the deployment has created the service's storage and network.
+An image built by a different NemoClaw revision might carry the right labels yet reject the runtime contract when its runtime starts, after the deployment has created the service's storage and network.
 In either case, rebuild the selected image from the bundle's source revision with `docker buildx bake vllm`, or `cargo images fetch` and then `docker buildx bake ollama`, as above.
 Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to its new digest.
 Keep the deployment state and reapply.

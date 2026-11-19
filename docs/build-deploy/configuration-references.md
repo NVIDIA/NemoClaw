@@ -9,7 +9,7 @@ A shared inference, provider, harness, integration, policy, or grant definition 
 Managed services have a separate rule: every entry in `spec.services` is installed and checked, even without a consumer.
 
 The authoring library and its [example TUI](../../crates/nemoclaw-onboarding/README.md) can generate a validated starter document without resolving credentials, planning, or applying.
-The questionnaire edits a single-sandbox deployment and derives native settings questions from Fabric schemas.
+The questionnaire edits a single-sandbox deployment and derives native settings questions from NVIDIA NeMo Fabric schemas.
 Other deployment shapes remain available through hand-authored YAML according to the [field reference](../reference/configuration.md).
 Generated and hand-authored files use the same lifecycle CLI `plan` and `apply` implementations.
 
@@ -51,7 +51,7 @@ Paths below are relative to `spec`.
 Sandboxes, inference providers, inferences, harnesses, integrations, policies, and grants are maps keyed by name.
 Policies and grants are defined only at the deployment level: only the sandbox's own network selects them, so a sandbox-level definition would add nothing over writing it in place.
 An inline provider has no key, so it requires `name`.
-Deployment-level provider names identify their OpenShell registrations.
+Deployment-level provider names identify their NVIDIA OpenShell registrations.
 Sandbox-local providers receive stable identities derived from the sandbox and provider names.
 Different sandboxes can reuse a local definition name without sharing its registration.
 A document supports one to 256 named sandboxes with a Kubernetes or OpenShift gateway, and one to 32 with Docker or Podman.

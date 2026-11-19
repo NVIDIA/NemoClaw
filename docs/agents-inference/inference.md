@@ -35,7 +35,7 @@ It assumes an existing endpoint serving both model IDs.
 It doesn't provision that server or download either model.
 Select a gateway, current agent image, endpoint, and models using the prerequisites below before applying it with a fresh deployment UID and state directory.
 
-The SDK preserves named models and maps the selected initial route to the public Fabric `default` model role.
+The SDK preserves named models and maps the selected initial route to the public NVIDIA NeMo Fabric `default` model role.
 Fabric owns native aliases and model-selection behavior.
 OpenShell enforces provider access at the sandbox boundary.
 This configuration supplies no automatic fallback, consultation between models, or agent delegation behavior.
@@ -71,7 +71,7 @@ Different sandboxes can reuse local provider names.
 Replace the example endpoints, model IDs, deployment UID, and image for your environment.
 The local server and hosted API must already exist and satisfy the [external endpoint prerequisites](#prepare-an-external-endpoint).
 Set `HOSTED_API_KEY` on the applying host.
-Requests to a real hosted API can incur charges.
+Requests to a real hosted API might incur charges.
 Use the [deployment workflow](../build-deploy/usage.md) with fresh state, then verify each configured model through its native agent interface.
 
 OpenShell receives a distinct provider credential key for each credentialed registration.
@@ -135,7 +135,8 @@ updatePolicy: Preserve
 
 `cpuLimitMillis: 4000` caps CPU use at four cores.
 `memoryLimitGiB` limits the container's system memory.
-These fields don't set the GPU budget: `memory.gpuMemoryGiB`, `memory.gpuMemoryUtilization`, and backend-specific cache settings retain their runtime meanings.
+These fields don't set the GPU budget.
+`memory.gpuMemoryGiB`, `memory.gpuMemoryUtilization`, and backend-specific cache settings retain their runtime meanings.
 The runtime's resident host-memory monitor reads `/proc`, not cgroup memory pressure, so the kernel can OOM-kill a container that reaches `memoryLimitGiB` before the monitor stops inference.
 When these limits are omitted, NemoClaw sets a 104 GiB memory limit and no CPU cap.
 
@@ -179,8 +180,7 @@ NemoClaw uses it to read the endpoint's model catalog.
 The harness name doesn't change these defaults.
 
 Agents use the protocol their harness's adapter selects for the provider transport.
-An agent uses another protocol only when its adapter's Fabric descriptor declares a model `api`, as Pi's and OpenClaw's do.
-See [Pi model selection](agents.md#pi-model-selection).
+An agent uses another protocol only when its adapter's Fabric descriptor declares a model `api`, as Pi's and OpenClaw's do ([Pi model selection](agents.md#pi-model-selection)).
 Otherwise, an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent.
 Fabric validates the rest of its configuration when the agent is configured.
 
@@ -332,7 +332,7 @@ Apply downloads and verifies the native registry manifest and each blob using th
 It then starts Ollama, checks the selected digest, and sends a load-only request without a prompt or generated response.
 The bounded readiness check requires Ollama to report the selected model fully on GPU, within the GPU budget times the number of GPUs the container sees, and with the requested context length.
 These checks are observations, not a hard GPU allocator quota.
-A model can exceed its budget during loading before the check fails.
+A model might exceed its budget during loading before the check fails.
 When the runtime stops during readiness, the apply error includes the stop detail it recorded in `/data/status.json`, such as a memory protection stop.
 Ollama's own output stays in the container log.
 CPU offload is rejected, and CPU-only execution isn't part of this shared adapter yet.
@@ -425,7 +425,7 @@ YAML doesn't reconfigure a running server in place.
 The generated key lives in a Docker volume, so NemoClaw generates keys only for services it places on Docker.
 On another platform, such as Kubernetes or Podman, supply the key yourself and keep it in the platform's secret store.
 With `authentication` set, `vllm_runtime`'s `launch.key_env` names the variable to set, `NEMOCLAW_INFERENCE_KEY`.
-When it is set, the runtime uses that key instead of generating one, needs no credential volume, and passes the key to vLLM only as `VLLM_API_KEY`.
+When it's set, the runtime uses that key instead of generating one, needs no credential volume, and passes the key to vLLM only as `VLLM_API_KEY`.
 The key must be 16 to 4,096 printable characters without whitespace.
 A supplied key without `authentication` stops startup, so the server never runs unauthenticated by mistake.
 
@@ -517,7 +517,7 @@ Restore the pinned external model before retrying, or use a fresh deployment to 
 
 An explicit apply can reconcile an owned, stopped proxy after its external model passes observation.
 A missing or insecure retained key stops startup.
-It is never regenerated beside initialized storage.
+The key is never regenerated beside initialized storage.
 Destroy removes the proxy and OpenShell registration and retains the credential volume.
 The external daemon and model remain untouched.
 Reapplying the original configuration reuses that retained key.

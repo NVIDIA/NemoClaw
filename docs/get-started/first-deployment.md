@@ -3,7 +3,7 @@
 
 # Deploy Your First OpenClaw Agent
 
-In this tutorial, you configure one OpenClaw sandbox with an existing OpenShell gateway and inference endpoint.
+In this tutorial, you configure one OpenClaw sandbox with an existing NVIDIA OpenShell gateway and inference endpoint.
 You then plan the deployment, apply it, and send one request to the agent.
 The commands use the v1 source-built tools and the [OpenClaw example at implementation revision `637bdb6276`](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/examples/openclaw.yaml).
 Keep the bundle and generated schema from the source revision used to build the image.
@@ -29,7 +29,8 @@ cd ../nemoclaw-v1
 Choose another unused directory if `../nemoclaw-v1` already exists.
 Don't replace an existing worktree.
 Run the remaining commands from this v1 worktree root on the client host unless noted otherwise.
-Don't mix bundles, examples, and generated schemas from different revisions: their field validation can differ.
+Don't mix bundles, examples, and generated schemas from different revisions.
+Their field validation can differ.
 
 [Build a native bundle](../build-deploy/build.md#build-a-native-bundle) from this v1 worktree and add its CLI to `PATH`:
 
@@ -83,7 +84,7 @@ Replace the following illustrative values before planning:
 Keep `spec.gateway.management: external`.
 This deployment doesn't manage the gateway or inference server.
 NemoClaw uses the external gateway's engine for image inspection.
-It doesn't transfer ownership of that gateway.
+Using that engine doesn't transfer ownership of the gateway.
 Update the editor schema comment in the copied file to `../../schemas/nemoclaw-v1alpha1.schema.json`.
 For other fields, use the [field reference](../reference/configuration.md), which the v1 worktree generates at `docs/reference/configuration.md` together with its schema.
 Refer to [inference configuration](../agents-inference/inference.md) for task-specific choices.

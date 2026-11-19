@@ -4,7 +4,7 @@
 # Deploy to Kubernetes or OpenShift
 
 Run agent sandboxes on an existing Kubernetes or OpenShift cluster.
-NemoClaw either installs a development OpenShell gateway in a namespace it binds or creates, or uses a gateway you already run.
+NemoClaw either installs a development NVIDIA OpenShell gateway in a namespace it binds or creates, or uses a gateway you already run.
 The same agent images serve Docker, Podman, Kubernetes, and OpenShift.
 
 The managed gateway authenticates users through a development issuer it runs, or through [an existing OIDC issuer](#authenticate-through-an-existing-oidc-issuer).
@@ -43,7 +43,8 @@ Managed model services aren't supported on Kubernetes.
 - **Inference:** An endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster).
   Managed model services under `spec.services` aren't supported on Kubernetes ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-NemoClaw never selects a context for you: omitting `kubeconfig` and `context` selects the pod's service account, never `KUBECONFIG`, `~/.kube/config`, or their current context.
+NemoClaw never selects a context for you.
+Omitting `kubeconfig` and `context` selects the pod's service account, never `KUBECONFIG`, `~/.kube/config`, or their current context.
 
 ### Cluster-Wide Objects
 
@@ -80,7 +81,7 @@ It covers every Linux platform the index lists, so one bundle serves ARM64 and A
 When you copy the image to another registry, copy the whole index so its digest stays the same.
 Besides its platform's image, an index from `cargo images build` lists an attestation manifest that Buildx adds.
 With `oc image mirror`, pass `--keep-manifest-list=true --filter-by-os='.*'`.
-By default it copies only the image for the platform `oc` runs on.
+By default, it copies only the image for the platform `oc` runs on.
 If a copy changes the digest, write the bundle again from the copy with `--registry`, as [Build agent images](build.md#build-agent-images) describes.
 For OpenShift's internal registry, reference the copy by the address nodes pull from, `image-registry.openshift-image-registry.svc:5000/<namespace>/<name>@<digest>`, and let the deployment's service accounts pull from that namespace, for example with the `system:image-puller` role.
 Set the environment variable named in `image.metadata` to the bundle's path before each command.
@@ -100,9 +101,9 @@ Size the cluster for the sandboxes you declare:
   A node allowed more than 250 pods also needs a pod range larger than a /24.
 - **Node memory:** In a recorded run, each OpenClaw sandbox used about 0.85 GiB of node memory, about 210 GiB for 256 ([#14403](https://github.com/NVIDIA/NemoClaw/issues/14403)).
 - **Storage:** A managed gateway gives each sandbox a 2 GiB workspace claim, so 256 sandboxes claim 512 GiB, from the cluster's default StorageClass unless `workspace_storage_class` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) names another, as [the placement example](../../examples/kubernetes/sandbox-placement.yaml) does.
-  OpenShell deletes a sandbox whose pod hasn't started within five minutes, so add sandboxes in steps the StorageClass provisions in that time.
-  k3s's local-path provisioner made about one volume every two seconds.
-  Steps of 64 sandboxes started within about three minutes, and a single apply of 256 lost 100.
+  OpenShell deletes a sandbox whose pod hasn't started within 5 minutes, so add sandboxes in steps the StorageClass provisions in that time.
+  k3s's local-path provisioner made about one volume every 2 seconds.
+  Steps of 64 sandboxes started within about 3 minutes, and a single apply of 256 lost 100.
 - **Gateway:** The managed gateway is limited to 1 CPU and 2 GiB of memory, and NemoClaw has no setting to change the limit.
   In a recorded run, 256 sandboxes used up to about 1.2 GiB of it ([#14403](https://github.com/NVIDIA/NemoClaw/issues/14403)).
 - **Open files:** The gateway holds about three connections per sandbox, 800 to 1,000 open files at 256, and a pod gets its open-file limit from the node's container runtime.
@@ -221,7 +222,7 @@ With this profile, the namespace holds no development issuer, and the state dire
 
 Like a Docker gateway's published port, `gateway.kubernetes.expose` publishes the gateway at `gateway.endpoint`, where other clients, such as the OpenShell CLI, dial it without a port forward.
 NemoClaw's own plan, apply, and destroy still reach the gateway through port forwards, so they still need `pods/portforward`.
-[#14422](https://github.com/NVIDIA/NemoClaw/issues/14422) tracks letting them dial the endpoint instead.
+Issue [#14422](https://github.com/NVIDIA/NemoClaw/issues/14422) tracks letting them dial the endpoint instead.
 Set one of `expose.service` and `expose.route`.
 Either forwards to the gateway's TLS listener, so TLS and client certificates pass through unchanged, and the gateway certificate names the endpoint's host.
 
@@ -252,7 +253,7 @@ spec:
   Apply fails if Kubernetes refuses the port or another Service holds it.
 - **The port is open on every node.** Restrict who can reach it with your network's own controls.
   The gateway's API requires a token from its issuer, not a client certificate.
-- **No `LoadBalancer` yet:** the pinned chart's Service takes no annotations or source ranges, and listens on the gateway's own port ([#14421](https://github.com/NVIDIA/NemoClaw/issues/14421)).
+- **No `LoadBalancer` yet:** The pinned chart's Service takes no annotations or source ranges, and listens on the gateway's own port ([#14421](https://github.com/NVIDIA/NemoClaw/issues/14421)).
 
 #### Through an OpenShift Route
 
@@ -595,11 +596,11 @@ spec:
 ```
 
 - **`endpoint`:** The listener certificate must name the endpoint's host.
-  Otherwise NemoClaw reports `the gateway's TLS server certificate does not name the endpoint's host`.
+  Otherwise, NemoClaw reports `the gateway's TLS server certificate does not name the endpoint's host`.
   When the operator sets the chart's `grpcRoute.hostnames`, the host must be one of them.
 - **`tls.ca`:** A variable holding the path of a CA certificate file, as for [any external gateway](usage.md#supply-credential-references).
   Give the CA that signed the certificate in the Secret the listener's `certificateRefs` names, `openshell-ingress-tls` in the guide.
-  That is the chart's own CA only when the listener reuses the chart's server certificate Secret.
+  This CA is the chart's own only when the listener reuses the chart's server certificate Secret.
   Omit `tls` when a publicly trusted CA signed the listener certificate.
   With the wrong CA, NemoClaw reports `the gateway's TLS server certificate is not signed by the configured certificate authority`.
   Leave out `tls.certificate` and `tls.key`: the ingress doesn't forward a client certificate.
@@ -699,10 +700,10 @@ Its pod list still shows this deployment's gateway, issuer, and sandboxes.
 Deleting the namespace stops them, so continue if nothing else uses the namespace.
 That procedure keeps a namespace that existed before the first apply, so first delete the deployment's workloads in it:
 
-- The gateway's objects, labelled `app.kubernetes.io/instance` with the release name.
-- Its Helm release records, labelled `owner=helm` and `name` with the release name.
-- The issuer's objects, labelled `nemoclaw.nvidia.com/uid` with the deployment's UID.
-- Its Sandboxes.
+- The gateway's objects, labeled `app.kubernetes.io/instance` with the release name
+- The gateway's Helm release records, labeled `owner=helm` and `name` with the release name
+- The issuer's objects, labeled `nemoclaw.nvidia.com/uid` with the deployment's UID
+- The deployment's Sandboxes
 
 Wait until the pod list shows none of them.
 Keep the state directory until the namespace, or the deployment's objects in a kept namespace, the volumes, and both cluster-wide objects are gone.

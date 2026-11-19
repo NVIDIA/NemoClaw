@@ -85,11 +85,11 @@ A plan lists them under **Agents, as last applied**: its changes can replace a r
 A plan omits that section when no agent has a recorded runtime, such as before the first apply.
 Otherwise, an agent without a recorded runtime is listed with `no runtime recorded` and has no `runtimeId`.
 [Run one request](agents.md#run-one-agent-request) shows the command and its input.
-The selected Fabric adapter owns how the harness handles the request.
+The selected NVIDIA NeMo Fabric adapter owns how the harness handles the request.
 
 ## Forward a Native Service
 
-To reach an adapter's native listener inside the sandbox, forward it from a private terminal on the client host:
+If an adapter serves a native listener inside the sandbox, forward it from a private terminal on the client host:
 
 ```sh
 openshell forward service REPLACE_WITH_SANDBOX --target-port REPLACE_WITH_PORT --local 127.0.0.1:REPLACE_WITH_PORT
@@ -104,7 +104,7 @@ See [Reach an Agent Interface](#reach-an-agent-interface).
 
 ## Reach an Agent Interface
 
-The agent's NVIDIA NeMo Fabric runtime serves OpenClaw's Control UI and Hermes's API server and dashboard inside its sandbox, on loopback ports that you choose.
+The agent's Fabric runtime serves OpenClaw's Control UI and Hermes's API server and dashboard inside its sandbox, on loopback ports that you choose.
 Fabric's adapters start them, generate their tokens, and stop them with the runtime.
 NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
 The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/openclaw/openclaw-dashboard.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/hermes/hermes.mdx#select-execution-paths) document each interface's behavior.
@@ -140,13 +140,13 @@ sandboxes:
 | Hermes | `dashboard`, with browser chat | `port` (required), `enabled` | No | None |
 | Hermes | `terminal`, the terminal UI; experimental in Fabric | `port` (required, the dashboard's port when both are on), `enabled` | No | The `Terminal` command signs in |
 
-An interface is on while it is present, unless it sets `enabled: false`.
+An interface is on while it's present, unless it sets `enabled: false`.
 OpenClaw reserves the ports from `port` through `port + 110`, and its `port` can't be combined with `port_range`.
 Hermes's `startup_timeout_seconds` setting, 60 by default and at most 75, bounds how long its interfaces have to start.
 
 Planning checks each interface against its schema in the image's adapter descriptor.
 It rejects an interface name or field that the adapter doesn't declare, for example `sandbox/claw: adapter/nvidia.fabric.openclaw compatibility rejected; harness_interfaces: harness.settings.interfaces.api: the image's adapter does not support this interface setting`, and a missing required field, a wrong type, or an out-of-range value, for example `harness_interfaces: harness.settings.interfaces.api.port: is required by the image's adapter`.
-Fabric checks the rest when it starts the agent: settings outside the interfaces, combinations such as OpenClaw's `port` with `port_range`, and a port that is already in use.
+Fabric checks the rest when it starts the agent: settings outside the interfaces, combinations such as OpenClaw's `port` with `port_range`, and a port that's already in use.
 The agent fails to start if an enabled interface can't start.
 Changing an agent's settings, including its interfaces, replaces its sandbox, deleting its files and conversations.
 
@@ -176,7 +176,7 @@ For a gateway that needs an OpenShell profile, the output asks for your profile'
 1. Run the forward in its own terminal and keep it running.
 2. Read the token with the `Token` command, in another terminal with the same selection.
    The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
-   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes or OpenClaw, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
+   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes or OpenClaw, it's at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
    The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user.
    Stopping the runtime removes it.
    After the runtime restarts, apply prints the new path.
@@ -232,7 +232,7 @@ Hermes's browser chat opens its own pseudo-terminal, so it needs `/dev/pts`, as 
 ### Hermes's Terminal UI
 
 Hermes's `terminal` interface attaches Hermes's terminal UI to the backend that serves browser chat, which the agent's runtime starts.
-Fabric marks this interface experimental: its `terminal` setting, the attachment files, and the attach helper can change between Fabric releases without compatibility.
+Fabric marks this interface experimental: its `terminal` setting, the attachment files, and the attach helper might change between Fabric releases without compatibility.
 See [Fabric's Hermes terminal guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/hermes/hermes-tui.mdx).
 Fabric tracks what it takes for the interface to stop being experimental in [NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656).
 Give it the dashboard's port, so that both use one backend process:
@@ -289,7 +289,7 @@ The API server and the rest of the dashboard work either way.
 ### Interface Failures
 
 Only the agent's runtime check decides whether NemoClaw finds the agent running.
-OpenClaw's Gateway, which is the runtime itself, serves its Control UI, so the Control UI's failure is the runtime's.
+OpenClaw's Gateway is the runtime itself and serves the Control UI, so a Control UI failure is a runtime failure.
 A Hermes interface process that exits leaves the agent running: plan reports no change, neither Fabric nor NemoClaw restarts the process or reports its failure, and the interface returns when the runtime next starts.
 
 ## Expose a Service Through the Gateway

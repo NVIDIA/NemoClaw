@@ -15,7 +15,7 @@ See [engine connection limits](../../internal-docs/design/execution-targets.md#c
 
 From the directory containing your YAML, preview the changes.
 Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
-A fresh managed gateway defers the OpenShell graph until apply makes it reachable.
+A fresh managed gateway defers the NVIDIA OpenShell graph until apply makes it reachable.
 
 ```sh
 nemoclaw plan --state-dir .local/deployment deployment.yaml
@@ -91,7 +91,7 @@ To remove them, follow [Remove Retained Resources](#remove-retained-resources) f
 
 ## Agent Runtimes During Apply
 
-Apply starts each new agent through Fabric's `fabric-agent-ctl` in its sandbox, and completes once the runtime has started.
+Apply starts each new agent through NVIDIA NeMo Fabric's `fabric-agent-ctl` in its sandbox, and completes once the runtime has started.
 It doesn't invoke agents, send generation requests, or replay work.
 Plan and apply ask Fabric whether each agent's runtime still runs, with `fabric-agent-ctl check`, which sends no prompt and makes no model request.
 When Fabric reports the runtime stopped, the plan updates the agent and says `agent runtime is not running`.
@@ -149,7 +149,8 @@ A change replaces a Docker or Podman gateway's container, which receives the new
 The restarted gateway restarts its sandboxes but not their Fabric agents.
 The next plan finds each agent's runtime stopped, and apply starts it again in its sandbox, which keeps its files.
 A sandbox that exits instead of restarting is replaced, which deletes its files and conversation history.
-Don't put secrets in it: plans and state show it.
+Don't put secrets in it.
+Plans and state show it.
 An external gateway takes no `config`.
 Its operator configures it.
 
@@ -200,7 +201,7 @@ Limits:
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.
 Use the [field reference](../reference/configuration.md) for names, defaults, and validation rules.
 
-Unknown fields, duplicate keys, and unsupported combinations are rejected.
+Validation rejects unknown fields, duplicate keys, and unsupported combinations.
 Images require immutable SHA-256 references.
 Container `environment` values are literal settings retained in configuration and state, not the credential references described below.
 Validation can't identify a secret pasted into a literal value.
@@ -368,7 +369,7 @@ A successful earlier plan doesn't reserve resources or authorize a later uncheck
 
 Sandbox names, the keys of `spec.sandboxes`, are unique within a deployment.
 Each sandbox declares one named agent.
-Agent names can repeat across sandboxes.
+Agent names may repeat across sandboxes.
 Adding a named sandbox preserves existing sandbox and provider identities.
 Reordering declarations isn't an update.
 Each sandbox receives only its selected inference provider policies, while shared definitions reuse one provider registration.
@@ -642,7 +643,7 @@ Destroy removes all bound sandboxes, provider registrations and profiles, the Op
 Files on caller-supplied mounted volumes remain under the platform's control.
 The platform owns their backup and transfer.
 Model downloads, prepared data, the gateway database and keys, the gateway bridge, the stopped initializer, images, and local deployment state remain.
-Re-applying the same configuration reinstalls a managed gateway on its retained storage and recreates the workspace.
+Reapplying the same configuration reinstalls a managed gateway on its retained storage and recreates the workspace.
 Service-owned networks are removed with disposable compute.
 Persistent resources stay tracked.
 Retained image bytes don't require retained image-resource bindings.
@@ -714,7 +715,7 @@ When every entry's objects are gone, remove the `.local/deployment` directory.
 To deploy again, use a fresh `metadata.uid` and a new state directory.
 Apply refuses a state directory whose gateway storage or credentials were removed.
 
-The [live Docker suite](../../internal-docs/contributing/testing.md) removes its gateways' UID-labelled objects and fails if any remain.
+The [live Docker suite](../../internal-docs/contributing/testing.md) removes its gateways' UID-labeled objects and fails if any remain.
 
 #### On Podman
 

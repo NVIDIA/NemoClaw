@@ -30,7 +30,7 @@ Configure the inputs NemoClaw needs to install and check it.
 For an HTTP readiness path, the application must return HTTP 200 only when it can accept its supported requests.
 Return a non-success status while loading.
 Without a path or runtime-status selection, the image must supply a Docker HEALTHCHECK.
-A service referenced by an inference `serviceRef` needs an address reachable from OpenShell, at base path `/v1`, and registration waits for readiness.
+A service referenced by an inference `serviceRef` needs an address reachable from NVIDIA OpenShell, at base path `/v1`, and registration waits for readiness.
 See [inference](../agents-inference/inference.md) for authentication and API compatibility requirements.
 
 ## Protect Application Credentials

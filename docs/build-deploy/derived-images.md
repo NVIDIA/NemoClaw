@@ -30,12 +30,12 @@ A derived image must keep them:
 | Keep | Why |
 |---|---|
 | The `io.nemoclaw.fabric.catalog` label | NemoClaw reads it to find the image's harnesses and how to launch them; `FROM` copies it |
-| `/opt/fabric`, including `/opt/fabric/bin/fabric-agent-ctl` | The sandbox's launch command and the Fabric runtime |
+| `/opt/fabric`, including `/opt/fabric/bin/fabric-agent-ctl` | The sandbox's launch command and the NVIDIA NeMo Fabric runtime |
 | The sandbox user, UID and GID `10001` | Files the agent writes, and mounted volumes, belong to this user |
 | The image's platform | NemoClaw checks it against the engine before deploying |
 
 Add files anywhere else.
-Prefer paths outside `/sandbox`, which OpenShell manages as the sandbox's working area.
+Prefer paths outside `/sandbox`, which NVIDIA OpenShell manages as the sandbox's working area.
 
 ## Use Your Additions
 
