@@ -48,6 +48,18 @@ grep -F " nemoclaw-$TAG-$PLATFORM.tar.gz" SHA256SUMS | sha256sum --check
 Expect `nemoclaw-TAG-PLATFORM.tar.gz: OK`.
 On any other result, delete the download and don't unpack it.
 
+A final release, one whose tag has no suffix such as `-rc12`, also attests each archive's and `SHA256SUMS`'s build provenance: that NVIDIA's release workflow produced them from this repository.
+With the [GitHub CLI](https://cli.github.com/), check both files:
+
+```sh
+gh attestation verify "nemoclaw-$TAG-$PLATFORM.tar.gz" --owner NVIDIA
+gh attestation verify SHA256SUMS --owner NVIDIA
+```
+
+Each command prints `✓ Verification succeeded!` and names the repository and workflow that built the file.
+On a failure, delete the download and don't unpack it.
+Release candidates have no attestations.
+
 Unpack the archive into a directory for this release, and put its `bin` directory on `PATH`:
 
 ```sh
@@ -87,6 +99,7 @@ if ((Get-FileHash $Archive -Algorithm SHA256).Hash -ne $Expected) { throw "check
 
 Setting `$ProgressPreference` keeps Windows PowerShell 5.1's progress display from slowing the download.
 On `checksum mismatch` or any other error, delete the download and don't unpack it.
+For a final release, check the files' build provenance with `gh attestation verify $Archive --owner NVIDIA` and `gh attestation verify SHA256SUMS --owner NVIDIA`, as [on Linux or macOS](#install-on-linux-or-macos).
 Otherwise unpack the archive into a directory for this release, and add its `bin` directory to your user `Path` and to the current session's:
 
 ```powershell

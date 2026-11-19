@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Attest each image index's build provenance with a GitHub artifact attestation,
 # and store it beside the image as an OCI referrer, so the index digest stays
-# the one staging pushed. Release / Stage calls this for a final release.
+# the one staging pushed. Attest the CLI archives and their SHA256SUMS by the
+# digests staging recorded after packing them. Release / Stage calls this for a
+# final release.
 name: Release / Attest
 on:
   workflow_call:
@@ -11,8 +13,29 @@ on:
         description: 'JSON array of {name, repository, digest}, one entry per image index.'
         required: true
         type: string
+      checksums:
+        description: 'The CLI archives and SHA256SUMS, one "<sha256>  <file>" line each, as sha256sum writes them.'
+        required: true
+        type: string
 permissions: {}
 jobs:
+  archives:
+    name: CLI archives
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Write the subjects
+        env:
+          CHECKSUMS: ${{ inputs.checksums }}
+        run: printf '%s\n' "$CHECKSUMS" > "$RUNNER_TEMP/subjects"
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/subjects
   attest:
     name: ${{ matrix.name }}
     strategy:
