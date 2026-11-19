@@ -74,6 +74,14 @@ fn ci_lists_the_runtime_images_each_live_case_runs() {
         "crates/nemoclaw-e2e/cases/docker-ollama.yaml",
         &serving("ollama"),
     );
+    write(
+        "crates/nemoclaw-e2e/cases/docker-llama-cpp.yaml",
+        &serving("llamaCpp"),
+    );
+    write(
+        "crates/nemoclaw-e2e/tests/e2e/hcl/tests/docker-llama-cpp.tftest.hcl",
+        "\n",
+    );
     let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
         .args(["images", "runtimes"])
         .current_dir(root.path())
@@ -87,7 +95,7 @@ fn ci_lists_the_runtime_images_each_live_case_runs() {
     let runtimes: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         runtimes,
-        json!({"docker-hosted": [], "docker-vllm": ["vllm"]})
+        json!({"docker-hosted": [], "docker-vllm": ["vllm"], "docker-llama-cpp": ["llama-cpp"]})
     );
 }
 

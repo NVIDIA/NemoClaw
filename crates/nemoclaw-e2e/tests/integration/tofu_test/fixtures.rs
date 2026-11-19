@@ -122,7 +122,17 @@ impl Shared {
                         .next()
                         .unwrap_or_default();
                     return match (request.method.as_str(), *operation, content) {
-                        (_, "json", _) => json(container_inspect(&container)),
+                        (_, "json", _) => {
+                            let mut inspected = container_inspect(&container);
+                            if let Some(port) = container["upstream_port"].as_u64() {
+                                let endpoint =
+                                    url::Url::parse(self.upstream_endpoint.get().unwrap()).unwrap();
+                                inspected["HostConfig"]["PortBindings"][format!("{port}/tcp")] = json!([{
+                                    "HostIp":endpoint.host_str(), "HostPort":endpoint.port().unwrap().to_string()
+                                }]);
+                            }
+                            json(inspected)
+                        }
                         // Docker reports a file's metadata in a header.
                         ("HEAD", "archive", Some(content)) => {
                             use base64::Engine as _;
@@ -329,6 +339,11 @@ impl Fixtures {
             let models = serving.models.lock().unwrap();
             let name = |model: &Value| model.as_str().or(model["name"].as_str()).map(str::to_owned);
             if request.method == "GET" && request.path.ends_with("/models") && !models.is_empty() {
+                if let Some(key) = models.iter().find_map(|model| model["credential"].as_str())
+                    && request.header("authorization") != Some(format!("Bearer {key}").as_str())
+                {
+                    return Some((401, Vec::new()));
+                }
                 let data: Vec<Value> = models
                     .iter()
                     .filter_map(name)
@@ -431,6 +446,26 @@ impl Fixtures {
                     .trim_end_matches('/')
                     .to_owned();
                 provider.endpoint = format!("{upstream}{path}");
+            }
+        }
+    }
+
+    /// Substitute only the publication probe's HTTP transport. The compiled
+    /// Docker bindings and the address registered with OpenShell stay intact;
+    /// declared proxy inspections expose the fixture listener at this address.
+    pub fn redirect_publication_probes(&self, graph: &mut Value) {
+        if let Some(reads) = graph
+            .get_mut("data")
+            .and_then(|data| data.get_mut("vllm_readiness"))
+            .and_then(Value::as_object_mut)
+        {
+            for read in reads.values_mut() {
+                if read.get("publication_endpoint").is_some() {
+                    read["publication_endpoint"] = json!(format!(
+                        "{}/v1",
+                        self.shared.upstream_endpoint.get().unwrap()
+                    ));
+                }
             }
         }
     }

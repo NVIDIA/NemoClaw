@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Candidate-built images are bound by CI. See docs/agents-inference/models.md for qualification scope.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-openclaw-llama-cpp
+  uid: b238c8a1-dd46-43e9-89c1-f5d9d4f34e4d
+spec:
+  gateway:
+    management: managed
+    target:
+      docker:
+        port: 17695
+        engine: unix:///var/run/docker.sock
+        networkCIDR: 172.30.121.0/24
+  services:
+    qwen:
+      kind: llamaCpp
+      hardware:
+        architecture: amd64
+        minComputeCapability: 89
+        minDriverMajor: 580
+        minGpuMemoryBytes: 12884901888
+      image: nc-prototype-llama-cpp@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      authentication: bearer
+      model:
+        repository: Qwen/Qwen3-4B-GGUF
+        revision: bc640142c66e1fdd12af0bd68f40445458f3869b
+        file: Qwen3-4B-Q4_K_M.gguf
+        sha256: 7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5
+        sizeBytes: 2497280256
+      serving:
+        modelName: qwen3-4b
+        port: 18898
+        contextTokens: 32768
+        startupTimeoutSeconds: 600
+      memory:
+        gpuMemoryGiB: 12
+        hostReserveGiB: 28
+  inferenceProviders:
+    qwen:
+      provider: openai
+      serviceRef: qwen
+  sandboxes:
+    assistant:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: qwen
+              overrides:
+                model: qwen3-4b
+                maxTokens: 2048

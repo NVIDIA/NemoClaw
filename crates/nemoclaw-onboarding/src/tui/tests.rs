@@ -1643,17 +1643,57 @@ fn exactly_one_local_image_for_the_harness_is_chosen_without_asking_and_saved() 
     assert!(review.contains(HERMES_IMAGE), "{review}");
 }
 
+/// The chosen image is only a default: going back from the next question asks
+/// for it, so the user can enter another image.
 #[test]
-fn going_back_from_the_question_after_a_chosen_image_skips_the_image() {
+fn going_back_from_the_question_after_a_chosen_image_asks_for_the_image() {
+    const REGISTRY_IMAGE: &str = "registry.example/agents/hermes@sha256:1111111111111111111111111111111111111111111111111111111111111111";
     let mut wizard = at_the_image_question("nvidia.fabric.hermes");
     let query = agent_images_probe(&wizard).unwrap();
     wizard.record(query, agent_images(&[HERMES_IMAGE]));
-    let after = wizard.question().unwrap().unwrap().id().to_owned();
-    assert_ne!(after, IMAGE_QUESTION);
+    assert_ne!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
     wizard.back();
-    let before = wizard.question().unwrap().unwrap().id().to_owned();
-    assert_ne!(before, IMAGE_QUESTION);
-    assert_ne!(before, after);
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(question.id(), IMAGE_QUESTION);
+    assert_eq!(
+        question.suggestion(),
+        Some(&serde_json::json!(HERMES_IMAGE))
+    );
+    wizard
+        .submit(Some(serde_json::json!(REGISTRY_IMAGE)))
+        .unwrap();
+    let mut asked = Vec::new();
+    while let Some(question) = wizard.question().unwrap() {
+        assert!(
+            asked.len() < 40,
+            "the journey did not reach review: {asked:?}"
+        );
+        asked.push(question.id().to_owned());
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{asked:?}: {:?}", wizard.error);
+    }
+    let yaml = wizard.configuration().unwrap().unwrap();
+    assert!(
+        yaml.contains(REGISTRY_IMAGE) && !yaml.contains(HERMES_IMAGE),
+        "{yaml}"
+    );
+}
+
+/// A rejected entry at the reopened image question keeps the question open,
+/// rather than bringing back the image the user went back to replace.
+#[test]
+fn a_rejected_image_at_the_reopened_question_keeps_it_open() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[HERMES_IMAGE]));
+    wizard.back();
+    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+    assert!(
+        wizard
+            .submit(Some(serde_json::json!("hermes:latest")))
+            .is_err()
+    );
+    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
 }
 
 #[test]
