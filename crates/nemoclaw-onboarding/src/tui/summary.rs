@@ -59,9 +59,6 @@ pub(super) struct Facts<'a> {
     /// The target's verdict, or `None` when the target was not read.
     pub target: Option<CompatibilityStatus>,
     pub output: Option<&'a Path>,
-    /// Each sandbox whose image is the only one its engine lists for its
-    /// harness, with that image.
-    pub single_images: &'a [(String, String)],
 }
 
 pub(super) fn rows(document: &Document, facts: &Facts<'_>) -> Vec<Row> {
@@ -132,11 +129,7 @@ pub(super) fn rows(document: &Document, facts: &Facts<'_>) -> Vec<Row> {
             }
         }
         rows.push(Row::plain("Runs on", runs_on(document)));
-        let kind = document
-            .sandbox_harness(sandbox)
-            .map(|harness| harness.kind.as_str().to_owned())
-            .ok();
-        rows.push(image_row(sandbox, kind.as_deref(), facts));
+        rows.push(image_row(sandbox, facts.target));
         rows.push(Row::plain("Network", network(sandbox, search, apis)));
     }
     for reference in document.credential_names() {
@@ -239,23 +232,14 @@ fn runs_on(document: &Document) -> String {
 }
 
 /// The image and the target's verdict on it and its engine.
-fn image_row(sandbox: NamedSandbox<'_>, harness: Option<&str>, facts: &Facts<'_>) -> Row {
+fn image_row(sandbox: NamedSandbox<'_>, target: Option<CompatibilityStatus>) -> Row {
     let image = &sandbox.image.ref_;
     let value = if image.is_empty() {
         "none".to_owned()
     } else {
         image.clone()
     };
-    // The question was not asked, so the review says where the image came from.
-    let detail = harness
-        .filter(|_| {
-            facts
-                .single_images
-                .iter()
-                .any(|(name, single)| name == sandbox.name && single == image)
-        })
-        .map(|harness| format!("Image discovery found only this image for {harness}."));
-    let status = match facts.target {
+    let status = match target {
         Some(CompatibilityStatus::Compatible) => Status::fine("compatible"),
         Some(CompatibilityStatus::Conflict) => Status::attention("conflict"),
         Some(CompatibilityStatus::Unverified) => Status::attention("not checked"),
@@ -264,7 +248,6 @@ fn image_row(sandbox: NamedSandbox<'_>, harness: Option<&str>, facts: &Facts<'_>
     };
     Row {
         status: Some(status),
-        detail,
         ..Row::plain("Image", value)
     }
 }

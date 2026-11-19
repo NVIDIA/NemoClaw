@@ -1654,10 +1654,6 @@ fn exactly_one_local_image_for_the_harness_is_chosen_without_asking_and_named_in
     assert!(yaml.contains(HERMES_IMAGE), "{yaml}");
     let review = screen(&wizard, 160, 60);
     assert!(review.contains(HERMES_IMAGE), "{review}");
-    assert!(
-        flat(&review).contains("Image discovery found only this image for nvidia.fabric.hermes."),
-        "{review}"
-    );
 }
 
 #[test]

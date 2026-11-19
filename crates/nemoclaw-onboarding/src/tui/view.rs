@@ -337,19 +337,8 @@ impl JourneyWizard {
             lines.extend(template_value_lines(resolution.kept()));
             return lines;
         };
-        let single_images: Vec<(String, String)> = document
-            .sandboxes()
-            .filter_map(|sandbox| {
-                let question = format!("/spec/sandboxes/{}/image/ref", sandbox.name);
-                let image = self
-                    .state()
-                    .single_agent_image(&question, self.observations())?;
-                Some((sandbox.name.to_owned(), image))
-            })
-            .collect();
         let facts = Facts {
             observations: self.observations(),
-            single_images: &single_images,
             target: assessment.map(|assessment| assessment.status),
             output: self.output.as_deref(),
         };
