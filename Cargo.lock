@@ -2979,8 +2979,8 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "nemo-fabric-core"
-version = "0.7.0"
-source = "git+https://github.com/NVIDIA/NeMo-Fabric?rev=56a4207b3c7edacd6e0cceea0af7815d2df274ca#56a4207b3c7edacd6e0cceea0af7815d2df274ca"
+version = "0.8.0"
+source = "git+https://github.com/NVIDIA/NeMo-Fabric?rev=0dfdb25425f131d323d18a1372e9dde7826c9995#0dfdb25425f131d323d18a1372e9dde7826c9995"
 dependencies = [
  "chrono",
  "getrandom 0.4.3",

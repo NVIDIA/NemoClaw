@@ -630,7 +630,9 @@ Use an explicit request to qualify inference.
 The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
-Managed llama.cpp and NVIDIA NIM services are tracked in [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); until then, use either as an external OpenAI-compatible endpoint.
+For managed GGUF serving, see [llama.cpp](models.md#serve-a-pinned-gguf-with-llamacpp).
+For managed NVIDIA NIM, see the [candidate configuration, requirements and limits](models.md#native-nim-candidate).
+Source-specific qualification results are recorded in [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006).
 NemoClaw has no Model Router and no provider for Gemini's native API; onboarding's Google Gemini preset uses Gemini's OpenAI-compatible endpoint.
 Distributed inference, separate inference hosts and other model formats are tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
 None of these limits prevents using a separately verified external endpoint with an accepted API.

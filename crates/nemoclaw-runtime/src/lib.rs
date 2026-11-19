@@ -7,6 +7,8 @@ mod error;
 pub use error::Error;
 pub mod files;
 pub mod hardware;
+pub mod llama_cpp;
+pub mod nim;
 pub mod ollama;
 pub mod schema;
 pub mod snapshot;
@@ -36,6 +38,8 @@ pub const EXITED_OUTPUT_LIMIT: usize = 4 << 10;
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RuntimeSpec {
     Vllm(Box<vllm::Service>),
+    LlamaCpp(Box<llama_cpp::LlamaCppService>),
+    Nim(Box<nim::NimService>),
     Ollama(Box<ollama::ManagedOllama>),
 }
 impl RuntimeSpec {
@@ -51,6 +55,8 @@ impl RuntimeSpec {
         })?;
         match &spec {
             Self::Vllm(s) => s.validate()?,
+            Self::LlamaCpp(s) => s.validate()?,
+            Self::Nim(s) => s.validate()?,
             Self::Ollama(s) => s.validate()?,
         };
         Ok(spec)
