@@ -88,10 +88,7 @@ pub(crate) async fn run(
                 cancel,
                 &mut queued_events,
                 poll_pending_event,
-                |wizard, resize| {
-                    if let Some((width, height)) = resize {
-                        terminal.resize(Rect::new(0, 0, width, height))?;
-                    }
+                |wizard| {
                     terminal
                         .draw(|frame| wizard.render_with_brand(frame, brand))
                         .map(|_| ())
@@ -328,28 +325,24 @@ pub(super) fn model_catalog_probe(wizard: &JourneyWizard) -> Option<DiscoveryQue
     (!wizard.observations().contains(&query)).then_some(query)
 }
 
-/// Read what the journey needs from the target before it takes any input.
-/// A read can answer the question on screen, as the one local image does, and
-/// the question that follows can need a read of its own, such as the model
-/// catalog. So go back to the probe after every read that changed the
-/// question, and take input only once the question on screen has been read
-/// for. Each screen drawn before a read is handed the latest resize that was
-/// typed during the one before, so it is drawn at the current size.
-/// `false` means the user escaped while the target was being read.
+/// Read what the journey needs from the target before it takes input, drawing
+/// the screen before each read. A read can answer the question on screen, as
+/// the one local image does, and the next question can need a read of its
+/// own, such as the model catalog. `false` means the user escaped.
 pub(super) async fn discover_before_input(
     wizard: &mut JourneyWizard,
     read: impl AsyncFn(Vec<DiscoveryQuery>, &CancellationToken) -> Result<DiscoveryObservations, Error>,
     cancel: &CancellationToken,
     queued_events: &mut VecDeque<Event>,
     mut poll: impl FnMut() -> io::Result<Option<Event>>,
-    mut draw: impl FnMut(&JourneyWizard, Option<(u16, u16)>) -> io::Result<()>,
+    mut draw: impl FnMut(&JourneyWizard) -> io::Result<()>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     loop {
         let queries = target_probe(wizard);
         if queries.is_empty() {
             return Ok(true);
         }
-        draw(wizard, take_latest_resize(queued_events))?;
+        draw(wizard)?;
         let asked = current_question(wizard);
         if !ask_target(wizard, &read, queries, cancel, queued_events, &mut poll).await? {
             return Ok(false);
@@ -358,17 +351,6 @@ pub(super) async fn discover_before_input(
             return Ok(true);
         }
     }
-}
-
-/// Take the resizes out of `queue` and return the size of the last one. The
-/// keys stay queued, in order, for the loop that handles input.
-pub(super) fn take_latest_resize(queue: &mut VecDeque<Event>) -> Option<(u16, u16)> {
-    let latest = queue.iter().rev().find_map(|event| match event {
-        Event::Resize(width, height) => Some((*width, *height)),
-        _ => None,
-    });
-    queue.retain(|event| !matches!(event, Event::Resize(..)));
-    latest
 }
 
 /// Ask the target with `read` and keep what it says. `false` means the user
@@ -382,7 +364,7 @@ pub(super) async fn ask_target(
     queries: Vec<DiscoveryQuery>,
     cancel: &CancellationToken,
     queued_events: &mut VecDeque<Event>,
-    mut poll: impl FnMut() -> io::Result<Option<Event>>,
+    poll: impl FnMut() -> io::Result<Option<Event>>,
 ) -> Result<bool, Error> {
     let discovery_cancel = cancel.child_token();
     let asked = current_question(wizard);
@@ -392,7 +374,7 @@ pub(super) async fn ask_target(
         cancel,
         &discovery_cancel,
         queued_events,
-        &mut poll,
+        poll,
     )
     .await?
     else {
@@ -406,45 +388,10 @@ pub(super) async fn ask_target(
         queued_events.clear();
     }
     wizard.remember(observed);
-    // The keys typed during the read answer the question that was on screen.
+    // Keys typed during the read answer the question that was on screen.
     // When the read answered it, they would answer the next one unseen.
     if current_question(wizard) != asked {
-        return discard_answer_keys(queued_events, poll);
-    }
-    Ok(true)
-}
-
-/// The most terminal events taken off the input at once, so a held key cannot
-/// keep this reading.
-const MOST_DRAINED_EVENTS: usize = 1024;
-
-/// Drop the keys typed for a question the read answered, both those queued
-/// and those still waiting in the terminal. A resize is kept, so the next
-/// screen is drawn at the current size, and so is a request to cancel.
-/// `false` means the user escaped.
-fn discard_answer_keys(
-    queued_events: &mut VecDeque<Event>,
-    mut poll: impl FnMut() -> io::Result<Option<Event>>,
-) -> Result<bool, Error> {
-    queued_events.retain(|event| !matches!(event, Event::Key(_)));
-    for _ in 0..MOST_DRAINED_EVENTS {
-        let event = match poll() {
-            Ok(Some(event)) => event,
-            Ok(None) => break,
-            Err(_) => return Err(Error::State("terminal input could not be read")),
-        };
-        match event {
-            Event::Key(key) if key.kind == KeyEventKind::Press => {
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    return Err(Error::Cancelled);
-                }
-                if key.code == KeyCode::Esc {
-                    return Ok(false);
-                }
-            }
-            Event::Key(_) => {}
-            other => queued_events.push_back(other),
-        }
+        queued_events.retain(|event| !matches!(event, Event::Key(_)));
     }
     Ok(true)
 }

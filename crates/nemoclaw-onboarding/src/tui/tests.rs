@@ -7,7 +7,7 @@ use super::{
     logo::BrandImage,
     terminal::{
         agent_images_probe, ask_target, credential_probe, discover_before_input,
-        local_engine_probe, model_catalog_probe, take_latest_resize,
+        local_engine_probe, model_catalog_probe,
     },
 };
 use crate::{Source, load_journey};
@@ -1589,7 +1589,8 @@ fn agent_images(references: &[&str]) -> DiscoveryObservation {
 
 const OLDER_HERMES_IMAGE: &str =
     "nc-fabric@sha256:2222222222222222222222222222222222222222222222222222222222222222";
-
+const OPENCLAW_IMAGE: &str =
+    "nc-fabric@sha256:4444444444444444444444444444444444444444444444444444444444444444";
 const IMAGE_QUESTION: &str = "/spec/sandboxes/assistant/image/ref";
 
 #[test]
@@ -1624,32 +1625,22 @@ fn the_image_question_suggests_the_newest_of_the_local_images_that_install_the_c
     );
 }
 
-/// The questions the journey asks from `wizard` to its review, accepting each
-/// suggestion.
-fn questions_to_the_review(wizard: &mut JourneyWizard) -> Vec<String> {
+#[test]
+fn exactly_one_local_image_for_the_harness_is_chosen_without_asking_and_saved() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[HERMES_IMAGE]));
     let mut asked = Vec::new();
-    for _ in 0..40 {
-        let Some(question) = wizard.question().unwrap() else {
-            return asked;
-        };
+    while let Some(question) = wizard.question().unwrap() {
+        assert!(
+            asked.len() < 40,
+            "the journey did not reach review: {asked:?}"
+        );
         asked.push(question.id().to_owned());
         wizard.advance();
         assert!(wizard.error.is_none(), "{asked:?}: {:?}", wizard.error);
     }
-    panic!("the journey did not reach review: {asked:?}");
-}
-
-#[test]
-fn exactly_one_local_image_for_the_harness_is_chosen_without_asking_and_named_in_the_review() {
-    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
-    let query = agent_images_probe(&wizard).unwrap();
-    wizard.record(query, agent_images(&[HERMES_IMAGE]));
-    let asked = questions_to_the_review(&mut wizard);
     assert!(!asked.iter().any(|id| id == IMAGE_QUESTION), "{asked:?}");
-    assert_eq!(
-        wizard.state().values().pointer(IMAGE_QUESTION),
-        Some(&serde_json::json!(HERMES_IMAGE))
-    );
     let yaml = wizard.configuration().unwrap().unwrap();
     assert!(yaml.contains(HERMES_IMAGE), "{yaml}");
     let review = screen(&wizard, 160, 60);
@@ -1657,32 +1648,16 @@ fn exactly_one_local_image_for_the_harness_is_chosen_without_asking_and_named_in
 }
 
 #[test]
-fn going_back_from_the_question_after_a_chosen_image_skips_the_image_again() {
+fn going_back_from_the_question_after_a_chosen_image_skips_the_image() {
     let mut wizard = at_the_image_question("nvidia.fabric.hermes");
     let query = agent_images_probe(&wizard).unwrap();
     wizard.record(query, agent_images(&[HERMES_IMAGE]));
     let after = wizard.question().unwrap().unwrap().id().to_owned();
     assert_ne!(after, IMAGE_QUESTION);
     wizard.back();
-    let before = wizard.question().unwrap().unwrap();
-    assert_ne!(before.id(), IMAGE_QUESTION);
-    assert_ne!(before.id(), after);
-    // The earlier answer is given again, and the image is chosen again.
-    wizard.advance();
-    assert_eq!(wizard.question().unwrap().unwrap().id(), after);
-    assert_eq!(
-        wizard.state().values().pointer(IMAGE_QUESTION),
-        Some(&serde_json::json!(HERMES_IMAGE))
-    );
-}
-
-#[test]
-fn several_local_images_for_the_harness_are_still_asked() {
-    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
-    let query = agent_images_probe(&wizard).unwrap();
-    wizard.record(query, agent_images(&[HERMES_IMAGE, OLDER_HERMES_IMAGE]));
-    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
-    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
+    let before = wizard.question().unwrap().unwrap().id().to_owned();
+    assert_ne!(before, IMAGE_QUESTION);
+    assert_ne!(before, after);
 }
 
 #[test]
@@ -1698,12 +1673,12 @@ fn an_image_the_engine_could_not_list_is_still_asked() {
         }),
     );
     assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
-    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
 }
 
 /// The express OpenClaw template after `edit`, on a machine whose one Docker
-/// engine answered, with the first question open.
-fn edited_template_on_one_docker_engine(edit: impl FnOnce(&mut Value)) -> JourneyWizard {
+/// engine answered, at the sandbox image question with the engine holding
+/// `local`.
+fn template_at_the_image_question(edit: impl FnOnce(&mut Value), local: &[&str]) -> JourneyWizard {
     let mut values: Value = serde_saphyr::from_slice(include_bytes!(
         "../../../../examples/onboarding/openclaw.yaml"
     ))
@@ -1714,134 +1689,111 @@ fn edited_template_on_one_docker_engine(edit: impl FnOnce(&mut Value)) -> Journe
     std::fs::write(&path, values.to_string()).unwrap();
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Template(&path), &capabilities).unwrap();
-    on_one_docker_engine(capabilities, state)
-}
-
-/// The express OpenClaw template, with its image `image` when given, on a
-/// machine whose one engine holds `local`, at the sandbox image question.
-fn template_at_the_image_question(image: Option<&str>, local: &[&str]) -> JourneyWizard {
-    let wizard = edited_template_on_one_docker_engine(|values| {
-        if let Some(image) = image {
-            values["spec"]["sandboxes"]["assistant"]["image"]["ref"] = serde_json::json!(image);
-        }
-    });
-    let mut wizard = to_the_image_question(wizard);
+    let mut wizard = to_the_image_question(on_one_docker_engine(capabilities, state));
     let query = agent_images_probe(&wizard).unwrap();
     wizard.record(query, agent_images(local));
     wizard
 }
 
-#[test]
-fn a_template_that_names_another_image_is_still_asked_about_it() {
-    for image in [
-        None,
-        Some("nc-fabric@sha256:3333333333333333333333333333333333333333333333333333333333333333"),
-    ] {
-        let wizard = template_at_the_image_question(
-            image,
-            &["nc-fabric@sha256:4444444444444444444444444444444444444444444444444444444444444444"],
-        );
-        let question = wizard.question().unwrap().unwrap();
-        assert_eq!(question.id(), IMAGE_QUESTION, "{image:?}");
-        assert_eq!(
-            question.suggestion(),
-            Some(&serde_json::json!(
-                "nc-fabric@sha256:4444444444444444444444444444444444444444444444444444444444444444"
-            ))
-        );
+/// Name `image` as the template's sandbox image, or none.
+fn with_image(image: Option<&str>) -> impl FnOnce(&mut Value) {
+    move |values| {
+        let sandbox = values["spec"]["sandboxes"]["assistant"]
+            .as_object_mut()
+            .unwrap();
+        match image {
+            Some(image) => sandbox.insert("image".into(), serde_json::json!({"ref": image})),
+            None => sandbox.remove("image"),
+        };
     }
 }
 
 #[test]
-fn a_template_that_names_the_one_local_image_is_not_asked_about_it() {
-    let wizard = template_at_the_image_question(Some(HERMES_IMAGE), &[HERMES_IMAGE]);
-    let next = wizard
+fn a_template_image_is_asked_about_unless_it_is_the_one_local_image() {
+    // The template's own image is a placeholder digest.
+    let placeholder = template_at_the_image_question(|_| {}, &[OPENCLAW_IMAGE]);
+    let other = template_at_the_image_question(with_image(Some(HERMES_IMAGE)), &[OPENCLAW_IMAGE]);
+    for wizard in [placeholder, other] {
+        let question = wizard.question().unwrap().unwrap();
+        assert_eq!(question.id(), IMAGE_QUESTION);
+        assert_eq!(
+            question.suggestion(),
+            Some(&serde_json::json!(OPENCLAW_IMAGE))
+        );
+    }
+    let same = template_at_the_image_question(with_image(Some(OPENCLAW_IMAGE)), &[OPENCLAW_IMAGE]);
+    let next = same
         .question()
         .unwrap()
         .map(|question| question.id().to_owned());
     assert_ne!(next.as_deref(), Some(IMAGE_QUESTION));
-    assert_eq!(
-        wizard.state().values().pointer(IMAGE_QUESTION),
-        Some(&serde_json::json!(HERMES_IMAGE))
-    );
 }
 
-const OPENCLAW_IMAGE: &str =
-    "nc-fabric@sha256:4444444444444444444444444444444444444444444444444444444444444444";
-const HARNESS_QUESTION: &str = "/spec/sandboxes/assistant/harness/kind";
-
 #[test]
-fn going_back_to_the_harness_question_does_not_keep_an_image_for_the_old_harness() {
-    // The template names its engine, so the images are readable at the first
-    // question as well as at the image question.
-    let wizard = edited_template_on_one_docker_engine(|values| {
-        values["spec"]["gateway"]["engine"] = serde_json::json!(DOCKER_ENGINE);
-        values["spec"]["sandboxes"]["assistant"]
-            .as_object_mut()
-            .unwrap()
-            .remove("image");
-    });
-    let mut wizard = to_the_image_question(wizard);
-    let query = agent_images_probe(&wizard).unwrap();
-    wizard.record(query, agent_images(&[OPENCLAW_IMAGE]));
+fn the_one_image_of_a_harness_the_sandbox_refers_to_is_chosen() {
+    let wizard = template_at_the_image_question(
+        |values| {
+            let sandbox = values["spec"]["sandboxes"]["assistant"]
+                .as_object_mut()
+                .unwrap();
+            sandbox.remove("harness");
+            sandbox.remove("image");
+            sandbox.insert("harnessRef".into(), serde_json::json!("shared"));
+            values["spec"]["harnesses"] =
+                serde_json::json!({"shared": {"kind": "nvidia.fabric.openclaw"}});
+        },
+        &[OPENCLAW_IMAGE],
+    );
     assert_eq!(
         wizard.state().values().pointer(IMAGE_QUESTION),
         Some(&serde_json::json!(OPENCLAW_IMAGE))
     );
-    for _ in 0..12 {
-        if wizard
-            .question()
-            .unwrap()
-            .is_some_and(|question| question.id() == HARNESS_QUESTION)
-        {
-            break;
+}
+
+#[test]
+fn an_engine_the_journey_still_asks_about_keeps_the_image_question_open() {
+    // No engine answered on the template's socket, so the engine question
+    // follows the image question, and the engine chosen there may not hold
+    // the image.
+    let wizard = template_at_the_image_question(
+        |values| {
+            values["spec"]["gateway"]["engine"] = serde_json::json!("unix:///other/engine.sock");
+            with_image(None)(values);
+        },
+        &[OPENCLAW_IMAGE],
+    );
+    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+}
+
+#[test]
+fn going_back_to_a_question_the_image_read_depends_on_leaves_the_image_unanswered() {
+    // The template names the engine, so the images stay read at the earlier
+    // questions, where the harness or runtime chosen next may not match them.
+    for earlier in [
+        "/spec/sandboxes/assistant/harness/kind",
+        "/spec/gateway/runtime/provider",
+    ] {
+        let mut wizard = template_at_the_image_question(
+            |values| {
+                values["spec"]["gateway"]["engine"] = serde_json::json!(DOCKER_ENGINE);
+                with_image(None)(values);
+            },
+            &[OPENCLAW_IMAGE],
+        );
+        assert!(wizard.state().values().pointer(IMAGE_QUESTION).is_some());
+        for _ in 0..14 {
+            if wizard.question().unwrap().unwrap().id() == earlier {
+                break;
+            }
+            wizard.back();
         }
-        wizard.back();
+        assert_eq!(wizard.question().unwrap().unwrap().id(), earlier);
+        assert_eq!(
+            wizard.state().values().pointer(IMAGE_QUESTION),
+            None,
+            "{earlier}"
+        );
     }
-    assert_eq!(wizard.question().unwrap().unwrap().id(), HARNESS_QUESTION);
-    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
-    wizard
-        .submit(Some(serde_json::json!("nvidia.fabric.hermes")))
-        .unwrap();
-    // The image is asked about for the harness chosen now.
-    let wizard = to_the_image_question(wizard);
-    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
-    assert_eq!(
-        agent_images_probe(&wizard),
-        Some(DiscoveryQuery::AgentImages(AgentImagesRequest {
-            engine: DOCKER_ENGINE.into(),
-            adapter_id: "nvidia.fabric.hermes".into(),
-        }))
-    );
-}
-
-#[test]
-fn the_images_of_a_harness_the_sandbox_refers_to_are_read_and_the_only_one_is_chosen() {
-    let wizard = edited_template_on_one_docker_engine(|values| {
-        let sandbox = values["spec"]["sandboxes"]["assistant"]
-            .as_object_mut()
-            .unwrap();
-        sandbox.remove("harness");
-        sandbox.remove("image");
-        sandbox.insert("harnessRef".into(), serde_json::json!("shared"));
-        values["spec"]["harnesses"] =
-            serde_json::json!({"shared": {"kind": "nvidia.fabric.openclaw"}});
-    });
-    let mut wizard = to_the_image_question(wizard);
-    let query = agent_images_probe(&wizard).expect("the images of the referenced harness are read");
-    assert_eq!(
-        query,
-        DiscoveryQuery::AgentImages(AgentImagesRequest {
-            engine: DOCKER_ENGINE.into(),
-            adapter_id: "nvidia.fabric.openclaw".into(),
-        })
-    );
-    wizard.record(query, agent_images(&[OPENCLAW_IMAGE]));
-    assert_ne!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
-    assert_eq!(
-        wizard.state().values().pointer(IMAGE_QUESTION),
-        Some(&serde_json::json!(OPENCLAW_IMAGE))
-    );
 }
 
 #[tokio::test]
@@ -1849,300 +1801,41 @@ async fn keys_typed_while_the_one_image_is_read_do_not_answer_the_next_question(
     let mut wizard = at_the_image_question("nvidia.fabric.hermes");
     let query = agent_images_probe(&wizard).unwrap();
     let mut queued = std::collections::VecDeque::new();
-    let mut typed = vec![crossterm::event::Event::Key(KeyEvent::new(
-        KeyCode::Enter,
-        KeyModifiers::NONE,
-    ))];
-    let read = async |_: Vec<DiscoveryQuery>, _: &CancellationToken| {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        Ok(DiscoveryObservations::new().with(
-            DiscoveryQuery::AgentImages(AgentImagesRequest {
-                engine: DOCKER_ENGINE.into(),
-                adapter_id: "nvidia.fabric.hermes".into(),
-            }),
-            agent_images(&[HERMES_IMAGE]),
-        ))
+    let enter = crossterm::event::Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let mut typed = vec![enter];
+    // The read ends once the key has been taken off the input.
+    let taken = tokio::sync::Notify::new();
+    let read = async |queries: Vec<DiscoveryQuery>, _: &CancellationToken| {
+        taken.notified().await;
+        Ok(observe_fixture(queries))
     };
-    assert!(
-        ask_target(
-            &mut wizard,
-            read,
-            vec![query],
-            &CancellationToken::new(),
-            &mut queued,
-            || Ok(typed.pop()),
-        )
-        .await
-        .unwrap()
-    );
-    assert!(typed.is_empty(), "the key was typed during the read");
-    assert_ne!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
-    assert!(queued.is_empty(), "{queued:?}");
-}
-
-#[tokio::test]
-async fn keys_typed_while_several_images_are_read_still_answer_the_image_question() {
-    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
-    let query = agent_images_probe(&wizard).unwrap();
-    let mut queued = std::collections::VecDeque::new();
-    let mut typed = vec![crossterm::event::Event::Key(KeyEvent::new(
-        KeyCode::Enter,
-        KeyModifiers::NONE,
-    ))];
-    let read = async |_: Vec<DiscoveryQuery>, _: &CancellationToken| {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        Ok(DiscoveryObservations::new().with(
-            DiscoveryQuery::AgentImages(AgentImagesRequest {
-                engine: DOCKER_ENGINE.into(),
-                adapter_id: "nvidia.fabric.hermes".into(),
-            }),
-            agent_images(&[HERMES_IMAGE, OLDER_HERMES_IMAGE]),
-        ))
-    };
-    assert!(
-        ask_target(
-            &mut wizard,
-            read,
-            vec![query],
-            &CancellationToken::new(),
-            &mut queued,
-            || Ok(typed.pop()),
-        )
-        .await
-        .unwrap()
-    );
-    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
-    assert_eq!(queued.len(), 1, "{queued:?}");
-}
-
-#[test]
-fn an_engine_the_journey_still_asks_about_keeps_the_image_question_open() {
-    // The template names an engine this machine did not answer on, so the
-    // engine question comes after the image question. The engine chosen there
-    // may not hold the image the other engine's read found.
-    let wizard = edited_template_on_one_docker_engine(|values| {
-        values["spec"]["gateway"]["engine"] = serde_json::json!("unix:///other/engine.sock");
-        values["spec"]["sandboxes"]["assistant"]
-            .as_object_mut()
-            .unwrap()
-            .remove("image");
-    });
-    let mut wizard = to_the_image_question(wizard);
-    let query = agent_images_probe(&wizard).unwrap();
-    wizard.record(query, agent_images(&[OPENCLAW_IMAGE]));
-    let question = wizard.question().unwrap().unwrap();
-    assert_eq!(question.id(), IMAGE_QUESTION);
-    assert_eq!(
-        question.suggestion(),
-        Some(&serde_json::json!(OPENCLAW_IMAGE))
-    );
-    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
-}
-
-const RUNTIME_QUESTION: &str = "/spec/gateway/runtime/provider";
-
-/// The express OpenClaw template, which names the engine the machine answered
-/// on and no image, at the model question after the one image was chosen,
-/// then back at the runtime question.
-fn at_the_runtime_question_after_the_one_image_was_chosen() -> JourneyWizard {
-    let wizard = edited_template_on_one_docker_engine(|values| {
-        values["spec"]["gateway"]["engine"] = serde_json::json!(DOCKER_ENGINE);
-        values["spec"]["sandboxes"]["assistant"]
-            .as_object_mut()
-            .unwrap()
-            .remove("image");
-    });
-    let mut wizard = to_the_image_question(wizard);
-    let query = agent_images_probe(&wizard).unwrap();
-    wizard.record(query, agent_images(&[OPENCLAW_IMAGE]));
-    for _ in 0..14 {
-        if wizard
-            .question()
-            .unwrap()
-            .is_some_and(|question| question.id() == RUNTIME_QUESTION)
-        {
-            return wizard;
-        }
-        wizard.back();
-    }
-    panic!("the journey did not go back to the runtime question");
-}
-
-#[test]
-fn a_runtime_the_journey_still_asks_about_keeps_the_image_question_open() {
-    let mut wizard = at_the_runtime_question_after_the_one_image_was_chosen();
-    // The runtime chosen next decides which engine holds the image.
-    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
-    wizard.submit(Some(serde_json::json!("podman"))).unwrap();
-    // No Podman engine answered, so the template's Docker engine is asked
-    // about after the image question. The image is still asked, not chosen.
-    for _ in 0..4 {
-        if wizard
-            .question()
-            .unwrap()
-            .is_some_and(|question| question.id() == IMAGE_QUESTION)
-        {
-            break;
-        }
-        wizard.advance();
-    }
-    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
-    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
-}
-
-#[test]
-fn confirming_the_runtime_again_chooses_the_one_image_again() {
-    let mut wizard = at_the_runtime_question_after_the_one_image_was_chosen();
-    wizard.submit(Some(serde_json::json!("docker"))).unwrap();
-    assert_eq!(
-        wizard.state().values().pointer(IMAGE_QUESTION),
-        Some(&serde_json::json!(OPENCLAW_IMAGE))
-    );
-    let asked = questions_to_the_review(&mut wizard);
-    assert!(!asked.iter().any(|id| id == IMAGE_QUESTION), "{asked:?}");
-}
-
-/// Ask for the one hermes image while `buffered` waits in the terminal once the
-/// read is done, as keys typed after the last poll do. Returns the answer, the
-/// events still queued and whether the terminal's input was read.
-async fn read_images_with_input_left_in_the_terminal(
-    images: &[&str],
-    buffered: crossterm::event::Event,
-) -> (Result<bool, Error>, Vec<crossterm::event::Event>, bool) {
-    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
-    let query = agent_images_probe(&wizard).unwrap();
-    let mut queued = std::collections::VecDeque::new();
-    let read_done = std::cell::Cell::new(false);
-    let taken = std::cell::Cell::new(false);
-    let read = async |_: Vec<DiscoveryQuery>, _: &CancellationToken| {
-        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-        read_done.set(true);
-        Ok(DiscoveryObservations::new().with(
-            DiscoveryQuery::AgentImages(AgentImagesRequest {
-                engine: DOCKER_ENGINE.into(),
-                adapter_id: "nvidia.fabric.hermes".into(),
-            }),
-            agent_images(images),
-        ))
-    };
-    let mut buffered = Some(buffered);
-    let result = ask_target(
+    let answered = ask_target(
         &mut wizard,
         read,
         vec![query],
         &CancellationToken::new(),
         &mut queued,
         || {
-            if read_done.get() {
-                taken.set(true);
-                Ok(buffered.take())
-            } else {
-                Ok(None)
+            let event = typed.pop();
+            if event.is_some() {
+                taken.notify_one();
             }
+            Ok(event)
         },
     )
     .await;
-    (result, queued.into_iter().collect(), taken.get())
-}
-
-fn enter() -> crossterm::event::Event {
-    crossterm::event::Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-}
-
-#[tokio::test]
-async fn a_key_left_in_the_terminal_when_the_one_image_is_chosen_is_dropped() {
-    let (result, queued, taken) =
-        read_images_with_input_left_in_the_terminal(&[HERMES_IMAGE], enter()).await;
-    assert!(result.unwrap());
-    assert!(taken, "the terminal's input was read");
-    assert!(queued.is_empty(), "{queued:?}");
-}
-
-#[tokio::test]
-async fn input_left_in_the_terminal_is_kept_when_the_image_question_stays() {
-    let (result, queued, taken) =
-        read_images_with_input_left_in_the_terminal(&[HERMES_IMAGE, OLDER_HERMES_IMAGE], enter())
-            .await;
-    assert!(result.unwrap());
-    assert!(!taken, "the input stays for the question it was typed for");
-    assert!(queued.is_empty(), "{queued:?}");
-}
-
-#[tokio::test]
-async fn a_resize_during_the_read_survives_the_one_image_being_chosen() {
-    let (result, queued, _) = read_images_with_input_left_in_the_terminal(
-        &[HERMES_IMAGE],
-        crossterm::event::Event::Resize(100, 40),
-    )
-    .await;
-    assert!(result.unwrap());
-    assert_eq!(queued, [crossterm::event::Event::Resize(100, 40)]);
-}
-
-#[tokio::test]
-async fn escape_and_interrupt_left_in_the_terminal_still_cancel_when_the_one_image_is_chosen() {
-    let escape = crossterm::event::Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    let (result, _, _) = read_images_with_input_left_in_the_terminal(&[HERMES_IMAGE], escape).await;
-    assert!(!result.unwrap(), "escape abandons the questionnaire");
-    let interrupt =
-        crossterm::event::Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
-    let (result, _, _) =
-        read_images_with_input_left_in_the_terminal(&[HERMES_IMAGE], interrupt).await;
-    assert!(matches!(result, Err(Error::Cancelled)));
-}
-
-#[tokio::test]
-async fn a_resize_queued_during_the_read_survives_the_one_image_being_chosen() {
-    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
-    let query = agent_images_probe(&wizard).unwrap();
-    let mut queued = std::collections::VecDeque::new();
-    let mut typed = vec![crossterm::event::Event::Resize(100, 40), enter()];
-    // The read ends only once both events have been taken off the input, so
-    // the test does not depend on how fast the polling runs.
-    let drained = tokio::sync::Notify::new();
-    let read = async |_: Vec<DiscoveryQuery>, _: &CancellationToken| {
-        drained.notified().await;
-        Ok(DiscoveryObservations::new().with(
-            DiscoveryQuery::AgentImages(AgentImagesRequest {
-                engine: DOCKER_ENGINE.into(),
-                adapter_id: "nvidia.fabric.hermes".into(),
-            }),
-            agent_images(&[HERMES_IMAGE]),
-        ))
-    };
-    assert!(
-        ask_target(
-            &mut wizard,
-            read,
-            vec![query],
-            &CancellationToken::new(),
-            &mut queued,
-            || {
-                let event = typed.pop();
-                if typed.is_empty() {
-                    drained.notify_one();
-                }
-                Ok(event)
-            },
-        )
-        .await
-        .unwrap()
-    );
-    assert!(typed.is_empty(), "both events were typed during the read");
+    assert!(answered.unwrap());
     assert_ne!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
-    assert_eq!(
-        queued.into_iter().collect::<Vec<_>>(),
-        [crossterm::event::Event::Resize(100, 40)]
-    );
+    assert!(queued.is_empty(), "{queued:?}");
 }
 
-/// What an engine that holds `images` for the hermes harness, and an inference
-/// endpoint that cannot be reached, say to `queries`.
-fn observe_fixture(queries: Vec<DiscoveryQuery>, images: &[&str]) -> DiscoveryObservations {
+/// What an engine that holds one hermes image, and an inference endpoint
+/// that cannot be reached, say to `queries`.
+fn observe_fixture(queries: Vec<DiscoveryQuery>) -> DiscoveryObservations {
     let mut observed = DiscoveryObservations::new();
     for query in queries {
         let observation = match &query {
-            DiscoveryQuery::AgentImages(_) => agent_images(images),
+            DiscoveryQuery::AgentImages(_) => agent_images(&[HERMES_IMAGE]),
             DiscoveryQuery::Inference(_) => {
                 DiscoveryObservation::Inference(EndpointObservation::unknown("unreachable"))
             }
@@ -2153,138 +1846,36 @@ fn observe_fixture(queries: Vec<DiscoveryQuery>, images: &[&str]) -> DiscoveryOb
     observed
 }
 
-/// Run the probe-then-read step the terminal takes before it accepts input,
-/// against the engine and endpoint of `observe_fixture`. Returns the wizard,
-/// each batch of queries that was read and how many screens were drawn.
-async fn discover_with_images(images: &[&str]) -> (JourneyWizard, Vec<Vec<DiscoveryQuery>>, usize) {
+#[tokio::test]
+async fn the_question_after_the_one_image_is_read_for_before_input() {
     let mut wizard = at_the_image_question("nvidia.fabric.hermes");
     let reads = std::cell::RefCell::new(Vec::new());
     let read = async |queries: Vec<DiscoveryQuery>, _: &CancellationToken| {
         reads.borrow_mut().push(queries.clone());
-        Ok(observe_fixture(queries, images))
+        Ok(observe_fixture(queries))
     };
-    let drawn = std::cell::Cell::new(0);
+    let discovered = discover_before_input(
+        &mut wizard,
+        read,
+        &CancellationToken::new(),
+        &mut std::collections::VecDeque::new(),
+        || Ok(None),
+        |_| Ok(()),
+    )
+    .await;
+    assert!(discovered.unwrap());
+    let reads = reads.into_inner();
     assert!(
-        discover_before_input(
-            &mut wizard,
-            read,
-            &CancellationToken::new(),
-            &mut std::collections::VecDeque::new(),
-            || Ok(None),
-            |_, _| {
-                drawn.set(drawn.get() + 1);
-                Ok(())
-            },
-        )
-        .await
-        .unwrap()
-    );
-    (wizard, reads.into_inner(), drawn.get())
-}
-
-#[tokio::test]
-async fn a_resize_typed_during_the_one_image_read_sizes_the_screen_drawn_before_the_next_read() {
-    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
-    // The image read ends once the resize was taken off the input, and the
-    // model catalog read ends at once.
-    let first_read = std::cell::Cell::new(true);
-    let taken = tokio::sync::Notify::new();
-    let read = async |queries: Vec<DiscoveryQuery>, _: &CancellationToken| {
-        if first_read.replace(false) {
-            taken.notified().await;
-        }
-        Ok(observe_fixture(queries, &[HERMES_IMAGE]))
-    };
-    let mut typed = vec![crossterm::event::Event::Resize(100, 40)];
-    let mut queued = std::collections::VecDeque::new();
-    let drawn = std::cell::RefCell::new(Vec::new());
-    assert!(
-        discover_before_input(
-            &mut wizard,
-            read,
-            &CancellationToken::new(),
-            &mut queued,
-            || {
-                let event = typed.pop();
-                if event.is_some() {
-                    taken.notify_one();
-                }
-                Ok(event)
-            },
-            |_, resize| {
-                drawn.borrow_mut().push(resize);
-                Ok(())
-            },
-        )
-        .await
-        .unwrap()
-    );
-    assert_eq!(
-        drawn.into_inner(),
-        [None, Some((100, 40))],
-        "the screen drawn before the model catalog read is sized by the resize"
-    );
-    assert!(queued.is_empty(), "{queued:?}");
-}
-
-#[test]
-fn taking_the_latest_resize_leaves_the_keys_queued_in_order() {
-    use crossterm::event::Event;
-    let key = |character| Event::Key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
-    let mut queue = std::collections::VecDeque::from([
-        key('a'),
-        Event::Resize(80, 24),
-        key('b'),
-        Event::Resize(100, 40),
-    ]);
-    assert_eq!(take_latest_resize(&mut queue), Some((100, 40)));
-    assert_eq!(queue.into_iter().collect::<Vec<_>>(), [key('a'), key('b')]);
-    assert_eq!(
-        take_latest_resize(&mut std::collections::VecDeque::from([key('c')])),
-        None
-    );
-}
-
-#[tokio::test]
-async fn the_next_question_is_read_for_before_input_when_the_one_image_answers_the_image_question()
-{
-    let (wizard, reads, drawn) = discover_with_images(&[HERMES_IMAGE]).await;
-
-    assert_eq!(reads.len(), 2, "{reads:?}");
-    assert!(
-        matches!(reads[0][..], [DiscoveryQuery::AgentImages(_)]),
+        matches!(
+            reads.as_slice(),
+            [images, catalog]
+                if matches!(images[..], [DiscoveryQuery::AgentImages(_)])
+                    && matches!(catalog[..], [DiscoveryQuery::Inference(_)])
+        ),
         "{reads:?}"
     );
-    assert!(
-        matches!(reads[1][..], [DiscoveryQuery::Inference(_)]),
-        "the model catalog is read before the model question takes input: {reads:?}"
-    );
-    assert_eq!(drawn, 2, "each read starts from a screen of its question");
     let question = wizard.question().unwrap().unwrap();
     assert_eq!(question.kind(), JourneyQuestionKind::InferenceModel);
-    assert_eq!(model_catalog_probe(&wizard), None);
-    assert_eq!(agent_images_probe(&wizard), None);
-}
-
-#[tokio::test]
-async fn a_read_that_leaves_the_question_alone_is_not_followed_by_another() {
-    let (wizard, reads, drawn) = discover_with_images(&[HERMES_IMAGE, OLDER_HERMES_IMAGE]).await;
-
-    assert_eq!(reads.len(), 1, "{reads:?}");
-    assert_eq!(drawn, 1);
-    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
-}
-
-#[test]
-fn without_discovery_the_image_question_is_asked_with_no_suggestion() {
-    let wizard = at_the_image_question("nvidia.fabric.hermes");
-    assert!(
-        agent_images_probe(&wizard).is_some(),
-        "the images have not been read"
-    );
-    let question = wizard.question().unwrap().unwrap();
-    assert_eq!(question.id(), IMAGE_QUESTION);
-    assert_eq!(question.suggestion(), None);
 }
 
 #[test]

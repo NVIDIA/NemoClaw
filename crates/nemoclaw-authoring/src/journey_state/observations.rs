@@ -253,7 +253,11 @@ impl JourneyState {
                 continue;
             }
             // A reference the schema rejects leaves the question to its user.
-            let _ = self.answer(capabilities, question.id(), Some(Value::String(only.clone())));
+            let _ = self.answer(
+                capabilities,
+                question.id(),
+                Some(Value::String(only.clone())),
+            );
         }
     }
 
