@@ -23,24 +23,14 @@ async fn docker_transport_distinguishes_confirmed_absence_from_failed_observatio
     }
 }
 /// A Unix socket is local only to a Unix client, and a named pipe only to a
-/// Windows client.
+/// Windows client. The test above reads an engine over the client's own one.
 #[test]
-fn a_local_engine_connects_only_over_the_clients_own_transport() {
-    let (own, foreign, requirement) = if cfg!(windows) {
-        (
-            "npipe:////./pipe/docker_engine",
-            "unix:///var/run/docker.sock",
-            "requires a Unix client",
-        )
+fn a_local_engine_on_the_other_platforms_transport_names_the_client_it_needs() {
+    let (foreign, requirement) = if cfg!(windows) {
+        ("unix:///var/run/docker.sock", "requires a Unix client")
     } else {
-        (
-            "unix:///var/run/docker.sock",
-            "npipe:////./pipe/docker_engine",
-            "requires a Windows client",
-        )
+        ("npipe:////./pipe/docker_engine", "requires a Windows client")
     };
-    // Connecting opens no transport, so no engine needs to listen.
-    assert_eq!(Engine::connect(own).unwrap().endpoint(), own);
     let error = Engine::connect(foreign).err().expect("a foreign transport");
     assert!(error.to_string().contains(requirement), "{error}");
 }
