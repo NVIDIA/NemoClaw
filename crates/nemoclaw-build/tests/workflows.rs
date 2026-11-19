@@ -325,3 +325,93 @@ runs:
         [".github/allowed-actions.yml lists third-party/action@approved, which no workflow uses"]
     );
 }
+
+/// Execute the admission step against a GitHub fixture. In particular, GitHub
+/// records the bot's first copy as branch_creation, not push.
+#[cfg(unix)]
+#[test]
+fn manual_copied_pr_admission_requires_a_bot_update_of_the_current_revision() {
+    use std::{os::unix::fs::PermissionsExt, process::Command};
+
+    let workflow: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/hcl-e2e.yml")).unwrap(),
+    )
+    .unwrap();
+    let script = workflow["jobs"]["cases"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["name"] == "Check copied-PR admission")
+        .unwrap()["run"]
+        .as_str()
+        .unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let gh = fixture.path().join("gh");
+    fs::write(
+        &gh,
+        r#"#!/bin/bash
+case "$2" in
+  */pulls/*) printf '%s\n' "$PR" ;;
+  */activity\?*)
+    if [[ "$2" == *activity_type=push* ]]; then
+      jq '[.[] | select(.activity_type == "push")]' <<< "$ACTIVITY"
+    else
+      printf '%s\n' "$ACTIVITY"
+    fi ;;
+  *) exit 2 ;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).unwrap();
+    let path = std::env::join_paths(
+        [fixture.path().to_path_buf()]
+            .into_iter()
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let sha = "a".repeat(40);
+    let pr = serde_json::json!({
+        "state": "open", "draft": false, "base": {"ref": "v1"}, "head": {"sha": sha}
+    });
+    for (kind, actor, revision, admitted) in [
+        ("branch_creation", "copy-pr-bot[bot]", sha.as_str(), true),
+        ("push", "copy-pr-bot[bot]", sha.as_str(), true),
+        ("force_push", "copy-pr-bot[bot]", sha.as_str(), true),
+        ("branch_deletion", "copy-pr-bot[bot]", sha.as_str(), false),
+        ("pr_merge", "copy-pr-bot[bot]", sha.as_str(), false),
+        ("branch_creation", "another-writer", sha.as_str(), false),
+        ("push", "copy-pr-bot[bot]", "older-head", false),
+    ] {
+        let activity = serde_json::json!([
+            {"activity_type": kind, "actor": {"login": actor}, "after": revision}
+        ]);
+        let output = Command::new("bash")
+            .args([
+                "--noprofile",
+                "--norc",
+                "-e",
+                "-o",
+                "pipefail",
+                "-c",
+                script,
+            ])
+            .env("PATH", &path)
+            .env("GITHUB_REPOSITORY", "fixture/repo")
+            .env("GITHUB_REF_NAME", "pull-request/42")
+            .env("GITHUB_REF", "refs/heads/pull-request/42")
+            .env("GITHUB_SHA", &sha)
+            .env("GITHUB_EVENT_NAME", "workflow_dispatch")
+            .env("GITHUB_ACTOR", "operator")
+            .env("PR", pr.to_string())
+            .env("ACTIVITY", activity.to_string())
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.success(),
+            admitted,
+            "{kind} by {actor} at {revision}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
