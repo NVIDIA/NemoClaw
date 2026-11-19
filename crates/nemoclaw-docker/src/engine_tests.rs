@@ -29,7 +29,10 @@ fn a_local_engine_on_the_other_platforms_transport_names_the_client_it_needs() {
     let (foreign, requirement) = if cfg!(windows) {
         ("unix:///var/run/docker.sock", "requires a Unix client")
     } else {
-        ("npipe:////./pipe/docker_engine", "requires a Windows client")
+        (
+            "npipe:////./pipe/docker_engine",
+            "requires a Windows client",
+        )
     };
     let error = Engine::connect(foreign).err().expect("a foreign transport");
     assert!(error.to_string().contains(requirement), "{error}");
