@@ -167,7 +167,7 @@ Inspect the live policy again and confirm that its denied-tool selectors match y
 Tool discovery does not verify denied-tool enforcement.
 
 For a trusted-private entry, pass the same reviewed `--trusted-private-host` value to `add`.
-For a public entry, `add` validates current DNS but reuses revalidated sibling pins when another managed server uses the same hostname and port.
+For a public entry, `add` validates current DNS answers, then reuses previously recorded public pins if another managed server shares the hostname and port.
 Remove-and-add therefore does not independently refresh shared public pins.
 Refer to [Change Endpoint Pins](#change-endpoint-pins) for pin changes.
 
@@ -191,7 +191,12 @@ $$nemoclaw my-sandbox mcp update doordash \
 
 The command changes only the live OpenShell policy. It does not change the agent-native endpoint, credential reference, provider, attachment, or agent adapter. Live policy is the enforcement source of truth; NemoClaw does not retain a second denied-tool intent record.
 
-NemoClaw validates the current source entry and endpoint pins before replacing the route. For public endpoints, it validates DNS and retains revalidated recorded pins. Conflicting sibling pins stop the update before route removal. This keeps an interrupted stricter update fail-closed. If replacement activation fails, the MCP route remains blocked and the error prints the exact `mcp update` command to retry. Rebuild captures and restores the complete live policy, including denied-tool rules, without regenerating it from registry state.
+NemoClaw validates the current source entry and endpoint pins before replacing the route.
+For public endpoints, it validates current DNS answers and checks that the retained recorded pins are public IP addresses.
+Conflicting sibling pins stop the update before route removal.
+This keeps an interrupted stricter update fail-closed.
+If replacement activation fails, the MCP route remains blocked and the error prints the exact `mcp update` command to retry.
+Rebuild captures and restores the complete live policy, including denied-tool rules, without regenerating it from registry state.
 
 Clear every denied-tool rule explicitly:
 

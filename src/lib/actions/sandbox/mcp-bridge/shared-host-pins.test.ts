@@ -135,7 +135,7 @@ describe("MCP shared-host address pins", () => {
   it.each([
     { url: "https://other.example.test/one", policyEndpointConflict: "mcp.example.test:443" },
     { allowedIps: undefined, policyEndpointConflict: "mcp.example.test:443" },
-    { url: "https://other.example.test/one", policyEndpointConflict: null },
+    { policyEndpointConflict: null },
   ])(
     "refuses unresolved live authority before filtering sibling $url / $allowedIps",
     (overrides) => {
@@ -145,6 +145,12 @@ describe("MCP shared-host address pins", () => {
   );
 
   it.each([
+    ["add", "https://other.example.test/one", null],
+    ["update", "https://other.example.test/one", null],
+    ["refresh", "https://other.example.test/one", null],
+    ["add", "https://mcp.example.test:8443/one", null],
+    ["update", "https://mcp.example.test:8443/one", null],
+    ["refresh", "https://mcp.example.test:8443/one", null],
     ["add", "https://other.example.test/one", "other.example.test:443"],
     ["update", "https://other.example.test/one", "other.example.test:443"],
     ["refresh", "https://other.example.test/one", "other.example.test:443"],
@@ -445,6 +451,8 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   it.each([
     ["another host", "https://other.example.test/mcp/one", "other.example.test", 443],
     ["another port", "https://mcp.example.test:8443/mcp/one", "mcp.example.test", 8443],
+    ["an unknown live host", "https://other.example.test/mcp/one", "", 443],
+    ["an unknown live port", "https://mcp.example.test:8443/mcp/one", "mcp.example.test", 0],
   ] as const)(
     "adds without changing a conflicting registration on %s",
     { timeout: 40_000 },

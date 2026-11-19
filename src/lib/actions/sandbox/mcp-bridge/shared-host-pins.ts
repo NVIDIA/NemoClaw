@@ -65,11 +65,7 @@ export function alignMcpTargetWithSharedHostPins(options: {
   const groups = new Map<string, PinGroup>();
   for (const entry of Object.values(bridges)) {
     if (entry.server === server) continue;
-    if (
-      endpointAuthority(entry.url) !== authority &&
-      entry.policyEndpointConflict !== authority &&
-      entry.policyEndpointConflict !== null
-    ) {
+    if (endpointAuthority(entry.url) !== authority && entry.policyEndpointConflict !== authority) {
       continue;
     }
     if (entry.policyEndpointConflict !== undefined) {

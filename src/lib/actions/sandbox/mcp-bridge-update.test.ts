@@ -176,6 +176,7 @@ describe("source-backed MCP denied-tool policy updates", () => {
     ["matching shared pins", "https://mcp.example.test/peer", "8.8.8.8"],
     ["another hostname", "https://other.example.test/peer", "1.1.1.1"],
     ["another port", "https://mcp.example.test:8443/peer", "1.1.1.1"],
+    ["an unknown unrelated authority", "https://other.example.test/peer", "1.1.1.1", null],
     [
       "an unrelated host conflict",
       "https://other.example.test/peer",
@@ -190,7 +191,7 @@ describe("source-backed MCP denied-tool policy updates", () => {
     ],
   ])(
     "preserves public-pin refresh with %s",
-    async (_label, url, address, policyEndpointConflict?: string) => {
+    async (_label, url, address, policyEndpointConflict?: string | null) => {
       const sibling = {
         ...entry,
         server: "peer",
@@ -400,6 +401,8 @@ describe("source-backed MCP denied-tool policy updates", () => {
   );
 
   it.each([
+    ["replace", ["delete_*"], "https://other.example.test/peer", null],
+    ["clear", [], "https://other.example.test/peer", null],
     ["replace", ["delete_*"], "https://other.example.test/peer", "other.example.test:443"],
     ["clear", [], "https://other.example.test/peer", "other.example.test:443"],
     ["replace", ["delete_*"], "https://mcp.example.test:8443/peer", "mcp.example.test:8443"],

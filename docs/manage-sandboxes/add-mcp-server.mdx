@@ -208,9 +208,10 @@ Deep Agents Code supports at most 64 managed MCP servers in one sandbox.
 Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenShell glob metacharacters.
 Endpoint URLs cannot use port `0`.
 
-NemoClaw validates DNS before registration.
-When another managed server in the sandbox uses the same hostname and port, a public add revalidates and reuses its recorded address pins, even if current DNS differs.
+NemoClaw validates current DNS answers before registration.
+If another managed server shares the hostname and port, a public add reuses its previously recorded public pins.
 Otherwise, the generated policy pins the validated DNS addresses.
+Reused pins can differ from the current DNS answers.
 NemoClaw refuses the add before mutation if sibling pin sets conflict or trusted-private pins would need to change.
 Refer to [Refresh Shared-Host Registrations](manage-mcp-servers#refresh-shared-host-registrations) to change pins for every registration on that hostname and port.
 Public endpoints need no trusted-private declaration.
