@@ -36,6 +36,15 @@ Here are a few practices to help achieve your goal:
 
 Contact Linda Caplinger for help with SEO.
 
+### File names and URLs
+
+*(Content Engineering guide: SEO Optimization)* Do not use underscores in file names.
+URLs should never have underscores; use a hyphen instead.
+This goes for the names of PDFs, topics, and so on, and helps minimize future errors.
+
+- ✅ **Correct:** `https://docs.nvidia.com/product/release-1808.html`
+- ❌ **Incorrect:** `https://docs.nvidia.com/product/release_1808.html`
+
 ## Social Media
 
 Here are some best practices for writing for social media platforms. For platform-specific guidance, ask your team specialist.
