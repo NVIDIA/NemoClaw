@@ -40,7 +40,7 @@ Accepted platform and model declarations are not a tested matrix; verify the exa
 | No general DGX Station setup procedure; most Station configurations are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Managed Ollama with OpenClaw on DGX Station | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | [Nemotron on an AMD64 GPU host](../agents-inference/models.md#configure-nemotron-on-an-amd64-gpu-host): its runtime image and GPU inference | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, docs, issue |
-| Deploying from a Windows client: the CLI can't connect to a local Docker or Podman engine or read hidden credential input, and [deployment planning requires a Unix client](../build-deploy/usage.md) | No open issue | [`b1b4730`][v1-b1b4730]: code, docs |
+| A managed local gateway from a Windows client: it needs the engine's Unix socket, so a Windows client [deploys with an external gateway](../build-deploy/usage.md) and reads its images through a local engine's named pipe or over SSH. No Windows host has run a deployment; CI tests the Windows client against fake engines | [#14632](https://github.com/NVIDIA/NemoClaw/issues/14632) | [`e3e3573`][v1-e3e3573]: code, docs |
 | Local GPU deployment on Windows/WSL or macOS | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | A model service on a separate physical SSH host | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Serving one model across several GPUs on one host: `container.gpuDevices` takes one entry, so vLLM refuses a [parallel layout](../agents-inference/models.md#set-the-parallel-layout) larger than one GPU | [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) | [`cb8ef25`][v1-cb8ef25]: code, issue |
@@ -156,4 +156,4 @@ Select the v1 guide explicitly and match its source revision to the bundle befor
 
 [v1-cb8ef25]: https://github.com/NVIDIA/NemoClaw/tree/cb8ef25252ffffbca051787adb4711c96ebfcf28
 [v1-291723b]: https://github.com/NVIDIA/NemoClaw/tree/291723b41b77dbd502f5418b9b0a9b7c1a322dc9
-[v1-b1b4730]: https://github.com/NVIDIA/NemoClaw/tree/b1b4730981ab2a52674d082bdc2fc65bc828ba4c
+[v1-e3e3573]: https://github.com/NVIDIA/NemoClaw/tree/e3e3573c6b98375d1e3520bfb6800c2594df396e
