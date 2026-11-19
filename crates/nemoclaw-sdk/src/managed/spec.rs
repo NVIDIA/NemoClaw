@@ -211,7 +211,7 @@ pub fn check_gateway_attribute(attribute: &str, value: &str) -> Result<(), &'sta
         "compute_driver" => (r"^(docker|podman)$", "must be docker or podman"),
         "engine" => {
             return crate::config::validate_engine_endpoint(value)
-                .map_err(|_| "must be a local Unix engine socket");
+                .map_err(|_| "must be a local engine's Unix socket or named pipe");
         }
         CONFIG_ATTRIBUTE => {
             return match serde_json::from_str::<super::gateway_config::GatewayConfig>(value) {
@@ -491,7 +491,6 @@ impl Spec {
                 .bytes()
                 .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
                 && crate::config::validate_engine_endpoint(&process.engine).is_ok()
-                && (process.engine.starts_with("unix://") || process.engine.starts_with("ssh://"))
                 && process.image.contains("@sha256:")
                 && process.valid_launch()
                 && process.entrypoint.iter().all(|value| valid_token(value))
@@ -666,7 +665,7 @@ impl Spec {
                     self.network():{"IPAMConfig":{"IPv4Address":self.gateway_address()?}}
                 }});
             }
-            host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":self.gateway.engine.strip_prefix("unix://").ok_or(Error::Conflict("managed gateway requires a Unix socket"))?,"Target":"/var/run/docker.sock"}]);
+            host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":crate::config::engine_socket(&self.gateway.engine).ok_or(Error::Conflict("managed gateway requires a local engine"))?,"Target":"/var/run/docker.sock"}]);
         } else {
             let process = self.process.as_ref().ok_or(Error::Conflict(
                 "runtime specification has no managed service process",

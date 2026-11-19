@@ -170,7 +170,7 @@ pub struct ManagedGateway {
     pub endpoint: String,
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes.
+    /// Managed local gateway engine: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket. Excluded by kubernetes.
     pub engine: String,
     #[serde(
         rename = "imagePullPolicy",

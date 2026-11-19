@@ -80,6 +80,7 @@ Read the notices for components and derived code:
 - [Runtime memory and serving policy attribution](../../crates/nemoclaw-runtime/NOTICE.md).
 - [vLLM runtime and Nemotron configuration sources](../../image/vllm/NOTICE.md).
 - [Ollama runtime sources](../../image/ollama/NOTICE.md).
+- [llama.cpp runtime sources](../../image/llama-cpp/NOTICE.md).
 
 ## Report a Security Issue
 

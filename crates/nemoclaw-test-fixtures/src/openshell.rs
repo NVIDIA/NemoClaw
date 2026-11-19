@@ -163,6 +163,11 @@ pub struct Fixture {
     task: tokio::task::JoinHandle<()>,
 }
 impl Fixture {
+    /// Stop serving, as a gateway process that exited: new connections are
+    /// refused.
+    pub fn stop(&self) {
+        self.task.abort();
+    }
     pub async fn start() -> Self {
         Self::start_with_tls(None).await
     }
