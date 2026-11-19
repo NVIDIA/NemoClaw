@@ -2496,9 +2496,13 @@ A passing Spark target establishes that option 2 selects the fixed vLLM preset a
 The extra-arguments case invokes the candidate CLI with `NEMOCLAW_PROVIDER=install-vllm` and `["--max-num-seqs","2"]`.
 It compares the real container command with the bounded recipe and appended sequence override.
 Fast installer tests own the selected-profile output, 32,768-token context and argument-order assertions.
-Each case keeps the existing 65-minute test deadline and identity-bound cleanup. These hardware targets have no hosted PR workflow or supported Advisor selector.
-The standalone command below requires a physical Spark reporting at least 60 GB and less than 64 GB.
-Retain its candidate-bound receipt, but keep hosted Spark qualification unresolved until a trusted workflow supports this scenario.
+Each case keeps the existing 65-minute test deadline and identity-bound cleanup.
+Select `spark-vllm-extra-arguments` by itself through the trusted E2E workflow's `jobs` or `targets` input.
+Its controller sends the candidate commit and managed-image revision to a dedicated Spark backend and uploads its receipt and archive.
+See [Spark dispatch prerequisites](docs/dgx-station-dispatch.md#dgx-spark-extra-arguments-dispatch) before dispatching.
+The fixed-profile `spark-express-vllm` case remains standalone.
+The command below also runs the extra-arguments case directly on a physical Spark reporting at least 60 GB and less than 64 GB.
+A standalone result does not qualify the GitHub dispatch path.
 
 ```bash
 E2E_JOB=1 E2E_TARGET_ID=spark-vllm-extra-arguments NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-vllm-extra-arguments:'

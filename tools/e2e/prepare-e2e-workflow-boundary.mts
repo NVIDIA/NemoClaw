@@ -28,6 +28,7 @@ const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
 export const CLI_ARTIFACT_PRODUCER_JOB = E2E_JOB_POLICY.cliArtifactProducer;
 const PREINSTALLED_E2E_JOBS = new Set([
   "dgx-station-express",
+  "spark-vllm-extra-arguments",
   "staging-brev-launchable",
   "staging-brev-launchable-identity",
 ]);

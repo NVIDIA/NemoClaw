@@ -13,8 +13,19 @@ function record(value: unknown): RecordValue {
 }
 
 export function validateDgxStationDispatchBoundary(workflow: unknown): string[] {
+  return validateDgxDispatchBoundary(workflow, TARGET);
+}
+
+export function validateDgxSparkDispatchBoundary(workflow: unknown): string[] {
+  return validateDgxDispatchBoundary(workflow, "spark-vllm-extra-arguments");
+}
+
+function validateDgxDispatchBoundary(workflow: unknown, target: string): string[] {
+  const spark = target === "spark-vllm-extra-arguments";
+  const platform = spark ? "Spark" : "Station";
+  const prefix = spark ? "DGX_SPARK_DISPATCH" : "DGX_STATION_DISPATCH";
   const errors: string[] = [];
-  const job = record(record(record(workflow).jobs)[TARGET]);
+  const job = record(record(record(workflow).jobs)[target]);
   const steps = Array.isArray(job.steps) ? job.steps.map(record) : [];
   const step = (name: string) => steps.find((entry) => entry.name === name) ?? {};
   const requireEqual = (observed: unknown, expected: unknown, error: string) => {
@@ -22,49 +33,66 @@ export function validateDgxStationDispatchBoundary(workflow: unknown): string[] 
   };
   requireEqual(
     job.if,
-    TRUSTED_SELECTOR,
-    "Station dispatch requires an explicit same-repository selection through the trusted main workflow after image publication",
+    TRUSTED_SELECTOR.replaceAll(TARGET, target),
+    `${platform} dispatch requires an explicit same-repository selection through the trusted main workflow after image publication`,
   );
   requireEqual(
     job.needs,
     ["base-image-publication", "generate-matrix"],
-    "Station dispatch must wait for its planner and managed-image publication",
+    `${platform} dispatch must wait for its planner and managed-image publication`,
   );
   requireEqual(
     job["runs-on"],
     "ubuntu-latest",
-    "Station controller must run on a GitHub-hosted runner",
+    `${platform} controller must run on a GitHub-hosted runner`,
   );
-  requireEqual(job["timeout-minutes"], 60, "Station controller must retain its bounded deadline");
+  requireEqual(
+    job["timeout-minutes"],
+    spark ? 95 : 60,
+    `${platform} controller must retain its bounded deadline`,
+  );
   requireEqual(
     job.concurrency,
-    { group: "dgx-station-express-dispatch", "cancel-in-progress": false },
-    "Station dispatch must use its own queue without cancelling active work",
+    { group: `${target}-dispatch`, "cancel-in-progress": false },
+    `${platform} dispatch must use its own queue without cancelling active work`,
   );
   requireEqual(
     job.permissions,
     { contents: "read", "id-token": "write" },
-    "Station controller must grant only source read and OIDC token permissions",
+    `${platform} controller must grant only source read and OIDC token permissions`,
   );
   const env = record(job.env);
   requireEqual(
-    [env.E2E_JOB, env.E2E_TARGET_ID, env.E2E_DEFAULT_ENABLED, env.E2E_GATEWAY_RUNTIMES],
-    ["1", TARGET, "0", "agnostic"],
-    "Station must be an explicit-only external E2E target",
+    [
+      env.E2E_JOB,
+      env.E2E_TARGET_ID,
+      env.E2E_DEFAULT_ENABLED,
+      env.E2E_GATEWAY_RUNTIMES,
+      env.E2E_TEST_FILE,
+      env.E2E_AGENT_RUNTIME,
+    ],
+    ["1", target, "0", "agnostic", "test/e2e/live/dgx-express.test.ts", "openclaw"],
+    `${platform} must be an explicit-only external E2E target`,
   );
   requireEqual(
     [env.E2E_OBSERVABLE_OUTCOME, env.E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT],
     [
-      "Station Express installs managed Super VL vLLM and NemoClaw, serves sandbox inference, and removes job runtime",
-      "Dedicated DGX Station GB300 with cached Nemotron 3.5 Super VL 120B",
+      spark
+        ? "Spark automatic vLLM selection preserves the memory-sized recipe with extra arguments, serves sandbox inference, and removes job runtime"
+        : "Station Express installs managed Super VL vLLM and NemoClaw, serves sandbox inference, and removes job runtime",
+      spark
+        ? "Dedicated DGX Spark GB10 reporting 60 GB to below 64 GB unified memory"
+        : "Dedicated DGX Station GB300 with cached Nemotron 3.5 Super VL 120B",
     ],
-    "Station evidence metadata must describe the Super VL default and cached model",
+    spark
+      ? "Spark evidence metadata must describe the GB10 memory tier and extra-arguments scenario"
+      : "Station evidence metadata must describe the Super VL default and cached model",
   );
-  const checkout = step("Check out trusted Station controller");
+  const checkout = step(`Check out trusted ${platform} controller`);
   requireEqual(
     checkout,
     {
-      name: "Check out trusted Station controller",
+      name: `Check out trusted ${platform} controller`,
       uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
       with: {
         repository: "NVIDIA/NemoClaw",
@@ -72,59 +100,63 @@ export function validateDgxStationDispatchBoundary(workflow: unknown): string[] 
         "persist-credentials": false,
       },
     },
-    "Station controller checkout must use the reviewed checkout action and trusted workflow revision without stored credentials",
+    `${platform} controller checkout must use the reviewed checkout action and trusted workflow revision without stored credentials`,
   );
   requireEqual(
-    step("Set up Node for Station controller"),
+    step(`Set up Node for ${platform} controller`),
     {
-      name: "Set up Node for Station controller",
+      name: `Set up Node for ${platform} controller`,
       uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
       with: { "node-version": "24.22.1" },
     },
-    "Station controller must use the reviewed Node setup",
+    `${platform} controller must use the reviewed Node setup`,
   );
   requireEqual(
     step("Install reviewed npm"),
     { name: "Install reviewed npm", uses: E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference },
-    "Station controller must install reviewed npm immutably",
+    `${platform} controller must install reviewed npm immutably`,
   );
-  const dispatch = step("Dispatch exact commit to Station through operator backend");
+  const dispatch = step(`Dispatch exact commit to ${platform} through operator backend`);
   requireEqual(
     dispatch.env,
     {
-      E2E_ARTIFACT_DIR: "${{ runner.temp }}/e2e-artifacts/live/dgx-station-express",
-      DGX_STATION_DISPATCH_CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
-      DGX_STATION_DISPATCH_MANAGED_IMAGE_REVISION:
+      E2E_ARTIFACT_DIR: `\${{ runner.temp }}/e2e-artifacts/live/${target}`,
+      [`${prefix}_CANDIDATE_SHA`]: "${{ inputs.checkout_sha || github.sha }}",
+      [`${prefix}_MANAGED_IMAGE_REVISION`]:
         "${{ needs.base-image-publication.outputs.managed_image_revision }}",
-      DGX_STATION_DISPATCH_URL: "${{ vars.DGX_STATION_DISPATCH_URL }}",
+      [`${prefix}_URL`]: `\${{ vars.${prefix}_URL }}`,
     },
-    "Station dispatch must bind separate candidate/image revisions and its own URL variable",
+    `${platform} dispatch must bind separate candidate/image revisions and its own URL variable`,
   );
   requireEqual(
     dispatch.run,
-    "node --no-warnings tools/e2e/dgx-station-dispatch-client.mts",
-    "Station dispatch must invoke only the fixed controller client",
+    `node --no-warnings tools/e2e/dgx-${platform.toLowerCase()}-dispatch-client.mts`,
+    `${platform} dispatch must invoke only the fixed controller client`,
   );
-  const upload = step("Upload Station Express artifacts");
-  requireEqual(upload.if, "always()", "Station must upload evidence on failure and cancellation");
+  const upload = step(`Upload ${platform} Express artifacts`);
+  requireEqual(
+    upload.if,
+    "always()",
+    `${platform} must upload evidence on failure and cancellation`,
+  );
   requireEqual(
     upload.with,
     {
-      name: "e2e-dgx-station-express",
-      path: "${{ runner.temp }}/e2e-artifacts/live/dgx-station-express/",
+      name: `e2e-${target}`,
+      path: `\${{ runner.temp }}/e2e-artifacts/live/${target}/`,
     },
-    "Station artifacts must use their own namespace",
+    `${platform} artifacts must use their own namespace`,
   );
   requireEqual(
     steps.map((entry) => entry.name),
     [
-      "Check out trusted Station controller",
-      "Set up Node for Station controller",
+      `Check out trusted ${platform} controller`,
+      `Set up Node for ${platform} controller`,
       "Install reviewed npm",
-      "Dispatch exact commit to Station through operator backend",
-      "Upload Station Express artifacts",
+      `Dispatch exact commit to ${platform} through operator backend`,
+      `Upload ${platform} Express artifacts`,
     ],
-    "Station controller must run checkout, Node setup, npm setup, dispatch, and upload in order",
+    `${platform} controller must run checkout, Node setup, npm setup, dispatch, and upload in order`,
   );
   return errors;
 }

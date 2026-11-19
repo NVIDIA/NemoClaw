@@ -33,3 +33,32 @@ Timing evidence records completed smoke phases. Total duration spans installer s
 Qualify an untouched baseline and the local candidate before drawing performance conclusions. The new controller must be available on the trusted main workflow before a GitHub run can execute it. An unmerged candidate selection does not replace the controller source. Keep local hardware evidence separate from proof of the full GitHub dispatch path.
 
 If installation state remains, CI cleanup validates any available sandbox registry and invokes the product uninstaller. The shared helper then handles an orphaned OpenClaw state volume when it was absent from the pre-install inventory, has the expected ownership labels and local driver without driver options, and is not attached to a container. It rejects unexpected volume changes and checks the final inventory against the baseline. An uninstall failure stops before volume cleanup. The helper does not rewrite session or registry state to make uninstall proceed. This does not establish that the standalone product uninstaller removes every agent state volume.
+
+## DGX Spark extra-arguments dispatch
+
+Deploy a separate Spark receiver before selecting `spark-vllm-extra-arguments` by itself in the workflow's `jobs` or `targets` input.
+The trusted main workflow must contain the Spark controller and client before it can dispatch this target.
+Configure `DGX_SPARK_DISPATCH_URL` with that receiver's HTTPS origin.
+The Spark controller uses its own queue, `nemoclaw-dgx-spark-dispatch` OIDC audience, schema version 4, and `e2e-spark-vllm-extra-arguments` artifact.
+It does not send work to the Station receiver.
+
+The receiver must verify the OIDC audience and trusted main workflow identity, then authenticate the requested candidate commit and managed-image revision independently.
+It must prepare and build that candidate without exposing controller credentials to candidate code.
+Use a dedicated DGX Spark GB10 reporting at least 60 GB and less than 64 GB of unified memory.
+Prepare Docker, NVIDIA Container Toolkit, OpenShell, sufficient model storage, and a clean runner account with no unrelated sandbox or `nemoclaw-vllm` container.
+Run the candidate's canonical entrypoint with `E2E_TARGET_ID=spark-vllm-extra-arguments`:
+
+```bash
+E2E_JOB=1 NEMOCLAW_RUN_LIVE_E2E=1 E2E_TARGET_ID=spark-vllm-extra-arguments npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-vllm-extra-arguments:'
+```
+
+The receiver must retain the selected candidate and image identities, hardware identity, target completion, command artifacts, and cleanup result.
+The version 4 compatibility vector is `tools/e2e/contracts/v4/dgx-spark-dispatch.json`; Station's version 3 contract is unchanged.
+The controller checks the returned job identity and requires an archive for a successful Spark result.
+It saves `dgx-spark-dispatch.json` and `dgx-spark-e2e-artifacts.tar.gz` for upload, including the receipt when execution fails.
+OIDC tokens stay in controller memory and are not part of the request or saved receipt.
+
+Allow the existing 65-minute scenario deadline, cleanup, and evidence transfer within the controller's 90-minute wait and 95-minute job deadline.
+A controller deadline, cancellation, or ambiguous submission requests cancellation of the same job and retains its recovery receipt.
+A failed or missing cleanup result cannot become successful qualification.
+Local support tests and a standalone hardware run do not prove deployment or successful execution of this trusted dispatch path.

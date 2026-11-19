@@ -164,6 +164,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "spark-vllm-extra-arguments",
+    {
+      name: "e2e-spark-vllm-extra-arguments",
+      path: "${{ runner.temp }}/e2e-artifacts/live/spark-vllm-extra-arguments/",
+    },
+  ],
+  [
     "external-gateway-health",
     {
       name: "e2e-external-gateway-health",

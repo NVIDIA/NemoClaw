@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { validateDgxStationDispatchBoundary } from "../../../tools/e2e/dgx-station-workflow-boundary.mts";
+import {
+  validateDgxStationDispatchBoundary,
+  validateDgxSparkDispatchBoundary,
+} from "../../../tools/e2e/dgx-station-workflow-boundary.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract.ts";
@@ -141,6 +144,7 @@ it.each(["jobs", "targets"] as const)(
       "mcp-bridge-dev",
       "portable-hermes-finalization",
       "dgx-station-express",
+      "spark-vllm-extra-arguments",
     ]);
     expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("dgx-station-express");
   },
@@ -160,4 +164,97 @@ it.each([
   expect(() => buildE2eWorkflowPlan(selectors)).toThrow(
     "dgx-station-express must be selected by itself",
   );
+});
+
+it.each(["jobs", "targets"] as const)(
+  "selects the Spark extra-arguments controller through %s without substituting Station",
+  (selector) => {
+    const plan = buildE2eWorkflowPlan({ [selector]: "spark-vllm-extra-arguments" });
+    expect(plan.selectedJobs).toEqual(["spark-vllm-extra-arguments"]);
+    expect(plan.matrix).toEqual([]);
+    expect(plan.testMatrix).toEqual([]);
+    expect(plan.runtimeProvidersByJob).toEqual({ "spark-vllm-extra-arguments": ["none"] });
+    expect(plan.coverageMatrix).toEqual([
+      expect.objectContaining({
+        id: "spark-vllm-extra-arguments",
+        agentRuntime: "openclaw",
+        environmentOrInferenceEndpoint:
+          "Dedicated DGX Spark GB10 reporting 60 GB to below 64 GB unified memory",
+      }),
+    ]);
+    expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("spark-vllm-extra-arguments");
+  },
+);
+
+describe("Spark workflow authorization and evidence", () => {
+  it("accepts the explicit Spark controller and its candidate-bound artifact handoff", () => {
+    expect(validateDgxSparkDispatchBoundary(readWorkflow())).toEqual([]);
+    expect(validateE2eWorkflow(readWorkflow())).toEqual([]);
+  });
+
+  it.each([
+    ["if", "${{ github.event_name == 'pull_request' }}", "trusted main workflow"],
+    ["needs", ["generate-matrix"], "managed-image publication"],
+    ["permissions", { contents: "write", "id-token": "write" }, "only source read"],
+    [
+      "concurrency",
+      { group: "dgx-station-express-dispatch", "cancel-in-progress": true },
+      "own queue",
+    ],
+  ])("rejects unsafe Spark %s policy", (field, value, expected) => {
+    const workflow = readWorkflow();
+    const job = (workflow.jobs as Record<string, Record<string, unknown>>)[
+      "spark-vllm-extra-arguments"
+    ];
+    job[field as string] = value;
+    expect(validateDgxSparkDispatchBoundary(workflow).join("\n")).toContain(expected);
+  });
+
+  it.each([
+    [
+      0,
+      "with",
+      {
+        repository: "NVIDIA/NemoClaw",
+        ref: "${{ inputs.checkout_sha }}",
+        "persist-credentials": false,
+      },
+      "trusted workflow revision",
+    ],
+    [
+      3,
+      "env",
+      { DGX_SPARK_DISPATCH_CANDIDATE_SHA: "${{ github.workflow_sha }}" },
+      "separate candidate/image revisions",
+    ],
+    [
+      3,
+      "run",
+      "node --no-warnings tools/e2e/dgx-station-dispatch-client.mts",
+      "fixed controller client",
+    ],
+    [4, "if", "success()", "failure and cancellation"],
+    [4, "with", { name: "e2e-dgx-station-express" }, "own namespace"],
+  ])(
+    "rejects a broken Spark candidate or artifact handoff at step %s %s",
+    (index, field, value, expected) => {
+      const workflow = readWorkflow();
+      const job = (workflow.jobs as Record<string, { steps: Record<string, unknown>[] }>)[
+        "spark-vllm-extra-arguments"
+      ];
+      job.steps[index as number][field as string] = value;
+      expect(validateDgxSparkDispatchBoundary(workflow).join("\n")).toContain(expected);
+      expect(validateE2eWorkflow(workflow).join("\n")).toContain(expected);
+    },
+  );
+});
+
+it.each([
+  { jobs: "spark-vllm-extra-arguments,dgx-station-express" },
+  { targets: "spark-vllm-extra-arguments,ubuntu-repo-cloud-openclaw" },
+  { jobs: "spark-vllm-extra-arguments", targets: "dgx-station-express" },
+  { jobs: "spark-vllm-extra-arguments,spark-vllm-extra-arguments" },
+  { targets: "spark-vllm-extra-arguments,spark-vllm-extra-arguments" },
+])("rejects mixed or repeated Spark selections: %j", (selectors) => {
+  expect(() => buildE2eWorkflowPlan(selectors)).toThrow("must be selected by itself");
 });

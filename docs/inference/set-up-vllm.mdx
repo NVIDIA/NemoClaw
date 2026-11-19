@@ -815,7 +815,8 @@ The host checks the token before `docker pull`, so a missing or empty token stop
 Set `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` to a JSON array of individual non-blank `vllm serve` tokens for operator-owned options and overrides.
 NemoClaw trims and validates the array before downloads, shell-quotes each token, and appends the tokens after the registry defaults.
 When the array overrides `--gpu-memory-utilization`, NemoClaw validates the last value and uses that effective value for GPU-memory preflight, matching the final `vllm serve` command.
-The tokens are added on top of the recipe NemoClaw selects for the host, so a DGX Spark that reports 60 GB to 64 GB of unified memory still gets its smaller Qwen recipe and the same selected-profile lines before installation.
+NemoClaw appends the tokens to the recipe selected for the host.
+A DGX Spark reporting at least 60 GB and less than 64 GB keeps its smaller Qwen recipe and selected-profile output.
 A recipe with a fixed serve command rejects the array, and a host that no recipe matches falls back to the registry defaults.
 
 ```bash

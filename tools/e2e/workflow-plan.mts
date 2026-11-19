@@ -27,6 +27,7 @@ import {
 } from "./credential-free-tests.mts";
 import {
   DGX_STATION_DISPATCH_TARGET,
+  DGX_SPARK_DISPATCH_TARGET,
   JETSON_DISPATCH_TARGET,
 } from "./jetson-dispatch-contract.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
@@ -640,14 +641,16 @@ export function buildE2eWorkflowPlan(
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
 
-  if (
-    (jobs.includes(DGX_STATION_DISPATCH_TARGET) || targets.includes(DGX_STATION_DISPATCH_TARGET)) &&
-    !(
-      (selectors.jobs === DGX_STATION_DISPATCH_TARGET && !selectors.targets) ||
-      (selectors.targets === DGX_STATION_DISPATCH_TARGET && !selectors.jobs)
-    )
-  ) {
-    throw new Error(`${DGX_STATION_DISPATCH_TARGET} must be selected by itself`);
+  for (const target of [DGX_STATION_DISPATCH_TARGET, DGX_SPARK_DISPATCH_TARGET]) {
+    if (
+      (jobs.includes(target) || targets.includes(target)) &&
+      !(
+        (selectors.jobs === target && !selectors.targets) ||
+        (selectors.targets === target && !selectors.jobs)
+      )
+    ) {
+      throw new Error(`${target} must be selected by itself`);
+    }
   }
 
   if (jobs.includes(STAGING_BREV_IDENTITY_JOB_ID) && (jobs.length !== 1 || targets.length !== 0)) {

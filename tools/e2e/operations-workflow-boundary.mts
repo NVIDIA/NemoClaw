@@ -22,7 +22,7 @@ import {
 } from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 
 export const MANUAL_PR_CANCEL_IN_PROGRESS =
-  "${{ inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}";
+  "${{ inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',spark-vllm-extra-arguments,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -655,7 +655,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       const trustedJetsonControllerCheckout =
         ((jobName === "jetson-nvmap-gpu" && step.name === "Check out trusted Jetson controller") ||
           (jobName === "dgx-station-express" &&
-            step.name === "Check out trusted Station controller")) &&
+            step.name === "Check out trusted Station controller") ||
+          (jobName === "spark-vllm-extra-arguments" &&
+            step.name === "Check out trusted Spark controller")) &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedOpenShellDevToolingCheckout =
