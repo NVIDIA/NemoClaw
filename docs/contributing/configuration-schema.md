@@ -3,4 +3,6 @@
 
 # Maintain the Configuration Schema
 
-This page moved to the [maintainer schema guide](../../internal-docs/contributing/configuration-schema.md). The [field reference](../reference/configuration.md) remains generated for the SDK in the current checkout. Do not edit generated fields by hand.
+This page moved to the [maintainer schema guide](../../internal-docs/contributing/configuration-schema.md).
+The [field reference](../reference/configuration.md) remains generated for the SDK in the current checkout.
+Don't edit generated fields by hand.
