@@ -87,7 +87,7 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       const workflow = readE2eOperationsWorkflow();
       const steps = workflow.jobs[job]!.steps!;
       workflow.jobs[job]!.steps = steps.filter(
-        (step) => step.uses !== "./.github/actions/setup-v1-protoc",
+        (step) => step.name !== "Set up the pinned v1 protoc",
       );
 
       expect(validateE2eOperationsWorkflow(workflow)).toContain(

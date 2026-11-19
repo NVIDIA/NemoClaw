@@ -3206,9 +3206,6 @@ jobs:
           cache: false
           rustflags: ""
 
-      - name: Set up the pinned v1 protoc
-        uses: ./.github/actions/setup-v1-protoc
-
       # Keep only the credential-bearing step anchored. Cleanup mappings stay
       # explicit because strict YAML decoders reject 100 or more aliases here.
       - &dockerhub-auth
@@ -3218,6 +3215,10 @@ jobs:
           auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && '1' || '0' }}
           username: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
           token: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+
+      # Not a local action: this credential-bearing job runs only reviewed local actions.
+      - name: Set up the pinned v1 protoc
+        run: bash .github/actions/setup-v1-protoc/install.sh "${{ runner.os }}-${{ runner.arch }}"
 
       - name: Configure live E2E trace directory
         env:
@@ -5834,10 +5835,11 @@ jobs:
           cache: false
           rustflags: ""
 
-      - name: Set up the pinned v1 protoc
-        uses: ./.github/actions/setup-v1-protoc
-
       - *dockerhub-auth
+
+      # Not a local action: this credential-bearing job runs only reviewed local actions.
+      - name: Set up the pinned v1 protoc
+        run: bash .github/actions/setup-v1-protoc/install.sh "${{ runner.os }}-${{ runner.arch }}"
 
       - name: Download reviewed OpenShell SDK archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

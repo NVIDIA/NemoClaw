@@ -1819,7 +1819,11 @@ function validatePinnedV1Protoc(errors: string[], workflow: OperationsWorkflow):
       (step) => step.name === "Set up pinned v1 compatibility toolchain",
     );
     if (toolchain < 0) continue;
-    const protoc = steps.findIndex((step) => step.uses === "./.github/actions/setup-v1-protoc");
+    const protoc = steps.findIndex(
+      (step) =>
+        step.name === "Set up the pinned v1 protoc" &&
+        String(step.run ?? "").includes(".github/actions/setup-v1-protoc/install.sh"),
+    );
     if (protoc <= toolchain) {
       errors.push(`${name} must install the pinned v1 protoc after the pinned v1 toolchain`);
     }
