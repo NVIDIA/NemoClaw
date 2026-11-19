@@ -149,7 +149,22 @@ impl JourneyWizard {
         *self.configuration.borrow_mut() = Some(Some(Err(reason.into())));
     }
 
+    /// Answer an image question the engine's images settle, then forget what
+    /// the old state resolved to.
     fn changed(&mut self) {
+        let before = self.state.clone();
+        if self
+            .state
+            .answer_single_agent_images(&self.capabilities, &self.observations)
+        {
+            // The chosen image is a default the user didn't confirm: going
+            // back from the next question asks for it.
+            self.history.push(before);
+        }
+        self.invalidate();
+    }
+
+    fn invalidate(&mut self) {
         *self.resolution.get_mut() = None;
         *self.configuration.get_mut() = None;
         // A changed review starts at its target verdict again.
@@ -200,9 +215,14 @@ impl JourneyWizard {
             .expect("submit requires an active question");
         let previous = self.state.clone();
         let answered = self.state.answer(&self.capabilities, question.id(), answer);
-        self.changed();
+        if answered.is_err() {
+            // A rejected answer leaves the state as it was; choosing the
+            // image here would replace the question the user is answering.
+            self.invalidate();
+        }
         answered?;
         self.history.push(previous);
+        self.changed();
         self.selected = 0;
         self.selection_changed = false;
         self.custom_answer = false;
@@ -239,7 +259,9 @@ impl JourneyWizard {
     pub(super) fn back(&mut self) {
         if let Some(previous) = self.history.pop() {
             self.state = previous;
-            self.changed();
+            // Answering the image again would skip the question going back
+            // just reached.
+            self.invalidate();
             self.selected = 0;
             self.selection_changed = false;
             self.custom_answer = false;

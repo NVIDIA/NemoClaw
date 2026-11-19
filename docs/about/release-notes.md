@@ -101,6 +101,7 @@ Onboarding:
 
 - The `nemoclaw onboard` review opens with a summary of the agent, model, API key, web search, where the deployment runs, image, network access, and output file; the saved YAML follows, collapsed until you press Tab.
 - At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#build-agent-images).
+  When the engine holds exactly one such image and neither your template nor an earlier answer names another, onboarding uses it without asking, and the review shows it. To enter another image, go back from the next question.
 
 Sandbox policy:
 
