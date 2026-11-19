@@ -135,6 +135,13 @@ fn launch_at(
                 &service.model.tool_parser,
             ]);
         }
+        if !service.model.chat_template_kwargs.is_empty() {
+            cmd.args([
+                "--default-chat-template-kwargs",
+                &serde_json::to_string(&service.model.chat_template_kwargs)
+                    .expect("JSON values serialize as native chat-template arguments"),
+            ]);
+        }
     });
     Ok((command, output))
 }
@@ -264,6 +271,60 @@ mod tests {
         let link = root.path().join("symlink");
         std::os::unix::fs::symlink(&file, &link).unwrap();
         assert!(ngc_key(&link).is_err());
+    }
+
+    #[tokio::test]
+    async fn authored_chat_template_arguments_reach_native_nim_and_omission_keeps_its_defaults() {
+        let root = tempfile::tempdir().unwrap();
+        let ngc = root.path().join("operator-ngc");
+        std::fs::write(&ngc, "synthetic-download-key\n").unwrap();
+        let executable = root.path().join("native-nim");
+        // The external backend decides whether its first-turn tool template is
+        // enabled. This substitute does not qualify model instruction following.
+        crate::executable::write_executable(
+            &executable,
+            r#"#!/bin/sh
+set -eu
+while [ $# -gt 0 ]; do
+ if [ "$1" = --default-chat-template-kwargs ]; then
+  shift
+  case "$1" in
+   *'"tools_in_user_message":false'*) exit 0 ;;
+   *) exit 43 ;;
+  esac
+ fi
+ shift
+done
+exit 42
+"#,
+        );
+        for selected in [true, false] {
+            let mut input = serde_json::to_value(service()).unwrap();
+            input["kind"] = "nim".into();
+            if selected {
+                input["model"]["chatTemplateKwargs"] =
+                    serde_json::json!({"tools_in_user_message": false});
+            }
+            let crate::RuntimeSpec::Nim(service) = crate::RuntimeSpec::decode(&input.to_string())
+                .expect("native NIM chat-template arguments must be configurable")
+            else {
+                panic!("NIM fixture")
+            };
+            let (mut command, output) = launch_at(
+                &service,
+                root.path(),
+                &ngc,
+                48 << 30,
+                Some("synthetic-inference-key".into()),
+                &executable,
+            )
+            .unwrap();
+            let mut child = command.spawn().unwrap();
+            drop(command);
+            let status = child.wait().await.unwrap();
+            output.explain(Ok(())).await.unwrap();
+            assert_eq!(status.code(), Some(if selected { 0 } else { 42 }));
+        }
     }
 
     #[tokio::test]

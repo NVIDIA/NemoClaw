@@ -45,6 +45,9 @@ pub struct NimModel {
     #[schemars(regex(pattern = "^[a-z0-9_]*$"), length(max = 64))]
     /// Native vLLM tool parser; a nonempty name enables auto tool choice. Omission leaves native defaults. Match the parser to the model and pinned image.
     pub tool_parser: String,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    /// Native vLLM default chat-template arguments, passed as JSON. Omission retains native defaults; request-level arguments take precedence.
+    pub chat_template_kwargs: std::collections::BTreeMap<String, serde_json::Value>,
     #[schemars(range(min = 1, max = 1099511627776_u64))]
     /// Profile's upstream memory floor, in bytes; include activation headroom in the budget.
     pub min_gpu_memory_bytes: u64,

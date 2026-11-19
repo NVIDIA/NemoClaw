@@ -54,8 +54,11 @@ Delete retained data separately only when it is no longer needed.
 The `kind: nim` implementation under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) remains a candidate.
 Its lifecycle qualification covers native NIM 2.0.12 on AMD64 L40S and ARM64 GB10 Spark with OpenShell 0.1.9, using the case's Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context and a 40 GiB GPU budget.
 The qualified scope includes authenticated inventory/inference, private-network isolation, export/reapply, credential-preserving restart recovery and retained-storage teardown.
-OpenClaw task completion remains unqualified: the L40S agent returned unrelated session text to an arithmetic request while direct authenticated inference answered correctly.
+General OpenClaw task completion remains unqualified: earlier L40S runs returned unrelated session text to an arithmetic request while direct authenticated inference answered correctly.
 Native tool-call acceptance and successful transport do not establish reliable agent tool use.
+The maintained NIM case selects a read/write file assistant, disables bundled skills and native tool search/Code Mode, and requests deterministic sampling with a 2048-token output limit.
+With the native template arguments below, three fresh Spark runtimes answered arithmetic before and after a hidden-file copy, copied its exact bytes and returned a different arithmetic answer correctly.
+Those bounded results do not qualify the full tool inventory: it exceeded 32K even with 2048 output tokens; at 64K the model repeated OpenClaw's appended session-status context instead of completing file requests.
 The default 8K NIM agent case remains unqualified: on Spark, OpenClaw's prompt plus the requested output exceeded that window, including when output was reduced from 4096 to 1024 tokens.
 That context failure is separate from the unrelated L40S response.
 The pinned FP8 and NVFP4 TP1/PP1 profiles also passed the five-step Spark agent lifecycle at 32K with the same 40 GiB budget; their native checkpoint formats are experimental, and they do not inherit BF16's separate recovery and tool checks.
@@ -74,6 +77,21 @@ A nonempty value forwards NIM's supported `--enable-auto-tool-choice --tool-call
 The candidate case selects `llama3_json`.
 Without those options, the pinned native server rejects auto-tool requests with HTTP 400.
 Parser acceptance does not establish reliable tool use or instruction following.
+
+`model.chatTemplateKwargs` supplies native vLLM default chat-template arguments through `--default-chat-template-kwargs`.
+Native request-level arguments take precedence; omitting this field retains the image's defaults.
+The pinned Llama 3.1 template otherwise adds an instruction requesting a function call to the first user message whenever tools are present, including questions that need no tool.
+To place the tool definitions in the native system message instead, configure:
+
+```yaml
+model:
+  # Keep the model name, profile and capacity fields for the selected image.
+  toolParser: llama3_json
+  chatTemplateKwargs:
+    tools_in_user_message: false
+```
+
+Qualify the resulting agent configuration with answer and tool-result checks; template selection alone does not establish task reliability.
 
 Set `ngcCredential.file` to an existing regular file on the Docker engine host, readable by container UID 1000. The file is mounted read-only at `/run/nemoclaw/ngc-api-key`; its value is passed only to the native child process, and is excluded from plans, state, exports, and container configuration. The operator owns the file's permissions, lifetime, and removal. Rotate by selecting a new versioned path and setting `updatePolicy: Recreate` for an explicit apply. Changing file contents alone does not update the running process.
 

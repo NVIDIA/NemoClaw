@@ -2292,6 +2292,11 @@
           "minimum": 1,
           "type": "integer"
         },
+        "chatTemplateKwargs": {
+          "additionalProperties": true,
+          "description": "Native vLLM default chat-template arguments, passed as JSON. Omission retains native defaults; request-level arguments take precedence.",
+          "type": "object"
+        },
         "minGpuMemoryBytes": {
           "description": "Profile's upstream memory floor, in bytes; include activation headroom in the budget.",
           "format": "uint64",

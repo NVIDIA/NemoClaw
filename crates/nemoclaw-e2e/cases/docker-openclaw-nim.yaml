@@ -32,6 +32,8 @@ spec:
         name: meta/llama-3.1-8b-instruct
         profile: 092ed4213624e774d24cdaf84e3b6222839bab2008a21d3c214ab46626366f90
         toolParser: llama3_json
+        chatTemplateKwargs:
+          tools_in_user_message: false
         minGpuMemoryBytes: 33000000000
         cacheBytes: 34359738368
       serving:
@@ -50,12 +52,23 @@ spec:
         tier: isolated
       harness:
         kind: nvidia.fabric.openclaw
+        settings:
+          tools:
+            toolSearch: false
+            codeMode: false
       agent:
         name: assistant
+        # This candidate qualifies a file assistant, not the full native tool inventory.
+        tools:
+          enabled: [read, write]
+        skills:
+          bundled:
+            enabled: false
         inference:
           routes:
             - name: primary
               providerRef: local-nim
               overrides:
                 model: meta/llama-3.1-8b-instruct
-                maxTokens: 4096
+                maxTokens: 2048
+                temperature: 0

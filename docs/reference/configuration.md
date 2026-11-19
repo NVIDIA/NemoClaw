@@ -938,6 +938,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `cacheBytes` | integer | Yes | — | Full cache disk allowance in bytes, excluding 16 GiB of working headroom. Constraints: minimum 1; maximum 1099511627776. |
+| `chatTemplateKwargs` | object | No | — | Native vLLM default chat-template arguments, passed as JSON. Omission retains native defaults; request-level arguments take precedence. |
 | `minGpuMemoryBytes` | integer | Yes | — | Profile's upstream memory floor, in bytes; include activation headroom in the budget. Constraints: minimum 1; maximum 1099511627776. |
 | `name` | string | Yes | — | Exact name advertised by NIM and used by the inference route. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`; minimum characters 1; maximum characters 200. |
 | `profile` | string | Yes | — | Native profile identifier from this image's embedded manifest. Constraints: pattern `^[a-f0-9]{64}$`. |

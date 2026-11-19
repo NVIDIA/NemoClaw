@@ -289,6 +289,23 @@ fn nim_accepts_an_operator_file_reference_without_loading_the_credential() {
 }
 
 #[test]
+fn nim_preserves_native_chat_template_arguments_and_rejects_a_nonobject() {
+    let mut input: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml"
+    ))
+    .unwrap();
+    let arguments = json!({"tools_in_user_message": false});
+    input["spec"]["services"]["local-nim"]["model"]["chatTemplateKwargs"] = arguments.clone();
+    let document = Document::parse(serde_json::to_vec(&input).unwrap().as_slice()).unwrap();
+    assert_eq!(
+        normalized(&document)["spec"]["services"]["local-nim"]["model"]["chatTemplateKwargs"],
+        arguments
+    );
+    input["spec"]["services"]["local-nim"]["model"]["chatTemplateKwargs"] = false.into();
+    assert!(Document::parse(serde_json::to_vec(&input).unwrap().as_slice()).is_err());
+}
+
+#[test]
 fn nim_rejects_literal_credentials_unsupported_engines_and_shared_backend_networks() {
     let document = Document::parse(
         include_bytes!("../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml").as_slice(),
