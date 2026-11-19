@@ -27,6 +27,7 @@ Agents:
 - OpenClaw works with `anthropic` providers ([#14529](https://github.com/NVIDIA/NemoClaw/issues/14529)).
 - OpenClaw's `web_fetch` reaches hosts that the sandbox's network policy allows ([#14537](https://github.com/NVIDIA/NemoClaw/issues/14537)).
 - OpenClaw keeps its native home in `/sandbox/artifacts`, as Hermes does; see [agent files](../build-deploy/state.md#agent-files).
+- OpenClaw sessions with kept state no longer fail on turns longer than about a minute or after a few minutes idle ([#14630](https://github.com/NVIDIA/NemoClaw/issues/14630)).
 
 Releases:
 
