@@ -461,7 +461,9 @@ export function prepareStoppedDockerStateCapture(
   const agentName = sandbox.agent ?? "openclaw";
   if (
     !["openclaw", "langchain-deepagents-code"].includes(agentName) ||
-    sandbox.openshellDriver !== "docker" ||
+    (sandbox.openshellDriver != null &&
+      sandbox.openshellDriver.trim() !== "" &&
+      sandbox.openshellDriver.trim().toLowerCase() !== "docker") ||
     !sandbox.lifecycleLiveIdentityFingerprint ||
     runtime.providerId !== "docker" ||
     runtime.lifecycleState !== "stopped" ||

@@ -224,9 +224,11 @@ nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
 <AgentOnly variant="deepagents">
 
 Deep Agents has no runtime `inference set` path.
-Named recreation restores saved `/sandbox/.deepagents/config.toml` preferences.
-If those preferences conflict with the requested selection, validation stops before NemoClaw updates the registry.
-To validate a different provider or model, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+For a managed image, recreation for a verified provider or model change keeps the replacement's generated configuration.
+The backup retains the previous `/sandbox/.deepagents/config.toml` for manual recovery of custom settings.
+For unchanged or unverifiable selections, or custom images, recreation restores the saved configuration.
+If restored preferences conflict with the requested selection, validation stops before NemoClaw updates the registry.
+To change the provider or model, follow [Recreate a Deep Agents Sandbox](../inference/manage-inference/switch-providers#recreate-a-deep-agents-sandbox).
 
 </AgentOnly>
 <AgentOnly variant="openclaw,hermes">
