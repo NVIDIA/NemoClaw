@@ -9,6 +9,26 @@ terraform {
   }
 }
 
+data "vllm_nim_runtime" "llama" {
+  backend = "vllm"
+  hardware {
+    architecture = "amd64"
+    min_compute_capability = 89
+    min_driver_major = 580
+    min_gpu_memory_bytes = 42949672960
+  }
+  model {
+    name = "meta/llama-3.1-8b-instruct"
+    profile = "092ed4213624e774d24cdaf84e3b6222839bab2008a21d3c214ab46626366f90"
+    min_gpu_memory_bytes = 33000000000
+    cache_bytes = 34359738368
+  }
+  authentication = "bearer"
+  memory {
+    gpu_memory_gib = 40
+  }
+}
+
 data "vllm_runtime" "qwen" {
   hardware {
     profile = "dgx-spark"
@@ -52,4 +72,30 @@ locals {
   vllm         = jsondecode(data.vllm_runtime.qwen.spec)
   launch       = data.vllm_runtime.qwen.launch
   requirements = data.vllm_runtime.qwen.requirements
+}
+
+# Same provider and placement contract; llama.cpp owns the typed GGUF settings.
+data "vllm_llama_cpp_runtime" "muse" {
+  hardware {
+    architecture = "amd64"
+    min_compute_capability = 89
+    min_gpu_memory_bytes = 34359738368
+    min_driver_major = 580
+  }
+  model {
+    repository = "meta-models/Muse-Glimmer-30B-GGUF"
+    revision = "43c7eadd41352a299ea8e0a36b3157978dd63596"
+    file = "Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf"
+    sha256 = "4cc57c0f51040a226e5a72cc47b7613f7772950e460a665f7083de89f183f60e"
+    size_bytes = 16756683904
+  }
+  authentication = "bearer"
+  serving {
+    model_name = "muse-glimmer"
+    reasoning_strength = "low"
+    port = 18899
+  }
+  memory {
+    gpu_memory_gib = 32
+  }
 }

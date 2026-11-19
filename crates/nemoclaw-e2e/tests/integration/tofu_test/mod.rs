@@ -325,6 +325,7 @@ fn prepare(
     let generations: compile::Generations =
         GENERATIONS.map(|kind| (kind.into(), "a".repeat(32))).into();
     let mut graph = compile::compile(&document, &generations, version).unwrap();
+    fixtures.redirect_publication_probes(&mut graph);
     for_tofu_test(&mut graph);
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("nemoclaw.tf.json"), graph.to_string()).unwrap();

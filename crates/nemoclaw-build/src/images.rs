@@ -30,7 +30,7 @@ const QUALIFY_TIMEOUT: Duration = Duration::from_secs(120);
 /// supervisor in [`RUNTIME_SUPERVISOR`]. CI builds a live HCL case's runtime
 /// images from this list, and `changes cases` uses it to select the cases
 /// whose runtime images a change affects.
-pub const RUNTIMES: [&str; 2] = ["ollama", "vllm"];
+pub const RUNTIMES: [&str; 4] = ["ollama", "vllm", "llama-cpp", "nim"];
 /// The directory of the supervisor that every runtime image includes.
 pub const RUNTIME_SUPERVISOR: &str = "image/supervisor";
 
@@ -44,7 +44,14 @@ pub fn runtime_targets(document: &str) -> Result<BTreeSet<&'static str>> {
         .into_iter()
         .flat_map(|services| services.values())
         .filter_map(|service| service["kind"].as_str())
-        .filter_map(|kind| RUNTIMES.into_iter().find(|runtime| *runtime == kind))
+        .filter_map(|kind| {
+            let target = if kind == "llamaCpp" {
+                "llama-cpp"
+            } else {
+                kind
+            };
+            RUNTIMES.into_iter().find(|runtime| *runtime == target)
+        })
         .collect())
 }
 

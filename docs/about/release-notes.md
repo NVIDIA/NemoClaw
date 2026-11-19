@@ -49,7 +49,7 @@ Installation:
 
 Images:
 
-- Releases stage a llama.cpp runtime image, `llama-cpp`, beside the vLLM and Ollama images; no service runs it yet.
+- Releases stage a llama.cpp runtime image, `llama-cpp`, beside the vLLM and Ollama images.
   It adds the supervisor to llama.cpp's CUDA 13.5 server image from release b12375, whose ARM64 and AMD64 builds carry kernels for GB300 (`sm_103`) and GB10 (`sm_121a`).
   CUDA 13.5 needs NVIDIA driver 580 or newer; see [build a runtime image](../build-deploy/build.md#build-a-runtime-image).
 

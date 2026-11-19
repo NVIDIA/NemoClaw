@@ -24,7 +24,21 @@ They are implementation details for identifying retained state, not a manual edi
 The [state store](../../crates/nemoclaw-sdk/src/state/mod.rs), [deployment lifecycle](../../crates/nemoclaw-sdk/src/deployment/mod.rs), and [OpenTofu configuration](../../crates/nemoclaw-sdk/src/deployment/opentofu.rs) define these files.
 Keep the whole directory after failure; deleting state does not establish that its runtime resources are absent.
 The local lock does not exclude other clients of the same gateway.
-State records carry a format version; the SDK rejects a different version without rewriting the directory or adopting its resources.
+State records carry a format version; the SDK rejects unsupported versions without rewriting the directory or adopting their resources.
+
+### Upgrade Intent Format 29 to 30
+
+This bundle reads intent formats 29 and 30 and writes format 30.
+The shared inference-memory refactor preserves format 29's serialized fields, so valid records can be upgraded without recreating resources or changing ownership generations.
+This exception does not accept older formats or skip document, digest, generation or pending-creation validation.
+
+1. Keep the previous CLI bundle and back up the entire deployment state directory before using the new bundle.
+2. Run `nemoclaw --state-dir <directory> plan <config.yaml>` with the matching desired configuration to inspect the deployment. Loading intent alone does not rewrite it; the command may refresh other deployment files.
+3. Continue with the normal apply or recovery procedure. The next successful intent save writes format 30 and preserves resource identities and unfinished-creation guards.
+
+The format 29 CLI cannot read a record after it is saved as format 30.
+Continue managing that deployment with the new bundle; do not edit the version or restore an old intent file over newer operation state to force a downgrade.
+This upgrade handles NemoClaw intent only; it does not migrate native conversations, model caches or resources between hosts.
 
 ## Agent Files
 
