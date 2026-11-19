@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native NIM startup with a pinned vLLM-backed profile.
 mod config;
-#[cfg(any(test, all(feature = "execution", target_os = "linux")))]
+#[cfg(all(feature = "execution", target_os = "linux"))]
 mod output;
 #[cfg(all(feature = "execution", target_os = "linux"))]
 mod process;
