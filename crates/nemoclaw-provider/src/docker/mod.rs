@@ -23,21 +23,11 @@ impl std::ops::Deref for Engine {
 impl Engine {
     pub fn connect(endpoint: &str) -> Result<Self, Error> {
         let read = nemoclaw_discovery::Engine::connect(endpoint)?;
-        // Local engines exist only on Unix, where their host can be measured.
         let host_observer: std::sync::Arc<dyn crate::hardware::HostObserver> =
             if endpoint.starts_with("ssh://") {
                 std::sync::Arc::new(ssh::RemoteHost)
             } else {
-                #[cfg(unix)]
-                {
-                    std::sync::Arc::new(crate::hardware::LocalHost::default())
-                }
-                #[cfg(not(unix))]
-                {
-                    return Err(Error::Conflict(
-                        "local container engines are unsupported on this platform",
-                    ));
-                }
+                std::sync::Arc::new(crate::hardware::LocalHost::default())
             };
         Ok(Self {
             read,

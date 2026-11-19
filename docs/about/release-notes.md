@@ -45,6 +45,12 @@ Images:
   It adds the supervisor to llama.cpp's CUDA 13.5 server image from release b12375, whose ARM64 and AMD64 builds carry kernels for GB300 (`sm_103`) and GB10 (`sm_121a`).
   CUDA 13.5 needs NVIDIA driver 580 or newer; see [build a runtime image](../build-deploy/build.md#build-a-runtime-image).
 
+Windows clients:
+
+- The CLI on Windows reaches a local Docker Desktop or Podman engine through its named pipe, such as `npipe:////./pipe/docker_engine`, and hides typed credentials at its prompts.
+  It plans, applies, and destroys a deployment with an external gateway whose `spec.gateway.engine` is that pipe or an `ssh://` engine ([#14631](https://github.com/NVIDIA/NemoClaw/issues/14631)).
+  A managed local gateway still needs a Linux or macOS client ([#14632](https://github.com/NVIDIA/NemoClaw/issues/14632)), and no Windows host has run a deployment; see [current limits](../resources/limits.md#platforms-models-and-placement).
+
 Gateways:
 
 - [Current limits](../resources/limits.md#data-and-cleanup) list a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: it leaves its sandboxes in `Error`, and the next apply replaces them ([#13953](https://github.com/NVIDIA/NemoClaw/issues/13953)).
@@ -333,7 +339,7 @@ Each release attaches the CLI for these platforms; [install the CLI](../get-star
 | Linux ARM64 | `linux_arm64` | Yes | Docker and kind suites |
 | Linux AMD64 | `linux_amd64` | Yes | Docker and kind suites, the cases on NVIDIA hosted inference, and the GPU cases |
 | macOS ARM64 | `darwin_arm64` | Yes | None |
-| Windows AMD64 | `windows_amd64` | No: [deployment planning requires a Unix client](../build-deploy/usage.md) | None |
+| Windows AMD64 | `windows_amd64` | With an [external gateway](../build-deploy/usage.md); a managed local gateway needs a Linux or macOS client | None |
 
 The builder also accepts `darwin_amd64`, but no release attaches it and CI doesn't build it.
 

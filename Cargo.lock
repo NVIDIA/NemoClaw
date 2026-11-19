@@ -3058,6 +3058,7 @@ name = "nemoclaw-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "crossterm_winapi",
  "nemoclaw-onboarding",
  "nemoclaw-sdk",
  "nix 0.29.0",
