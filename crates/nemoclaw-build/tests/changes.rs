@@ -1263,7 +1263,7 @@ fn the_selection_names_where_each_selected_case_runs() {
     let (_, selection) = repo.selected(&base, &[]);
     assert_eq!(
         selection["runners"],
-        serde_json::json!({"gpu": ["docker-one"], "hosted": [], "live-docker": [], "live-kind": [], "openshift": []}),
+        serde_json::json!({"gpu": ["docker-one"], "dgx-station": [], "hosted": [], "live-docker": [], "live-kind": [], "openshift": []}),
         "{selection}"
     );
     assert_eq!(
@@ -1296,7 +1296,7 @@ fn all_selects_every_case_without_analysis() {
     );
     assert_eq!(
         selection["runners"],
-        serde_json::json!({"gpu": ["docker-one"], "hosted": [], "live-docker": [], "live-kind": ["kind-two"], "openshift": []}),
+        serde_json::json!({"gpu": ["docker-one"], "dgx-station": [], "hosted": [], "live-docker": [], "live-kind": ["kind-two"], "openshift": []}),
         "{selection}"
     );
 }
@@ -1430,4 +1430,27 @@ fn live_case_files_are_read_only_by_their_own_case() {
             }
         }
     }
+}
+
+#[test]
+fn changing_the_station_example_selects_only_its_qualified_hardware_case() {
+    let repo = Repo::new();
+    let document = fs::read_to_string(
+        repo.0
+            .path()
+            .join("crates/nemoclaw-e2e/cases/docker-one.yaml"),
+    )
+    .unwrap();
+    let example = "examples/gtc-dc/openclaw-dgx-station.yaml";
+    let base = repo.commit(&[
+        (example, Some(&document)),
+        (
+            "crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-station-openclaw-nemotron.tftest.hcl",
+            Some("\n"),
+        ),
+    ]);
+    repo.commit(&[(example, Some(&format!("{document}\n# changed\n")))]);
+    let (ids, selection) = repo.selected(&base, &[]);
+    assert_eq!(ids, ["dgx-station-openclaw-nemotron"]);
+    assert_eq!(selection["runners"]["dgx-station"], serde_json::json!(ids));
 }

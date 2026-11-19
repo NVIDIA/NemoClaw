@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Adapted from main's .github/workflows/pr-self-hosted.yaml at
+# 1a62cc06d8ca975771f287efc270df6ae9867c93: v1 case selection and HCL execution.
+# Uses main's copy-pr-bot admission. The bot vets the revision before copying it;
+# its trusted-author policy is not a maintainer/admin-only permission check.
+name: Live / V1 PR hardware
+
+on:
+  push:
+    branches: ["pull-request/[0-9]+"]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  plan:
+    if: github.repository == 'NVIDIA/NemoClaw' && github.actor == 'copy-pr-bot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      gpu: ${{ steps.select.outputs.gpu }}
+      station: ${{ steps.select.outputs.station }}
+      cases: ${{ steps.select.outputs.cases }}
+    steps:
+      - name: Resolve the admitted PR revision
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=${GITHUB_REF_NAME#pull-request/}
+          [[ $number =~ ^[1-9][0-9]*$ ]] || exit 1
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+          if ! jq -e --arg sha "$GITHUB_SHA" '
+            .state == "open" and .draft == false and .base.ref == "v1" and .head.sha == $sha
+          ' <<< "$pr" > /dev/null; then
+            echo 'The copied revision is not an open, non-draft v1 PR head; no hardware selected.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo 'eligible=true' >> "$GITHUB_OUTPUT"
+          echo "base=$(jq -r '.base.sha' <<< "$pr")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.pr.outputs.eligible == 'true'
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Select affected hardware cases
+        id: select
+        if: steps.pr.outputs.eligible == 'true'
+        env:
+          BASE: ${{ steps.pr.outputs.base }}
+        run: |
+          cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
+            changes cases --base "$BASE" > "$RUNNER_TEMP/hardware-cases.json"
+          selection=$(cat "$RUNNER_TEMP/hardware-cases.json")
+          {
+            echo "cases=$(jq -c '{runners,nvidia_key}' <<< "$selection")"
+            echo "gpu=$(jq '.runners.gpu | length > 0' <<< "$selection")"
+            echo "station=$(jq '.runners["dgx-station"] | length > 0' <<< "$selection")"
+          } >> "$GITHUB_OUTPUT"
+          jq -r '"Commit: `" + .commit + "`", (.cases | to_entries[] | "- \(.key): \(if .value.run then "run" else "skip" end): \(.value.reason)")' \
+            <<< "$selection" >> "$GITHUB_STEP_SUMMARY"
+
+  gpu:
+    needs: plan
+    if: needs.plan.result == 'success' && needs.plan.outputs.gpu == 'true'
+    uses: ./.github/workflows/hcl-e2e.yml
+    with:
+      hosted: false
+      cases: ${{ needs.plan.outputs.cases }}
+    secrets: inherit
+
+  station:
+    needs: plan
+    if: needs.plan.result == 'success' && needs.plan.outputs.station == 'true'
+    uses: ./.github/workflows/hcl-e2e.yml
+    with:
+      target: dgx-station
+      hosted: false
+      cases: ${{ needs.plan.outputs.cases }}
+    secrets: inherit

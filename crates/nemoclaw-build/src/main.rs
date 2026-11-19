@@ -102,6 +102,13 @@ enum Action {
         #[arg(long)]
         prebuilt: bool,
     },
+    /// Record the hashes of a bundle's files in its manifest after signing
+    /// changed them, leaving the rest of the manifest as it was.
+    #[cfg(feature = "sdk")]
+    Reseal {
+        /// The bundle directory, such as `dist/PLATFORM`.
+        directory: PathBuf,
+    },
     /// Run this platform's `CI / Bundle` steps, or one named step.
     ///
     /// Build this command without default features (`cargo ci`), so it can
@@ -590,6 +597,18 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
     );
     Ok(())
 }
+/// Signing changes a bundle's executables, and `Bundle::open` refuses files
+/// whose hashes differ from the manifest's.
+#[cfg(feature = "sdk")]
+fn reseal(directory: &Path) -> Result<()> {
+    let path = directory.join("manifest.json");
+    let mut manifest: Manifest = serde_json::from_slice(&fs::read(&path)?)?;
+    for (name, digest) in &mut manifest.files {
+        *digest = bundle::hash_file(&directory.join(name))?;
+    }
+    fs::write(&path, serde_json::to_vec_pretty(&manifest)?)?;
+    Ok(())
+}
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -695,6 +714,10 @@ async fn main() -> Result<()> {
             FernAction::Public => fern::public(root, &fern::Release::from_environment()),
         }
         .map_err(Into::into);
+    }
+    #[cfg(feature = "sdk")]
+    if let Action::Reseal { directory } = &cli.command {
+        return reseal(directory);
     }
     #[cfg(feature = "sdk")]
     if let Action::Schema { check } = cli.command {
@@ -970,6 +993,8 @@ async fn main() -> Result<()> {
         Action::Schema { .. } | Action::Docs { .. } | Action::Fern { .. } => {
             unreachable!("documentation generation returned before build tool checks")
         }
+        #[cfg(feature = "sdk")]
+        Action::Reseal { .. } => unreachable!("resealing returned before build tool checks"),
         Action::Ci { .. }
         | Action::ReleaseGate(..)
         | Action::ReleaseVerifyPromotion { .. }

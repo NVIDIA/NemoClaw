@@ -8,6 +8,7 @@
 # organization admin allows it.
 verified-creators:
   - anchore
+  - Azure
 commits:
   - Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
   - taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853
