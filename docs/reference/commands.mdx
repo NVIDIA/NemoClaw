@@ -472,6 +472,11 @@ This option requires the managed Hermes image; Portable and custom images are no
 Gateway startup makes bounded model calls to verify judge classification and separate routing and answer usage accounting.
 If that check fails, the gateway does not start.
 
+Onboarding, connect readiness, and status require fresh routing preflight observations of provider bindings, effective policy, the installed package, protected configuration, credential references, and the gateway process.
+Missing or changed evidence blocks verification without changing providers.
+A successful gateway health check does not establish routing readiness.
+Status and onboarding report a direct capable-provider request separately; that request does not establish adaptive routing.
+
 Fresh setup creates OpenShell-managed providers for the selected profiles and attaches them to the new sandbox.
 NemoClaw verifies and records their identities before completing setup.
 Switchyard clients use observed native endpoints and endpoint-scoped credential references, not raw keys or `inference.local`.
@@ -1414,8 +1419,10 @@ During that lease, another `launch` still verifies these conditions:
 
 <AgentOnly variant="hermes">
 
-For Switchyard routing, inference readiness verifies the recorded provider identities, revisions, profiles, and sandbox attachments.
-This check does not send a model request.
+For Switchyard routing, inference readiness requires fresh host preflight evidence for the recorded provider identities, revisions, profiles, and sandbox attachments.
+It also verifies the effective policy, installed package, protected routing configuration, credential references, and gateway process identity.
+Missing or changed evidence blocks readiness without changing providers.
+These preflight checks do not send a model request.
 
 Before each gateway launch, including supervised recovery, NemoClaw makes bounded model calls.
 These calls verify judge classification and separate routing and answer usage accounting.
