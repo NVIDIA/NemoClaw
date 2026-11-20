@@ -168,9 +168,9 @@ Read each observation for only what it establishes:
 | Observation | What It Establishes | Next Check |
 |---|---|---|
 | Model appears in the endpoint inventory | The service reports that model | Confirm API compatibility and an inference request. |
-| Apply succeeds | Declared resources pass readiness checks and each agent started | Verify inference and a native agent turn through the intended interface. |
+| Apply succeeds | Declared resources pass readiness checks and each agent started | Follow the [native invocation procedure](../agents-inference/agents.md#running-one-agent-request) or [interface access procedure](../agents-inference/interfaces.md#reaching-an-agent-interface). Check the reply separately. |
 | Agent configuration changed inside the sandbox | Not reported: Fabric reports no applied configuration | Change the configuration in the deployment and apply, which replaces the sandbox. |
-| Forwarded native service cannot connect | Native service, forwarding, or authentication might be incomplete | Follow [interface diagnosis](../agents-inference/interfaces.md#diagnosing-failures). Keep local forwarding ports consistent. |
+| Forwarded native service cannot connect | Native service, forwarding, or authentication might be incomplete | Check [gateway and workspace selection](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace), then follow [interface diagnosis](../agents-inference/interfaces.md#diagnosing-failures). Keep local forwarding ports consistent. |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](../agents-inference/models.md#diagnosing-and-recovering-a-stopped-runtime) and correct capacity or startup conditions before explicit recovery. |
 
 Terminal sandbox apply errors, and plans that replace an exited sandbox, name the sandbox and report the OpenShell phase, OpenShell's reason code, and the main process exit code, or `unknown` when unavailable.

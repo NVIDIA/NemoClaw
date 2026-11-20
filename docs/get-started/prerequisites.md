@@ -35,22 +35,28 @@ Prepare these inputs before running apply:
 - An authenticated OpenShell CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
-For the [first-deployment tutorial](first-deployment.md), use OpenShell **0.1.7** for the gateway and native CLI.
+For the [source-pinned first-deployment tutorial](first-deployment.md), use OpenShell **0.1.7** for the gateway and native CLI. The current checkout's `versions.json` pins 0.1.9; do not use it with the older tutorial bundle. The tutorial also uses Rust 1.99.1 from its pinned worktree, not this checkout's Rust 1.100.0.
 The tutorial's pinned NemoClaw implementation (`637bdb6276309ea71d1f1fcb68fff518fe2db926`) records this version and OpenShell source revision `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c` in its `versions.json`.
 Its gateway check rejects a different reported OpenShell version or an incompatible compute driver.
 For another NemoClaw revision, use its own `versions.json` rather than assuming this version applies.
 Select a compatible [inference API](../agents-inference/inference.md) and verify an actual agent reply.
 Endpoint reachability alone is insufficient.
 
-Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.7`.
-The guides assume an operator provides the external gateway and its credentials.
-Register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
-For an existing profile or plaintext loopback gateway, use [gateway and workspace selection](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace).
-See the [first-deployment guide](first-deployment.md) for its rehearsal status.
+Prepare the pinned CLI before starting the tutorial:
+
+1. Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.7`.
+
+2. If the external gateway needs an authenticated profile, register it in the CLI with `openshell gateway add` for mTLS or OIDC.
+   Follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx).
+
+The operator provides the external gateway and its credentials.
+After apply, the [first-deployment guide](first-deployment.md#sending-a-verification-request) links to gateway and workspace selection and distinguishes readiness from a verified reply.
 
 ## Client and Build Tools
 
-Follow the [source-build guide](../build-deploy/build.md) for tool versions and a verified bundle of the CLI, OpenTofu, providers, and schemas.
+For the pinned first deployment, use `docs/build-deploy/build.md` in the tutorial's worktree ([pinned build guide](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md)).
+For builds from this documentation checkout, use its [source-build guide](../build-deploy/build.md) for tool versions and a verified bundle of the CLI, OpenTofu, providers, and schemas.
+Don't combine the two toolchains.
 Keep the bundle unchanged while an operation uses it.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
@@ -71,7 +77,7 @@ Choose the gateway and model placement that matches the available engine and end
 | Configuration | Requirements and owning guide |
 |---|---|
 | External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API and model, and an immutable sandbox image; see [usage](../build-deploy/usage.md) and [inference](../agents-inference/inference.md) |
-| NVIDIA NeMo Fabric agent image | A native Linux ARM64 or AMD64 Docker builder with Buildx, which builds every agent target; see [image prerequisites](../build-deploy/build.md#building-agent-images) |
+| NVIDIA NeMo Fabric agent image | A native Linux ARM64 or AMD64 Docker builder with Buildx, which builds every agent target; use the selected worktree's image prerequisites ([pinned tutorial](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md#build-agent-images), [this checkout](../build-deploy/build.md#building-agent-images)) |
 | Managed vLLM | Matching runtime image, pinned model revision, and storage and capacity for the selected hardware contract; see [managed models](../agents-inference/models.md) and [AMD64 Nemotron configuration](../agents-inference/models.md#configuring-nemotron-on-an-amd64-gpu-host) |
 | Managed Ollama | Matching runtime image, pinned model digest, one NVIDIA GPU, and the same hardware, placement, and capacity contract as vLLM; see [managed Ollama](../agents-inference/inference.md#running-managed-ollama) |
 | Managed rootless Podman gateway | Podman 5 or later, local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](../build-deploy/usage.md#using-a-managed-podman-gateway) |

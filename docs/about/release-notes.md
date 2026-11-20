@@ -4,7 +4,8 @@
 # Release Notes
 
 These notes describe the v1 development documentation and its release boundaries.
-v1 has no release yet.
+As of this documentation revision, v1 has no published release.
+The release records list draft release candidates, not a published final release.
 Issue [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) tracks the first one.
 The workspace package version alone doesn't establish that a release has been published.
 
