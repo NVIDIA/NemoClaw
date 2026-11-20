@@ -1539,6 +1539,8 @@ redirects:
     destination: "/nemoclaw/v0/user-guide/:path*"
   - source: "/nemoclaw/user-guide/:path*.html"
     destination: "/nemoclaw/v0/user-guide/:path*"
+  # Strip the extension before resolving legacy section aliases. For example,
+  # latest/about/overview maps to v0/user-guide/openclaw/about/overview.
   - source: "/nemoclaw/latest/:path*/index.html"
     destination: "/nemoclaw/latest/:path*"
   - source: "/nemoclaw/:path*/index.html"
