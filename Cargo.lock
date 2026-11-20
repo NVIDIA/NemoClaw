@@ -3139,6 +3139,7 @@ dependencies = [
  "openshell-core",
  "openshell-provider",
  "prost",
+ "pulldown-cmark",
  "rcgen",
  "reqwest 0.13.5",
  "rustls",

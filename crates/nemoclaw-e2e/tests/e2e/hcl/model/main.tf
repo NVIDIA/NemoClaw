@@ -45,6 +45,18 @@ variable "reply" {
   }
 }
 
+variable "port" {
+  description = "The port to serve on, in place of the one the case's `model` provider names."
+  type        = number
+  default     = null
+}
+
+variable "enabled" {
+  description = "Whether to serve the stub, so a scenario that runs for several rows can leave it out."
+  type        = bool
+  default     = true
+}
+
 variable "markers" {
   description = "By name, text to look for in each chat completion or Messages request. The completion or message names each marker its request holds, in name order, after the reply."
   type        = map(string)
@@ -62,7 +74,7 @@ variable "markers" {
 
 locals {
   document = yamldecode(file(var.context.config))
-  port     = tonumber(regex(":([0-9]+)/v1$", local.document.spec.inferenceProviders.model.endpoint)[0])
+  port     = var.port != null ? var.port : tonumber(regex(":([0-9]+)/v1$", local.document.spec.inferenceProviders.model.endpoint)[0])
   image    = jsondecode(file(var.context.versions)).images.developmentIssuer
   # Only the server that reads the request body can match it, so it composes
   # the completion's text from `reply` and one variable per marker, which
@@ -206,13 +218,15 @@ provider "docker" {
 }
 
 resource "docker_image" "model" {
+  count        = var.enabled ? 1 : 0
   name         = local.image
   keep_locally = true
 }
 
 resource "docker_container" "model" {
+  count        = var.enabled ? 1 : 0
   name         = "nc-hcl-model-${substr(sha256(local.document.metadata.uid), 0, 12)}"
-  image        = docker_image.model.image_id
+  image        = docker_image.model[0].image_id
   network_mode = "host"
   must_run     = true
   command      = ["nginx", "-c", "/tmp/stub.conf", "-g", "daemon off;"]
