@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
+
+import { redactString } from "../fixtures/redaction.ts";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { V1_IMAGE_REF_PLACEHOLDER } from "../../../src/lib/domain/config/export-document.ts";
@@ -238,7 +241,7 @@ describe("Hermes config export live evidence", () => {
       credentialValuesOmitted: true,
       outputFilesAbsent: false,
       refusalCategory: null,
-      refusalDiagnosticMatches: false,
+      refusalCategoriesMatch: false,
     });
     expect(mocks.writeText).not.toHaveBeenCalled();
     expect(mocks.readSandboxPolicy).not.toHaveBeenCalled();
@@ -274,7 +277,25 @@ describe("Hermes config export live evidence", () => {
     );
   });
 
-  it("accepts the exact credential-bearing HTTP refusal from both aliases", () => {
+  it("rejects consumer evidence that retains a failure", () => {
+    const evidence = passingEvidence();
+    expect(
+      passesHermesConfigExportLiveEvidence({
+        ...evidence,
+        consumer: {
+          ...evidence.consumer,
+          failure: {
+            alias: "nemoclaw",
+            operation: "parse-export-with-pinned-v1",
+            revision: pinnedConsumerEvidence().revision,
+            diagnostic: "consumer failed",
+          },
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts the unsupported credential-bearing HTTP refusal from both aliases", () => {
     expect(
       passesHermesConfigExportLiveEvidence({
         outcome: "expected-refusal",
@@ -283,7 +304,7 @@ describe("Hermes config export live evidence", () => {
         credentialValuesOmitted: true,
         outputFilesAbsent: true,
         refusalCategory: "unsupported",
-        refusalDiagnosticMatches: true,
+        refusalCategoriesMatch: true,
       }),
     ).toBe(true);
   });
@@ -292,7 +313,7 @@ describe("Hermes config export live evidence", () => {
     "aliasesEquivalent",
     "credentialValuesOmitted",
     "outputFilesAbsent",
-    "refusalDiagnosticMatches",
+    "refusalCategoriesMatch",
   ] as const)("rejects expected-refusal evidence when %s is false", (field) => {
     expect(
       passesHermesConfigExportLiveEvidence({
@@ -302,7 +323,7 @@ describe("Hermes config export live evidence", () => {
         credentialValuesOmitted: true,
         outputFilesAbsent: true,
         refusalCategory: "unsupported",
-        refusalDiagnosticMatches: true,
+        refusalCategoriesMatch: true,
         [field]: false,
       }),
     ).toBe(false);
@@ -338,61 +359,75 @@ describe("Hermes config export live evidence", () => {
       credentialValuesOmitted: true,
       outputFilesAbsent: true,
       refusalCategory: "unsupported",
-      refusalDiagnosticMatches: true,
+      refusalCategoriesMatch: true,
     });
     expect(mocks.writeText).not.toHaveBeenCalled();
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { plan: EMPTY_MESSAGING_PLAN, format: "full", extraMessagingRefusal: false, passed: true },
-    { plan: EMPTY_MESSAGING_PLAN, format: "full", extraMessagingRefusal: true, passed: false },
-    {
-      plan: compactSandboxMessagingPlanForPersistence(EMPTY_MESSAGING_PLAN),
-      format: "compact",
-      extraMessagingRefusal: false,
-      passed: true,
-    },
-    {
-      plan: compactSandboxMessagingPlanForPersistence(EMPTY_MESSAGING_PLAN),
-      format: "compact",
-      extraMessagingRefusal: true,
-      passed: false,
-    },
-  ])(
-    "requires only the HTTP refusal for $format empty messaging (extra messaging refusal: $extraMessagingRefusal)",
-    async ({ plan, extraMessagingRefusal, passed }) => {
-      Object.assign(mocks.load().sandboxes.hermes, {
-        name: "hermes",
-        agent: "hermes",
-        endpointUrl: "http://host.openshell.internal:35271/v1",
-        messaging: { schemaVersion: 1, plan },
-      });
-      mocks.command.mockResolvedValue({
+  it("accepts unsupported HTTP refusal after the real fixture redactor", async () => {
+    mocks.load().sandboxes.hermes.endpointUrl = "http://host.openshell.internal:35271/v1";
+    const diagnostic = redactString(
+      "Config export failed (unsupported).\nspec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.",
+    );
+    expect(diagnostic).toContain("credential <REDACTED>");
+    mocks.command.mockResolvedValue({ exitCode: 2, stdout: "", stderr: diagnostic });
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: true });
+    expect(mocks.writeText).not.toHaveBeenCalled();
+  });
+
+  it("accepts different redacted details when both aliases report the same refusal category", async () => {
+    mocks.load().sandboxes.hermes.endpointUrl = "http://host.openshell.internal:35271/v1";
+    mocks.command
+      .mockResolvedValueOnce({
         exitCode: 2,
         stdout: "",
-        stderr: [
-          "Config export failed (unsupported).",
-          ...(extraMessagingRefusal
-            ? [
-                "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
-              ]
-            : []),
-          "spec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.",
-        ].join("\n"),
+        stderr: "Config export failed (unsupported).\nFirst detail.",
+      })
+      .mockResolvedValueOnce({
+        exitCode: 2,
+        stdout: "",
+        stderr: "Config export failed (unsupported).\nDifferent redacted detail.",
       });
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: true });
+  });
 
-      await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed });
-      expect(mocks.writeJson).toHaveBeenCalledWith(
-        "hermes-config-export-live-evidence.json",
-        expect.objectContaining({
-          outcome: "expected-refusal",
-          refusalDiagnosticMatches: passed,
-        }),
-      );
-      expect(mocks.writeText).not.toHaveBeenCalled();
-    },
-  );
+  it("rejects different category sets from the two aliases", async () => {
+    mocks.load().sandboxes.hermes.messaging = { schemaVersion: 1, plan: { channels: [] } };
+    mocks.command
+      .mockResolvedValueOnce({
+        exitCode: 2,
+        stdout: "",
+        stderr: "Config export failed (unsupported).",
+      })
+      .mockResolvedValueOnce({
+        exitCode: 2,
+        stdout: "",
+        stderr: "Config export failed (unsupported, policy-not-representable).",
+      });
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+    expect(mocks.writeJson).toHaveBeenCalledWith(
+      "hermes-config-export-live-evidence.json",
+      expect.objectContaining({ aliasesEquivalent: false, refusalCategoriesMatch: true }),
+    );
+  });
+
+  it.each([
+    { plan: EMPTY_MESSAGING_PLAN, format: "full" },
+    { plan: compactSandboxMessagingPlanForPersistence(EMPTY_MESSAGING_PLAN), format: "compact" },
+  ])("accepts unsupported HTTP refusal with $format empty messaging", async ({ plan }) => {
+    Object.assign(mocks.load().sandboxes.hermes, {
+      endpointUrl: "http://host.openshell.internal:35271/v1",
+      messaging: { schemaVersion: 1, plan },
+    });
+    mocks.command.mockResolvedValue({
+      exitCode: 2,
+      stdout: "",
+      stderr: "Config export failed (unsupported).\nRedacted detail.",
+    });
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: true });
+    expect(mocks.writeText).not.toHaveBeenCalled();
+  });
 
   it.each(["https", "http"])(
     "accepts messaging refusal from both aliases with %s endpoint",
@@ -432,7 +467,7 @@ describe("Hermes config export live evidence", () => {
         credentialValuesOmitted: true,
         outputFilesAbsent: true,
         refusalCategory: "unsupported",
-        refusalDiagnosticMatches: true,
+        refusalCategoriesMatch: true,
       });
       expect(mocks.writeText).not.toHaveBeenCalled();
       expect(mocks.save).not.toHaveBeenCalled();
@@ -476,12 +511,18 @@ describe("Hermes config export live evidence", () => {
       "hermes-config-export-live-evidence.json",
       expect.objectContaining({
         refusalCategory: "unsupported",
-        refusalDiagnosticMatches: true,
+        refusalCategoriesMatch: true,
       }),
     );
   });
 
   it.each([
+    ...["unsupported, unsupported", "", "unsupported,unknown"].map((categories) => ({
+      name: `invalid category header: ${categories}`,
+      scheme: "https",
+      driver: "docker",
+      diagnostics: `Config export failed (${categories}).`,
+    })),
     {
       name: "unrelated messaging failure",
       scheme: "https",
@@ -502,19 +543,7 @@ describe("Hermes config export live evidence", () => {
       diagnostics:
         "Config export failed (policy-not-representable).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
     },
-    {
-      name: "vague messaging detail",
-      scheme: "https",
-      driver: "docker",
-      diagnostics: "Config export failed (unsupported).\nUnexpected messaging failure.",
-    },
-    {
-      name: "missing HTTP credential refusal",
-      scheme: "http",
-      driver: "docker",
-      diagnostics:
-        "Config export failed (unsupported).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
-    },
+
     {
       name: "unexpected identity drift alongside messaging refusal",
       scheme: "https",
@@ -525,46 +554,13 @@ describe("Hermes config export live evidence", () => {
         "Registry and live gateway bindings differ.",
       ].join("\n"),
     },
-    {
-      name: "undocumented finding in the unsupported category",
-      scheme: "https",
-      driver: "docker",
-      diagnostics: [
-        "Config export failed (unsupported).",
-        "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
-        "Unexpected export observation failure.",
-      ].join("\n"),
-    },
+
     {
       name: "unrelated category with only expected findings",
       scheme: "https",
       driver: "docker",
       diagnostics:
         "Config export failed (unsupported, drifted).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
-    },
-    {
-      name: "policy category without its finding",
-      scheme: "https",
-      driver: "docker",
-      diagnostics:
-        "Config export failed (unsupported, policy-not-representable).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
-    },
-    {
-      name: "policy finding without its category",
-      scheme: "https",
-      driver: "docker",
-      diagnostics: [
-        "Config export failed (unsupported).",
-        "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
-        "spec.sandboxes[].network.policy (policy-not-representable): Verified effective policy is malformed, unknown, or cannot be represented losslessly.",
-      ].join("\n"),
-    },
-    {
-      name: "missing Podman refusal",
-      scheme: "https",
-      driver: "podman",
-      diagnostics:
-        "Config export failed (unsupported).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
     },
   ])(
     "rejects $name as expected messaging refusal evidence",
@@ -585,37 +581,13 @@ describe("Hermes config export live evidence", () => {
       await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
       expect(mocks.writeJson).toHaveBeenCalledWith(
         "hermes-config-export-live-evidence.json",
-        expect.objectContaining({ refusalCategory: null, refusalDiagnosticMatches: false }),
+        expect.objectContaining({ refusalCategory: null, refusalCategoriesMatch: false }),
       );
       expect(mocks.save).not.toHaveBeenCalled();
     },
   );
 
-  it("rejects other unsupported findings without the messaging refusal", async () => {
-    mocks.load.mockReturnValue({
-      sandboxes: {
-        hermes: {
-          credentialEnv: "NVIDIA_API_KEY",
-          endpointUrl: "https://integrate.api.nvidia.com/v1",
-          gatewayName: "nemoclaw",
-          messaging: { schemaVersion: 1, plan: { channels: [] } },
-          workload: { kind: "managed-image", reference: IMAGE_REF },
-        },
-      },
-    });
-    mocks.command.mockResolvedValue({
-      exitCode: 2,
-      stdout: "",
-      stderr: [
-        "Config export failed (unsupported).",
-        "source.sandbox.providers (unsupported): The sandbox provider attachments do not match its supported configuration.",
-      ].join("\n"),
-    });
-
-    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
-  });
-
-  it.each(["http", "https"])("accepts the exact Podman %s export refusal", async (scheme) => {
+  it.each(["http", "https"])("accepts unsupported Podman %s export refusal", async (scheme) => {
     mocks.load.mockReturnValue({
       sandboxes: {
         hermes: {
@@ -646,17 +618,11 @@ describe("Hermes config export live evidence", () => {
       credentialValuesOmitted: true,
       outputFilesAbsent: true,
       refusalCategory: "unsupported",
-      refusalDiagnosticMatches: true,
+      refusalCategoriesMatch: true,
     });
   });
 
   it.each([
-    {
-      label: "unrelated failure",
-      exitCode: 2,
-      extra: "\nunrelated failure",
-      writeOutput: (_args: string[]) => undefined,
-    },
     { label: "wrong exit", exitCode: 1, extra: "", writeOutput: (_args: string[]) => undefined },
     {
       label: "published file",
@@ -768,12 +734,12 @@ describe("Hermes config export live evidence", () => {
     });
     expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
       outcome: "expected-refusal",
-      aliasesEquivalent: false,
+      aliasesEquivalent: true,
       checked: true,
       credentialValuesOmitted: false,
       outputFilesAbsent: true,
-      refusalCategory: null,
-      refusalDiagnosticMatches: false,
+      refusalCategory: "unsupported",
+      refusalCategoriesMatch: true,
     });
   });
 
@@ -827,6 +793,49 @@ describe("Hermes config export live evidence", () => {
       }),
     );
   });
+
+  it.each([
+    { alias: "nemoclaw", preceding: [] },
+    { alias: "nemohermes", preceding: [pinnedConsumerEvidence()] },
+  ] as const)(
+    "retains a bounded redacted consumer exception for $alias and removes private exports",
+    async ({ alias, preceding }) => {
+      const secret = "private-consumer-value";
+      const writeExport = async (_command: string, args: string[]) => {
+        fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, exportedHermesYaml());
+        return { exitCode: 0, stderr: "", stdout: "" };
+      };
+      mocks.command
+        .mockImplementationOnce(writeExport)
+        .mockImplementationOnce(writeExport)
+        .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+      preceding.forEach((summary) => mocks.validateWithPinnedV1.mockReturnValueOnce(summary));
+      mocks.validateWithPinnedV1.mockImplementationOnce(() => {
+        throw new Error(`consumer failed: ${secret} ${"details ".repeat(700)}`);
+      });
+
+      await expect(runEnabledFixture([secret])).resolves.toEqual({ checked: true, passed: false });
+      const evidence = mocks.writeJson.mock.calls.find(
+        ([name]) => name === "hermes-config-export-live-evidence.json",
+      )![1];
+      expect(evidence.consumer.passed).toBe(false);
+      expect(evidence.consumer.failure).toEqual({
+        alias,
+        operation: "parse-export-with-pinned-v1",
+        revision: pinnedConsumerEvidence().revision,
+        diagnostic: expect.stringContaining("[REDACTED]"),
+      });
+      expect(evidence.consumer.failure.diagnostic.length).toBeLessThanOrEqual(2000);
+      expect(JSON.stringify(evidence)).not.toContain(secret);
+      expect(evidence.consumer.actual).toEqual(
+        alias === "nemohermes" ? { nemoclaw: pinnedConsumerEvidence() } : {},
+      );
+      expect(mocks.validateWithPinnedV1).toHaveBeenCalledTimes(alias === "nemohermes" ? 2 : 1);
+      expect(mocks.writeText).not.toHaveBeenCalled();
+      const args = mocks.command.mock.calls[0]![1] as string[];
+      expect(fs.existsSync(path.dirname(args[args.indexOf("--output") + 1]!))).toBe(false);
+    },
+  );
 
   it("withholds YAML when the pinned v1 parse differs from source intent", async () => {
     const raw = exportedHermesYaml();

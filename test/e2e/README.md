@@ -1062,11 +1062,19 @@ of credential values. It then changes the fixture's recorded sandbox fingerprint
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
+The shared Hermes export fixture checks refusal exit status 2, matching expected category sets,
+absence of output files, and omission of credential values. Refusal detail wording is incidental
+and can change during redaction. Domain config-export tests own the field-specific refusal reasons.
+A pinned-V1 consumer exception still fails validation. Its evidence records the launcher alias,
+pinned revision, operation, and a redacted diagnostic limited to 2,000 characters, while preserving
+any earlier successful launcher result. Support tests cover exceptions from each alias, redaction,
+bounded evidence, private-file cleanup, and parsed-document mismatches.
+
 The `hermes-discord` target owns the live messaging refusal boundary for #12987. After Discord
 onboarding, it requires the persisted sandbox state to contain the configured Discord channel, then
 uses the shared Hermes export fixture to run both real CLI launchers. Both must refuse the unsupported
 messaging state without publishing a file or exposing credentials. The E2E support tests cover the
-deterministic refusal selection and diagnostic comparison.
+deterministic refusal selection and category comparison.
 The target owns the shared export fixture in the catalogue so fixture changes select this live check.
 The target removes redundant CLI-presence, sandbox-list, and standalone provider-get probes: later
 live commands use both CLIs, read the persisted sandbox entry, and require the named provider to be

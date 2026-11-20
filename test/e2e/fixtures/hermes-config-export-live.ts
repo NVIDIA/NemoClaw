@@ -26,6 +26,7 @@ import type { ArtifactSink } from "./artifacts.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
+import { redactString } from "./redaction.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
 import {
   createV1ParseConsumer,
@@ -78,6 +79,12 @@ interface HermesV1ParseSummary {
   readonly expected: V1ParseSummary;
   readonly actual: Partial<Record<"nemoclaw" | "nemohermes", V1ParseSummary>>;
   readonly passed: boolean;
+  readonly failure?: {
+    readonly alias: "nemoclaw" | "nemohermes";
+    readonly operation: "parse-export-with-pinned-v1";
+    readonly revision: typeof V1ALPHA1_CHECKED_REVISION;
+    readonly diagnostic: string;
+  };
 }
 
 interface HermesConfigExportExpectedRefusalEvidence {
@@ -87,28 +94,17 @@ interface HermesConfigExportExpectedRefusalEvidence {
   readonly credentialValuesOmitted: boolean;
   readonly outputFilesAbsent: boolean;
   readonly refusalCategory: "unsupported" | null;
-  readonly refusalDiagnosticMatches: boolean;
+  readonly refusalCategoriesMatch: boolean;
 }
 
 export type HermesConfigExportLiveEvidence =
   | HermesConfigExportPublishedEvidence
   | HermesConfigExportExpectedRefusalEvidence;
 
-// Each refusal line names the finding's field and category before its diagnostic.
-const CREDENTIAL_HTTP_REFUSAL =
-  "spec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.";
-const PODMAN_REFUSAL =
-  "spec.sandboxes[].runtime.provider (unsupported): V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
-const MESSAGING_REFUSAL =
-  "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.";
-const POLICY_REFUSAL =
-  "spec.sandboxes[].network.policy (policy-not-representable): Verified effective policy is malformed, unknown, or cannot be represented losslessly.";
-// The exporter reports these v1 compatibility limits alongside excluded messaging.
-const MESSAGING_ADDITIONAL_REFUSALS = [
-  "source.sandbox.providers (unsupported): The sandbox provider attachments do not match its supported configuration.",
-  "source.workload.startupProfile (unsupported): The managed startup profile is not the canonical profile supported by v1 export.",
-  POLICY_REFUSAL,
-];
+function refusalCategories(diagnostic: string): string[] {
+  const header = diagnostic.split("\n")[0] ?? "";
+  return /^Config export failed \(([^)]+)\)\.$/u.exec(header)?.[1]?.split(", ").sort() ?? [];
+}
 
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
@@ -127,13 +123,14 @@ export function passesHermesConfigExportLiveEvidence(
       evidence.credentialValuesOmitted &&
       evidence.outputFilesAbsent &&
       evidence.refusalCategory === "unsupported" &&
-      evidence.refusalDiagnosticMatches
+      evidence.refusalCategoriesMatch
     );
   }
   return (
     evidence.agent === "nvidia.fabric.hermes" &&
     evidence.aliasesEquivalent &&
     evidence.consumer.passed &&
+    evidence.consumer.failure === undefined &&
     evidence.credentialReferenceMatches &&
     evidence.credentialValuesOmitted &&
     evidence.identityDriftPreventedPublication &&
@@ -179,11 +176,28 @@ function validateHermesConsumers(
   const expected = expectedHermesConsumerEvidence(input);
   const actual: HermesV1ParseSummary["actual"] = {};
   const validate = input.validateWithPinnedV1 ?? parseWithPinnedV1;
-  try {
-    actual.nemoclaw = validate(nemoclawRaw);
-    actual.nemohermes = validate(nemohermesRaw);
-  } catch {
-    return { expected, actual, passed: false };
+  for (const [alias, raw] of [
+    ["nemoclaw", nemoclawRaw],
+    ["nemohermes", nemohermesRaw],
+  ] as const) {
+    try {
+      actual[alias] = validate(raw);
+    } catch (error) {
+      return {
+        expected,
+        actual,
+        passed: false,
+        failure: {
+          alias,
+          operation: "parse-export-with-pinned-v1",
+          revision: V1ALPHA1_CHECKED_REVISION,
+          diagnostic: redactString(
+            error instanceof Error ? error.message : String(error),
+            input.redactionValues,
+          ).slice(0, 2000),
+        },
+      };
+    }
   }
   return {
     expected,
@@ -306,51 +320,32 @@ export async function verifyHermesConfigExportLive(
     entry.credentialEnv.length > 0 &&
     entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
   const expectsMessagingRefusal = hasExportExcludedMessaging(entry);
-  const expectedRefusals = [
-    ...(expectsMessagingRefusal ? [MESSAGING_REFUSAL] : []),
-    ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
-    ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
-  ];
-  if (expectedRefusals.length > 0 || !launchersSucceeded) {
-    if (expectedRefusals.length > 0) {
-      const expectedDiagnostic = ["Config export failed (unsupported).", ...expectedRefusals].join(
-        "\n",
+  const expectsRefusal =
+    expectsMessagingRefusal || entry.openshellDriver === "podman" || expectsCredentialHttpRefusal;
+  if (expectsRefusal || !launchersSucceeded) {
+    if (expectsRefusal) {
+      const categories = [nemoclawDiagnostics, nemohermesDiagnostics].map(refusalCategories);
+      const allowedCategories = expectsMessagingRefusal
+        ? ["unsupported", "policy-not-representable"]
+        : ["unsupported"];
+      const refusalCategoriesMatch = categories.every(
+        (values) =>
+          values.includes("unsupported") &&
+          new Set(values).size === values.length &&
+          values.every((category) => allowedCategories.includes(category)),
       );
-      const refusalDiagnosticMatches = [nemoclawDiagnostics, nemohermesDiagnostics].every(
-        (diagnostic) => {
-          if (!expectsMessagingRefusal) return diagnostic === expectedDiagnostic;
-          const [header, ...findings] = diagnostic.split("\n");
-          const categories = /^Config export failed \(([^)]+)\)\.$/u
-            .exec(header ?? "")?.[1]
-            ?.split(", ");
-          const expectedCategories = [
-            "unsupported",
-            ...(findings.includes(POLICY_REFUSAL) ? ["policy-not-representable"] : []),
-          ];
-          return (
-            categories?.length === expectedCategories.length &&
-            expectedCategories.every((category) => categories.includes(category)) &&
-            expectedRefusals.every((refusal) => findings.includes(refusal)) &&
-            findings.every(
-              (finding) =>
-                expectedRefusals.includes(finding) ||
-                MESSAGING_ADDITIONAL_REFUSALS.includes(finding),
-            )
-          );
-        },
-      );
-      const refusalCategory = refusalDiagnosticMatches ? "unsupported" : null;
+      const refusalCategory = refusalCategoriesMatch ? "unsupported" : null;
       const evidence: HermesConfigExportExpectedRefusalEvidence = {
         outcome: "expected-refusal",
         aliasesEquivalent:
           nemoclaw.exitCode === 2 &&
           nemohermes.exitCode === 2 &&
-          nemoclawDiagnostics === nemohermesDiagnostics,
+          isDeepStrictEqual(categories[0], categories[1]),
         checked: true,
         credentialValuesOmitted: !containsCredential,
         outputFilesAbsent: !fs.existsSync(nemoclawPath) && !fs.existsSync(nemohermesPath),
         refusalCategory,
-        refusalDiagnosticMatches,
+        refusalCategoriesMatch,
       };
       await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
       return { checked: true, passed: passesHermesConfigExportLiveEvidence(evidence) };
