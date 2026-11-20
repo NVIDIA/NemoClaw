@@ -85,6 +85,11 @@ Gateways:
 - While a managed Docker gateway's container is stopped, plan, apply, and destroy fail with an error that names the container and the `docker start` command that starts it, instead of `observation transport failed`.
   See [troubleshooting](../observability/troubleshooting.md#identifying-the-failure) ([#14626](https://github.com/NVIDIA/NemoClaw/issues/14626)).
 
+Recovery:
+
+- After OpenShell rejects a sandbox create as an invalid argument, such as a network policy key with the reserved `_provider_` prefix, a corrected apply or destroy proceeds, instead of failing on an unfinished creation.
+  See [recovering an interrupted operation](../build-deploy/usage.md#recovering-an-interrupted-operation) ([#14654](https://github.com/NVIDIA/NemoClaw/issues/14654)).
+
 ### Changes in v0.1.0-rc11
 
 These changes reached `v1` between the `v0.1.0-rc10` and `v0.1.0-rc11` tags.
