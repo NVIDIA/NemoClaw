@@ -6,8 +6,8 @@ use super::{
     labels::{label, terminal_text},
     logo::BrandImage,
     terminal::{
-        agent_images_probe, ask_target, credential_probe, discover_before_input,
-        local_engine_probe, model_catalog_probe,
+        accept_review, agent_images_probe, ask_target, credential_probe, discover_before_input,
+        image_probe, local_engine_probe, model_catalog_probe,
     },
 };
 use crate::{Source, load_journey};
@@ -22,8 +22,10 @@ use nemoclaw_sdk::{
     config::{ComputeDriver, Document},
     discovery::{
         AgentImagesObservation, AgentImagesRequest, CredentialRequest, DiscoveryObservation,
-        DiscoveryQuery, DiscoveryRequest, EngineObservation, ObservationStatus,
+        DiscoveryQuery, DiscoveryRequest, EngineObservation, FabricObservation, GatewayObservation,
+        ObservationStatus,
     },
+    hardware_discovery::HardwareObservation,
     inference_discovery::{CredentialObservation, EndpointObservation},
 };
 use ratatui::{Terminal, backend::TestBackend};
@@ -1514,6 +1516,12 @@ async fn unreachable(
                     reason: Some("unreachable".into()),
                 })
             }
+            DiscoveryQuery::Gateway(_) => {
+                DiscoveryObservation::Gateway(GatewayObservation::unknown("unreachable"))
+            }
+            DiscoveryQuery::Hardware(_) => {
+                DiscoveryObservation::Hardware(HardwareObservation::unknown_because("unreachable"))
+            }
             other => panic!("unexpected read {other:?}"),
         };
         observed.record(query, observation);
@@ -2039,6 +2047,90 @@ async fn credentials_are_checked_when_review_opens_and_only_once() {
         "{text}"
     );
     assert!(!text.contains("Get a key at"), "{text}");
+}
+
+/// Read as `unreachable` does, except that the engine holds no image.
+async fn without_images(
+    queries: Vec<DiscoveryQuery>,
+    cancel: &CancellationToken,
+) -> Result<DiscoveryObservations, Error> {
+    let (images, rest): (Vec<_>, Vec<_>) = queries
+        .into_iter()
+        .partition(|query| matches!(query, DiscoveryQuery::Fabric(_)));
+    let mut observed = unreachable(rest, cancel).await?;
+    for query in images {
+        observed.record(
+            query,
+            DiscoveryObservation::Fabric(FabricObservation {
+                status: ObservationStatus::Unavailable,
+                reason: Some("image is not present on the selected engine".into()),
+                ..FabricObservation::unknown("fixture")
+            }),
+        );
+    }
+    Ok(observed)
+}
+
+#[tokio::test]
+async fn review_reads_the_image_once_and_says_how_to_get_an_absent_one() {
+    let mut wizard = reviewing_wizard(unverified_engine());
+    let asked = image_probe(&wizard);
+    assert!(
+        asked
+            .iter()
+            .any(|query| matches!(query, DiscoveryQuery::Fabric(_))),
+        "{asked:?}"
+    );
+    assert!(
+        ask_target(
+            &mut wizard,
+            without_images,
+            asked,
+            &CancellationToken::new(),
+            &mut std::collections::VecDeque::new(),
+            || Ok(None),
+        )
+        .await
+        .unwrap()
+    );
+    assert!(image_probe(&wizard).is_empty(), "the image is read once");
+    for (width, height) in [(160, 40), (80, 30)] {
+        let text = flat(&screen(&wizard, width, height));
+        assert!(text.contains("not present"), "{width}x{height}: {text}");
+        // The link wraps on a narrow screen.
+        let link = if width >= 100 {
+            "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"
+        } else {
+            "building-agent-images"
+        };
+        assert!(text.contains(link), "{width}x{height}: {text}");
+        assert!(!text.contains("not checked"), "{width}x{height}: {text}");
+        assert!(
+            !text.contains("not been observed"),
+            "{width}x{height}: {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_enter_that_reveals_an_absent_image_shows_it_before_saving() {
+    let mut wizard = reviewing_wizard(unverified_engine());
+    let enter = async |wizard: &mut JourneyWizard| {
+        accept_review(
+            wizard,
+            without_images,
+            &CancellationToken::new(),
+            &mut std::collections::VecDeque::new(),
+            || Ok(None),
+        )
+        .await
+        .unwrap()
+    };
+    assert!(enter(&mut wizard).await);
+    assert!(!wizard.accepted, "the read changed what the review showed");
+    assert!(flat(&screen(&wizard, 160, 40)).contains("not present"));
+    assert!(enter(&mut wizard).await);
+    assert!(wizard.accepted, "the review now shows what saving reads");
 }
 
 #[test]
