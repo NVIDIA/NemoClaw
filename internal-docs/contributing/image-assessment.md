@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Assess Saved Image Inventories
+# Assessing Saved Image Inventories
 
 Use the source-built assessment command to check saved release SBOMs for known vulnerabilities.
 It reads local inputs and a prepared Grype database, invokes the pinned scanner, and prints a report.
@@ -10,7 +10,7 @@ It does not pull or run images, update the database, change registry resources, 
 This command supplies the raw assessment for [#13523](https://github.com/NVIDIA/NemoClaw/issues/13523).
 The separate release controller evaluates reviewed exceptions and controls disclosure and publication.
 
-## Prepare the Inputs
+## Preparing the Inputs
 
 Use the pinned Rust toolchain from [build prerequisites](../../docs/build-deploy/build.md) and a verified Grype 0.121.3 binary.
 Prepare a Grype database cache before assessment using the scanner's [database commands](https://oss.anchore.com/docs/reference/grype/cli/).
@@ -38,7 +38,7 @@ Structural source entries do not count as software inventory; at least one ident
 Grype can't match a package without one, such as an npm subpath export or an unversioned binary that Syft records; the report counts those per platform as `unidentified_packages`.
 These checks establish minimum matching information, not complete SPDX conformance or source-image package coverage.
 
-## Run an Assessment
+## Running an Assessment
 
 From the repository root, use absolute paths to the prepared inputs, scanner, and database cache:
 
@@ -63,7 +63,7 @@ Keep reports from private candidates in a location approved for that inventory.
 Package names and advisory details can disclose unreleased contents even when no credentials appear.
 Do not send that output to public workflow logs or artifacts; the release workflow reports a final release's findings itself.
 
-## Interpret the Result
+## Interpreting the Result
 
 | Result | Exit code | Action |
 |---|---|---|
@@ -106,7 +106,7 @@ It reads the prepared database without updating it.
 
 The [release procedure](releases.md) owns publication: its workflow assesses a final release with the `v1` controller, verifies the staged digests, and publishes the draft only when the assessment passes.
 
-## Bind a Release Assessment
+## Binding a Release Assessment
 
 `release-gate` reads the saved inputs and runs a fresh scan; it never accepts a saved passing report as authority.
 The inventory must also contain each image's `index_digest`, observed from the registry index.
@@ -134,7 +134,7 @@ A locally supplied policy checksum proves consistency, not independent review.
 It rejects missing, added, substituted, or invalid subjects.
 These local checks cannot prevent a repository writer or package administrator from bypassing a publication workflow.
 
-## Review Upstream Exceptions
+## Reviewing Upstream Exceptions
 
 The default policy at `.github/security/v1-vulnerability-exceptions.json` is empty.
 It has `schema_version: 1` and an `exceptions` array.
@@ -161,8 +161,8 @@ The JSON report retains every finding.
 
 Anyone who may push a final tag may release; no approval step gates publication.
 The workflow freezes the `v1` controller that contains the tagged commit, and the jobs that assess and publish run that controller, not the candidate's source.
-A final release must ship what a release candidate staged: the publish job requires a release candidate of the same version whose draft lists the same platform manifests for every image.
-It then prepares a fresh advisory database, assesses the saved inputs, reports High and Critical findings to code scanning, keeps the reports as a workflow artifact, verifies the registry digests, and publishes the draft only when the assessment passes.
+A final release must ship what a release candidate staged: the assessment job requires a release candidate of the same version whose draft lists the same platform manifests for every image.
+It then prepares a fresh advisory database, assesses the saved inputs, reports High and Critical findings to code scanning, keeps the reports as a workflow artifact, and verifies the registry digests; only when the assessment passes does it [attest the images' provenance](releases.md#verifying-provenance) and publish the draft.
 The workflow does not change package visibility.
 Repository writers and package administrators can still publish a draft or change a package by hand, outside the workflow.
 Release candidates run the same assessment report-only: the job attaches `assessment.json`, `assessment.sarif`, and `gate.json` to the private draft and warns, instead of failing, when the policy would block publication.
@@ -175,7 +175,7 @@ Its per-release analysis category and finding fingerprints remain stable across 
 Uploads exceeding the supported result limit fail rather than silently dropping findings; the complete local report is retained.
 Successful local schema validation does not establish successful hosted ingestion or alert rendering.
 
-## Monitor Supported Releases
+## Monitoring Supported Releases
 
 `.github/security/v1-supported-releases.json` explicitly lists supported published releases and defaults to an empty list.
 Each entry pins `tag`, `inventory_sha256`, `sboms_sha256`, `policy_sha256`, and RFC 3339 `support_until`.

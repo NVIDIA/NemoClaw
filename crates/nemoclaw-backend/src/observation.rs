@@ -165,6 +165,10 @@ static TOKENS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z0-9_+/=-]{32,}").expect("constant diagnostic token pattern")
 });
 
+/// The summary of the OpenTofu error a provider reports for a create that
+/// left nothing behind; the SDK reads it to drop the pending creation.
+pub const CREATED_NOTHING_SUMMARY: &str = "Create rejected; nothing created";
+
 impl ObservationError {
     /// Bound backend diagnostics and remove credentials before they enter public errors.
     pub fn sanitized_detail(detail: &str) -> Box<str> {

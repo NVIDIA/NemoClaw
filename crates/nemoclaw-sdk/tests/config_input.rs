@@ -33,7 +33,7 @@ fn omitted_or_empty_image_is_rejected_on_every_runtime() {
                 error.contains("spec.sandboxes.assistant")
                     && error
                         .contains("image.ref must name an agent image pinned by a SHA-256 digest")
-                    && error.contains("docs/build-deploy/build.md#build-agent-images"),
+                    && error.contains("docs/build-deploy/build.md#building-agent-images"),
                 "{name}: {error}"
             );
         }

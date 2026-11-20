@@ -1,13 +1,13 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Contribute Documentation
+# Contributing Documentation
 
 Follow [WRITING.md](../../WRITING.md) for prose and [the design decision](../design/scope.md) for accepted scope.
 User-facing guidance lives in `docs/`; design rationale, release procedures, and maintainer validation live in `internal-docs/`.
 The [documentation build](documentation-build.md) renders selected pages for Fern; edit the Markdown sources and [page manifest](../../fern/pages.json), not generated MDX.
 
-## Choose the Page
+## Choosing the Page
 
 Use the [documentation index](../../docs/README.md) to find the reader's task.
 Read the complete owning page and check its inbound links before editing.
@@ -30,9 +30,10 @@ Remove a limit only when the text can link to the implementation, tests, or scop
 
 State a qualification limit as a property of the current code, not as a past test result; do not imply that a configuration is tested without a test that covers it.
 
-## Write the Procedure
+## Writing the Procedure
 
 Give each page one primary task, with descriptive headings and one prose sentence per source line.
+Start the title and each task heading with a gerund, such as *Configuring a Managed Gateway*; name concepts and references with noun phrases, such as *Support Matrix*.
 Add the SPDX Apache-2.0 header to new documentation and preserve upstream notices.
 For operational instructions:
 
@@ -44,10 +45,10 @@ Example image pins and deployment IDs do not authorize access to the original de
 Use relative file links and existing heading anchors.
 When moving content, update inbound links and the index; retain old paths or anchors only when they have consumers.
 
-## Validate and Review
+## Validating and Reviewing
 
 Verify changed commands against their parser, script, or executable help, and check local links and anchors.
-Run `cargo run --locked -p nemoclaw-build -- fern check` from the repository root to check the generated reference, local links, and Fern routes; [tool prerequisites](documentation-build.md#validate-locally) apply.
+Run `cargo run --locked -p nemoclaw-build -- fern check` from the repository root to check the generated reference, local links, and Fern routes; [tool prerequisites](documentation-build.md#validating-locally) apply.
 The documentation build parses every `yaml` and `yml` fenced example on rendered pages and checks complete deployments with the SDK parser.
 Keep fragments syntactically valid; put settings for different YAML locations in separate fences.
 Fragment parsing checks syntax only; maintained complete examples have separate parser, schema, and adapter-contract tests.

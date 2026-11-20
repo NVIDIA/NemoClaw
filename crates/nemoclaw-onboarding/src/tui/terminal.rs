@@ -80,23 +80,23 @@ pub(crate) async fn run(
         // question, and credentials at review. The answers depend only on the
         // state and observations, which change only when a render is pending.
         // Each read is attempted once, even when it fails.
-        if discover && needs_render {
-            let queries = target_probe(&wizard);
-            if !queries.is_empty() {
-                terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
-                if !ask_target(
-                    &mut wizard,
-                    read_target,
-                    queries,
-                    cancel,
-                    &mut queued_events,
-                    poll_pending_event,
-                )
-                .await?
-                {
-                    return Ok(None);
-                }
-            }
+        if discover
+            && needs_render
+            && !discover_before_input(
+                &mut wizard,
+                read_target,
+                cancel,
+                &mut queued_events,
+                poll_pending_event,
+                |wizard| {
+                    terminal
+                        .draw(|frame| wizard.render_with_brand(frame, brand))
+                        .map(|_| ())
+                },
+            )
+            .await?
+        {
+            return Ok(None);
         }
         if needs_render {
             terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
@@ -371,6 +371,34 @@ pub(super) fn model_catalog_probe(wizard: &JourneyWizard) -> Option<DiscoveryQue
     (!wizard.observations().contains(&query)).then_some(query)
 }
 
+/// Read what the journey needs from the target before it takes input, drawing
+/// the screen before each read. A read can answer the question on screen, as
+/// the one local image does, and the next question can need a read of its
+/// own, such as the model catalog. `false` means the user escaped.
+pub(super) async fn discover_before_input(
+    wizard: &mut JourneyWizard,
+    read: impl AsyncFn(Vec<DiscoveryQuery>, &CancellationToken) -> Result<DiscoveryObservations, Error>,
+    cancel: &CancellationToken,
+    queued_events: &mut VecDeque<Event>,
+    mut poll: impl FnMut() -> io::Result<Option<Event>>,
+    mut draw: impl FnMut(&JourneyWizard) -> io::Result<()>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    loop {
+        let queries = target_probe(wizard);
+        if queries.is_empty() {
+            return Ok(true);
+        }
+        draw(wizard)?;
+        let asked = current_question(wizard);
+        if !ask_target(wizard, &read, queries, cancel, queued_events, &mut poll).await? {
+            return Ok(false);
+        }
+        if current_question(wizard) == asked {
+            return Ok(true);
+        }
+    }
+}
+
 /// Ask the target with `read` and keep what it says. `false` means the user
 /// escaped while it was being read, which abandons the questionnaire.
 pub(super) async fn ask_target(
@@ -385,6 +413,8 @@ pub(super) async fn ask_target(
     poll: impl FnMut() -> io::Result<Option<Event>>,
 ) -> Result<bool, Error> {
     let discovery_cancel = cancel.child_token();
+    let asked = current_question(wizard);
+    let queries_for_replay = queries.clone();
     let Some(observed) = wait_for_discovery(
         read(queries, &discovery_cancel),
         cancel,
@@ -396,8 +426,34 @@ pub(super) async fn ask_target(
     else {
         return Ok(false);
     };
+    // The menu this read produces can differ from the one on screen while it
+    // ran: a recommended model the endpoint does not list is dropped, and the
+    // suggestion moves. A key typed before that menu was drawn must not choose
+    // from it, so the user confirms again once they see it.
+    if selects_a_model(&queries_for_replay) {
+        queued_events.clear();
+    }
     wizard.remember(observed);
+    // Keys typed during the read answer the question that was on screen.
+    // When the read answered it, they would answer the next one unseen.
+    if current_question(wizard) != asked {
+        queued_events.retain(|event| !matches!(event, Event::Key(_)));
+    }
     Ok(true)
+}
+
+/// The ID of the question the wizard asks, if it asks one.
+fn current_question(wizard: &JourneyWizard) -> Option<String> {
+    let question = wizard.question().ok()??;
+    Some(question.id().to_owned())
+}
+
+/// Whether answering the question that follows these reads means choosing a
+/// model from the endpoint's catalog.
+fn selects_a_model(queries: &[DiscoveryQuery]) -> bool {
+    queries
+        .iter()
+        .any(|query| matches!(query, DiscoveryQuery::Inference(_)))
 }
 
 /// Read the target directly. A read that fails is an unknown observation,

@@ -311,7 +311,7 @@ pub(super) fn category(name: &str) -> &'static str {
 }
 /// What plan says about an image the engine doesn't hold. The read that waits
 /// for its pull is unknown until apply and adds nothing to it.
-const ABSENT_IMAGE: &str = "Selected image is not on the selected engine, so its Fabric capabilities are unverified. Apply pulls it before creating anything else; to build one, see https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images";
+const ABSENT_IMAGE: &str = "Selected image is not on the selected engine, so its Fabric capabilities are unverified. Apply pulls it before creating anything else; to build one, see https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images";
 /// The plan-time read whose image the read `name` waits for a pull of.
 fn acquired_by(name: &str) -> Option<&str> {
     (category(name) == "fabric")

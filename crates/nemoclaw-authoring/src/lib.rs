@@ -41,7 +41,7 @@ pub use target_assessment::{CompatibilityStatus, DiscoveryAssessment, assess_tar
 
 /// Where the documentation says how to build an agent image.
 pub const BUILD_AGENT_IMAGES: &str =
-    "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images";
+    "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images";
 
 mod fingerprint;
 mod sdk_schema;

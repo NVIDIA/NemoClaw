@@ -6,6 +6,14 @@
 
 run "deploy" {
   assert {
+    condition     = [for sandbox in local.openshell.created_sandboxes : sandbox.gpu_count if sandbox.name == "researcher"] == [1]
+    error_message = "OpenShell must receive the requested GPU count."
+  }
+  assert {
+    condition     = alltrue([for sandbox in local.openshell.created_sandboxes : sandbox.gpu_count == null if sandbox.name != "researcher"])
+    error_message = "Omitting a GPU request must leave the sandbox without one."
+  }
+  assert {
     condition = [for sandbox in local.openshell.created_sandboxes : sandbox.driver_config if sandbox.name == "researcher"] == [{
       docker = {
         mounts      = [{ type = "volume", source = "skills", target = "/sandbox/skills" }]

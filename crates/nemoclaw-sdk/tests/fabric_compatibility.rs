@@ -587,10 +587,7 @@ fn agents_keep_their_state_where_the_adapter_accepts_it() {
     let hermes = project(include_bytes!("../../../examples/fabric-hermes.yaml"));
     assert_eq!(hermes["runtime"]["keep_state"], true, "{hermes}");
     let openclaw = project(include_bytes!("../../../examples/openclaw.yaml"));
-    assert!(
-        openclaw["runtime"].get("keep_state").is_none(),
-        "{openclaw}"
-    );
+    assert_eq!(openclaw["runtime"]["keep_state"], true, "{openclaw}");
     let remote = project(include_bytes!("../../../examples/fabric-remote-agent.yaml"));
     assert!(remote["runtime"].get("keep_state").is_none(), "{remote}");
 }
@@ -691,6 +688,41 @@ fn opencode_trusts_the_plain_http_model_hosts_the_deployment_names() {
 }
 
 #[test]
+fn openclaw_fetches_hosts_that_policy_dns_answers() {
+    // OpenShell's policy DNS answers every name from 198.18.0.0/15 and decides
+    // each connection itself; OpenClaw's fetch tools refuse that range unless
+    // told it belongs to such a proxy.
+    let text = include_str!("../../../examples/openclaw.yaml");
+    let project = |text: &str| {
+        let doc = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
+        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandboxes().next().unwrap()).unwrap()
+    };
+    let config = project(text);
+    assert_eq!(
+        config["harness"]["settings"]["tools"]["web"]["fetch"]["ssrfPolicy"],
+        json!({"allowRfc2544BenchmarkRange": true}),
+        "{config}"
+    );
+
+    // An authored value stays, beside the harness's other tools settings.
+    let authored = text.replace(
+        "        kind: nvidia.fabric.openclaw\n",
+        "        kind: nvidia.fabric.openclaw\n        settings:\n          tools:\n            toolSearch: false\n            web:\n              fetch:\n                ssrfPolicy:\n                  allowRfc2544BenchmarkRange: false\n",
+    );
+    assert_ne!(authored, text);
+    let config = project(&authored);
+    assert_eq!(
+        config["harness"]["settings"]["tools"],
+        json!({"toolSearch": false, "web": {"fetch": {"ssrfPolicy": {"allowRfc2544BenchmarkRange": false}}}}),
+        "{config}"
+    );
+
+    // Hermes declares no such setting, and Fabric rejects undeclared settings.
+    let hermes = project(include_str!("../../../examples/fabric-hermes.yaml"));
+    assert_eq!(hermes["harness"]["settings"], json!({}), "{hermes}");
+}
+
+#[test]
 fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
     // Pi declares `api`, `context_window`, and `max_tokens` as model extensions.
     let pi = nemoclaw_sdk::config::Document::parse(
@@ -703,13 +735,33 @@ fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
     assert_eq!(model["context_window"], 32768, "{model}");
     assert_eq!(model["max_tokens"], 4096, "{model}");
 
-    // OpenClaw declares no model `api`, so none is sent.
+    // OpenClaw declares a model `api` too, so it calls each provider with
+    // the API the provider declares: an anthropic provider gets the Messages
+    // API, which carries the key in x-api-key where OpenShell places it.
     let text = include_str!("../../../examples/openclaw.yaml");
     let openclaw = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
     let config =
         nemoclaw_sdk::fabric_config::for_sandbox(&openclaw, openclaw.sandbox("assistant").unwrap())
             .unwrap();
-    assert!(config["models"]["default"].get("api").is_none(), "{config}");
+    assert_eq!(
+        config["models"]["default"]["api"], "openai-responses",
+        "{config}"
+    );
+    let anthropic = text.replace(
+        "      provider: openai\n      api: openai-responses\n",
+        "      provider: anthropic\n      api: anthropic-messages\n",
+    );
+    assert_ne!(anthropic, text);
+    let anthropic = nemoclaw_sdk::config::Document::parse(anthropic.as_bytes()).unwrap();
+    let config = nemoclaw_sdk::fabric_config::for_sandbox(
+        &anthropic,
+        anthropic.sandbox("assistant").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        config["models"]["default"]["api"], "anthropic-messages",
+        "{config}"
+    );
 
     // Extensions cannot replace a field the deployment sets.
     let reserved = text.replace(

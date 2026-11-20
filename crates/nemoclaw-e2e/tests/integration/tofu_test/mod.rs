@@ -49,7 +49,7 @@ struct Scenario {
     environment: BTreeMap<String, String>,
     credentials: BTreeMap<String, String>,
     /// Whether a document it applies has a managed gateway on the fixture
-    /// engine, whose storage only a local engine socket reaches.
+    /// engine, which test files name by the fixed Unix socket's Docker alias.
     engine_socket: bool,
 }
 
@@ -325,6 +325,7 @@ fn prepare(
     let generations: compile::Generations =
         GENERATIONS.map(|kind| (kind.into(), "a".repeat(32))).into();
     let mut graph = compile::compile(&document, &generations, version).unwrap();
+    fixtures.redirect_publication_probes(&mut graph);
     for_tofu_test(&mut graph);
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("nemoclaw.tf.json"), graph.to_string()).unwrap();
@@ -501,7 +502,7 @@ async fn run_shard(shard: usize) {
         // The skip shows in the output and the CI summary, not only as an absence.
         if cfg!(not(unix)) && scenario.engine_socket {
             println!(
-                "scenario {}: skipped; managed Docker gateway storage needs a Unix engine socket",
+                "scenario {}: skipped; its Docker alias follows from the Unix fixture engine socket",
                 scenario.name
             );
             record(&scenario.name, "skipped on this platform");

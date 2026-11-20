@@ -15,7 +15,10 @@ pub use endpoint::{forbidden_address, validate_endpoint, validate_endpoint_url};
 pub use error::Error;
 pub use identity::{generate_generation, generate_owner};
 pub use nemoclaw_runtime::config::ConfigError;
-pub use observation::{Binding, Bound, Observation, ObservationError, ObservationStatus, refresh};
+pub use observation::{
+    Binding, Bound, CREATED_NOTHING_SUMMARY, Observation, ObservationError, ObservationStatus,
+    refresh,
+};
 pub use secrets::{EnvironmentSecrets, Secrets};
 
 /// Names the directory, in the deployment's private state, where providers

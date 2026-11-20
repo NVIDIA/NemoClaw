@@ -163,6 +163,11 @@ pub struct Fixture {
     task: tokio::task::JoinHandle<()>,
 }
 impl Fixture {
+    /// Stop serving, as a gateway process that exited: new connections are
+    /// refused.
+    pub fn stop(&self) {
+        self.task.abort();
+    }
     pub async fn start() -> Self {
         Self::start_with_tls(None).await
     }
@@ -360,7 +365,8 @@ impl State {
                 .collect();
             json!({"id": meta.id, "name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
                 "providers": spec.providers, "command": spec.command, "policy_endpoints": endpoints,
-                "policy_middlewares": middlewares, "driver_config": driver_config})
+                "policy_middlewares": middlewares, "driver_config": driver_config,
+                "gpu_count": spec.resource_requirements.and_then(|resources| resources.gpu).map(|gpu| gpu.count.unwrap_or(1))})
         }).collect();
         let profiles: BTreeMap<_, _> = self
             .profiles

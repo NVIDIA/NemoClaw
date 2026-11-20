@@ -8,6 +8,8 @@ fn engine_configuration_validates_without_opening_a_transport_and_redacts_reject
         "unix:///not/a/real/socket",
         "ssh://user@host:2222",
         "ssh://host",
+        "npipe:////./pipe/docker_engine",
+        "npipe:////./pipe/podman-machine-default",
     ] {
         validate_engine_endpoint(endpoint).unwrap();
     }
@@ -23,6 +25,11 @@ fn engine_configuration_validates_without_opening_a_transport_and_redacts_reject
         "ssh://host:0",
         "ssh://user%40other@host",
         "ssh://host\nsecret",
+        "npipe:////./pipe/",
+        "npipe:////remote/pipe/secret",
+        "npipe:////./pipe/secret/nested",
+        "npipe:////./pipe/secret?option",
+        "npipe://\\\\.\\pipe\\secret",
     ] {
         let error = validate_engine_endpoint(endpoint).unwrap_err();
         assert!(!error.to_string().contains("secret"));

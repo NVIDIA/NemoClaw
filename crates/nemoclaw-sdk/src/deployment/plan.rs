@@ -885,7 +885,10 @@ pub(super) mod discovery_tests {
             panic!("expected one message per sandbox: {deferred:?}");
         };
         assert!(absent.contains("not on the selected engine"), "{absent}");
-        assert!(absent.contains("build.md#build-agent-images"), "{absent}");
+        assert!(
+            absent.contains("build.md#building-agent-images"),
+            "{absent}"
+        );
         assert!(!absent.contains("metadata"), "{absent}");
         assert!(unknown.contains("image metadata or compatibility is incomplete"));
     }

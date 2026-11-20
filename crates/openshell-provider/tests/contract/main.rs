@@ -18,7 +18,6 @@ use std::{collections::BTreeSet, fs, path::Path, process::Output};
 
 /// A fake Docker engine with volumes, containers, and files, shared with
 /// nemoclaw-e2e's `tofu test` integration case.
-#[cfg(unix)]
 #[path = "../../../test-support/docker_engine.rs"]
 mod docker_engine;
 #[path = "../../../test-support/http.rs"]
@@ -114,7 +113,6 @@ async fn tool_credentials() {
 }
 
 /// A Docker engine that answers reads only.
-#[cfg(unix)]
 pub(crate) async fn read_only_engine() -> http_fixture::Fixture {
     http_fixture::Fixture::engine(|request| {
         assert_eq!(request.method, "GET", "a prerequisite read mutated the engine");
@@ -145,7 +143,6 @@ pub(crate) async fn read_only_engine() -> http_fixture::Fixture {
 
 /// `hcl/gateway`: the Docker gateway launch, engine prerequisites, and the
 /// Kubernetes resources plan from typed settings.
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn gateway_settings_plan_without_contacting_a_host() {

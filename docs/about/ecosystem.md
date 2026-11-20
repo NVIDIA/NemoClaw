@@ -3,10 +3,10 @@
 
 # Ecosystem
 
-NemoClaw combines deployment management, OpenShell sandbox controls, and NeMo Fabric agent execution.
+NemoClaw combines deployment management, NVIDIA OpenShell sandbox controls, and NVIDIA NeMo Fabric agent execution.
 You use NemoClaw to configure and operate the deployment, then send requests to the running agent through Fabric.
 
-## Understand Each Component
+## Understanding Each Component
 
 Choose the component responsible for the action you need rather than assuming NemoClaw owns every runtime operation.
 
@@ -22,9 +22,9 @@ NemoClaw's CLI and Rust SDK use [OpenTofu](../references/provider.md) to order r
 OpenShell enforces the sandbox's access controls while Fabric runs the selected harness inside it.
 The [accepted scope](../../internal-docs/design/scope.md#upstream-boundaries) defines these ownership boundaries.
 
-For the configuration-to-request flow, refer to [Architecture Overview](architecture-overview.md). Use [desired-state operations](../build-deploy/usage.md) to change deployment resources and [native agent access](../agents-inference/agents.md#choose-native-access) to send requests.
+For the configuration-to-request flow, refer to [Architecture Overview](architecture-overview.md). Use [desired-state operations](../build-deploy/usage.md) to change deployment resources and [native agent access](../agents-inference/agents.md#choosing-native-access) to send requests.
 
-## Choose Where to Start
+## Choosing Where to Start
 
 Start with the guide for the component that owns your task.
 
@@ -34,11 +34,12 @@ Start with the guide for the component that owns your task.
 | Build an application or evaluation that invokes different harnesses through a common API | [Fabric documentation](https://docs.nvidia.com/nemo/fabric/); your application owns its deployment workflow. |
 | Run a workload in a sandbox and configure its image, policy, and agent integration yourself | [OpenShell documentation](https://docs.nvidia.com/openshell/). |
 
-Fabric can be used independently of NemoClaw, and OpenShell can sandbox workloads that do not use Fabric.
-In NemoClaw, the agent images include Fabric and the selected harness; follow [the image build guide](../build-deploy/build.md#build-agent-images) for this deployment path.
+Fabric can be used independently of NemoClaw, and OpenShell can sandbox workloads that don't use Fabric.
+In NemoClaw, the agent images include Fabric and the selected harness.
+Follow [the image build guide](../build-deploy/build.md#building-agent-images) for this deployment path.
 
-## Match the Components to Your Deployment
+## Matching the Components to Your Deployment
 
 Use the bundle, image, schema, and documentation from the same NemoClaw revision.
-An adapter available in Fabric does not establish compatibility with your NemoClaw image, model, or platform.
+An adapter available in Fabric doesn't establish compatibility with your NemoClaw image, model, or platform.
 Check [Fabric harnesses](../references/fabric-harnesses.md), [compatibility across releases](../references/compatibility.md), and [current limits](../resources/limits.md) before choosing a configuration.

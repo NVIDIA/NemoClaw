@@ -31,8 +31,8 @@ mod export_observations;
 mod fabric_bridge;
 #[path = "rust/fabric_deployment.rs"]
 mod fabric_deployment;
-// Scenarios with managed Docker gateway storage, which takes only a local
-// engine socket, run only on Unix; the runner skips them elsewhere.
+// Scenarios with a managed gateway name the Docker alias of the Unix fixture
+// engine socket, so they run only on Unix; the runner skips them elsewhere.
 #[path = "tofu_test/mod.rs"]
 mod hcl_integration;
 #[cfg(unix)]
@@ -47,6 +47,8 @@ mod multi_agent;
 mod openshell_contract_fixtures;
 #[path = "rust/remote_service.rs"]
 mod remote_service;
+#[path = "rust/signed_bundle.rs"]
+mod signed_bundle;
 #[path = "tls.rs"]
 mod tls;
 #[path = "../../../test-support/http.rs"]

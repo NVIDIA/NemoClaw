@@ -22,6 +22,21 @@ async fn docker_transport_distinguishes_confirmed_absence_from_failed_observatio
         }
     }
 }
+/// A Unix socket is local only to a Unix client, and a named pipe only to a
+/// Windows client. The test above reads an engine over the client's own one.
+#[test]
+fn a_local_engine_on_the_other_platforms_transport_names_the_client_it_needs() {
+    let (foreign, requirement) = if cfg!(windows) {
+        ("unix:///var/run/docker.sock", "requires a Unix client")
+    } else {
+        (
+            "npipe:////./pipe/docker_engine",
+            "requires a Windows client",
+        )
+    };
+    let error = Engine::connect(foreign).err().expect("a foreign transport");
+    assert!(error.to_string().contains(requirement), "{error}");
+}
 #[test]
 fn archive_observation_requires_one_complete_regular_file_within_limit() {
     let good = archive(&[("status.json", b"ready".as_slice(), 0o600)]).unwrap();

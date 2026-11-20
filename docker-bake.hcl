@@ -108,8 +108,21 @@ target "ollama" {
   tags = ["nc-prototype-ollama:rust-v1"]
 }
 
+target "llama-cpp" {
+  inherits = ["_runtime"]
+  contexts = { supervisor = "target:supervisor", sources = ".build/image-sources/llama-cpp" }
+  dockerfile = "image/llama-cpp/Dockerfile"
+  tags = ["nc-prototype-llama-cpp:rust-v1"]
+}
+
+target "nim" {
+  inherits = ["_runtime"]
+  dockerfile = "image/nim/Dockerfile"
+  tags = ["nc-prototype-nim:rust-v1"]
+}
+
 group "runtimes" {
-  targets = ["vllm", "ollama"]
+  targets = ["vllm", "ollama", "llama-cpp"]
 }
 
 # Checks use disposable build stages and never start deployed resources.

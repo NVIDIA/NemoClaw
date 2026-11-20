@@ -87,7 +87,7 @@ The selected engine, any SSH execution setup, and the harness image are [operato
 
 - The graph has no runtime resources when neither a managed gateway nor managed inference services are declared.
   An external gateway must already be reachable for planning.
-- The deployment graph can also contain an [Ollama proxy](../../docs/agents-inference/inference.md#use-external-ollama-through-a-managed-proxy), its credential storage, model observation, and readiness dependencies.
+- The deployment graph can also contain an [Ollama proxy](../../docs/agents-inference/inference.md#using-external-ollama-through-a-managed-proxy), its credential storage, model observation, and readiness dependencies.
 - Each adapter uses `fabric_agent` after sandbox creation and route setup.
   NemoClaw runs one agent runtime per sandbox, so a new agent always gets a new sandbox.
 - Refresh asks Fabric whether each agent's runtime still runs; apply starts a stopped runtime again in its sandbox.
@@ -95,7 +95,7 @@ The selected engine, any SSH execution setup, and the harness image are [operato
 
 For native configuration and optional tracing, see [agent runtimes](../../docs/agents-inference/agents.md).
 For listener setup and forwarding, see [agent interfaces](../../docs/agents-inference/interfaces.md).
-For partial failure and retry rules, see [deployment recovery](../../docs/build-deploy/usage.md#recover-an-interrupted-operation).
+For partial failure and retry rules, see [deployment recovery](../../docs/build-deploy/usage.md#recovering-an-interrupted-operation).
 
 ## Implementation
 

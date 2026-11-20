@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 pub(crate) use nemoclaw_runtime::schema::{at, forbid, property};
 
-const IMAGE_REF_ERROR: &str = "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images";
+const IMAGE_REF_ERROR: &str = "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images";
 fn optional_string(
     schema: &mut Value,
     field: &str,
@@ -370,7 +370,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                     "engine",
                     // Docker's socket is the default for a Docker runtime only;
                     // the Podman rule below requires an explicit socket.
-                    json!({"anyOf": [{"const":""},{"pattern":"^unix:///"}], "default": c::GATEWAY_ENGINE}),
+                    json!({"anyOf": [{"const":""},{"pattern":"^(unix:///|npipe:////\\./pipe/)"}], "default": c::GATEWAY_ENGINE}),
                 ),
                 (
                     "networkCIDR",

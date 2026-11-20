@@ -3,16 +3,16 @@
 
 # Tests
 
-## Choose Local Validation
+## Choosing Local Validation
 
 Before pushing, choose checks that cover the changed behavior and its affected callers.
 
 | Change | Local validation |
 |---|---|
-| Prose or documentation | Review the changed text; run the [documentation check](documentation-build.md#validate-locally) for documentation changes. |
+| Prose or documentation | Review the changed text; run the [documentation check](documentation-build.md#validating-locally) for documentation changes. |
 | Declarative configuration or workflow triggers | Run the applicable schema or lint checks; test affected execution paths when their behavior changes. |
 | Isolated code change | Run focused behavioral tests and nearby regression checks, plus formatting and lint checks for the affected code. |
-| Bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies | Run `cargo ci`; it [selects](#select-expensive-local-checks) the bundle, contract, and integration checks from the changed inputs. |
+| Bundle construction, provider contracts, lifecycle behavior, or broad workspace dependencies | Run `cargo ci`; it [selects](#selecting-expensive-local-checks) the bundle, contract, and integration checks from the changed inputs. |
 | Images or Kubernetes deployment | Also run `cargo ci live-docker` or `cargo ci live-kind`; see [live tests](live-tests.md). |
 | Impact is unclear or narrower checks cannot establish confidence | Run `cargo ci`. |
 
@@ -22,7 +22,7 @@ Report the commands and results to whoever asked for the change, and name checks
 Repeat validation when relevant inputs change, a check fails, or an unresolved concern requires it; a push alone does not require another run.
 Required PR checks still apply before merging.
 
-## Run the Full Local Suite
+## Running the Full Local Suite
 
 Run this platform's complete `CI / Bundle` checks from the repository root:
 
@@ -35,7 +35,7 @@ It downloads Protocol Buffers compiler 36.2 and cargo-nextest 0.9.152 into the G
 It then runs formatting, Clippy, the unit tests and doctests, the schema check, a bundle build, and the contract and integration tests, stopping at the first failure.
 To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.2/bin/protoc` after `cargo ci tools`, or to another protoc 36.2.
 
-## Select Expensive Local Checks
+## Selecting Expensive Local Checks
 
 Plain `cargo ci` selects bundle, contract, and integration work from changed inputs:
 
@@ -134,7 +134,7 @@ The `live-docker` profile selects the Docker tests in `nemoclaw-build`, that `e2
 Other ignored tests, such as the Brev and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
 [Run live tests](live-tests.md) gives each test's prerequisites and the state it retains.
 
-## Run Each Layer
+## Running Each Layer
 
 Run every command from the repository root.
 `cargo ci STEP` runs one step after checking the pinned tools.
@@ -169,7 +169,7 @@ Afterward it removes every container, volume, and network labelled with the docu
 When the tests pass, the step fails if OpenShell left a sandbox object or if it cannot list or remove an object labelled with one of those UUIDs.
 It requests no inference from a model server and needs no GPU or credentials.
 
-`cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#build-agent-images).
+`cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#building-agent-images).
 It downloads the pinned kind executable by checksum into `.tools`, creates a cluster with a fresh `nc-live-` name, installs the pinned Agent Sandbox release, and loads an agent image built from this checkout by digest.
 It starts a registry that requires a login on the kind network and pushes that image to it for the scenario.
 It then runs the `kind-kubernetes-development` and `kind-kubernetes-oidc` HCL E2E scenarios, one after the other, which need no Helm CLI.
@@ -218,7 +218,7 @@ The slowest of those runs lost their time outside any test step:
 - Flaky reruns: a rerun repeats the failed job's wait and the time before it starts, and after its producers' artifacts expire, the [whole workflow's](#archives).
 - Serial `needs` chains: a job waits for every job it needs, even when it uses none of their outputs. `E2E build images` downloads no artifacts but waits for `Build bundle`, because the E2E workflow that contains it needs the build and bundle jobs.
 
-### Shorten It
+### Shortening It
 
 - Partition and parallelize: split a long job or step across runners instead of adding to it, as Windows runs a third integration partition.
 - Cache what a job would otherwise rebuild or download; see [CI caches](#ci-caches).
@@ -226,7 +226,7 @@ The slowest of those runs lost their time outside any test step:
 - Move a check to the cheapest [layer](#test-layers) that observes it, and keep live suites, whose Docker tests and kind scenarios run one at a time, to what needs a real engine or cluster.
 - Fix a flaky test or job when you see it, or file a `v1` issue with the failing run; don't rerun until it passes.
 
-### Measure a Workflow Change
+### Measuring a Workflow Change
 
 Compare several runs of the same kind before and after the change, since queues vary: pull requests or `v1` pushes, with the same selected checks and warm caches.
 List a run's times and each job's with the GitHub API:
@@ -251,7 +251,7 @@ Compilation, image builds, cluster setup, artifact transfers, and runner and con
 ### Local Waiting Time
 
 Waiting for local checks costs the same as waiting for CI.
-Run the narrowest checks that [local validation](#choose-local-validation) allows.
+Run the narrowest checks that [local validation](#choosing-local-validation) allows.
 Plain `cargo ci` skips the bundle, contract, and integration steps that its plan doesn't select, and `cargo ci --dry-run` shows the selection before you wait for it; it runs the selected steps one after another, while CI runs each platform's layers in parallel.
 
 ## Budgets and Per-Test Limits
@@ -290,7 +290,7 @@ Budgets fail a run only on the Linux GitHub Actions runners, where `GITHUB_ACTIO
 
 The multiple leaves a margin for the platforms that only report budgets; the `test` step uses three because its slowest test takes nearly twice its limit on macOS.
 
-### Change a Budget
+### Changing a Budget
 
 Lower a budget when a change makes its step faster; a pull request that raises one must give the reason.
 When you change a per-test limit, change the matching `slow-timeout` period in [`.config/nextest.toml`](../../.config/nextest.toml) as well: the step's profile, or the binary's `binary_id` override in the `contract` profile.
@@ -361,7 +361,7 @@ Documentation previews publish only for PRs targeting `v1`.
 | Workflow | Checks |
 |---|---|
 | CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; each platform's jobs start with their test layer, such as `linux_amd64 / Contract tests 1 of 1` or `linux_amd64 / E2E / E2E Docker tests` |
-| CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
+| CI / Images | `Build / linux_arm64`, `Build / linux_amd64`; beside them, `Build / llama.cpp runtime / linux_arm64` and `Build / llama.cpp runtime / linux_amd64` build the llama.cpp runtime image and run its server's and supervisor's version commands |
 | CI / Dependencies | `Policy`, `Python scripts` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
@@ -425,7 +425,7 @@ The build job uploads each file as its own artifact, and the bundle job uploads 
 Contract, integration, and live jobs download the inputs, their own layer's archive, and the bundle, the live jobs also the live images archive, and each then runs `.build/ci/nemoclaw-build ci STEP --archive-file .build/ci/LAYER.tar.zst`, which remaps the tests' working directories to the checkout and extracts the tests into `.build/ci/extracted`.
 CI keeps these artifacts for one day; rerunning a failed job reuses its producers' artifacts, even from an earlier attempt, and after they expire the complete workflow must be rerun.
 
-### Run a Contract or Integration Partition
+### Running a Contract or Integration Partition
 
 `cargo ci --full` runs the complete contract and integration suites, each in one step.
 After `cargo ci build` and `cargo ci bundle`, select one partition explicitly:
@@ -449,9 +449,8 @@ The worker compiles nothing and writes JUnit timings under `target/nextest/integ
 
 ### Windows
 
-Windows has no Unix sockets for fake container engines, so tests reach them over SSH through the fake relay `nemoclaw-fixture-ssh`, which forwards `ssh://127.0.0.1:PORT` to the fixture's loopback port.
-[`Fixture::engine`](../../crates/test-support/http.rs) serves the engine on a Unix socket where one exists and otherwise installs the relay as `ssh` beside the test executable.
-The `contract` and `integration` steps also put the relay first on `PATH` as `ssh`, so the providers and CLI that OpenTofu and the SDK start reach it too.
+[`Fixture::engine`](../../crates/test-support/http.rs) serves a fake engine where the platform's local engines listen: a Unix socket, or on Windows a named pipe, `npipe:////./pipe/NAME`, which the providers and CLI that OpenTofu and the SDK start reach too.
+Tests that need an SSH engine reach a fixture's loopback port through the fake relay `nemoclaw-fixture-ssh`, which forwards `ssh://127.0.0.1:PORT`; on Windows, the `contract` and `integration` steps put it first on `PATH` as `ssh`.
 Use `Fixture::engine` for a fake engine so that the test runs on every platform; compile a test that needs a Unix-only fixture only on Unix with `#[cfg(unix)]`.
 
 ### Live Suites
@@ -480,7 +479,7 @@ Only the hosted and GPU jobs receive the key, and a GPU case receives it only wh
 `E2E Kubernetes (kind) tests` runs only HCL cases, so it is skipped when none is selected; `cargo ci live-docker` and `live-kind` take the selection as `--hcl-cases`, and without it run every case placed on them.
 
 Whenever the plan selects a hosted case, Linux AMD64 runs it as `linux_amd64 / E2E / E2E HCL CASE`, from the same test archive, bundle, and live images as the live suites, except on a fork's pull request, which cannot use the inference secret.
-On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts, so a pull request never runs them.
+On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse `pull_request` jobs. Separately, [Live / V1 PR hardware](../../.github/workflows/pr-self-hosted.yml) consumes bot-admitted copied PR branches and runs the affected qualified hardware cases for open, non-draft v1 PRs. Those runs remain outside merge requirements; see [hardware dispatch](live-tests.md#dgx-station-on-colossus).
 Live / HCL's `Cases` job lists the cases and fetches the model runtime images' pinned sources, and each case's job runs the same test archive, bundle, and live images as the hosted cases, which the GPU runner can run because CI / Bundle builds them on Ubuntu 22.04. Each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services.
 Dispatch Live / HCL to run the hosted or GPU cases alone: without CI / Bundle's artifacts, its `Build` job builds the bundle, test executable, and agent images on Ubuntu 22.04 from the dispatched branch.
 A `dgx-station` dispatch skips `Build`, and the Station case's job builds them on the Station runner before it runs the case: two machines share that runner's label, and Actions artifacts move the 1 GB candidate at 3-8 MB/s there.
@@ -524,7 +523,7 @@ A denied license or source requires reviewing the dependency and policy; do not 
 
 ## Image Source Checks
 
-Use the [agent image build prerequisites](../../docs/build-deploy/build.md#build-agent-images); the Bake tests need Docker Buildx but no host Python.
+Use the [agent image build prerequisites](../../docs/build-deploy/build.md#building-agent-images); the Bake tests need Docker Buildx but no host Python.
 For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
@@ -564,11 +563,11 @@ In each image, offline and as the image's own user, it checks:
 
 The build itself refuses a catalog label that differs from what the image installs, and installs only what Fabric's lock pins.
 NemoClaw doesn't run Fabric's native adapters; their behavior is Fabric's to test.
-Use the [reference image procedure](agent-image-maintenance.md#qualify-the-reference-contract-image) to run these locally.
+Use the [reference image procedure](agent-image-maintenance.md#qualifying-the-reference-contract-image) to run these locally.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
 On `v1` pushes that build images, it then pushes the checked agent and proxy images, and the reference image the live suites pull, by digest to `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`, an internal package that releases promote from ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)).
-It pushes only to packages that already exist and aren't public, and otherwise skips with a warning; see [provisioning the packages](releases.md#provision-the-packages).
+It pushes only to packages that already exist and aren't public, and otherwise skips with a warning; see [provisioning the packages](releases.md#provisioning-the-packages).
 The job summary lists each digest and how long its push took.
 A following job keeps the images of the latest ten commits and deletes older ones; releases keep their own copies of the images they promote.
 A failed planning job fails those checks instead of skipping them.
@@ -678,7 +677,7 @@ cargo llvm-cov report --ignore-filename-regex nemoclaw-e2e
 
 There is no coverage threshold or CI coverage job.
 
-## Write Tests
+## Writing Tests
 
 Put each test at the layer that owns its behavior, and don't repeat a check that a lower layer covers:
 

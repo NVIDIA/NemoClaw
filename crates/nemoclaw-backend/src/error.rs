@@ -32,6 +32,12 @@ pub enum Error {
         "the gateway's Helm release {release} in namespace {namespace} exists, but the state does not record it, so NemoClaw leaves it; an apply stopped at once while Helm installed it can leave it; if it is this deployment's, remove it with `helm uninstall {release} --namespace {namespace}` and rerun; resources retained"
     )]
     UnboundRelease { release: String, namespace: String },
+    /// A managed gateway's container is stopped, so the gateway can't serve
+    /// the refresh of the objects it holds.
+    #[error(
+        "managed gateway container {name} is not running, so OpenTofu can't read the gateway's sandboxes and other objects; start it with `{start}`, then run the command again; resources retained"
+    )]
+    GatewayStopped { name: String, start: String },
     #[error(
         "sandbox unavailable: {phase}, reason {reason}, exit code {exit_code}{guidance}; resources retained",
         guidance = sandbox_startup_guidance(.reason)
@@ -49,6 +55,10 @@ pub enum Error {
         /// Data-source postconditions were the only reported apply failures.
         /// Absent for incomplete output or an ambiguous resource operation.
         postcondition_failures: Option<Vec<String>>,
+        /// The addresses of the creates that OpenShell rejected before it
+        /// created anything, when those rejections were the only reported
+        /// apply failures. Absent for incomplete output or any other failure.
+        uncreated: Option<Vec<String>>,
     },
     #[error("operation interrupted; retain state and reapply the same configuration")]
     Cancelled,
@@ -92,6 +102,7 @@ impl From<nemoclaw_runtime::Error> for Error {
                 operation: "memory protection".into(),
                 diagnostic,
                 postcondition_failures: None,
+                uncreated: None,
             },
             nemoclaw_runtime::Error::Cancelled => Self::Cancelled,
             nemoclaw_runtime::Error::ServiceStarting => Self::ServiceStarting,

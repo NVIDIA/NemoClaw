@@ -3,8 +3,9 @@
 
 # Documentation Index
 
-These guides describe NemoClaw v1. They reflect the implementation inspected at `origin/v1` revision `637bdb6276309ea71d1f1fcb68fff518fe2db926`; use a matched checkout and bundle when following them. The [field reference](reference/configuration.md) and its JSON Schema are generated from this checkout's SDK. For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
-[Current limits](resources/limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
+These guides describe NemoClaw Agent Configs, a release candidate built from the `v1` branch. Use a bundle, example, and image built from the implementation revision you operate. The [first-deployment tutorial](get-started/first-deployment.md) is an exception: it pins `637bdb6276309ea71d1f1fcb68fff518fe2db926` and OpenShell 0.1.7. Follow that worktree's build instructions and generated schema for the exercise, not this checkout's newer build guide.
+
+The [field reference](reference/configuration.md) and JSON Schema are generated from this checkout's SDK, not from the tutorial's pinned worktree. [Release Notes](about/release-notes.md) describe changes in this checkout, including OpenShell 0.1.9. [Current Limits](resources/limits.md) lists unimplemented or untested paths. Do not treat contracts from different revisions as interchangeable.
 
 ## About
 
@@ -17,17 +18,18 @@ Start with the product overview, then use the architecture and ecosystem guides 
 | Distinguish upstream responsibilities | [Ecosystem](about/ecosystem.md) |
 | Check v1 development status and changes | [Release Notes](about/release-notes.md) |
 
-## Get Started
+## Getting Started
 
 Check the prerequisites before following the first deployment; migration is a separate path for existing users.
 
 | Reader goal | Guide |
 |---|---|
 | Check client, runtime, and model-host requirements | [Prerequisites](get-started/prerequisites.md) |
+| Install, upgrade, or uninstall a release's CLI | [Installing the CLI](get-started/install.md) |
 | Deploy OpenClaw with existing gateway and inference services | [First deployment](get-started/first-deployment.md) |
 | Assess a move from an earlier version | [Migration](get-started/migration.md) |
 
-## Build and Deploy
+## Building and Deploying
 
 Choose the guide for the artifact or deployment operation you need to perform.
 
@@ -77,13 +79,14 @@ Look up the interface contract of your source revision before adapting a command
 
 ## Resources
 
-Use these sources to find help, development status, and currently documented limits.
+Use these sources to find help, development status, currently documented limits, and scope.
 
 | Reader goal | Guide |
 |---|---|
 | Find version-matched documentation and reporting channels | [Project resources](resources/resources.md) |
 | Check release status | [Release Notes](about/release-notes.md) |
 | Find unimplemented or unqualified paths | [Current limits](resources/limits.md) |
+| Find what Agent Configs leaves to other components by design | [Out of Scope](resources/out-of-scope.md) |
 
 ## Security
 

@@ -1,24 +1,24 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Maintain Agent Image Pins and Catalogs
+# Maintaining Agent Image Pins and Catalogs
 
-Use these procedures when changing the Fabric or agent image source pins. They are maintainer tasks; readers building matched artifacts from a pinned revision can use the [public image build guide](../../docs/build-deploy/build.md#build-agent-images) instead. The pin and catalog contract below is based on inspected `origin/v1` at `86b8d94273a76a696e06b300dc29f7035b163667`: `image/fabric/Dockerfile`, `image/fabric/catalog.py`, and `crates/nemoclaw-sdk/build.rs`.
+Use these procedures when changing the Fabric or agent image source pins. They are maintainer tasks; readers building matched artifacts from a pinned revision can use the [public image build guide](../../docs/build-deploy/build.md#building-agent-images) instead. The pin and catalog contract below is based on inspected `origin/v1` at `86b8d94273a76a696e06b300dc29f7035b163667`: `image/fabric/Dockerfile`, `image/fabric/catalog.py`, and `crates/nemoclaw-sdk/build.rs`.
 
-## Update the OpenClaw Pin
+## Updating the OpenClaw Pin
 
 OpenClaw's npm package has no lockfile, so the agent image copies `/app` from OpenClaw's published image, pinned by digest in `OPENCLAW_IMAGE` in [the Dockerfile](../../image/fabric/Dockerfile).
 When an agent starts, Fabric's OpenClaw adapter refuses versions outside `SUPPORTED_OPENCLAW_VERSIONS` in the pinned Fabric source.
 When you change the Fabric pin, check that set; if it changed, pin the digest of OpenClaw's published image for a supported version, then rebuild and qualify the OpenClaw image.
 
-## Update the Hermes Pin
+## Updating the Hermes Pin
 
 The agent image installs Hermes Agent from the release source archive that `hermes.tar.gz` pins under `imageSources.fabric` in [`versions.json`](../../versions.json), by URL and SHA-256.
 Hermes's dashboard and browser chat need its web assets and TUI bundle built, so the image copies them from Hermes's published image, pinned by digest in `HERMES_IMAGE`.
 The build stops if any file that image shares with the pinned release source differs, apart from the `README.md` its build empties.
 When you move that pin, pin the digest of Hermes's published image for the same release, then rebuild and qualify the Hermes image.
 
-## Regenerate the Bundled Catalog
+## Regenerating the Bundled Catalog
 
 The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric source that `fabric.tar.gz` pins under `imageSources.fabric` in [`versions.json`](../../versions.json).
 Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, such as a freshly built agent image's `/opt/fabric/bin/python`. Pass that revision and checksum, and `--adapter` once for each adapter ID the current catalog lists:
@@ -32,7 +32,7 @@ python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM \
 Use the revision at the end of that pin's URL and its SHA-256.
 The snapshot holds canonical descriptors and provenance only; it does not change any image.
 
-## Qualify the Reference Contract Image
+## Qualifying the Reference Contract Image
 
 Use the dummy image to exercise the provisioning interface with Fabric's runtime and `fabric-agent-ctl`, but no native agent, credentials, or model.
 It installs NemoClaw's test-only Fabric adapter and a deterministic agent, the way production images install Fabric's adapters.

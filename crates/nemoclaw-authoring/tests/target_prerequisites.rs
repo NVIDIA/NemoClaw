@@ -121,7 +121,10 @@ fn one_resolution_combines_model_suggestions_and_target_compatibility() {
             source: "fixture".into(),
             reachable: Some(true),
             authentication: AuthenticationStatus::Accepted,
-            models: vec!["vendor/discovered-model".into()],
+            models: vec![
+                "nvidia/nemotron-3-ultra-550b-a55b".into(),
+                "vendor/discovered-model".into(),
+            ],
             api_verified: false,
         }),
     );
@@ -129,12 +132,9 @@ fn one_resolution_combines_model_suggestions_and_target_compatibility() {
         .resolve_with_observations(&capabilities, &observations)
         .unwrap();
     let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
-    assert!(
-        resolved
-            .question(model)
-            .unwrap()
-            .choices()
-            .contains(&json!("vendor/discovered-model"))
+    assert_eq!(
+        resolved.question(model).unwrap().choices(),
+        [json!("nvidia/nemotron-3-ultra-550b-a55b")]
     );
     assert_eq!(
         resolved.target_assessment().unwrap().status,
