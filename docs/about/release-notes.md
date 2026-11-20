@@ -33,6 +33,7 @@ Agents:
   See [agent files](../build-deploy/state.md#agent-files).
 - OpenClaw sessions with kept state no longer fail on turns longer than about a minute or after a few minutes idle ([#14630](https://github.com/NVIDIA/NemoClaw/issues/14630)).
 - A Hermes route to an `anthropic` provider reaches the provider's endpoint whatever its path ([#14538](https://github.com/NVIDIA/NemoClaw/issues/14538)).
+- Agent images build Fabric from its [`v0.7.0`](https://github.com/NVIDIA/NeMo-Fabric/tree/v0.7.0) release tag instead of a commit on its `release/0.7` branch, without patches ([#13318](https://github.com/NVIDIA/NemoClaw/issues/13318)).
 
 Releases:
 
