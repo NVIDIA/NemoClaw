@@ -45,13 +45,13 @@ run "verify" {
   assert {
     condition = alltrue([
       for binding in [
-        openshell_inference.inference_hosted-67174548e3aabed89753c50f,
-        openshell_inference.inference_nvidia-2c1ae0c8529e4a6941ffc0ca,
-        openshell_inference.inference_nvidia-e5502e1d4f6fe705a1de3ddc,
+        openshell_inference.inference_hosted-8e7ba1ed41483247ad89f520,
+        openshell_inference.inference_nvidia-a4aa03b2e1678f224e80cdbe,
+        openshell_inference.inference_nvidia-911a985bd109bb13b29f894d,
       ] :
       module.observed.registrations[binding.registration].credentials == { (binding.sandbox_env) = "env:${binding.server.credential_env}" }
       && contains(values(module.observed.registrations[binding.registration].config), binding.server.endpoint)
-    ]) && openshell_inference.inference_hosted-67174548e3aabed89753c50f.api == "openai-completions"
+    ]) && openshell_inference.inference_hosted-8e7ba1ed41483247ad89f520.api == "openai-completions"
     error_message = "A registration's API, base URL, or credential differs from its provider."
   }
 
@@ -59,7 +59,7 @@ run "verify" {
   # the Hermes sandbox names only its own NVIDIA binding.
   assert {
     condition = (
-      contains(module.observed.agents.assistant.providers, openshell_inference.inference_hosted-67174548e3aabed89753c50f.registration)
+      contains(module.observed.agents.assistant.providers, openshell_inference.inference_hosted-8e7ba1ed41483247ad89f520.registration)
       && length(module.observed.agents.assistant.providers) == 2
       && length(module.observed.agents.researcher.providers) == 1
       && length(setintersection(module.observed.agents.assistant.providers, module.observed.agents.researcher.providers)) == 0
@@ -72,7 +72,7 @@ run "verify" {
     condition = (
       module.observed.agents.assistant.start.configuration == jsondecode(terraform_data.agent_assistant.input)
       && module.observed.agents.researcher.start.configuration == jsondecode(terraform_data.agent_researcher.input)
-      && module.observed.agents.assistant.start.configuration.models.smart.api_key_env == openshell_inference.inference_hosted-67174548e3aabed89753c50f.sandbox_env
+      && module.observed.agents.assistant.start.configuration.models.smart.api_key_env == openshell_inference.inference_hosted-8e7ba1ed41483247ad89f520.sandbox_env
       && module.observed.agents.assistant.start.configuration.models.default == module.observed.agents.assistant.start.configuration.models.smart
       && module.observed.http.requests == []
     )
