@@ -22,8 +22,8 @@ For capabilities, architecture, security controls, and the full feature list, se
 
 ## Explore NemoClaw Agent Configs
 
-[NemoClaw Agent Configs](https://github.com/NVIDIA/NemoClaw/tree/v1) is a workflow in development for configuring sandboxed agents in YAML and previewing deployment changes before applying them.
-Explore its capabilities on the development branch and use the [migration guide](https://github.com/NVIDIA/NemoClaw/blob/v1/docs/get-started/migration.md) to assess whether it fits your workflows.
+[NemoClaw Agent Configs](https://github.com/NVIDIA/NemoClaw/tree/v1) is the next version of NemoClaw, available as a release candidate on the `v1` branch. You describe sandboxed agents in a YAML file and review each change before NemoClaw applies it.
+Before you move a deployment, check the [migration guide](https://github.com/NVIDIA/NemoClaw/blob/v1/docs/get-started/migration.md) for what it supports today.
 
 ## Get Started
 
