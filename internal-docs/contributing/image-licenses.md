@@ -4,7 +4,8 @@
 # Reviewing Image Licenses
 
 Publishing a v1 image redistributes every component in it, so each image's licenses must allow that before a final release ([#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
-This page states which images releases don't publish, when an image needs open-source review board (OSRB) sign-off, how to review a release's images, and the result for release candidate `v0.1.0-rc10`.
+This page records completed notice work, remaining release evidence, excluded images, and the historical review of release candidate `v0.1.0-rc10`.
+A technical audit is evidence for a release decision; it does not authorize publication.
 
 ## Images Releases Don't Publish
 
@@ -14,17 +15,55 @@ Staging takes its agent images from the Bake file's `release-agents` group, whic
 CI still builds and checks the image, and users build it locally, as [Building Agent Images](../../docs/build-deploy/build.md#building-agent-images) describes.
 The other images proceed through the review below.
 
-## When an Image Needs OSRB
+## Release Approval Coverage
 
-An image needs no OSRB sign-off when every component's license allows redistribution with only its notices: MIT, Apache-2.0, BSD, ISC, and similar permissive licenses.
-The image must still retain those notices.
-An image needs OSRB sign-off when it contains any of these:
+Before publication, the release owner must record the applicable container approval, inherited approval coverage, or exception with OSRB/Legal.
+A permissive license classification alone does not establish that an image is approved for release.
+Existing approved base or product coverage can reduce the review to additions and changes; a package or digest change does not by itself establish that a separate approval is required.
+Keep private approval and contract details in the appropriate private review record.
+CUDA and other proprietary components also need their applicable redistribution terms checked.
 
-- a component under a third-party proprietary license;
-- a component under a copyleft license, such as GPL, LGPL, AGPL, or MPL, whose source or notice terms apply;
-- a component whose license is unknown or missing.
+## Completed Notice Work
 
-NVIDIA proprietary components, such as CUDA libraries, need no OSRB sign-off under this rule; their own license's redistribution terms still apply.
+- [#14594](https://github.com/NVIDIA/NemoClaw/pull/14594) retains Node.js, OpenClaw, Bun, proxy dependency, and Rust library notices, and adds the initial review procedure.
+- [#13590](https://github.com/NVIDIA/NemoClaw/pull/13590) adds per-platform software inventories (SBOMs) for release artifacts.
+- [#14694](https://github.com/NVIDIA/NemoClaw/pull/14694) excludes Claude from release publication and documents local builds.
+- The current recipes also retain the exact Codex 0.154.0 LICENSE and NOTICE, LangSmith 0.11.1 MIT notice, sqlite-vec 0.1.9 MIT notice, and firecrawl-anydoc 0.2.4 MIT notice.
+  The llama.cpp overlay retains its two vendored UI library notices, pinned brand license and redistribution permission, source credit, and Geist font notice.
+  Their source commits and checksums are pinned in `versions.json`; the image notice files describe their locations.
+
+The current Ollama base's `GO_LICENSE` contains third-party Go module notices; do not repeat the historical missing-notice finding without inspecting the candidate.
+The current Bun notice includes rebuilding instructions; retaining those instructions does not establish delivery of all required source or relinking materials.
+Fabric's retained source archive includes Rust, Python, and Node attribution documents.
+An attribution document or lockfile alone does not establish complete source delivery or an inventory of every compiled subcomponent.
+
+## Remaining Release Evidence
+
+[#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) tracks these requirements for the release owner and image maintainers.
+There are 14 shipping image names: ten agents (`codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `opencode`, `pi`, and `remote-agent`), `ollama-proxy`, and three runtimes (`vllm`, `ollama`, and `llama-cpp`).
+NIM is a separate local-build target, not part of this release catalog.
+
+| Scope | Evidence still needed |
+| --- | --- |
+| Every shipping image | Applicable approval coverage; exact component versions, patches, notices, and source delivery tied to the final platform manifest digest |
+| Debian and Ubuntu bases | Applicable inherited coverage or delivery of the exact required source packages and patches, with recipient instructions and retention ownership |
+| Fabric, proxy, and native harness binaries | Build-specific dependency/source mapping, including native Codex and Code Mode binaries; source delivery beyond notice lists and lockfiles |
+| Deep Agents and Hermes | Native wheel source coverage; Fetch Use 0.4.0's exact notice; original source and notices for Hermes's prebuilt dashboard and TUI |
+| OpenClaw, Pi, and OpenCode | Shipped npm/native dependency mapping, including OpenClaw's MPL components and Bun's applicable source and relinking delivery |
+| llama.cpp UI | Complete shipped JavaScript dependency/source/notice mapping beyond the named vendored libraries and brand assets already retained |
+| Final runtime candidates | Inspect `vllm`, `ollama`, and `llama-cpp` on both AMD64 and ARM64, including CUDA/runtime terms; upstream base inspection or old SBOMs do not clear changed final overlays |
+
+For the current vLLM 0.34.0 base, FFmpeg 8.1.1 is bundled through PyNvVideoCodec 2.0.4 and OpenCV, rather than PyAV.
+Their retained notices identify LGPL terms; reconcile each actual library and build with its corresponding source.
+A scanner's unknown license entry alone does not establish a missing notice or a redistribution prohibition.
+
+For source delivery, identify the image path or release-controlled source location, exact versions and patches, any required build/relinking materials, recipient instructions, and the owner and retention period.
+Upstream links alone do not establish that the selected delivery mechanism meets the applicable requirements.
+Reuse complete source and notices already retained, including the supervisor's vendor archive and pure source packages.
+Only applicable third-party source obligations are in scope; this does not require publication of proprietary CUDA source.
+
+For harnesses NVIDIA does not ship, document compatible pinned builds and inherited notice, source, and service terms.
+Local building does not itself grant permission to redistribute the result.
 
 ## Reviewing a Release
 
@@ -32,11 +71,16 @@ NVIDIA proprietary components, such as CUDA libraries, need no OSRB sign-off und
 2. Classify each package by its declared license expression: take the most permissive choice of an `OR`, and the most restrictive term of an `AND`.
 3. Resolve entries the SBOM marks `NOASSERTION` from their registry's metadata, such as [deps.dev](https://deps.dev) for Cargo, Go, npm, and PyPI packages, or from the upstream repository's license.
 4. Inspect the image for components the SBOM can't see, such as executables bundled inside a package or libraries copied without package metadata.
-5. Check that the image retains each component's license and notices, and record what each non-permissive component requires.
+5. Check that the image retains each component's license and notices, and record applicable source, relinking, and redistribution requirements.
+6. Record the source delivery mechanism and applicable approval coverage against each final platform manifest digest.
 
-No release check applies this rule; review each final release's images by hand.
+No automated license gate establishes these release decisions; review each final release's images.
 
 ## Result for v0.1.0-rc10
+
+This is a historical technical assessment, not current release approval.
+The verdicts and gaps below describe rc10; use [Remaining Release Evidence](#remaining-release-evidence) for current closeout work.
+The historical proxy verdict describes permissive license findings, not an exemption from container approval.
 
 This review covers both platforms of every image that `v0.1.0-rc10` staged from [`5716c39`](https://github.com/NVIDIA/NemoClaw/commit/5716c39bc26a16532033d1e4c6e44636fe7aa983).
 Images built from later commits, such as the vLLM 0.34.0 and Hermes Agent 0.22.7 upgrades, need their own review.

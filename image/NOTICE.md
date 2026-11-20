@@ -25,6 +25,13 @@ OpenClaw's published image omits OpenClaw's MIT license, so the OpenClaw image r
 Bun's image omits Bun's license, so the OpenCode image retains it at `/opt/nemoclaw/source/bun-LICENSE.md`; Bun statically links JavaScriptCore and TinyCC, which are under LGPL-2.1.
 The Claude image installs claude-agent-sdk, whose wheels bundle the Claude Code CLI; Claude Code is Anthropic's proprietary software under [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance), not the SDK's MIT license.
 
+The Codex image retains `codex-LICENSE` and `codex-NOTICE` from Codex 0.154.0, including its Ratatui attribution, under `/opt/nemoclaw/source/`.
+The Deep Agents image retains `langsmith-LICENSE` from LangSmith 0.11.1 and `sqlite-vec-LICENSE-MIT` from sqlite-vec 0.1.9 there; sqlite-vec offers MIT as a license choice.
+The Hermes image retains `anydoc-LICENSE` from firecrawl-anydoc 0.2.4, including the Sideguide Technologies copyright notice, there.
+These files are unmodified upstream copies whose exact source commits and SHA-256 values `versions.json` pins.
+Move these notice pins with the corresponding versions in Fabric's or Hermes's dependency lock.
+They supplement retained upstream attributions; they do not establish complete notice or source coverage for embedded native executables or frontend bundles.
+
 OpenClaw installs the pinned search plugin archives through its native installer; the image packages them in OpenClaw’s bundled-plugin directory.
 Examples select plugin IDs without filesystem paths.
 Hermes plugin placement remains in the Dockerfile because the pinned Fabric supplies its Tavily assets and placement instructions without an installation command.

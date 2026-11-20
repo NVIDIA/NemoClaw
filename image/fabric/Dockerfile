@@ -106,6 +106,14 @@ RUN test -n "$ADAPTER_ID" \
     && printf '{"%s": {"files": [], "binaries": []}}\n' "$ADAPTER_ID" > /opt/nemoclaw/adapters.json
 USER node
 
+FROM generic AS codex
+# The locked Codex wheels omit these project-specific license and notice files.
+COPY --from=sources --chmod=0644 /codex-LICENSE /codex-NOTICE /opt/nemoclaw/source/
+
+FROM generic AS deepagents
+# These exact release notices supplement Fabric's attribution placeholders.
+COPY --from=sources --chmod=0644 /langsmith-LICENSE /sqlite-vec-LICENSE-MIT /opt/nemoclaw/source/
+
 FROM runtime-base AS interactive
 COPY --from=node /node/ /
 RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep && rm -rf /var/lib/apt/lists/*
@@ -147,6 +155,7 @@ RUN case "$TARGETARCH" in amd64|arm64) ;; *) exit 1 ;; esac \
         -C /opt/nemo-relay/plugins/switchyard --strip-components=1
 
 FROM interactive AS hermes
+COPY --from=sources --chmod=0644 /anydoc-LICENSE /opt/nemoclaw/source/
 COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
 COPY --from=switchyard-assets /opt/nemo-relay /opt/nemo-relay

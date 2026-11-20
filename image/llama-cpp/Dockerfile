@@ -12,6 +12,7 @@ COPY LICENSE /opt/nemoclaw/source/LICENSE
 COPY image/supervisor/Dockerfile /opt/nemoclaw/source/supervisor.Dockerfile
 COPY image/llama-cpp/NOTICE.md image/llama-cpp/Dockerfile /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /llama.cpp-LICENSE /nlohmann-json-LICENSE /cpp-httplib-LICENSE /rotate-bits-LICENSE.md /xxhash-LICENSE /opt/nemoclaw/source/
+COPY --from=sources --chmod=0644 /llama-brand-LICENSE /llama-brand-BRAND-USAGE.md /llama-brand-fonts-OFL.txt /llama-ui-big-integer-LICENSE /llama-ui-nerdamer-LICENSE /opt/nemoclaw/source/
 ENTRYPOINT ["/usr/local/bin/nemoclaw-runtime"]
 CMD []
 LABEL org.nemoclaw.inference.authentication="bearer-v1" \
