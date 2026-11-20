@@ -30,7 +30,7 @@ The policy package is the source of truth for Issue Type, Project fields, labels
 
 ```bash
 gh issue view <number> --repo NVIDIA/NemoClaw --json number,title,body,labels,url,author,projectItems
-gh pr view <number> --repo NVIDIA/NemoClaw --json number,title,body,labels,url,author,files,isDraft,mergeStateStatus,projectItems,statusCheckRollup
+gh pr view <number> --repo NVIDIA/NemoClaw --json number,title,body,labels,url,author,files,isDraft,baseRefName,mergeStateStatus,projectItems,statusCheckRollup
 ```
 
 Use the command for the item type.
@@ -42,8 +42,8 @@ Read Project Priority and Status from Project 199. Do not infer them from labels
 ```bash
 gh issue list --repo NVIDIA/NemoClaw --state open --label "needs: triage" --limit 50 --json number,title,body,labels,url,author
 gh issue list --repo NVIDIA/NemoClaw --state open --limit 50 --json number,title,body,labels,url,author
-gh pr list --repo NVIDIA/NemoClaw --state open --label "needs: triage" --limit 50 --json number,title,body,labels,url,author,isDraft,mergeStateStatus
-gh pr list --repo NVIDIA/NemoClaw --state open --limit 50 --json number,title,body,labels,url,author,isDraft,mergeStateStatus
+gh pr list --repo NVIDIA/NemoClaw --state open --label "needs: triage" --limit 50 --json number,title,body,labels,url,author,isDraft,baseRefName,mergeStateStatus
+gh pr list --repo NVIDIA/NemoClaw --state open --limit 50 --json number,title,body,labels,url,author,isDraft,baseRefName,mergeStateStatus
 ```
 
 Keep unlabeled items from the unfiltered results.
