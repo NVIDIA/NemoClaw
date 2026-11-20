@@ -32,6 +32,7 @@ Use the [public guide](../docs/README.md) for deployment tasks. The pages here r
 | Engine, network, and model placement | [Execution targets](design/execution-targets.md) |
 | Recipe artifacts | [Recipes](design/recipes.md) |
 | Generic container design | [Container contract](design/container-contract.md) |
+| Telemetry record and opt-out | [Telemetry](design/telemetry.md) |
 
 ## Source Notices and Fixtures
 
