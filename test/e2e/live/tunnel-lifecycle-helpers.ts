@@ -78,6 +78,18 @@ export function cloudflaredTargetsRegisteredPort(
   );
 }
 
+export function tunnelSandboxObservation(
+  inventory: Pick<ShellProbeResult, "exitCode" | "stdout">,
+  sandboxName: string,
+): { exitCode: number | null; phases: Array<string | null> } {
+  return {
+    exitCode: inventory.exitCode,
+    phases: parseLiveSandboxEntries(inventory.stdout)
+      .filter((sandbox) => sandbox.name === sandboxName)
+      .map((sandbox) => sandbox.phase),
+  };
+}
+
 function assertTestOwnedSandboxName(): void {
   if (!SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX)) {
     throw new Error(
@@ -586,15 +598,10 @@ export async function runTunnelLifecycleContract({
         timeoutMs: COMMAND_TIMEOUT_MS,
       },
     );
-    expect(
-      {
-        exitCode: inventory.exitCode,
-        phases: parseLiveSandboxEntries(inventory.stdout)
-          .filter((sandbox) => sandbox.name === SANDBOX_NAME)
-          .map((sandbox) => sandbox.phase),
-      },
-      resultText(inventory),
-    ).toEqual({ exitCode: 0, phases: ["Ready"] });
+    expect(tunnelSandboxObservation(inventory, SANDBOX_NAME), resultText(inventory)).toEqual({
+      exitCode: 0,
+      phases: ["Ready"],
+    });
   }
   const probe = await host.nemoclaw([SANDBOX_NAME, "connect", "--probe-only"], {
     artifactName: "gateway-after-tunnel-stop",
