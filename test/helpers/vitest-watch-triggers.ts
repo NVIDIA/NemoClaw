@@ -522,6 +522,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/repository/code-scanning-workflow.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/label-v1-prs\.yaml$/,
+    testsToRun: runTests("test/automation/pull-requests/label-v1-prs-workflow.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/(?:pr-limits\.json|workflows\/pr-limit\.yaml)$/,
     testsToRun: runTests("test/automation/pull-requests/pr-limit-workflow.test.ts"),
   },
