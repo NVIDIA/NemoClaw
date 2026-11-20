@@ -114,7 +114,7 @@ changes. The current branch name becomes the preview ID. The default instance is
 GitHub Actions publishes Fern docs from the same source files that `npm run docs` validates locally.
 
 Docs PRs get Fern previews when they change `docs/`, `fern/`, or docs build inputs.
-When `FERN_TOKEN` is available, the workflow renders the guides from the `v1` branch and includes them alongside the PR’s v0 guides. Both products use the PR’s home page and installation prompt. The workflow posts links to both homes on the same `pr-<number>` Fern preview.
+The workflow renders the guides from the `v1` branch and validates them together with the PR’s v0 guides. Both products use the PR’s home page and installation prompt. When `FERN_TOKEN` is available, the workflow publishes the combined `pr-<number>` preview and posts links to both homes.
 
 After a docs PR merges, pushes to `main` (or `v0` after the rename) publish the affected docs to the staging Fern instance.
 The staging publish job regenerates agent variants, validates Fern docs, publishes staging, and deletes the merged PR preview when it can map the merge commit back to a PR.

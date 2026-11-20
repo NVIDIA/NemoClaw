@@ -12,6 +12,7 @@ instances:
 title: NVIDIA NemoClaw
 
 global-theme: nvidia
+header: ./components/DocsHeader.tsx
 
 layout:
   searchbar-placement: header
@@ -31,7 +32,6 @@ colors:
 
 theme:
   page-actions: toolbar
-  product-switcher: toggle
   footer-nav: minimal
 
 logo:

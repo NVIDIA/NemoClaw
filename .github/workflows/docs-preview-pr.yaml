@@ -48,7 +48,6 @@ jobs:
           fi
 
       - name: Checkout the v1 documentation source
-        if: steps.fern-preview.outputs.enabled == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NVIDIA/NemoClaw
@@ -56,7 +55,6 @@ jobs:
           persist-credentials: false
 
       - name: Set up the v1 documentation renderer
-        if: steps.fern-preview.outputs.enabled == 'true'
         uses: ./.github/actions/setup-rust
         with:
           platform: linux_amd64
@@ -64,14 +62,15 @@ jobs:
           save-cache: "false"
 
       - name: Render the v1 guides for this preview
-        if: steps.fern-preview.outputs.enabled == 'true'
         run: |
           cargo run --locked -p nemoclaw-build -- docs
           cp -R fern/_generated "$RUNNER_TEMP/v1-guide"
 
+      # Keep the v1 composite action available to its post-job cleanup.
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          path: pr-docs
           persist-credentials: false
 
       - name: Setup Node.js
@@ -83,18 +82,25 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
 
       - name: Install docs dependencies
+        working-directory: pr-docs
         run: npm ci --ignore-scripts
 
       - name: Prepare and validate docs
+        working-directory: pr-docs
         run: |
           npm run docs:prepare
           npm run docs:validate
 
-      - name: Assemble both products for the PR preview
-        if: steps.fern-preview.outputs.enabled == 'true'
-        run: node scripts/fern-preview-config.mts "$RUNNER_TEMP/v0-preview" "$RUNNER_TEMP/v1-guide"
+      - name: Assemble and validate the combined preview
+        working-directory: pr-docs
+        run: |
+          node scripts/fern-preview-config.mts "$RUNNER_TEMP/v0-preview" "$RUNNER_TEMP/v1-guide"
+          FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
+          cd "$RUNNER_TEMP/v0-preview/fern"
+          npx --yes "fern-api@${FERN_VERSION}" check --local
 
       - name: Generate preview URL
+        working-directory: pr-docs
         if: ${{ steps.fern-preview.outputs.enabled == 'true' }}
         id: generate-docs
         env:
@@ -129,6 +135,7 @@ jobs:
           echo "preview_url=$EXPECTED_BASE" >> "$GITHUB_OUTPUT"
 
       - name: Post or update PR comment
+        working-directory: pr-docs
         if: ${{ steps.fern-preview.outputs.enabled == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
