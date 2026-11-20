@@ -136,12 +136,12 @@ COPY image/fabric/OPENCLAW-SOURCES.md /sources/README.md
 # Keep the driver subtree, license, and package metadata from the pinned repo.
 RUN mkdir -p /src/cua \
     && tar -xzf /tmp/cua-source.tar.gz -C /src/cua --strip-components=1 \
-        cua-36987990b292537770fe2df3a9e6dee2ef43db2f/LICENSE \
+        cua-36987990b292537770fe2df3a9e6dee2ef43db2f/LICENSE.md \
         cua-36987990b292537770fe2df3a9e6dee2ef43db2f/package.json \
         cua-36987990b292537770fe2df3a9e6dee2ef43db2f/libs/cua-driver \
     && cd /src/cua \
     && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
-        -I 'gzip -n' -cf /sources/cua-driver-source.tar.gz LICENSE package.json libs/cua-driver
+        -I 'gzip -n' -cf /sources/cua-driver-source.tar.gz LICENSE.md package.json libs/cua-driver
 
 FROM interactive AS openclaw
 # Upstream owns /app as its own user; the sandbox only reads it.
