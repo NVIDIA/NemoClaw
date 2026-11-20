@@ -91,6 +91,11 @@ Gateways:
   The `openshift` target takes the fields of `kubernetes`, and only it takes [`expose.route`](../build-deploy/kubernetes.md#through-an-openshift-route), which publishes the gateway at `expose.endpoint`.
   See [adapting a document to another target](../build-deploy/usage.md#adapting-a-document-to-another-target) and the [breaking change](#breaking-changes-since-v010-rc11).
 
+Recovery:
+
+- After OpenShell rejects a sandbox create as an invalid argument, such as a network policy key with the reserved `_provider_` prefix, a corrected apply or destroy proceeds, instead of failing on an unfinished creation.
+  See [recovering an interrupted operation](../build-deploy/usage.md#recovering-an-interrupted-operation) ([#14654](https://github.com/NVIDIA/NemoClaw/issues/14654)).
+
 ### Changes in v0.1.0-rc11
 
 These changes reached `v1` between the `v0.1.0-rc10` and `v0.1.0-rc11` tags.

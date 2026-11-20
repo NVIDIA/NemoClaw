@@ -441,8 +441,17 @@ impl Deployment {
             .await;
         let mutations_settled = applied.is_ok();
         if !mutations_settled {
-            let (started, unreported) = &*started.lock().expect("started creations");
-            if !unreported {
+            let (started, unreported) = &mut *started.lock().expect("started creations");
+            // A create the provider reports as having made nothing lost no ID,
+            // so it is forgotten like one that never started.
+            if let Err(Error::Execution {
+                uncreated: Some(uncreated),
+                ..
+            }) = &applied
+            {
+                started.retain(|address| !uncreated.contains(address));
+            }
+            if !*unreported {
                 record.forget_unstarted_creations(&earlier, started);
                 store.save(&record)?;
             }

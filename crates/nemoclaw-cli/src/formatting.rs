@@ -781,6 +781,11 @@ pub(crate) fn render_error(
             "No runtime resources changed."
         }
         Some(Error::SandboxStartup { .. }) => "Resources retained; sandbox startup failed.",
+        Some(Error::Execution {
+            uncreated: Some(_), ..
+        }) if context.operation == "Apply" => {
+            "OpenShell rejected the failed sandbox creates as invalid, so they created nothing. Resources applied earlier remain in the saved state; correct the configuration and apply again, or run destroy."
+        }
         _ if matches!(context.operation, "Apply" | "Destroy") => {
             "Resource state is not confirmed. Changes may already have been made; preserve the deployment state directory."
         }
@@ -1606,6 +1611,7 @@ mod tests {
             operation: "apply".into(),
             diagnostic: "sandbox/coder start failed (pi_model_unknown); agent runtime is unavailable; resources retained".into(),
             postcondition_failures: None,
+            uncreated: None,
         };
         for mutated in [false, true] {
             let cli =
@@ -1722,6 +1728,7 @@ mod tests {
             operation: "apply".into(),
             diagnostic: "first line\nnext line\u{1b}[2J".into(),
             postcondition_failures: None,
+            uncreated: None,
         };
         let text = render_error(&error, OutputFormat::Text, &RenderContext::new(&cli));
         assert!(text.contains("first line\nnext line"));
