@@ -20,6 +20,7 @@ import {
   resolveTunnelLifecycleStateDir,
   tunnelLifecycleCommandEnv,
   tunnelLifecycleInstallArgs,
+  tunnelSandboxObservation,
 } from "../live/tunnel-lifecycle-helpers.ts";
 
 function shellResult(overrides: Partial<ShellProbeResult> = {}): ShellProbeResult {
@@ -263,5 +264,39 @@ describe("tunnel lifecycle cloudflared log attribution", () => {
     } finally {
       fs.rmSync(logRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("tunnel-stop passive sandbox observation", () => {
+  it("accepts only the owned sandbox's Ready row from the default table", () => {
+    expect(
+      tunnelSandboxObservation(
+        shellResult({
+          stdout: "NAME CREATED PHASE\nother 2026-11-20 Error\ne2e-tunnel-life 2026-11-20 Ready\n",
+        }),
+        "e2e-tunnel-life",
+      ),
+    ).toEqual({ exitCode: 0, phases: ["Ready"] });
+  });
+
+  it.each([
+    ["other Ready\n", []],
+    ["e2e-tunnel-life Error\n", ["Error"]],
+    ["e2e-tunnel-life\n", [null]],
+    ["e2e-tunnel-life Ready\ne2e-tunnel-life Error\n", ["Ready", "Error"]],
+  ])("preserves missing, failed, unknown, and duplicate observations: %s", (stdout, phases) => {
+    expect(tunnelSandboxObservation(shellResult({ stdout }), "e2e-tunnel-life")).toEqual({
+      exitCode: 0,
+      phases,
+    });
+  });
+
+  it("preserves a failed inventory command even when stdout contains a Ready row", () => {
+    expect(
+      tunnelSandboxObservation(
+        shellResult({ exitCode: 1, stdout: "e2e-tunnel-life Ready\n" }),
+        "e2e-tunnel-life",
+      ),
+    ).toEqual({ exitCode: 1, phases: ["Ready"] });
   });
 });
