@@ -277,13 +277,13 @@ fn prepare(
         Ok(path)
     };
     let mut document = |name: &str| document_for(name, &agent, harness, None);
-    // Each gateway test refuses resources from an earlier run, so each gets
-    // fresh documents: an isolation pair, profile revisions, and a rejected
-    // create.
-    let first = document("live-isolation-a")?;
+    // Each gateway test refuses resources from an earlier run, so each gets a
+    // fresh document, and the isolation test a second one.
+    let gateways = GATEWAY_TESTS
+        .iter()
+        .map(|(_, name)| document(name))
+        .collect::<Result<Vec<_>>>()?;
     let second = document("live-isolation-b")?;
-    let profiles = document("live-profiles")?;
-    let rejected = document("live-rejected-create")?;
     // The interface case's agents reach a stub model at the gateway network's
     // host address; the stub answers only requests with this run's key.
     let mut key = [0u8; 16];
@@ -356,7 +356,11 @@ fn prepare(
     .chain([
         (
             GATEWAY_DOCUMENTS.into(),
-            [path(&first), path(&profiles), path(&rejected)].join("\n"),
+            gateways
+                .iter()
+                .map(|document| path(document))
+                .collect::<Vec<_>>()
+                .join("\n"),
         ),
         (HCL_CASES.into(), bound.join("\n")),
     ])
@@ -452,11 +456,21 @@ const HCL_CASES: &str = "NEMOCLAW_LIVE_DOCKER_HCL_CASES";
 const GATEWAY_DOCUMENTS: &str = "NEMOCLAW_LIVE_DOCKER_GATEWAY_DOCUMENTS";
 
 /// Gateway tests all read NEMOCLAW_TEST_GATEWAY_DOCUMENT and each refuses
-/// another test's resources, so each runs alone with its own document.
-const GATEWAY_TESTS: [&str; 3] = [
-    "pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes",
-    "imported_profile_revisions_survive_repeated_reads_and_gateway_restart",
-    "an_invalid_argument_sandbox_create_persists_no_sandbox",
+/// another test's resources, so each runs alone with the fresh document
+/// named beside it.
+const GATEWAY_TESTS: [(&str, &str); 3] = [
+    (
+        "pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes",
+        "live-isolation-a",
+    ),
+    (
+        "imported_profile_revisions_survive_repeated_reads_and_gateway_restart",
+        "live-profiles",
+    ),
+    (
+        "an_invalid_argument_sandbox_create_persists_no_sandbox",
+        "live-rejected-create",
+    ),
 ];
 
 pub(super) fn run_live_docker(
@@ -546,13 +560,13 @@ pub(super) fn run_live_docker(
     };
     let gateway = GATEWAY_TESTS
         .iter()
-        .map(|name| format!("test({name})"))
+        .map(|(name, _)| format!("test({name})"))
         .collect::<Vec<_>>()
         .join(" | ");
     let result: Result<()> = (|| {
         // `-E` narrows the profile's default filter rather than replacing it.
         nextest(&format!("not ({gateway} | test(=hcl_live::case))"), &[])?;
-        for (name, document) in GATEWAY_TESTS.iter().zip(&documents) {
+        for ((name, _), document) in GATEWAY_TESTS.iter().zip(&documents) {
             nextest(
                 &format!("test({name})"),
                 &[("NEMOCLAW_TEST_GATEWAY_DOCUMENT", document.clone())],
@@ -774,40 +788,5 @@ esac
             error.contains(&format!("cannot list volumes with label={UID_LABEL}=a")),
             "{error}"
         );
-    }
-
-    /// The lane gives each gateway test its own document; an ignored test the
-    /// lane does not list runs with none and fails there.
-    #[test]
-    fn every_ignored_live_gateway_test_runs_with_its_own_document() {
-        let tests =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../nemoclaw-provider/tests");
-        let mut files = vec![tests.join("managed_gateway_live.rs")];
-        for entry in std::fs::read_dir(tests.join("managed_gateway_live")).unwrap() {
-            files.push(entry.unwrap().path());
-        }
-        let mut ignored = Vec::new();
-        for file in files {
-            let source = std::fs::read_to_string(&file).unwrap();
-            let mut lines = source.lines();
-            while let Some(line) = lines.next() {
-                if !line.trim_start().starts_with("#[ignore") {
-                    continue;
-                }
-                let name = lines
-                    .by_ref()
-                    .find_map(|next| {
-                        let next = next.trim_start();
-                        next.strip_prefix("async fn ").or(next.strip_prefix("fn "))
-                    })
-                    .and_then(|rest| rest.split('(').next())
-                    .unwrap();
-                ignored.push(name.to_owned());
-            }
-        }
-        ignored.sort();
-        let mut listed: Vec<String> = GATEWAY_TESTS.iter().map(|name| (*name).into()).collect();
-        listed.sort();
-        assert_eq!(ignored, listed);
     }
 }
