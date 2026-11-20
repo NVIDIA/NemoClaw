@@ -7,8 +7,12 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { textContainsHighConfidenceCredential } from "../../security/credential-filter.js";
+import {
+  textContainsCredential,
+  textContainsHighConfidenceCredential,
+} from "../../security/credential-filter.js";
 import { withoutOpenClawSqliteMachineAuthority } from "./openclaw-sqlite-sanitizer.js";
+import { inspectExtractedOpenClawDatabase } from "./sqlite-credential-scan.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -16,6 +20,49 @@ function databasePath(): string {
   const directory = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-state-"));
   temporaryDirectories.push(directory);
   return path.join(directory, "openclaw.sqlite");
+}
+
+function sanitizedBytes(original: Buffer): Buffer {
+  const result = withoutOpenClawSqliteMachineAuthority(original);
+  expect(result).toBeInstanceOf(Buffer);
+  return result as Buffer;
+}
+
+function scanForCredential(bytes: Buffer): boolean | null {
+  const scanRoot = path.dirname(databasePath());
+  writeFileSync(path.join(scanRoot, "openclaw.sqlite"), bytes, { mode: 0o600 });
+  return inspectExtractedOpenClawDatabase(scanRoot, "openclaw.sqlite");
+}
+
+function execAndMemoryState(otherPluginIds: string[]) {
+  const sourcePath = databasePath();
+  const source = new DatabaseSync(sourcePath);
+  source.exec(`
+    PRAGMA secure_delete = ON;
+    CREATE TABLE exec_approvals_config (
+      config_key TEXT NOT NULL PRIMARY KEY, raw_json TEXT NOT NULL, has_socket_token INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE plugin_state_entries (
+      plugin_id TEXT NOT NULL, namespace TEXT NOT NULL, entry_key TEXT NOT NULL,
+      value_json TEXT NOT NULL, PRIMARY KEY (plugin_id, namespace, entry_key)
+    ) STRICT;
+  `);
+  const approvals = {
+    version: 1,
+    socket: { path: "/run/exec.sock", token: "private-exec-socket-token" },
+    agents: { main: { allowlist: [{ pattern: "/usr/bin/git" }] } },
+  };
+  source
+    .prepare("INSERT INTO exec_approvals_config VALUES (?, ?, ?)")
+    .run("current", JSON.stringify(approvals, null, 2), 1);
+  const insert = source.prepare("INSERT INTO plugin_state_entries VALUES (?, ?, ?, ?)");
+  const provenance = { version: 1, fileHash: "a".repeat(64), sessionKey: "agent:main:main" };
+  insert.run("core:memory-artifact-provenance", "workspace-files", "a", JSON.stringify(provenance));
+  for (const pluginId of otherPluginIds) {
+    insert.run(pluginId, "workspace-files", "b", JSON.stringify(provenance));
+  }
+  source.close();
+  return { original: readFileSync(sourcePath), approvals, provenance };
 }
 
 afterEach(() => {
@@ -76,6 +123,45 @@ describe("OpenClaw SQLite archive sanitation", () => {
       summary: "keep me",
     });
     inspection.close();
+  });
+
+  it("removes the exec approvals socket token and the memory provenance session key", () => {
+    const { original, approvals, provenance } = execAndMemoryState(["other-plugin"]);
+    expect(textContainsCredential(original.toString("utf8"))).toBe(true);
+
+    const sanitized = sanitizedBytes(original);
+    expect(sanitized.byteLength).toBe(original.byteLength);
+    const sanitizedPath = databasePath();
+    writeFileSync(sanitizedPath, sanitized, { flag: "wx", mode: 0o600 });
+    const inspection = new DatabaseSync(sanitizedPath, { readOnly: true });
+    try {
+      const row = inspection
+        .prepare("SELECT raw_json, has_socket_token FROM exec_approvals_config")
+        .get();
+      expect(row?.has_socket_token).toBe(0);
+      expect(JSON.parse(String(row?.raw_json))).toEqual({
+        version: 1,
+        socket: { path: "/run/exec.sock" },
+        agents: approvals.agents,
+      });
+      const entries = inspection
+        .prepare("SELECT plugin_id, value_json FROM plugin_state_entries ORDER BY plugin_id")
+        .all()
+        .map((entry) => [entry.plugin_id, JSON.parse(String(entry.value_json))]);
+      expect(entries).toEqual([
+        ["core:memory-artifact-provenance", { version: 1, fileHash: "a".repeat(64) }],
+        ["other-plugin", provenance],
+      ]);
+    } finally {
+      inspection.close();
+    }
+  });
+
+  it("leaves no OpenClaw credential finding after removing the socket token and session key", () => {
+    const { original } = execAndMemoryState([]);
+    expect(scanForCredential(original)).toBe(true);
+
+    expect(scanForCredential(sanitizedBytes(original))).toBe(false);
   });
 
   it("fails closed for a malformed database", () => {
