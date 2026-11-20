@@ -309,6 +309,37 @@ $$nemoclaw config export my-assistant --output -
 Exports never contain credential values. They include credential environment-variable references only when the target configuration requires one. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 With `--json` and file output, the version 1 result includes `sourceSandbox`, `outputPath`, `documentDigest`, and `specDigest`.
 
+Each export starts with a comment block, the export report, whose first line is `# nemoclaw-export-report: 1`.
+The number changes only when the report format changes incompatibly.
+The report has one line for each setting the export left out, replaced with a placeholder, or rewrote, except retained corporate CA state, which is reported separately on standard error as described below:
+
+```text
+# <kind> <field> [value=<json>] [before=<json> after=<json|omitted>]: <reason>
+```
+
+- `kind` is `omitted`, `placeholder`, `changed`, or `review`.
+  A `review` line names exported values that come from the source image and may not exist in the v1 image.
+- `value` is the setting's value in the source sandbox.
+- `before` and `after` appear on `changed` lines and show the source value and its exported form.
+  `after=omitted` means the export drops the field to get the same v1 behavior.
+
+The last line starts with `# gateway`.
+It records that the export reuses the source gateway port in `spec.gateway.endpoint`.
+If the source deployment is still running, start the v1 gateway on a different, free port.
+
+The report never contains credential values or credential environment-variable names.
+URL values in the report have user information, query strings, and fragments removed.
+v1 treats the report as YAML comments.
+`specDigest` covers the configuration's `spec` and is not affected by the report.
+`documentDigest` is the SHA-256 digest of the file as written, including the report.
+Each report entry also appears as a `Warning:` line on standard error.
+When the command refuses a source, it writes no YAML.
+It prints `Config export failed (<categories>).` on standard error, followed by one line per finding:
+
+```text
+<field> (<category>): <reason>
+```
+
 Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
 When retained CA state is present, a successful export reports that omission on standard error.
 Export does not change the source sandbox's trust.
@@ -318,8 +349,7 @@ Before deploying the YAML, prepare the destination:
 - Supply values for `credential.env` references through the destination command's environment.
   Keep credential values out of YAML.
   Unset exported credentials after the destination command finishes.
-- If `network.proxy` is present, ensure its host and port are reachable from the destination sandbox.
-  Export does not install the proxy.
+- Read the export report and decide how to handle each entry, including each placeholder image.
 - Review destination CA trust requirements before deployment.
 
 The exporter refuses sources that require host proxy credential replay.
@@ -327,7 +357,8 @@ Experimental runtime identity is not supported by this export command.
 For its separate OpenClaw workflow, refer to [Configure Experimental Runtime Identity](/user-guide/openclaw/reference/configure-runtime-identity).
 
 The v0 command projects verified source state into the pre-release v1alpha1 YAML shape.
-Managed OpenClaw and Hermes exports omit `image` so v1 applies its managed image default.
+Every exported sandbox carries the placeholder `image.ref`, because no v0 agent image ships Fabric.
+Replace it with a compatible v1 agent image digest before planning.
 
 If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
 The directory can have moved from the requested output location.
@@ -337,11 +368,17 @@ Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports Docker-managed OpenClaw sandboxes and canonical managed Hermes or LangChain Deep Agents Code sandboxes in the default workspace.
 Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
-OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile include a named service with `image: null`.
-Replace only that value with an official, immutable, compatible v1 runtime image before v1 parsing or planning.
+The exported explicit policy keeps every network rule from the source's base policy.
+It leaves out the `_provider_` entries that OpenShell composes from attached providers, because OpenShell rejects that reserved prefix and composes the entries again for the destination's providers.
+It also leaves out `filesystem_policy`, `process`, and `landlock`, because they describe the source image's user and paths.
+v1 applies OpenShell defaults to sections that an explicit policy omits.
+The export report lists each omitted entry and section, and flags the network-rule binaries as source-image paths to review.
+OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile include a named service whose `image` is the placeholder `REPLACE-ME@sha256:` followed by 64 zeros.
+The export report lists it as `placeholder services.<name>.image`.
+Replace that value with an official, immutable, compatible v1 service image before planning.
 Other local inference and Podman exports remain deferred.
 Deep Agents export requires hosted OpenAI Completions inference and explicitly disabled automatic approval, observability, and web search.
-It emits the immutable image as `image.ref`, the `deepagents` harness, and one `agent`.
+It emits the `nvidia.fabric.langchain.deepagents` harness, the placeholder `image.ref`, and one `agent`.
 The command rejects other Deep Agents settings instead of omitting them.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
 Managed OpenClaw and Hermes sources can also export Tavily with a `tavily-search` integration, the `TAVILY_API_KEY` reference, and a grant for the primary agent.
@@ -349,27 +386,17 @@ Export verifies the source's provider and profile binding, including the Hermes-
 Missing or mismatched search evidence prevents publication.
 Disabled search remains ungranted.
 Hermes with Brave and search-enabled Deep Agents sources remain unsupported.
-When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
-For hosted OpenClaw inference, the export preserves context-window, maximum-token, reasoning, and reasoning-effort settings when omitting them would change the target's effective behavior.
-It preserves nondefault agent timeout and heartbeat settings under `execution`.
+The export leaves out settings that have no confirmed v1 equivalent and lists each one in the export report.
+These are the managed proxy, the context-window, reasoning, and reasoning-effort settings, the heartbeat, tool disclosure, OpenClaw OTLP observability, and the OpenClaw and Hermes interface settings.
+For hosted inference, each route keeps its model and maximum-token setting.
+A retained agent timeout is exported as `harness.runtime.timeout_seconds`.
 The command rejects a managed OpenClaw sandbox with secondary agents and produces no document.
 Secondary-agent export remains deferred until the v1 schema defines that representation.
-For OpenClaw, it retains the managed dashboard marker because omitting it disables the target dashboard; the default marker includes port `18789` while the loopback bind remains implicit.
-When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
-It omits the default progressive disclosure setting.
-When OpenClaw conversation diagnostics are enabled, the export includes the fixed local OTLP endpoint, service name, and sample rate under agent observability.
-It never includes collector credentials.
-Before applying the export, run an OTLP/HTTP collector on port `4318` of the destination host.
-The sandbox must reach it as `host.openshell.internal:4318`.
-The export does not install or configure that collector. Verify trace delivery after applying the configuration.
-It omits settings only when the v1 target has the same effective behavior without them.
 Hermes export fails when Hermes tool gateways are enabled.
-It preserves Hermes dashboard and in-browser TUI behavior, including explicit disabled values when omission would enable them, plus nondefault API and enabled-dashboard ports.
-For a disabled Hermes dashboard, export writes `interfaces.dashboard.enabled: false` and omits the recorded dashboard port because v1 rejects a port on a disabled dashboard.
+Export still verifies the retained Hermes interface settings before it leaves them out.
 The retained dashboard URL must be `http://127.0.0.1:<port>` with a port from `1024` through `65535`; a retained `browserUrl` must match it.
 The registry `dashboardPort` must match the URL port, except that it may be absent for port `18789`.
 Export rejects other URL forms, invalid ports, and mismatches.
-The default API port is omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
 The exporter validates that source binding, then emits API-key authentication without a provider reference because v1 derives the association from the provider configuration.
 OAuth authentication and other unsupported profiles fail with a diagnostic instead of producing an incomplete document.
@@ -3896,8 +3923,8 @@ $$nemoclaw tunnel start
 Stop host auxiliary services that `$$nemoclaw tunnel start` started (for example cloudflared).
 
 If NemoClaw cannot confirm that `cloudflared` stopped, the command returns an error and retains the process, PID file, and dashboard-port record. Do not stop the recorded PID while its identity is uncertain. Before stopping it manually, use the host process manager to verify that the recorded process is `cloudflared` (`cloudflared.exe` on Windows), then stop it and retry `$$nemoclaw tunnel stop`.
-When stop confirmation fails, NemoClaw also skips dependent gateway, channel, model, and managed gateway-port cleanup. After safely stopping the verified `cloudflared` process, rerun the command to retry that cleanup.
-If NemoClaw finds an unmanaged `cloudflared` process or cannot inspect tunnel ownership, it preserves that process and continues sandbox channel, Ollama, and requested gateway cleanup before returning an error.
+When stop confirmation fails, NemoClaw also skips Ollama model cleanup. After safely stopping the verified `cloudflared` process, rerun the command to retry tunnel and model cleanup.
+If NemoClaw finds an unmanaged `cloudflared` process or cannot inspect tunnel ownership, it preserves that process and returns an error. The in-sandbox gateway and channel delivery remain running. Ollama model cleanup can still run.
 
 Use `$$nemoclaw <name> channels stop <channel>` when you only want to pause one messaging bridge.
 
@@ -3905,7 +3932,7 @@ Use `$$nemoclaw <name> channels stop <channel>` when you only want to pause one 
 $$nemoclaw tunnel stop
 ```
 
-The command asks NemoClaw to stop an in-sandbox gateway only when NemoClaw directly owns that process. Supervisor-owned agent runtime processes remain managed inside their sandbox. The command leaves agent-owned host forwards and the managed OpenShell gateway port available.
+The command does not stop the in-sandbox gateway. The OpenClaw gateway is the sandbox's main process, so stopping it would end the sandbox. Use `$$nemoclaw <name> stop` to stop the sandbox and its channels. The command leaves agent-owned host forwards and the managed OpenShell gateway port available.
 
 If command-line inspection is unavailable for a live cloudflared PID, Windows can still verify `cloudflared.exe` and stop it through an identity-bound process handle. Other platforms require process inspection before signaling. If NemoClaw cannot perform identity-bound signaling, it leaves the process and PID record untouched and reports incomplete cleanup. Independently verify and stop the recorded cloudflared process with the host process manager, keep the PID record until that process exits, then retry `$$nemoclaw tunnel stop`.
 

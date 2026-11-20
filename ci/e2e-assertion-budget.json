@@ -27,14 +27,14 @@
       "generatedProbeConditions": 214
     },
     "unique": {
-      "expectCalls": 1762,
-      "matcherAssertions": 1742,
+      "expectCalls": 1765,
+      "matcherAssertions": 1745,
       "nodeAssertions": 132,
       "namedAssertionHelpers": 687,
       "failCalls": 1,
       "throwGuards": 533,
-      "objectFieldAssertions": 266,
-      "assertionPoints": 3361,
+      "objectFieldAssertions": 267,
+      "assertionPoints": 3365,
       "generatedProbeBlocks": 221,
       "generatedProbeConditions": 729
     },
@@ -119,7 +119,7 @@
       "test/e2e/live/state-backup-restore.test.ts": [5,12,5,12,0],
       "test/e2e/live/telegram-injection.test.ts": [19,28,26,67,12],
       "test/e2e/live/token-rotation.test.ts": [28,36,28,36,2],
-      "test/e2e/live/tunnel-lifecycle.test.ts": [0,0,8,17,4],
+      "test/e2e/live/tunnel-lifecycle.test.ts": [0,0,11,21,4],
       "test/e2e/live/whatsapp-qr-compact.test.ts": [29,35,29,35,1],
       "test/e2e/live/windows-mxc-openclaw-process-container.test.ts": [7,11,7,73,4]
     }

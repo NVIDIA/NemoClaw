@@ -15,16 +15,17 @@ import {
   type V1Alpha1Export,
 } from "../../../../src/lib/config/v1alpha1-export.ts";
 import { unsafeEndpointUrlViolation } from "../../../../src/lib/core/endpoint-url-safety.ts";
-import { isWebSearchProvider, webSearchEnvFor } from "../../../../src/lib/inference/web-search.ts";
-import { V1ALPHA1_RUNTIME_DEFAULTS_REVISION } from "../../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
-import { decodeManagedStartupProfile } from "../../../../src/lib/onboard/managed-startup/profile.ts";
+import {
+  exportedExplicitPolicy,
+  V1_IMAGE_REF_PLACEHOLDER,
+} from "../../../../src/lib/domain/config/export-document.ts";
+import { V1ALPHA1_CHECKED_REVISION } from "../../../../src/lib/domain/config/v1alpha1-checked-revision.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
 import {
-  expectedPinnedV1HermesNativeSettings,
-  type PinnedV1ConsumerEvidence,
-  type PinnedV1OpenClawNativeSettings,
-  validateConfigExportWithPinnedV1,
-} from "../../../support/v1-config-consumer.ts";
+  createV1ParseConsumer,
+  summarizeV1Parse,
+  type V1ParseSummary,
+} from "../../../support/v1-parse-consumer.ts";
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
@@ -77,7 +78,10 @@ const ExportRouteSchema = Type.Object(
   {
     name: LocalNameSchema,
     providerRef: LocalNameSchema,
-    overrides: Type.Object({ model: NonEmptyStringSchema }, { additionalProperties: true }),
+    overrides: Type.Object(
+      { model: NonEmptyStringSchema, maxTokens: Type.Optional(Type.Integer({ minimum: 1 })) },
+      { additionalProperties: false },
+    ),
   },
   { additionalProperties: false },
 );
@@ -91,18 +95,6 @@ const ExportAgentSchema = Type.Object(
     auth: Type.Optional(
       Type.Object({ method: Type.Literal("api-key") }, { additionalProperties: false }),
     ),
-    tools: Type.Optional(
-      Type.Union([
-        Type.Object(
-          { disclosure: Type.Union([Type.Literal("direct"), Type.Literal("progressive")]) },
-          { additionalProperties: false },
-        ),
-        Type.Object(
-          { allow: Type.Array(Type.Literal("read"), { minItems: 1, maxItems: 1 }) },
-          { additionalProperties: false },
-        ),
-      ]),
-    ),
     integrationRefs: Type.Optional(
       Type.Array(Type.Union([Type.Literal("brave-search"), Type.Literal("tavily-search")]), {
         minItems: 1,
@@ -113,85 +105,58 @@ const ExportAgentSchema = Type.Object(
   { additionalProperties: false },
 );
 const ExportHarnessFields = {
-  execution: Type.Optional(
-    Type.Object(
-      {
-        timeoutSeconds: Type.Optional(Type.Integer({ minimum: 1 })),
-        heartbeatEvery: Type.Optional(NonEmptyStringSchema),
-      },
-      { additionalProperties: false, minProperties: 1 },
-    ),
+  runtime: Type.Optional(
+    Type.Object({ timeout_seconds: Type.Integer({ minimum: 1 }) }, { additionalProperties: false }),
   ),
-  interfaces: Type.Optional(UnknownRecordSchema),
-  observability: Type.Optional(UnknownRecordSchema),
 };
 const ExportSandboxFields = {
-  name: LocalNameSchema,
-  runtime: Type.Object({ provider: Type.Literal("docker") }, { additionalProperties: false }),
+  image: Type.Object(
+    { ref: Type.String({ pattern: V1ALPHA1_IMAGE_PATTERN }) },
+    { additionalProperties: false },
+  ),
   network: Type.Object(
+    { policy: Type.Object({ explicit: UnknownRecordSchema }, { additionalProperties: false }) },
+    { additionalProperties: false },
+  ),
+};
+const ExportIntegrationsSchema = Type.Union([
+  Type.Object(
     {
-      policy: Type.Object({ explicit: UnknownRecordSchema }, { additionalProperties: false }),
-      proxy: Type.Optional(
-        Type.Object(
-          { host: NonEmptyStringSchema, port: Type.Integer({ minimum: 1, maximum: 65_535 }) },
-          { additionalProperties: false },
-        ),
+      "brave-search": Type.Object(
+        {
+          kind: Type.Literal("webSearch"),
+          provider: Type.Literal("brave"),
+          credential: CredentialSchema,
+        },
+        { additionalProperties: false },
       ),
     },
     { additionalProperties: false },
   ),
-  integrations: Type.Optional(
-    Type.Union([
-      Type.Object(
+  Type.Object(
+    {
+      "tavily-search": Type.Object(
         {
-          "brave-search": Type.Object(
-            {
-              kind: Type.Literal("webSearch"),
-              provider: Type.Literal("brave"),
-              credential: CredentialSchema,
-            },
-            { additionalProperties: false },
-          ),
+          kind: Type.Literal("webSearch"),
+          provider: Type.Literal("tavily"),
+          credential: CredentialSchema,
         },
         { additionalProperties: false },
       ),
-      Type.Object(
-        {
-          "tavily-search": Type.Object(
-            {
-              kind: Type.Literal("webSearch"),
-              provider: Type.Literal("tavily"),
-              credential: CredentialSchema,
-            },
-            { additionalProperties: false },
-          ),
-        },
-        { additionalProperties: false },
-      ),
-    ]),
+    },
+    { additionalProperties: false },
   ),
-};
-const DeepAgentsExportSandboxSchema = Type.Object(
-  {
-    ...ExportSandboxFields,
-    image: Type.Object(
-      { ref: Type.String({ pattern: V1ALPHA1_IMAGE_PATTERN }) },
-      { additionalProperties: false },
-    ),
-    harness: Type.Object(
-      { kind: Type.Literal("deepagents"), ...ExportHarnessFields },
-      { additionalProperties: false },
-    ),
-    agent: ExportAgentSchema,
-  },
-  { additionalProperties: false },
-);
-const AgentExportSandboxSchema = Type.Object(
+]);
+const ExportSandboxSchema = Type.Object(
   {
     ...ExportSandboxFields,
     harness: Type.Object(
       {
-        kind: Type.Union([Type.Literal("hermes"), Type.Literal("openclaw")]),
+        kind: Type.Union([
+          Type.Literal("nvidia.fabric.langchain.deepagents"),
+          Type.Literal("nvidia.fabric.hermes"),
+          Type.Literal("nvidia.fabric.openclaw"),
+        ]),
         ...ExportHarnessFields,
       },
       { additionalProperties: false },
@@ -202,7 +167,6 @@ const AgentExportSandboxSchema = Type.Object(
 );
 const HostedInferenceProviderSchema = Type.Object(
   {
-    name: LocalNameSchema,
     provider: Type.Union([Type.Literal("anthropic"), Type.Literal("openai")]),
     api: Type.Union([
       Type.Literal("anthropic-messages"),
@@ -216,7 +180,6 @@ const HostedInferenceProviderSchema = Type.Object(
 );
 const ServiceInferenceProviderSchema = Type.Object(
   {
-    name: LocalNameSchema,
     provider: Type.Literal("openai"),
     api: Type.Literal("openai-completions"),
     serviceRef: LocalNameSchema,
@@ -226,7 +189,7 @@ const ServiceInferenceProviderSchema = Type.Object(
 const OllamaProxyServiceSchema = Type.Object(
   {
     kind: Type.Literal("ollamaProxy"),
-    image: Type.Null(),
+    image: Type.Literal(V1_IMAGE_REF_PLACEHOLDER),
     endpoint: NonEmptyStringSchema,
     upstream: Type.Object(
       {
@@ -261,7 +224,7 @@ const VllmServiceSchema = Type.Object(
       { ipc: Type.Literal("host"), sharedMemoryGiB: Type.Literal(32) },
       { additionalProperties: false },
     ),
-    image: Type.Null(),
+    image: Type.Literal(V1_IMAGE_REF_PLACEHOLDER),
     model: Type.Object(
       {
         repository: Type.Literal("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"),
@@ -307,6 +270,10 @@ const ConfigExportDocumentSchema = Type.Object(
         gateway: Type.Object(
           {
             management: Type.Literal("managed"),
+            runtime: Type.Object(
+              { provider: Type.Literal("docker") },
+              { additionalProperties: false },
+            ),
             endpoint: NonEmptyStringSchema,
           },
           { additionalProperties: false },
@@ -314,14 +281,16 @@ const ConfigExportDocumentSchema = Type.Object(
         services: Type.Optional(
           Type.Record(LocalNameSchema, Type.Union([OllamaProxyServiceSchema, VllmServiceSchema])),
         ),
-        inferenceProviders: Type.Array(
+        inferenceProviders: Type.Record(
+          LocalNameSchema,
           Type.Union([HostedInferenceProviderSchema, ServiceInferenceProviderSchema]),
-          { minItems: 1 },
+          { minProperties: 1 },
         ),
-        sandboxes: Type.Array(
-          Type.Union([DeepAgentsExportSandboxSchema, AgentExportSandboxSchema]),
-          { minItems: 1, maxItems: 1 },
-        ),
+        integrations: Type.Optional(ExportIntegrationsSchema),
+        sandboxes: Type.Record(LocalNameSchema, ExportSandboxSchema, {
+          minProperties: 1,
+          maxProperties: 1,
+        }),
       },
       { additionalProperties: false },
     ),
@@ -393,9 +362,10 @@ export interface ConfigExportEvidenceEnvelope {
   observed?: ConfigExportSemantics;
   verifications: ConfigExportVerification[];
   command?: ConfigExportCommandOutcome;
-  consumer?: PinnedV1ConsumerEvidence & {
-    expected: PinnedV1ConsumerEvidence;
-    actual: PinnedV1ConsumerEvidence;
+  consumer?: {
+    revision: V1ParseSummary["revision"];
+    expected: V1ParseSummary;
+    actual: V1ParseSummary;
     passed: boolean;
   };
   export?: {
@@ -472,7 +442,8 @@ export interface ConfigExportValidationDependencies {
   producer(): ConfigExportProducer;
   readOpenFile(file: number, limitBytes: number): string;
   removeDirectory(directory: string): void;
-  validateWithPinnedV1(raw: string): PinnedV1ConsumerEvidence;
+  /** Parse the export with the pinned v1 SDK and summarize the parsed document. */
+  validateWithPinnedV1(raw: string): V1ParseSummary;
 }
 
 const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
@@ -516,7 +487,14 @@ const DEFAULT_DEPENDENCIES: ConfigExportValidationDependencies = {
     return buffer.subarray(0, offset).toString("utf8");
   },
   removeDirectory: (directory) => fs.rmSync(directory, { force: true, recursive: true }),
-  validateWithPinnedV1: validateConfigExportWithPinnedV1,
+  validateWithPinnedV1: (raw) => {
+    const consumer = createV1ParseConsumer();
+    try {
+      return summarizeV1Parse(consumer.parse(raw));
+    } finally {
+      consumer.dispose();
+    }
+  },
 };
 
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {
@@ -564,8 +542,8 @@ function canonicalJson(value: unknown): string {
 }
 
 function exportedHarnessKind(agent: string | null | undefined): string | null {
-  if (agent === "langchain-deepagents-code") return "deepagents";
-  return agent ?? null;
+  if (agent === "langchain-deepagents-code") return "nvidia.fabric.langchain.deepagents";
+  return agent ? `nvidia.fabric.${agent}` : null;
 }
 
 function exportedProviderName(provider: string | null | undefined): string | null {
@@ -577,133 +555,35 @@ function exportedProviderName(provider: string | null | undefined): string | nul
   return `hosted-${normalized || "provider"}`.slice(0, 40).replace(/[^a-z0-9]+$/gu, "");
 }
 
-function expectedOpenclawNativeSettings(
-  entry: ConfigExportRegistryEntry,
-): PinnedV1OpenClawNativeSettings | undefined {
-  if (entry.agent !== "openclaw" || entry.workload?.kind !== "managed-image") return undefined;
-  const profile = decodeManagedStartupProfile(entry.workload.encodedProfile);
-  const { agentConfig, dashboard, tuning } = profile;
-  if (
-    profile.agent !== "openclaw" ||
-    agentConfig.agent !== "openclaw" ||
-    dashboard.agent !== "openclaw" ||
-    tuning.contextWindow === null ||
-    tuning.maxTokens === null ||
-    tuning.reasoning === null ||
-    tuning.reasoningEffort === null
-  ) {
-    throw new Error("the live OpenClaw source profile is incomplete");
-  }
-  return {
-    model: {
-      contextWindow: tuning.contextWindow,
-      maxTokens: tuning.maxTokens,
-      reasoning: tuning.reasoning,
-    },
-    reasoningEffort: tuning.reasoningEffort,
-    execution: {
-      timeoutSeconds: agentConfig.agentTimeoutSeconds,
-      heartbeatEvery: agentConfig.heartbeatEvery,
-    },
-    dashboard: {
-      enabled: true,
-      port: dashboard.port,
-      bind: dashboard.bindAddress === "0.0.0.0" ? "lan" : "loopback",
-    },
-    toolDisclosure: profile.tools.disclosure,
-  };
-}
-
-function expectedPinnedV1Evidence(entry: ConfigExportRegistryEntry): PinnedV1ConsumerEvidence {
-  const openclawNativeSettings = expectedOpenclawNativeSettings(entry);
-  const hermesNativeSettings =
-    entry.agent === "hermes" ? expectedPinnedV1HermesNativeSettings(entry) : undefined;
+function expectedParseSummary(entry: ConfigExportRegistryEntry, imageRef: string): V1ParseSummary {
   const searchProvider = entry.webSearchEnabled === true ? entry.webSearchProvider : null;
-  if (entry.webSearchEnabled === true && !isWebSearchProvider(searchProvider)) {
+  if (
+    entry.webSearchEnabled === true &&
+    searchProvider !== "brave" &&
+    searchProvider !== "tavily"
+  ) {
     throw new Error("the live web-search provider is missing or unsupported");
   }
+  const integration = searchProvider ? `${searchProvider}-search` : null;
   return {
-    revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
-    compiledSandboxes: 1,
-    ...(openclawNativeSettings
-      ? {
-          contextWindows: [openclawNativeSettings.model.contextWindow],
-          openclawNativeSettings: { [entry.name]: openclawNativeSettings },
-        }
-      : {}),
-    ...(hermesNativeSettings
-      ? { hermesNativeSettings: { [entry.name]: hermesNativeSettings } }
-      : {}),
-    webSearch: searchProvider
-      ? {
-          [entry.name]: {
-            provider: searchProvider,
-            credentialReference: webSearchEnvFor(searchProvider),
-            agentRefs: ["primary"],
-            nativeProvider: searchProvider,
-          },
-        }
-      : {},
-    openclawNativeSettingsVerified: entry.agent === "openclaw" ? 1 : 0,
-    hermesNativeSettingsVerified: entry.agent === "hermes" ? 1 : 0,
+    revision: V1ALPHA1_CHECKED_REVISION,
+    sandboxes: {
+      [entry.name]: {
+        harnessKind: exportedHarnessKind(entry.agent) ?? "",
+        imageRef,
+        integrationRefs: integration ? [integration] : [],
+      },
+    },
+    integrations:
+      searchProvider && integration
+        ? {
+            [integration]: {
+              provider: searchProvider,
+              credentialReference: searchProvider === "brave" ? "BRAVE_API_KEY" : "TAVILY_API_KEY",
+            },
+          }
+        : {},
   };
-}
-
-function comparablePinnedV1Evidence(
-  evidence: PinnedV1ConsumerEvidence,
-  expected: PinnedV1ConsumerEvidence,
-  sandboxName: string,
-): PinnedV1ConsumerEvidence {
-  const actualHermesNativeSettings = evidence.hermesNativeSettings?.[sandboxName];
-  const actualNativeSettings = evidence.openclawNativeSettings?.[sandboxName];
-  return {
-    revision: evidence.revision,
-    compiledSandboxes: evidence.compiledSandboxes,
-    webSearch: evidence.webSearch ?? {},
-    ...(expected.contextWindows ? { contextWindows: evidence.contextWindows } : {}),
-    ...(expected.openclawNativeSettings
-      ? {
-          openclawNativeSettings: actualNativeSettings
-            ? { [sandboxName]: actualNativeSettings }
-            : {},
-        }
-      : {}),
-    ...(expected.hermesNativeSettings
-      ? {
-          hermesNativeSettings: actualHermesNativeSettings
-            ? { [sandboxName]: actualHermesNativeSettings }
-            : {},
-        }
-      : {}),
-    openclawNativeSettingsVerified: evidence.openclawNativeSettingsVerified,
-    hermesNativeSettingsVerified: evidence.hermesNativeSettingsVerified,
-  };
-}
-
-function targetPolicyForV1Alpha1(value: unknown, agent: string | null | undefined): unknown {
-  const policy = structuredClone(requiredRecord(value, "effective policy"));
-  const landlock = policy.landlock as Record<string, unknown> | undefined;
-  if (landlock?.compatibility === "strict") landlock.compatibility = "hard_requirement";
-  const process = policy.process as Record<string, unknown> | undefined;
-  if (process && typeof process === "object" && !Array.isArray(process)) {
-    if (process.run_as_user === "sandbox") process.run_as_user = "1000";
-    if (process.run_as_group === "sandbox") process.run_as_group = "1000";
-  }
-  const filesystem = policy.filesystem_policy as Record<string, unknown> | undefined;
-  if (filesystem && typeof filesystem === "object" && !Array.isArray(filesystem)) {
-    const readOnly = Array.isArray(filesystem.read_only) ? [...filesystem.read_only] : [];
-    const readWrite = Array.isArray(filesystem.read_write) ? filesystem.read_write : [];
-    const roots = [
-      "/opt/fabric",
-      "/opt/nemoclaw",
-      ...(agent === "openclaw" ? ["/app"] : agent === "hermes" ? ["/opt/hermes"] : []),
-    ];
-    for (const root of roots) {
-      if (!readOnly.includes(root) && !readWrite.includes(root)) readOnly.push(root);
-    }
-    filesystem.read_only = readOnly;
-  }
-  return policy;
 }
 
 function readProducer(): ConfigExportProducer {
@@ -730,24 +610,25 @@ function readProducer(): ConfigExportProducer {
 }
 
 function enabledManifestFeatures(manifest: LoadedManifest): string[] {
+  // OpenClaw observability is not exported: v1 has no equivalent, and the command warns instead.
   return Object.entries(manifest.document.spec.onboarding.features ?? {})
-    .filter(([name, value]) => ["observability", "webSearch"].includes(name) && value === true)
+    .filter(([name, value]) => name === "webSearch" && value === true)
     .map(([name]) => name)
     .sort();
 }
 
 function observedFeatures(
-  sandbox: V1Alpha1Export["spec"]["sandboxes"][number] | undefined,
+  document: ConfigExportDocument,
+  sandbox: V1Alpha1Export["spec"]["sandboxes"][string] | undefined,
 ): string[] {
   const features: string[] = [];
   if (
     sandbox?.agent.integrationRefs?.some(
-      (name) => sandbox.integrations?.[name]?.kind === "webSearch",
+      (name) => document.spec.integrations?.[name]?.kind === "webSearch",
     )
   ) {
     features.push("webSearch");
   }
-  if (sandbox?.harness.observability) features.push("observability");
   return features.sort();
 }
 
@@ -794,7 +675,7 @@ async function readEffectivePolicyDocument(
   const policy = await reader.readSandboxPolicy({
     target: namedOpenShellGateway(gatewayName),
     sandboxName,
-    scope: "effective",
+    scope: "base",
   });
   if (!policy.ok) {
     throw new Error("the effective sandbox policy could not be read");
@@ -803,28 +684,27 @@ async function readEffectivePolicyDocument(
 }
 
 function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSemantics {
-  const sandbox = document.spec.sandboxes[0];
+  const [sandboxName, sandbox] = Object.entries(document.spec.sandboxes)[0] ?? [];
   const agent = sandbox?.agent;
   const route = agent?.inference.routes[0];
-  const provider = document.spec.inferenceProviders.find(
-    (candidate) => candidate.name === route?.providerRef,
-  );
+  const providerName = route?.providerRef;
+  const provider = providerName ? document.spec.inferenceProviders[providerName] : undefined;
   return {
-    sandboxName: sandbox?.name ?? null,
+    sandboxName: sandboxName ?? null,
     agent: sandbox?.harness.kind ?? null,
-    runtimeProvider: sandbox?.runtime.provider ?? null,
+    runtimeProvider: document.spec.gateway.runtime.provider,
     imageRef: sandbox?.image?.ref ?? null,
-    inferenceProviderName: provider?.name ?? null,
+    inferenceProviderName: provider ? (providerName ?? null) : null,
     inferenceProvider: provider?.provider ?? null,
     inferenceApi: provider?.api ?? null,
-    inferenceEndpoint: provider?.endpoint ?? null,
+    inferenceEndpoint: provider && "endpoint" in provider ? (provider.endpoint ?? null) : null,
     model: route?.overrides?.model ?? null,
     credentialReference:
       provider && "credential" in provider ? (provider.credential?.env ?? null) : null,
     routeName: route?.name ?? null,
     routeProviderReference: route?.providerRef ?? null,
     policySha256: sandbox ? sha256(canonicalJson(sandbox.network.policy.explicit)) : null,
-    enabledFeatures: observedFeatures(sandbox),
+    enabledFeatures: observedFeatures(document, sandbox),
   };
 }
 
@@ -883,15 +763,14 @@ async function expectedSemantics(
       throw new Error("the live Deep Agents sandbox is not at the exportable disabled baseline");
     }
   }
-  const expectedPolicy = targetPolicyForV1Alpha1(YAML.parse(policyDocument), entry.agent);
+  const expectedPolicy = exportedExplicitPolicy(
+    requiredRecord(YAML.parse(policyDocument), "base policy"),
+  );
   return {
     sandboxName: instance.sandboxName,
     agent: exportedHarnessKind(manifest.document.spec.onboarding.agent),
     runtimeProvider: entry.openshellDriver ?? null,
-    imageRef:
-      entry.agent === "langchain-deepagents-code"
-        ? requiredString(entry.workload.reference, "registry workload reference")
-        : null,
+    imageRef: V1_IMAGE_REF_PLACEHOLDER,
     inferenceProviderName: exportedProviderName(entry.provider),
     inferenceProvider:
       entry.preferredInferenceApi === "anthropic-messages" ? "anthropic" : "openai",
@@ -968,7 +847,7 @@ export function isPodmanConfigExportRefusal(
       !result.timedOut &&
       !outputExists &&
       output?.error?.message ===
-        "Config export failed (unsupported).\nV1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred."
+        "Config export failed (unsupported).\nspec.sandboxes[].runtime.provider (unsupported): V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred."
     );
   } catch {
     return false;
@@ -1157,7 +1036,7 @@ export class ConfigExportValidationPhaseFixture {
     let observedRefusalCategory: string | undefined;
     let command: ConfigExportCommandOutcome | undefined;
     let consumer: ConfigExportEvidenceEnvelope["consumer"];
-    let expectedConsumerEvidence: PinnedV1ConsumerEvidence | undefined;
+    let expectedConsumerEvidence: V1ParseSummary | undefined;
     let registryBeforeExport: ConfigExportRegistry["sandboxes"] | undefined;
 
     try {
@@ -1174,7 +1053,7 @@ export class ConfigExportValidationPhaseFixture {
         if (!sourceEntry) {
           throw new Error("the live sandbox disappeared before config export");
         }
-        expectedConsumerEvidence = expectedPinnedV1Evidence(sourceEntry);
+        expectedConsumerEvidence = expectedParseSummary(sourceEntry, expected.imageRef ?? "");
         registryBeforeExport = structuredClone(registry.sandboxes);
         podmanRefusal = expected.runtimeProvider === "podman";
         if (podmanRefusal) {
@@ -1297,32 +1176,27 @@ export class ConfigExportValidationPhaseFixture {
         }
         if (!expectedConsumerEvidence) throw new Error("pinned v1 expectations were not captured");
         consumer = {
-          revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
+          revision: V1ALPHA1_CHECKED_REVISION,
           expected: expectedConsumerEvidence,
-          actual: { revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION },
+          actual: { revision: V1ALPHA1_CHECKED_REVISION, sandboxes: {}, integrations: {} },
           passed: false,
         };
-        const consumerEvidence = this.dependencies.validateWithPinnedV1(raw);
-        const actualConsumerEvidence = comparablePinnedV1Evidence(
-          consumerEvidence,
-          expectedConsumerEvidence,
-          instance.sandboxName,
-        );
+        const actualConsumerEvidence = this.dependencies.validateWithPinnedV1(raw);
         const consumerPassed = isDeepStrictEqual(actualConsumerEvidence, expectedConsumerEvidence);
         verifications.push({
-          id: "consumerNativeSettings",
+          id: "consumerParsedDocument",
           passed: consumerPassed,
           expected: expectedConsumerEvidence,
           actual: actualConsumerEvidence,
         });
         consumer = {
-          ...consumerEvidence,
+          revision: V1ALPHA1_CHECKED_REVISION,
           expected: expectedConsumerEvidence,
           actual: actualConsumerEvidence,
           passed: consumerPassed,
         };
         if (!consumerPassed) {
-          throw new Error("pinned v1 consumer evidence differs from the live source profile");
+          throw new Error("the pinned v1 parse differs from the live source profile");
         }
         classification = "success";
       }
