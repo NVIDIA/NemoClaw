@@ -57,6 +57,7 @@ It posts only to the fixed collector endpoint or to a loopback address.
 
 All parameters are flat and at the top level.
 Every parameter is present in every record.
+Each field is an accepted design decision; the Purpose column says what it is for.
 
 | Field | Type | Values | Source | Purpose |
 |---|---|---|---|---|
