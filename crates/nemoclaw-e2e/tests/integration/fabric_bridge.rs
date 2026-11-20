@@ -22,7 +22,7 @@ async fn sandbox_with_runtime(
         include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *doc.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut doc, &fixture.endpoint);
     let client = OpenShell::connect(
         &doc.spec.gateway.connection(),
         Arc::new(nemoclaw_sdk::EnvironmentSecrets),

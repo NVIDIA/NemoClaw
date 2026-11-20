@@ -146,7 +146,7 @@ async fn planning_checks_subnet_conflicts_and_defers_absent_shared_networks() {
                     matches!(
                         result,
                         Err(Error::Conflict(
-                            "managed gateway subnet overlaps an existing Docker network; set spec.gateway.networkCIDR to a free private /24"
+                            "managed gateway subnet overlaps an existing Docker network; set the gateway target's networkCIDR to a free private /24"
                         ))
                     ),
                     "{result:?}"
@@ -178,7 +178,7 @@ async fn planning_new_gateway_storage_refuses_a_subnet_another_network_holds() {
                 (404, json!({})),
                 taken.clone(),
                 Some(
-                    "managed gateway subnet overlaps an existing Docker network; set spec.gateway.networkCIDR to a free private /24",
+                    "managed gateway subnet overlaps an existing Docker network; set the gateway target's networkCIDR to a free private /24",
                 ),
             ),
             ((404, json!({})), json!([]), None),

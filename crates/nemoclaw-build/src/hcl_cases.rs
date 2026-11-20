@@ -154,10 +154,10 @@ pub fn needs(document: &str) -> Result<Needs> {
         .into_iter()
         .flat_map(|providers| providers.values())
         .any(|provider| provider["credential"]["env"] == NVIDIA_KEY);
-    let provider = spec["gateway"]["runtime"]["provider"].as_str();
-    let runner = if provider == Some("kubernetes") {
+    let target = &spec["gateway"]["target"];
+    let runner = if target.get("kubernetes").is_some() {
         Runner::LiveKind
-    } else if provider == Some("openshift") {
+    } else if target.get("openshift").is_some() {
         Runner::OpenShift
     } else if !crate::images::runtime_targets(document)?.is_empty() {
         Runner::Gpu

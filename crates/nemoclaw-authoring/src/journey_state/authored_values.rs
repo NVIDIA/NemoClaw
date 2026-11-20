@@ -229,39 +229,63 @@ impl AuthoredValues {
     }
 
     /// Remove sibling fields that the SDK schema defined before a write but no
-    /// longer defines, such as fields of the previous gateway form.
+    /// longer defines, such as fields of the previous gateway form. A sibling
+    /// both forms define with different schemas, such as the gateway's
+    /// target, loses its own fields the same way.
     pub(super) fn remove_inactive_siblings(&mut self, pointer: &str, before: &Value) {
         let Some((parent, _)) = pointer.rsplit_once('/') else {
             return;
         };
-        let Some(siblings) = self.values.pointer(parent).and_then(Value::as_object) else {
+        self.remove_inactive_fields(parent, Some(pointer), before, 0);
+    }
+
+    fn remove_inactive_fields(
+        &mut self,
+        parent: &str,
+        written: Option<&str>,
+        before: &Value,
+        depth: usize,
+    ) {
+        if depth >= 16 {
+            return;
+        }
+        let Some(fields) = self.values.pointer(parent).and_then(Value::as_object) else {
             return;
         };
-        let inactive = siblings
-            .keys()
-            .filter(|key| {
-                let field = format!("{parent}/{}", escape_pointer(key));
-                field != pointer
-                    && sdk_field_schema_for(before, &field).is_some()
-                    && sdk_field_schema_for(&self.values, &field).is_none()
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        if let Some(siblings) = self
+        let mut inactive = Vec::new();
+        let mut changed = Vec::new();
+        for (key, value) in fields {
+            let field = format!("{parent}/{}", escape_pointer(key));
+            if Some(field.as_str()) == written {
+                continue;
+            }
+            let Some((was, _)) = sdk_field_schema_for(before, &field) else {
+                continue;
+            };
+            match sdk_field_schema_for(&self.values, &field) {
+                None => inactive.push(key.clone()),
+                Some((now, _)) if now != was && value.is_object() => changed.push(field),
+                Some(_) => {}
+            }
+        }
+        if let Some(fields) = self
             .values
             .pointer_mut(parent)
             .and_then(Value::as_object_mut)
         {
             for key in inactive {
-                siblings.remove(&key);
+                fields.remove(&key);
             }
+        }
+        for field in changed {
+            self.remove_inactive_fields(&field, None, before, depth + 1);
         }
     }
 
     /// Target a managed gateway at the local engine that answered for the
-    /// chosen runtime. Without one, a generated engine is withdrawn rather
-    /// than left pointing at another runtime's engine.
-    pub(super) fn sync_gateway_engine_for_runtime(
+    /// chosen target. Without one, a generated engine is withdrawn rather
+    /// than left pointing at another target's engine.
+    pub(super) fn sync_gateway_engine_for_target(
         &mut self,
         answered_engines: &[DiscoveryRequest],
     ) -> Result<(), Diagnostics> {
@@ -273,22 +297,23 @@ impl AuthoredValues {
         {
             return Ok(());
         }
-        if self.values.pointer(GATEWAY_ENGINE_PATH).is_some() && !self.generated_gateway_engine {
+        let Some((target, path)) = gateway_engine(&self.values) else {
+            // A cluster target has no engine to generate.
+            self.generated_gateway_engine = false;
+            return Ok(());
+        };
+        if self.values.pointer(&path).is_some() && !self.generated_gateway_engine {
             return Ok(());
         }
-        let runtime = self
-            .values
-            .pointer(RUNTIME_PROVIDER)
-            .and_then(Value::as_str);
         let engine = answered_engines
             .iter()
-            .find(|request| Some(request.compute_driver.as_str()) == runtime)
+            .find(|request| request.compute_driver.as_str() == target)
             .map(|request| Value::String(request.engine.clone()));
         if engine.is_none() && !self.generated_gateway_engine {
             return Ok(());
         }
         self.generated_gateway_engine = engine.is_some();
-        self.put_sdk_field(GATEWAY_ENGINE_PATH, engine)
+        self.put_sdk_field(&path, engine)
     }
 }
 

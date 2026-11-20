@@ -17,7 +17,7 @@ A package that a workflow's token creates inherits this public repository's visi
 Before the first push, a maintainer creates each package as internal, which makes them its administrator, and grants this repository's Actions write access:
 
 - `v1-ci`, which holds every per-commit image. Grant it the **Admin** role instead, so the image workflow can delete per-commit images older than the latest ten commits.
-- `v1/<image>` for each agent image a release stages (`codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `opencode`, `pi`, `remote-agent`), and for `ollama-proxy`, `vllm`, and `ollama`.
+- `v1/<image>` for each agent image a release stages (`codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `opencode`, `pi`, `remote-agent`), and for `ollama-proxy`, `vllm`, `ollama`, and `llama-cpp`.
 - Create a package by pushing any image to it with a personal token that has `write:packages`; it starts internal.
 - Then, in the package's settings under **Manage Actions access**, add `NVIDIA/NemoClaw` with the **Write** role.
 
@@ -132,7 +132,7 @@ Use [image assessment](image-assessment.md) to evaluate the saved SPDX inventori
 Local assessment does not authorize publication.
 
 Deploy with the CLI archive for your platform and the digests the draft lists.
-Docker deployments pull private images through `spec.registries`; Kubernetes deployments use `imagePullSecrets`.
+Docker deployments pull private images through `spec.registries`; Kubernetes deployments use pull Secrets named in `image_pull_secrets` in the `openshell.drivers.kubernetes` table of `spec.gateway.config`.
 
 ## Publishing
 

@@ -14,8 +14,8 @@ spec:
   # Supply the existing Kubernetes cluster's OpenShell gateway.
   gateway:
     management: external
-    runtime:
-      provider: kubernetes
+    target:
+      kubernetes: {}
     endpoint: https://openshell.example.com
     credential: {env: GATEWAY_TOKEN}
     tls:

@@ -11,17 +11,17 @@ fn input(managed: bool) -> Value {
     let original =
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
     let mut input = serde_json::to_value(original).unwrap();
-    input["spec"]["gateway"]["runtime"] = json!({"provider": "openshift"});
+    input["spec"]["gateway"]["target"] = json!({"openshift": {}});
     input["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
         json!({"env":"TEST_IMAGE_METADATA"});
     if managed {
         input["spec"]["gateway"] = json!({
-            "management": "managed", "runtime": {"provider": "openshift"}, "endpoint": "https://127.0.0.1:17671",
-            "kubernetes": {
+            "management": "managed",
+            "target": {"openshift": {
                 "kubeconfig":{"env":"TEST_OPENSHIFT_CONFIG"},
                 "context":"explicit-openshift", "namespace":"owned-agents",
                 "authentication":{"profile":"development"}
-            }
+            }}
         });
     }
     input
@@ -40,7 +40,7 @@ fn openshift_preserves_authored_profile_and_uses_the_upstream_kubernetes_driver(
         assert!(jsonschema::is_valid(&schema::input_schema(), &input));
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
         assert_eq!(
-            document.spec.gateway.runtime().provider,
+            document.spec.gateway.compute_driver(),
             ComputeDriver::OpenShift
         );
         let exported = document.yaml().unwrap();
@@ -56,21 +56,21 @@ fn openshift_preserves_authored_profile_and_uses_the_upstream_kubernetes_driver(
 }
 
 #[test]
-fn the_runtime_alone_selects_openshift() {
+fn the_target_alone_selects_openshift() {
     let schema = schema::input_schema();
-    // The Kubernetes target has no separate platform field to disagree with.
+    // The OpenShift target has no separate platform field to disagree with.
     let mut value = input(true);
-    value["spec"]["gateway"]["kubernetes"]["distribution"] = json!("openshift");
+    value["spec"]["gateway"]["target"]["openshift"]["distribution"] = json!("openshift");
     assert!(!jsonschema::is_valid(&schema, &value));
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
-    // A managed cluster target accepts only the two cluster runtimes.
-    for provider in ["docker", "podman"] {
+    // A target names exactly one place to run.
+    for other in ["docker", "kubernetes"] {
         let mut value = input(true);
-        value["spec"]["gateway"]["runtime"]["provider"] = json!(provider);
-        assert!(!jsonschema::is_valid(&schema, &value), "{provider}");
+        value["spec"]["gateway"]["target"][other] = json!({});
+        assert!(!jsonschema::is_valid(&schema, &value), "{other}");
         assert!(
             Document::parse(value.to_string().as_bytes()).is_err(),
-            "{provider}"
+            "{other}"
         );
     }
 }

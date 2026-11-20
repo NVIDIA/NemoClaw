@@ -62,13 +62,13 @@ pub struct ResourceSchema {
 }
 
 /// Managed Kubernetes resource fields: the cluster target and identity, the
-/// environment list as JSON, and the observed reconciliation.
-const KUBERNETES_FIELDS: [&str; 12] = [
+/// environment list as JSON, and the observed reconciliation. Each command
+/// forwards a free local port to the gateway, so none names an endpoint.
+const KUBERNETES_FIELDS: [&str; 11] = [
     "name",
     "owner",
     "generation",
     "compute_driver",
-    "endpoint",
     "kubeconfig_env",
     "context",
     "namespace",
@@ -77,12 +77,11 @@ const KUBERNETES_FIELDS: [&str; 12] = [
     crate::kubernetes::OIDC_FIELD,
     "running",
 ];
-const KUBERNETES_AUTH_FIELDS: [&str; 13] = [
+const KUBERNETES_AUTH_FIELDS: [&str; 12] = [
     "name",
     "owner",
     "generation",
     "compute_driver",
-    "endpoint",
     "kubeconfig_env",
     "context",
     "namespace",
@@ -277,8 +276,8 @@ impl ServiceDefinition {
         let gateway = &document.spec.gateway;
         let local_docker = gateway
             .as_managed()
-            .is_some_and(|gateway| crate::config::engine_socket(&gateway.engine).is_some())
-            && gateway.runtime().provider == ComputeDriver::Docker;
+            .is_some_and(|gateway| crate::config::engine_socket(gateway.engine()).is_some())
+            && gateway.compute_driver() == ComputeDriver::Docker;
         let (placement, package) = match self {
             Self::Ollama(service) => (service.published_placement()?, "Ollama"),
             Self::Vllm(service) => (service.published_placement()?, "vLLM"),
@@ -311,8 +310,8 @@ impl ServiceDefinition {
         if let Self::Container(service) = self {
             let gateway = gateway.managed()?;
             return Ok(Some(NetworkAllocation {
-                engine: gateway.engine.clone(),
-                network_cidr: gateway.network_cidr.clone(),
+                engine: gateway.engine().to_owned(),
+                network_cidr: gateway.network_cidr().to_owned(),
                 bind_address: service
                     .publication
                     .as_ref()
@@ -543,7 +542,7 @@ pub(crate) fn discovery_engines(document: &Document) -> Result<BTreeSet<String>,
                         .spec
                         .gateway
                         .as_managed()
-                        .map(|gateway| gateway.engine.clone())
+                        .map(|gateway| gateway.engine().to_owned())
                 })
                 .ok_or(ConfigError::new("service engine is not configured"))
         })
@@ -659,7 +658,10 @@ pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
     let mut publications = BTreeSet::new();
     let mut networks = BTreeMap::new();
     if let Gateway::Managed(gateway) = gateway {
-        networks.insert(gateway.engine.clone(), gateway.network_cidr.clone());
+        networks.insert(
+            gateway.engine().to_owned(),
+            gateway.network_cidr().to_owned(),
+        );
     }
     for definition in document.spec.services.values() {
         let Some(allocation) = definition.allocation(gateway)? else {
