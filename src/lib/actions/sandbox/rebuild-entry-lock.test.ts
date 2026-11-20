@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { expect, test } from "../../../../test/helpers/owned-test-resources";
+import { SOURCE_REQUIRE_HOOK } from "../../../../test/helpers/source-loader-options";
 
 // Passing CI shards ran each case in 2.2-4.7 s, including lock-holder startup
 // (#14689). This deadline allows slower runners and still reports the child's
@@ -55,7 +56,7 @@ test.for(["registered", "missing"] as const)(
         process.execPath,
         [
           "--require",
-          "tsx/cjs",
+          SOURCE_REQUIRE_HOOK,
           "-e",
           `
     const session = require(process.argv[1]);
@@ -78,7 +79,7 @@ test.for(["registered", "missing"] as const)(
         process.execPath,
         [
           "--require",
-          "tsx/cjs",
+          SOURCE_REQUIRE_HOOK,
           "-e",
           `
       const entry = require(process.argv[1]);
