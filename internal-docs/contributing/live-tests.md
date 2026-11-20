@@ -158,9 +158,9 @@ NVIDIA_INFERENCE_API_KEY=... \
 Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deployment` with the same bundle, whether or not the scenario passed.
 
 
-### DGX Station on Colossus
+### DGX Station and Spark on Colossus
 
-**Live / V1 PR hardware** listens for `copy-pr-bot` pushes to `pull-request/<number>`. Like main, it uses the bot's trusted-author admission rather than a maintainer/admin-only actor gate. It verifies that the PR is open, non-draft, targets `v1`, and still has the copied head SHA, then uses `changes cases --base` to select affected GPU and Station cases. The Station example and scenario belong to the Station placement in the same case registry; shared changes select it through the existing dependency rules. Unqualified Spark hardware is excluded. A PR based on v1 before this workflow was introduced must pick up the workflow before its copied branch can trigger it.
+**Live / V1 PR hardware** listens for `copy-pr-bot` pushes to `pull-request/<number>`. Like main, it uses the bot's trusted-author admission rather than a maintainer/admin-only actor gate. It verifies that the PR is open, non-draft, targets `v1`, and still has the copied head SHA, then uses `changes cases --base` to select affected GPU and Station cases. The Station example and scenario belong to the Station placement in the same case registry; shared changes select it through the existing dependency rules. Spark remains manual-only and is excluded from this automatic selection. A PR based on v1 before this workflow was introduced must pick up the workflow before its copied branch can trigger it.
 
 These runs report failures in a separate workflow; they are not added as merge requirements. Running jobs are not automatically cancelled. Hardware jobs recheck PR eligibility after queueing and before deployment. GitLab/Colorunner continues to own leases and replacement; CI does not provision hosts.
 
@@ -171,13 +171,30 @@ gh workflow run hcl-e2e.yml --ref v1 -f target=dgx-station -f hosted=false \
   -f jobs=dgx-station-openclaw-nemotron
 ```
 
+Spark uses the same workflow and persistent-runner path, with the fixed `colossus-gb10` label and without CI / Bundle artifacts. Like Station, dispatch on `v1` or the current PR's bot-admitted `pull-request/<number>` branch; direct dispatch from an author branch is rejected. For a PR candidate:
+
+```bash
+gh workflow run hcl-e2e.yml --repo NVIDIA/NemoClaw --ref "pull-request/<number>" \
+  -f target=dgx-spark -f hosted=false -f jobs=dgx-spark-openclaw-nemotron
+```
+
 Build, inference, and cleanup failures fail the run visibly. An offline runner leaves its hardware job queued. A queued PR revision that becomes draft, closes, or is superseded cannot deploy when it reaches a runner.
 
-Colorunner must prepare Ubuntu 24.04 ARM64, GB300, Docker GPU access, and the containerd image store. CI does not provision the host or manage its lease.
-The shared HCL workflow binds the existing GTC Station example to its pinned Nemotron 3.5 model/runtime and candidate images, fresh UID, state, and nonoverlapping subnet. The scenario applies, requires OpenClaw to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup.
+Colorunner must prepare Ubuntu 24.04 ARM64, the intended GPU (GB300 for Station or GB10 for Spark), Docker/Buildx, NVIDIA Container Toolkit, container GPU access, and the containerd image store. CI does not provision the host or manage its lease.
+Before Spark dispatch, complete the capacity checks in [#13934](https://github.com/NVIDIA/NemoClaw/issues/13934): record the SSA owner, admitted lease window, limits and recovery procedure; verify host identity and GPU access; and qualify the persistent runner with a manual smoke on its unique label. Keep the exact smoke commit, runner ID and run URL. Smoke runs `true` and proves job delivery only; capacity, inference and cleanup need their own evidence.
+
+The shared HCL workflow builds on the selected host and binds its existing GTC example to candidate images, a fresh UID, state, and nonoverlapping subnet:
+
+| Target | Runner label | Example and model |
+|---|---|---|
+| Station | `colossus-gb300` | `openclaw-dgx-station.yaml`, with the existing Nemotron 3.5 Super VL override |
+| Spark | `colossus-gb10` | `openclaw-dgx-spark.yaml`, retaining its pinned Nemotron 3 Super NVFP4 model and Spark memory settings |
+
+Each scenario applies, requires OpenClaw to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup. Record the E2E commit, job URL, actual runner identity, and uploaded identity, inference and cleanup outcomes. A successful run establishes that case on that host; it does not establish renewal or replacement readiness. Leave #13934 open until its remaining capacity acceptance criteria have evidence.
 
 Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>/`. Published reports contain outcomes and candidate/UID/case identity only.
 Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
+The [Spark scenario](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-spark-openclaw-nemotron.tftest.hcl), including model download and load, must fit the existing 60-minute job budget with build and cleanup; the model startup timeout does not extend that job budget. Do not reuse an existing deployment as evidence of a fresh run.
 To recover a failed run, set `run` to its retained directory and use the original executables:
 
 ```bash
@@ -189,7 +206,7 @@ NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
 ## Spark and Fabric
 
 The `docker-openclaw-vllm-shared` [HCL E2E scenario](#hcl-e2e-scenarios) covers several sandboxes served by one local model on the `Live / HCL` NVIDIA GPU runner.
-Spark hardware has no CI runner yet.
+Spark's manual Colossus case is described [above](#dgx-station-and-spark-on-colossus); host and runner qualification remain tracked in [#13934](https://github.com/NVIDIA/NemoClaw/issues/13934).
 
 The SDK's `runtime_compile::an_image_pin_or_gateway_port_change_reaches_only_replaceable_processes` test owns what changing only a model's image pin reaches: its container and image, not its storage.
 Storage retention and watchdog recovery have separate tests under [runtime boundaries](integration-tests.md#runtime-boundaries) and [generic models](#generic-models).
