@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
+import { stripVTControlCharacters } from "node:util";
 
 import { DEFAULT_GATEWAY_PORT, parsePort } from "../../../../src/lib/core/ports.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
@@ -236,8 +237,8 @@ export class GatewayClient {
       ...options,
     });
     assertExitZero(result, "openshell status");
-    const text = `${result.stdout}\n${result.stderr}`;
-    if (!/connected/i.test(text) || !new RegExp(gatewayName, "i").test(text)) {
+    const text = stripVTControlCharacters(`${result.stdout}\n${result.stderr}`);
+    if (!/\bconnected\b/i.test(text) || !new RegExp(gatewayName, "i").test(text)) {
       throw new Error(`openshell status did not report connected gateway '${gatewayName}'.`);
     }
     return result;

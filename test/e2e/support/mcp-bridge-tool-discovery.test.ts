@@ -815,6 +815,8 @@ describe("authenticated MCP tool discovery transport retry", () => {
     );
     const diagnostics = await fs.readFile(artifactPath, "utf8");
     expect(JSON.parse(diagnostics)).toEqual({
+      priorSessionCancellationCount: 0,
+      priorSessionCancellations: [],
       provider: {
         present: true,
         state: "configured",

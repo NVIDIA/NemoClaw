@@ -143,108 +143,147 @@ describe("OpenShell gateway upgrade boundary", () => {
     ]);
   });
 
-  const serviceArgv = [
-    "/legacy/bin/openshell",
-    "--gateway",
-    "nemoclaw",
-    "--workspace",
-    "default",
-    "forward",
-    "service",
-    "alpha",
-    "--target-port",
-    "18789",
-    "--target-host",
-    "127.0.0.1",
-    "--local",
-    "127.0.0.1:18789",
-  ];
-  const processStat = (start = "12345", state = "S") =>
-    `4321 (openshell) ${state} ${Array(18).fill("0").join(" ")} ${start} 0\n`;
-  const serviceProbes = () =>
-    [
-      "4321\n",
-      "/legacy/bin/openshell\n",
-      processStat(),
-      "/legacy/bin/openshell\n",
-      "/legacy/bin/openshell\n",
-      `${serviceArgv.join("\0")}\0`,
-      processStat(),
-      "4321\n",
-    ].map((stdout) => ({ exitCode: 0, stdout, signal: null, timedOut: false }));
-
-  it("retains the v0.0.123 ForwardTcp process identity without an SSH registry entry (#12558)", () => {
-    const probes = serviceProbes();
-    const identity = legacyGatewayServiceForwardIdentity(probes, "alpha", "18789");
-    expect(identity).toBe(`4321\t12345\t/legacy/bin/openshell\t${JSON.stringify(serviceArgv)}`);
-    probes[2]!.stdout = probes[6]!.stdout = processStat("12346");
-    expect(legacyGatewayServiceForwardIdentity(probes, "alpha", "18789")).not.toBe(identity);
-  });
-
-  it.each([
-    { label: "missing listener", index: 0, change: { stdout: "" } },
-    { label: "ambiguous listener", index: 0, change: { stdout: "4321\n5678\n" } },
-    { label: "replaced listener", index: 7, change: { stdout: "5678\n" } },
-    { label: "missing command", index: 1, change: { stdout: "" } },
-    { label: "foreign executable", index: 3, change: { stdout: "/foreign/openshell\n" } },
-    { label: "failed read", index: 4, change: { exitCode: 1 } },
-    { label: "timeout", index: 3, change: { timedOut: true } },
-    { label: "signal", index: 3, change: { signal: "SIGTERM" as const } },
-    {
-      label: "different sandbox",
-      index: 5,
-      change: { stdout: `${serviceArgv.join("\0").replace("alpha", "beta")}\0` },
-    },
-    {
-      label: "different gateway",
-      index: 5,
-      change: { stdout: `${serviceArgv.join("\0").replace("nemoclaw", "foreign")}\0` },
-    },
-    {
-      label: "different port",
-      index: 5,
-      change: { stdout: `${serviceArgv.join("\0").replace("18789", "18790")}\0` },
-    },
-    {
-      label: "extra argument",
-      index: 5,
-      change: { stdout: `${serviceArgv.join("\0")}\0--unexpected\0` },
-    },
-    { label: "reused PID", index: 6, change: { stdout: processStat("99999") } },
-    { label: "zombie process", index: 6, change: { stdout: processStat("12345", "Z") } },
-    {
-      label: "different PID in stat",
-      index: 6,
-      change: { stdout: processStat().replace("4321", "5678") },
-    },
-  ])("rejects a ForwardTcp observation with $label (#12558)", ({ index, change }) => {
-    const probes = serviceProbes();
-    const changed = probes.map((probe, i) => (i === index ? { ...probe, ...change } : probe));
-    expect(legacyGatewayServiceForwardIdentity(changed, "alpha", "18789")).toBeNull();
-  });
-
-  it("captures the retained ForwardTcp executable and process around its listener (#12558)", async () => {
-    const probes = serviceProbes();
-    const pendingProbes = [...probes];
-    const command = vi.fn().mockImplementation(async () => pendingProbes.shift()!);
-    const result = await captureLegacyGatewayServiceForward(
-      { command, openshellCommandPath: "/legacy/bin/openshell" },
+  describe.each([
+    ["v0.0.123", false],
+    ["v0.0.141", true],
+  ] as const)("direct forward for %s", (_fixture, explicitGatewayEndpoint) => {
+    const serviceArgv = [
+      "/legacy/bin/openshell",
+      "--gateway",
+      "nemoclaw",
+      ...(explicitGatewayEndpoint ? ["--gateway-endpoint", "https://127.0.0.1:8080"] : []),
+      "--workspace",
+      "default",
+      "forward",
+      "service",
       "alpha",
+      "--target-port",
       "18789",
-      {},
-      "legacy",
+      "--target-host",
+      "127.0.0.1",
+      "--local",
+      "127.0.0.1:18789",
+    ];
+    const processStat = (start = "12345", state = "S") =>
+      `4321 (openshell) ${state} ${Array(18).fill("0").join(" ")} ${start} 0\n`;
+    const serviceProbes = () =>
+      [
+        "4321\n",
+        "/legacy/bin/openshell\n",
+        processStat(),
+        "/legacy/bin/openshell\n",
+        "/legacy/bin/openshell\n",
+        `${serviceArgv.join("\0")}\0`,
+        processStat(),
+        "4321\n",
+      ].map((stdout) => ({ exitCode: 0, stdout, signal: null, timedOut: false }));
+
+    it("retains the pinned ForwardTcp process identity without an SSH registry entry (#12558)", () => {
+      const probes = serviceProbes();
+      const identity = legacyGatewayServiceForwardIdentity(
+        probes,
+        "alpha",
+        "18789",
+        explicitGatewayEndpoint,
+      );
+      expect(identity).toBe(`4321\t12345\t/legacy/bin/openshell\t${JSON.stringify(serviceArgv)}`);
+      probes[2]!.stdout = probes[6]!.stdout = processStat("12346");
+      expect(
+        legacyGatewayServiceForwardIdentity(probes, "alpha", "18789", explicitGatewayEndpoint),
+      ).not.toBe(identity);
+    });
+
+    it.each([
+      { label: "missing listener", index: 0, change: { stdout: "" } },
+      { label: "ambiguous listener", index: 0, change: { stdout: "4321\n5678\n" } },
+      { label: "replaced listener", index: 7, change: { stdout: "5678\n" } },
+      { label: "missing command", index: 1, change: { stdout: "" } },
+      { label: "foreign executable", index: 3, change: { stdout: "/foreign/openshell\n" } },
+      { label: "failed read", index: 4, change: { exitCode: 1 } },
+      { label: "timeout", index: 3, change: { timedOut: true } },
+      { label: "signal", index: 3, change: { signal: "SIGTERM" as const } },
+      {
+        label: "different sandbox",
+        index: 5,
+        change: { stdout: `${serviceArgv.join("\0").replace("alpha", "beta")}\0` },
+      },
+      {
+        label: "different gateway",
+        index: 5,
+        change: { stdout: `${serviceArgv.join("\0").replace("nemoclaw", "foreign")}\0` },
+      },
+      {
+        label: "different port",
+        index: 5,
+        change: { stdout: `${serviceArgv.join("\0").replace("18789", "18790")}\0` },
+      },
+      {
+        label: "extra argument",
+        index: 5,
+        change: { stdout: `${serviceArgv.join("\0")}\0--unexpected\0` },
+      },
+      { label: "reused PID", index: 6, change: { stdout: processStat("99999") } },
+      { label: "zombie process", index: 6, change: { stdout: processStat("12345", "Z") } },
+      {
+        label: "different PID in stat",
+        index: 6,
+        change: { stdout: processStat().replace("4321", "5678") },
+      },
+    ])("rejects a ForwardTcp observation with $label (#12558)", ({ index, change }) => {
+      const probes = serviceProbes();
+      const changed = probes.map((probe, i) => (i === index ? { ...probe, ...change } : probe));
+      expect(
+        legacyGatewayServiceForwardIdentity(changed, "alpha", "18789", explicitGatewayEndpoint),
+      ).toBeNull();
+    });
+
+    it("captures the retained ForwardTcp executable and process around its listener (#12558)", async () => {
+      const probes = serviceProbes();
+      const pendingProbes = [...probes];
+      const command = vi.fn().mockImplementation(async () => pendingProbes.shift()!);
+      const result = await captureLegacyGatewayServiceForward(
+        { command, openshellCommandPath: "/legacy/bin/openshell" },
+        "alpha",
+        "18789",
+        {},
+        "legacy",
+        explicitGatewayEndpoint,
+      );
+      expect(result.identity).toBe(
+        legacyGatewayServiceForwardIdentity(probes, "alpha", "18789", explicitGatewayEndpoint),
+      );
+      expect(command.mock.calls.map(([executable, args]) => [executable, args])).toEqual([
+        ["lsof", ["-ti", ":18789", "-sTCP:LISTEN"]],
+        ["which", ["/legacy/bin/openshell"]],
+        ["cat", ["/proc/4321/stat"]],
+        ["readlink", ["-f", "/proc/4321/exe"]],
+        ["readlink", ["-f", "/legacy/bin/openshell"]],
+        ["cat", ["/proc/4321/cmdline"]],
+        ["cat", ["/proc/4321/stat"]],
+        ["lsof", ["-ti", ":18789", "-sTCP:LISTEN"]],
+      ]);
+    });
+
+    it
+      .runIf(explicitGatewayEndpoint)
+      .each([
+        "https://foreign.example:8080",
+        "http://127.0.0.1:8080",
+        "https://127.0.0.1:8081",
+        "",
+      ])("rejects a substituted fixture gateway endpoint %j (#12558)", (endpoint) => {
+      const probes = serviceProbes();
+      probes[5]!.stdout = `${serviceArgv.map((arg, index) => (index === 4 ? endpoint : arg)).join("\0")}\0`;
+      expect(legacyGatewayServiceForwardIdentity(probes, "alpha", "18789", true)).toBeNull();
+    });
+    it.runIf(explicitGatewayEndpoint)(
+      "rejects the legacy form when the fixture requires its explicit endpoint (#12558)",
+      () => {
+        const probes = serviceProbes();
+        probes[5]!.stdout = `${serviceArgv.filter((_arg, index) => index !== 3 && index !== 4).join("\0")}\0`;
+        expect(legacyGatewayServiceForwardIdentity(probes, "alpha", "18789", true)).toBeNull();
+      },
     );
-    expect(result.identity).toBe(legacyGatewayServiceForwardIdentity(probes, "alpha", "18789"));
-    expect(command.mock.calls.map(([executable, args]) => [executable, args])).toEqual([
-      ["lsof", ["-ti", ":18789", "-sTCP:LISTEN"]],
-      ["which", ["/legacy/bin/openshell"]],
-      ["cat", ["/proc/4321/stat"]],
-      ["readlink", ["-f", "/proc/4321/exe"]],
-      ["readlink", ["-f", "/legacy/bin/openshell"]],
-      ["cat", ["/proc/4321/cmdline"]],
-      ["cat", ["/proc/4321/stat"]],
-      ["lsof", ["-ti", ":18789", "-sTCP:LISTEN"]],
-    ]);
   });
 
   it.each(["", "//"])("prepares private install paths with HOME suffix %j", (suffix) => {

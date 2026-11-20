@@ -748,6 +748,32 @@ describe("E2E fixture clients", () => {
     ).expectOpenshellStatusConnected();
   });
 
+  it.each(["Connected", "Connected (HTTP)", "\u001b[32mConnected\u001b[0m"])(
+    "gateway client accepts %s status",
+    async (status) => {
+      const runner = new FakeRunner();
+      runner.stdout = `Gateway: nemoclaw\nStatus: ${status}\n`;
+      const host = new HostCliClient(runner);
+      const gateway = new GatewayClient(host, new SandboxClient(runner));
+
+      await expect(gateway.expectOpenshellStatusConnected()).resolves.toBeDefined();
+    },
+  );
+
+  it.each(["Disconnected", "disconnected", "\u001b[31mDisconnected\u001b[0m"])(
+    "gateway client rejects exit-zero %s status",
+    async (status) => {
+      const runner = new FakeRunner();
+      runner.stdout = `Gateway: nemoclaw\nStatus: ${status}\n`;
+      const host = new HostCliClient(runner);
+      const gateway = new GatewayClient(host, new SandboxClient(runner));
+
+      await expect(gateway.expectOpenshellStatusConnected()).rejects.toThrow(
+        "did not report connected gateway 'nemoclaw'",
+      );
+    },
+  );
+
   it("initial cleanup verifies the requested gateway before deleting a sandbox", async () => {
     const runner = new FakeRunner();
     runner.enqueue({ stdout: JSON.stringify({ gateway: "nemoclaw", status: "healthy" }) });

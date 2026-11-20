@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { buildGatewayRuntimeStartScript } from "../gateway-runtime-start.ts";
@@ -613,7 +614,8 @@ export class LifecyclePhaseFixture {
           timeoutMs: 30_000,
         });
         assertExitZero(status, "openshell status");
-        if (/connected/i.test(`${status.stdout}\n${status.stderr}`)) return;
+        if (/\bconnected\b/i.test(stripVTControlCharacters(`${status.stdout}\n${status.stderr}`)))
+          return;
       } catch (error) {
         lastError = error;
       }

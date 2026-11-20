@@ -367,14 +367,13 @@ NODE`,
   );
 }
 
-function readDiscordRestRequests(captureFile: string): Array<Record<string, unknown>> {
+function readDiscordCaptures(captureFile: string): Array<Record<string, unknown>> {
   return fs
     .readFileSync(captureFile, "utf8")
     .trim()
     .split(/\n+/u)
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>)
-    .filter((row) => row.event === "request");
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 async function rawTokenSurfaceProbe(
@@ -546,7 +545,7 @@ test(
     );
     expect(
       isNetworkPolicyDenial(deniedNodeGateway) &&
-        !readDiscordRestRequests(fakeGateway.captureFile).some((row) => row.event === "upgrade"),
+        !readDiscordCaptures(fakeGateway.captureFile).some((row) => row.event === "upgrade"),
       resultText(deniedNodeGateway),
     ).toBe(true);
 
@@ -626,7 +625,7 @@ test(
       resultText(deniedNodeRest),
     ).toBe(true);
     expect(
-      readDiscordRestRequests(fakeRest.captureFile),
+      readDiscordCaptures(fakeRest.captureFile).filter((row) => row.event === "request"),
       "denied Node REST request changed the fake Discord capture",
     ).toEqual([]);
 

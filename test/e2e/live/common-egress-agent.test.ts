@@ -157,7 +157,6 @@ async function assertPersonalRuntimeEgress(
     trustedSandboxShellScript(String.raw`
 set -eu
 curl_bin="$(command -v curl)"
-test -n "$curl_bin"
 curl_body="$(mktemp)"
 trap 'rm -f "$curl_body"' EXIT
 "$curl_bin" -fsSL --max-time 30 -o "$curl_body" https://example.com/

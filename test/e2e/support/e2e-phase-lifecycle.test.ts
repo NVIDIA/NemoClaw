@@ -257,6 +257,35 @@ describe("LifecyclePhaseFixture rebuild helpers", () => {
 });
 
 describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
+  it.each(["Connected", "Connected (HTTP)", "\u001b[32mConnected\u001b[0m"])(
+    "accepts %s status while waiting for gateway recovery",
+    async (status) => {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(0, `Gateway: nemoclaw\nStatus: ${status}\n`));
+      const fx = fixture(runner, new FakeCleanup());
+
+      await expect(
+        fx.waitForGatewayConnected({ attempts: 1, intervalMs: 0 }),
+      ).resolves.toBeUndefined();
+      expect(runner.calls).toHaveLength(1);
+    },
+  );
+
+  it.each(["Disconnected", "disconnected", "\u001b[31mDisconnected\u001b[0m"])(
+    "rejects exit-zero %s status while waiting for gateway recovery",
+    async (status) => {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(0, `Gateway: nemoclaw\nStatus: ${status}\n`));
+      runner.enqueue(shellResult(0, "ActiveState=failed\n"));
+      const fx = fixture(runner, new FakeCleanup());
+
+      await expect(fx.waitForGatewayConnected({ attempts: 1, intervalMs: 0 })).rejects.toThrow(
+        "gateway did not become healthy after restart",
+      );
+      expect(runner.calls).toHaveLength(2);
+    },
+  );
+
   it("falls back to PID/container controls when the selected user service is inactive (#10947)", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "12345\n")); // resolveHostRuntime pid probe

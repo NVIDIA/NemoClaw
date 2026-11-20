@@ -129,10 +129,13 @@ const DASHBOARD_PORT = "18789";
 const GATEWAY_CREDENTIAL = "nemoclaw-gateway-upgrade-fixture-key";
 const VERIFY_SYSTEMD_UPGRADE =
   OLD_NEMOCLAW_COMMIT === REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawCommit;
-const captureFixtureGatewayForward =
+const captureFixtureGatewayForward = (...args: Parameters<typeof captureLegacyGatewayForward>) =>
   OLD_NEMOCLAW_COMMIT === REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawCommit
-    ? captureLegacyGatewayForward
-    : captureLegacyGatewayServiceForward;
+    ? captureLegacyGatewayForward(...args)
+    : captureLegacyGatewayServiceForward(
+        ...args,
+        OLD_NEMOCLAW_COMMIT === REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE.nemoclawCommit,
+      );
 const TEST_TIMEOUT_MS =
   REVIEWED_GATEWAY_UPGRADE_FIXTURE_FOR_REF.additionalStoppedSandboxes > 0
     ? 110 * 60_000

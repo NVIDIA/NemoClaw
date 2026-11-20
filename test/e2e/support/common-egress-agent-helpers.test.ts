@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { zstdCompressSync } from "node:zlib";
 
 import { describe, expect, it, vi } from "vitest";
 import { nestedFetchEvidence } from "../../helpers/openclaw-nested-fetch-evidence.ts";
@@ -335,16 +336,20 @@ describe("common-egress agent parsing and classification helpers", () => {
     ).toEqual(evidence);
   });
 
-  it("executes the generated reducer script against OpenClaw SQLite session artifacts", () => {
-    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-reducer-"));
-    try {
-      const databasePath = join(directory, "openclaw-agent.sqlite");
-      const database = new DatabaseSync(databasePath);
-      database.exec(`
+  it.each(["inline", "zstd", "corrupt", "length-mismatch", "oversized"])(
+    "executes the generated reducer against %s SQLite transcript artifacts",
+    (storage) => {
+      const directory = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-reducer-"));
+      try {
+        const databasePath = join(directory, "openclaw-agent.sqlite");
+        const database = new DatabaseSync(databasePath);
+        database.exec(`
         CREATE TABLE transcript_events (
           session_id TEXT NOT NULL,
           seq INTEGER NOT NULL,
-          event_json TEXT NOT NULL,
+          event_json TEXT,
+          event_zstd BLOB,
+          event_utf8_bytes INTEGER,
           PRIMARY KEY (session_id, seq)
         ) STRICT;
         CREATE TABLE trajectory_runtime_events (
@@ -354,53 +359,81 @@ describe("common-egress agent parsing and classification helpers", () => {
           PRIMARY KEY (session_id, seq)
         ) STRICT;
       `);
-      const insertTranscript = database.prepare(
-        "INSERT INTO transcript_events (session_id, seq, event_json) VALUES (?, ?, ?)",
-      );
-      const [assistantEvent, toolResultEvent] = publicFetchSessionJsonLines().split("\n");
-      insertTranscript.run("session-under-test", 0, assistantEvent);
-      insertTranscript.run("session-under-test", 1, toolResultEvent);
-      insertTranscript.run("unrelated-session", 0, JSON.stringify({ ignored: true }));
-      database
-        .prepare(
-          "INSERT INTO trajectory_runtime_events (session_id, seq, event_json) VALUES (?, ?, ?)",
-        )
-        .run("session-under-test", 0, publicFetchTrajectory());
-      database.close();
+        const insertTranscript = database.prepare(
+          "INSERT INTO transcript_events (session_id, seq, event_json, event_zstd, event_utf8_bytes) VALUES (?, ?, ?, ?, ?)",
+        );
+        const [assistantEvent, toolResultEvent] = publicFetchSessionJsonLines().split("\n");
+        const insertEvent = (session: string, seq: number, event: string) => {
+          const bytes = Buffer.from(event);
+          insertTranscript.run(
+            session,
+            seq,
+            storage === "inline" ? event : null,
+            storage === "inline"
+              ? null
+              : storage === "corrupt"
+                ? Buffer.from("invalid zstd")
+                : zstdCompressSync(bytes),
+            storage === "inline"
+              ? null
+              : storage === "oversized"
+                ? 4_194_305
+                : bytes.length + Number(storage === "length-mismatch"),
+          );
+        };
+        insertEvent("session-under-test", 0, assistantEvent!);
+        insertEvent("session-under-test", 1, toolResultEvent!);
+        insertEvent("unrelated-session", 0, JSON.stringify({ ignored: true }));
+        database
+          .prepare(
+            "INSERT INTO trajectory_runtime_events (session_id, seq, event_json) VALUES (?, ?, ?)",
+          )
+          .run("session-under-test", 0, publicFetchTrajectory());
+        database.close();
 
-      const result = spawnSync(
-        process.execPath,
-        [
-          "-e",
-          buildOpenClawToolEvidenceReducerScript(PUBLIC_FETCH_EXPECTATION),
-          databasePath,
-          "session-under-test",
-        ],
-        { encoding: "utf8" },
-      );
+        const result = spawnSync(
+          process.execPath,
+          [
+            "-e",
+            buildOpenClawToolEvidenceReducerScript(PUBLIC_FETCH_EXPECTATION),
+            databasePath,
+            "session-under-test",
+          ],
+          { encoding: "utf8" },
+        );
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(parseOpenClawToolEvidence(result.stdout)).toMatchObject({
-        errors: [],
-        finalStatuses: ["success"],
-        toolCalls: [{ name: "web_fetch", target: { hostname: "www.wikidata.org" } }],
-        toolExecutions: [{ name: "web_fetch", target: { hostname: "www.wikidata.org" } }],
-        toolResults: [{ name: "web_fetch", target: { hostname: "www.wikidata.org" } }],
-        webFetchResults: [
-          expect.objectContaining({
-            expectedContentMatches: true,
-            expectedUrlMatches: true,
-            paired: true,
-            resultSuccess: true,
-          }),
-        ],
-      });
-      expect(result.stdout).not.toContain("must-not-remain");
-      expect(result.stdout).not.toContain("United States");
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
+        expect(result.status, result.stderr).toBe(0);
+        const evidence = parseOpenClawToolEvidence(result.stdout);
+        const validPayload = storage === "inline" || storage === "zstd";
+        expect(evidence.errors).toHaveLength(validPayload ? 0 : 1);
+        expect(evidence).toMatchObject({
+          finalStatuses: ["success"],
+          toolCalls: validPayload
+            ? [{ name: "web_fetch", target: { hostname: "www.wikidata.org" } }]
+            : [],
+          toolExecutions: [{ name: "web_fetch", target: { hostname: "www.wikidata.org" } }],
+          toolResults: validPayload
+            ? [{ name: "web_fetch", target: { hostname: "www.wikidata.org" } }]
+            : [],
+          webFetchResults: validPayload
+            ? [
+                expect.objectContaining({
+                  expectedContentMatches: true,
+                  expectedUrlMatches: true,
+                  paired: true,
+                  resultSuccess: true,
+                }),
+              ]
+            : [],
+        });
+        expect(assessPersonalPublicFetchToolEvidence(evidence).matches).toBe(validPayload);
+        expect(result.stdout).not.toContain("must-not-remain");
+        expect(result.stdout).not.toContain("United States");
+      } finally {
+        rmSync(directory, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("uses a direct-call model snapshot for complete results without granting control tools", () => {
     const evidence = reduceOpenClawToolEvidence(
@@ -495,33 +528,35 @@ describe("common-egress agent parsing and classification helpers", () => {
     });
   });
 
-  it.each([
-    "valid",
-    "wrong run",
-    "wrong parent",
-    "wrong generated ID",
-    "wrong wrapper target",
-    "tool failure",
-    "missing error flag",
-    "missing result",
-    "omitted result",
-    "oversized request",
-    "wrong URL",
-    "wrong role",
-    "context-visible record",
-    "duplicate record",
-    "hidden forbidden tool",
-    "parent outside snapshot",
-  ])("validates nested web_fetch evidence: %s", (variant) => {
-    const fixture = nestedFetchEvidence(variant);
-    const evidence = reduceOpenClawToolEvidence(
-      fixture.session,
-      fixture.trajectory,
-      fixture.expectation,
-    );
-    expect(assessPersonalPublicFetchToolEvidence(evidence).matches).toBe(variant === "valid");
-    expect(JSON.stringify(evidence)).not.toContain("must-not-remain");
-    expect(JSON.stringify(evidence)).not.toContain("United States");
+  describe.each(["tool_call", "tool_search_code"])("nested ID format %s", (prefix) => {
+    it.each([
+      "valid",
+      "wrong run",
+      "wrong parent",
+      "wrong generated ID",
+      "wrong wrapper target",
+      "tool failure",
+      "missing error flag",
+      "missing result",
+      "omitted result",
+      "oversized request",
+      "wrong URL",
+      "wrong role",
+      "context-visible record",
+      "duplicate record",
+      "hidden forbidden tool",
+      "parent outside snapshot",
+    ])("validates nested web_fetch evidence: %s", (variant) => {
+      const fixture = nestedFetchEvidence(variant);
+      const evidence = reduceOpenClawToolEvidence(
+        fixture.session.replaceAll("tool_search_code:", `${prefix}:`),
+        fixture.trajectory.replaceAll("tool_search_code:", `${prefix}:`),
+        fixture.expectation,
+      );
+      expect(assessPersonalPublicFetchToolEvidence(evidence).matches).toBe(variant === "valid");
+      expect(JSON.stringify(evidence)).not.toContain("must-not-remain");
+      expect(JSON.stringify(evidence)).not.toContain("United States");
+    });
   });
 
   it("accepts a progressive Tool Search wrapper only with projected web_fetch proof", () => {

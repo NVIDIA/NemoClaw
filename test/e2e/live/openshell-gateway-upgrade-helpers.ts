@@ -107,11 +107,12 @@ function listenerPid(observation: ForwardObservation): string | null {
     : null;
 }
 
-/** The v0.0.123 fixture launches ForwardTcp directly, outside the SSH forward registry. */
+/** Pin each direct ForwardTcp fixture to its reviewed argument form, including the 0.0.141 endpoint. */
 export function legacyGatewayServiceForwardIdentity(
   probes: readonly ForwardObservation[],
   sandboxName: string,
   port: string,
+  explicitGatewayEndpoint = false,
 ): string | null {
   if (
     probes.length !== 8 ||
@@ -148,6 +149,7 @@ export function legacyGatewayServiceForwardIdentity(
     commandPath,
     "--gateway",
     "nemoclaw",
+    ...(explicitGatewayEndpoint ? ["--gateway-endpoint", "https://127.0.0.1:8080"] : []),
     "--workspace",
     "default",
     "forward",
@@ -179,6 +181,7 @@ export async function captureLegacyGatewayServiceForward(
   port: string,
   env: NodeJS.ProcessEnv,
   phase: string,
+  explicitGatewayEndpoint = false,
 ): Promise<{ identity: string | null; output: string }> {
   const probe = (suffix: string, command: string, args: string[]) =>
     host.command(command, args, {
@@ -222,7 +225,12 @@ export async function captureLegacyGatewayServiceForward(
     after,
   ];
   return {
-    identity: legacyGatewayServiceForwardIdentity(probes, sandboxName, port),
+    identity: legacyGatewayServiceForwardIdentity(
+      probes,
+      sandboxName,
+      port,
+      explicitGatewayEndpoint,
+    ),
     output: probes.map(resultText).join("\n"),
   };
 }

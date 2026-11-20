@@ -432,6 +432,8 @@ export function reduceOpenClawToolEvidence(
       .trim()
       .replace(/[^A-Za-z0-9_.:-]+/gu, "_")
       .slice(0, 120) || "call";
+  const isNestedToolCallId = (id: string, parentPart: string, name: string): boolean =>
+    id.match(/^tool_(?:call|search_code):(.+):[1-9][0-9]*$/u)?.[1] === `${parentPart}:${name}`;
   const normalizedUrl = (value: unknown): string | null => {
     if (typeof value !== "string" || value.length > 4096) return null;
     try {
@@ -667,8 +669,6 @@ export function reduceOpenClawToolEvidence(
     const parentId = normalizedId(details?.parentToolCallId);
     const id = normalizedId(details?.toolCallId);
     const name = normalizedName(details?.toolName);
-    const prefix =
-      parentId && name ? `tool_search_code:${sanitizeToolCallIdPart(parentId)}:${name}:` : "";
     if (
       message.role !== "custom" ||
       message.display !== true ||
@@ -684,8 +684,7 @@ export function reduceOpenClawToolEvidence(
       !projectedWrapperIds.has(parentId) ||
       !id ||
       !name ||
-      !id.startsWith(prefix) ||
-      !/^[1-9][0-9]*$/u.test(id.slice(prefix.length))
+      !isNestedToolCallId(id, sanitizeToolCallIdPart(parentId), name)
     ) {
       addError("nested tool evidence has invalid correlation or result");
       continue;
@@ -711,10 +710,9 @@ export function reduceOpenClawToolEvidence(
       if (block?.type !== "toolCall" || name !== "web_fetch" || !id || sessionCallIds.has(id)) {
         continue;
       }
-      const associated = [...allowedWrapperIdParts].some((wrapperIdPart) => {
-        const prefix = `tool_search_code:${wrapperIdPart}:web_fetch:`;
-        return id.startsWith(prefix) && /^[1-9][0-9]*$/u.test(id.slice(prefix.length));
-      });
+      const associated = [...allowedWrapperIdParts].some((wrapperIdPart) =>
+        isNestedToolCallId(id, wrapperIdPart, "web_fetch"),
+      );
       if (associated) projectedTargetCallIds.add(id);
     }
   }
@@ -895,14 +893,16 @@ export function buildOpenClawToolEvidenceReducerScript(
   return [
     '"use strict"',
     'const { DatabaseSync } = require("node:sqlite")',
+    'const { zstdDecompressSync } = require("node:zlib")',
+    'const decodeRow = (row) => { if (typeof row.eventJson === "string") return row.eventJson; if (!(row.eventZstd instanceof Uint8Array) || row.eventZstd.byteLength < 1 || row.eventZstd.byteLength > 4194304 || !Number.isSafeInteger(row.eventBytes) || row.eventBytes < 1 || row.eventBytes > 4194304) throw new Error("Invalid compressed transcript bounds"); const bytes = zstdDecompressSync(row.eventZstd, { maxOutputLength: row.eventBytes }); if (bytes.byteLength !== row.eventBytes) throw new Error("Invalid compressed transcript length"); return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }',
     `const reduce = ${reduceOpenClawToolEvidence.toString()}`,
     `const expectedFetch = ${JSON.stringify(expectedFetch)}`,
     "const [databasePath, sessionId] = process.argv.slice(1)",
     "const readErrors = []",
     "const database = new DatabaseSync(databasePath, { allowExtension: false, open: true, readOnly: true, timeout: 2000 })",
     'database.exec("PRAGMA query_only = ON; BEGIN")',
-    'const readRows = (sql, label) => { try { return database.prepare(sql).all(sessionId).map((row) => String(row.eventJson)).join("\\n"); } catch (error) { readErrors.push(label + " read failed: " + String(error && error.code || "unknown")); return ""; } }',
-    'const sessionJsonLines = readRows("SELECT event_json AS eventJson FROM transcript_events WHERE session_id = ? ORDER BY seq", "session")',
+    'const readRows = (sql, label) => { try { return database.prepare(sql).all(sessionId).map(decodeRow).join("\\n"); } catch (error) { readErrors.push(label + " read failed: " + String(error && error.code || "unknown")); return ""; } }',
+    'const sessionJsonLines = readRows("SELECT event_json AS eventJson, event_zstd AS eventZstd, event_utf8_bytes AS eventBytes FROM transcript_events WHERE session_id = ? ORDER BY seq", "session")',
     'const trajectoryJsonLines = readRows("SELECT event_json AS eventJson FROM trajectory_runtime_events WHERE session_id = ? ORDER BY seq", "trajectory")',
     'database.exec("COMMIT")',
     "database.close()",

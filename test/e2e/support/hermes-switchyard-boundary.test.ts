@@ -27,12 +27,19 @@ test("boundary peers require the credential, expose redirect/denial witnesses, a
   try {
     expect((await post({ authorization: SWITCHYARD_CALLER_CANARY })).status).toBe(401);
     const headers = { authorization: `Bearer ${fixture.credential}` };
+    fixture.respondWithError(true);
     const judged = await post(headers, {
       model: "fixture-capable",
       response_format: { type: "json_schema" },
     });
     const decision = JSON.parse(JSON.parse(await judged.text()).choices[0].message.content);
-    expect(decision.p_solve).toBe(0.99);
+    expect(decision).toEqual({
+      crux: "bounded fixture task",
+      primary_rule: "SUP-1",
+      capability_boundary: "supported",
+      p_solve: 0.99,
+    });
+    fixture.respondWithError(false);
     const answered = await post(headers, { model: "fixture-efficient" });
     expect(JSON.parse(await answered.text()).choices[0].message.content).toBe(
       SWITCHYARD_BOUNDARY_ANSWER,

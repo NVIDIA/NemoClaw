@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, stripVTControlCharacters } from "node:util";
 
 import YAML from "yaml";
 
@@ -27,6 +27,7 @@ import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
+import { redactString } from "./redaction.ts";
 import {
   createV1ParseConsumer,
   summarizeV1Parse,
@@ -78,6 +79,10 @@ interface HermesV1ParseSummary {
   readonly expected: V1ParseSummary;
   readonly actual: Partial<Record<"nemoclaw" | "nemohermes", V1ParseSummary>>;
   readonly passed: boolean;
+  readonly failure?: {
+    readonly launcher: "nemoclaw" | "nemohermes";
+    readonly diagnostic: string;
+  };
 }
 
 interface HermesConfigExportExpectedRefusalEvidence {
@@ -182,8 +187,19 @@ function validateHermesConsumers(
   try {
     actual.nemoclaw = validate(nemoclawRaw);
     actual.nemohermes = validate(nemohermesRaw);
-  } catch {
-    return { expected, actual, passed: false };
+  } catch (error) {
+    return {
+      expected,
+      actual,
+      passed: false,
+      failure: {
+        launcher: actual.nemoclaw === undefined ? "nemoclaw" : "nemohermes",
+        diagnostic: redactString(
+          stripVTControlCharacters(error instanceof Error ? error.message : String(error)),
+          input.redactionValues,
+        ).slice(-4096),
+      },
+    };
   }
   return {
     expected,
@@ -310,7 +326,7 @@ export async function verifyHermesConfigExportLive(
     ...(expectsMessagingRefusal ? [MESSAGING_REFUSAL] : []),
     ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
     ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
-  ];
+  ].map((refusal) => redactString(refusal));
   if (expectedRefusals.length > 0 || !launchersSucceeded) {
     if (expectedRefusals.length > 0) {
       const expectedDiagnostic = ["Config export failed (unsupported).", ...expectedRefusals].join(
@@ -318,8 +334,10 @@ export async function verifyHermesConfigExportLive(
       );
       const refusalDiagnosticMatches = [nemoclawDiagnostics, nemohermesDiagnostics].every(
         (diagnostic) => {
-          if (!expectsMessagingRefusal) return diagnostic === expectedDiagnostic;
-          const [header, ...findings] = diagnostic.split("\n");
+          // Host commands redact credential-shaped context before returning diagnostics.
+          const comparableDiagnostic = redactString(diagnostic);
+          if (!expectsMessagingRefusal) return comparableDiagnostic === expectedDiagnostic;
+          const [header, ...findings] = comparableDiagnostic.split("\n");
           const categories = /^Config export failed \(([^)]+)\)\.$/u
             .exec(header ?? "")?.[1]
             ?.split(", ");
