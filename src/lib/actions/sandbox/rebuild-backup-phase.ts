@@ -79,6 +79,7 @@ export interface RebuildBackupPhaseInput {
   bail: RebuildBail;
   runtimeSelection?: OpenShellRuntimeSelection;
   stoppedNativeState?: PreparedStoppedNativeState;
+  requestedDcodeAutoApprovalMode?: RebuildSandboxEntry["dcodeAutoApprovalMode"];
 }
 
 export interface RebuildBackupPhaseResult {
@@ -272,6 +273,7 @@ export async function runRebuildBackupPhase(
         input.log,
         input.bail,
         input.stoppedNativeState,
+        input.requestedDcodeAutoApprovalMode,
       ));
     if (backupManifest === undefined) return null;
     const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;

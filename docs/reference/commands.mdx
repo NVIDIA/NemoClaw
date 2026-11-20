@@ -309,6 +309,37 @@ $$nemoclaw config export my-assistant --output -
 Exports never contain credential values. They include credential environment-variable references only when the target configuration requires one. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 With `--json` and file output, the version 1 result includes `sourceSandbox`, `outputPath`, `documentDigest`, and `specDigest`.
 
+Each export starts with a comment block, the export report, whose first line is `# nemoclaw-export-report: 1`.
+The number changes only when the report format changes incompatibly.
+The report has one line for each setting the export left out, replaced with a placeholder, or rewrote, except retained corporate CA state, which is reported separately on standard error as described below:
+
+```text
+# <kind> <field> [value=<json>] [before=<json> after=<json|omitted>]: <reason>
+```
+
+- `kind` is `omitted`, `placeholder`, `changed`, or `review`.
+  A `review` line names exported values that come from the source image and may not exist in the v1 image.
+- `value` is the setting's value in the source sandbox.
+- `before` and `after` appear on `changed` lines and show the source value and its exported form.
+  `after=omitted` means the export drops the field to get the same v1 behavior.
+
+The last line starts with `# gateway`.
+It records that the export reuses the source gateway port in `spec.gateway.endpoint`.
+If the source deployment is still running, start the v1 gateway on a different, free port.
+
+The report never contains credential values or credential environment-variable names.
+URL values in the report have user information, query strings, and fragments removed.
+v1 treats the report as YAML comments.
+`specDigest` covers the configuration's `spec` and is not affected by the report.
+`documentDigest` is the SHA-256 digest of the file as written, including the report.
+Each report entry also appears as a `Warning:` line on standard error.
+When the command refuses a source, it writes no YAML.
+It prints `Config export failed (<categories>).` on standard error, followed by one line per finding:
+
+```text
+<field> (<category>): <reason>
+```
+
 Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
 When retained CA state is present, a successful export reports that omission on standard error.
 Export does not change the source sandbox's trust.
@@ -318,8 +349,7 @@ Before deploying the YAML, prepare the destination:
 - Supply values for `credential.env` references through the destination command's environment.
   Keep credential values out of YAML.
   Unset exported credentials after the destination command finishes.
-- If `network.proxy` is present, ensure its host and port are reachable from the destination sandbox.
-  Export does not install the proxy.
+- Read the export report and decide how to handle each entry, including each placeholder image.
 - Review destination CA trust requirements before deployment.
 
 The exporter refuses sources that require host proxy credential replay.
@@ -327,7 +357,8 @@ Experimental runtime identity is not supported by this export command.
 For its separate OpenClaw workflow, refer to [Configure Experimental Runtime Identity](/user-guide/openclaw/reference/configure-runtime-identity).
 
 The v0 command projects verified source state into the pre-release v1alpha1 YAML shape.
-Managed OpenClaw and Hermes exports omit `image` so v1 applies its managed image default.
+Every exported sandbox carries the placeholder `image.ref`, because no v0 agent image ships Fabric.
+Replace it with a compatible v1 agent image digest before planning.
 
 If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
 The directory can have moved from the requested output location.
@@ -337,11 +368,17 @@ Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports Docker-managed OpenClaw sandboxes and canonical managed Hermes or LangChain Deep Agents Code sandboxes in the default workspace.
 Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
-OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile include a named service with `image: null`.
-Replace only that value with an official, immutable, compatible v1 runtime image before v1 parsing or planning.
+The exported explicit policy keeps every network rule from the source's base policy.
+It leaves out the `_provider_` entries that OpenShell composes from attached providers, because OpenShell rejects that reserved prefix and composes the entries again for the destination's providers.
+It also leaves out `filesystem_policy`, `process`, and `landlock`, because they describe the source image's user and paths.
+v1 applies OpenShell defaults to sections that an explicit policy omits.
+The export report lists each omitted entry and section, and flags the network-rule binaries as source-image paths to review.
+OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile include a named service whose `image` is the placeholder `REPLACE-ME@sha256:` followed by 64 zeros.
+The export report lists it as `placeholder services.<name>.image`.
+Replace that value with an official, immutable, compatible v1 service image before planning.
 Other local inference and Podman exports remain deferred.
 Deep Agents export requires hosted OpenAI Completions inference and explicitly disabled automatic approval, observability, and web search.
-It emits the immutable image as `image.ref`, the `deepagents` harness, and one `agent`.
+It emits the `nvidia.fabric.langchain.deepagents` harness, the placeholder `image.ref`, and one `agent`.
 The command rejects other Deep Agents settings instead of omitting them.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
 Managed OpenClaw and Hermes sources can also export Tavily with a `tavily-search` integration, the `TAVILY_API_KEY` reference, and a grant for the primary agent.
@@ -349,27 +386,17 @@ Export verifies the source's provider and profile binding, including the Hermes-
 Missing or mismatched search evidence prevents publication.
 Disabled search remains ungranted.
 Hermes with Brave and search-enabled Deep Agents sources remain unsupported.
-When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
-For hosted OpenClaw inference, the export preserves context-window, maximum-token, reasoning, and reasoning-effort settings when omitting them would change the target's effective behavior.
-It preserves nondefault agent timeout and heartbeat settings under `execution`.
+The export leaves out settings that have no confirmed v1 equivalent and lists each one in the export report.
+These are the managed proxy, the context-window, reasoning, and reasoning-effort settings, the heartbeat, tool disclosure, OpenClaw OTLP observability, and the OpenClaw and Hermes interface settings.
+For hosted inference, each route keeps its model and maximum-token setting.
+A retained agent timeout is exported as `harness.runtime.timeout_seconds`.
 The command rejects a managed OpenClaw sandbox with secondary agents and produces no document.
 Secondary-agent export remains deferred until the v1 schema defines that representation.
-For OpenClaw, it retains the managed dashboard marker because omitting it disables the target dashboard; the default marker includes port `18789` while the loopback bind remains implicit.
-When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
-It omits the default progressive disclosure setting.
-When OpenClaw conversation diagnostics are enabled, the export includes the fixed local OTLP endpoint, service name, and sample rate under agent observability.
-It never includes collector credentials.
-Before applying the export, run an OTLP/HTTP collector on port `4318` of the destination host.
-The sandbox must reach it as `host.openshell.internal:4318`.
-The export does not install or configure that collector. Verify trace delivery after applying the configuration.
-It omits settings only when the v1 target has the same effective behavior without them.
 Hermes export fails when Hermes tool gateways are enabled.
-It preserves Hermes dashboard and in-browser TUI behavior, including explicit disabled values when omission would enable them, plus nondefault API and enabled-dashboard ports.
-For a disabled Hermes dashboard, export writes `interfaces.dashboard.enabled: false` and omits the recorded dashboard port because v1 rejects a port on a disabled dashboard.
+Export still verifies the retained Hermes interface settings before it leaves them out.
 The retained dashboard URL must be `http://127.0.0.1:<port>` with a port from `1024` through `65535`; a retained `browserUrl` must match it.
 The registry `dashboardPort` must match the URL port, except that it may be absent for port `18789`.
 Export rejects other URL forms, invalid ports, and mismatches.
-The default API port is omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
 The exporter validates that source binding, then emits API-key authentication without a provider reference because v1 derives the association from the provider configuration.
 OAuth authentication and other unsupported profiles fail with a diagnostic instead of producing an incomplete document.
@@ -472,6 +499,11 @@ This option requires the managed Hermes image; Portable and custom images are no
 Gateway startup makes bounded model calls to verify judge classification and separate routing and answer usage accounting.
 If that check fails, the gateway does not start.
 
+Onboarding, connect readiness, and status require fresh routing preflight observations of provider bindings, effective policy, the installed package, protected configuration, credential references, and the gateway process.
+Missing or changed evidence blocks verification without changing providers.
+A successful gateway health check does not establish routing readiness.
+Status and onboarding report a direct capable-provider request separately; that request does not establish adaptive routing.
+
 Fresh setup creates OpenShell-managed providers for the selected profiles and attaches them to the new sandbox.
 NemoClaw verifies and records their identities before completing setup.
 Switchyard clients use observed native endpoints and endpoint-scoped credential references, not raw keys or `inference.local`.
@@ -488,6 +520,26 @@ Neither `--resume --switchyard-config <file>` nor `--recreate-sandbox` enables r
 While routing is configured, `inference set` refuses changes.
 To use different selections, preserve the existing sandbox and onboard with a new name.
 For a new single-model sandbox, omit `--switchyard-config`.
+
+The generated efficient and capable clients set `timeout_ms = 120000`, `max_retries = 0`, and `forward_auth = false`.
+This policy configures a 120-second deadline for each physical provider call, including its full response stream, with no automatic provider retries.
+The clients do not forward caller credentials.
+The capable client uses the same settings when reused as the routing judge.
+These fixed settings are not user overrides and do not define a whole-turn deadline or response-byte limit.
+
+Hermes stops when its protected Switchyard routing configuration does not match the sandbox image.
+Do not edit the protected routing files to bypass that check.
+Create a fresh sandbox with an unused name and the routing JSON file.
+This does not recover data from the failed sandbox.
+Use an independently maintained backup to restore data.
+Do not delete the failed sandbox while data recovery remains unresolved.
+
+```bash
+$$nemoclaw onboard --fresh --agent hermes --name <new-name> --switchyard-config <routing-config.json>
+```
+
+Configuration generation and package validation do not prove runtime deadline enforcement, cancellation, or interception of every Hermes request.
+Adaptive routing remains opt-in and is disabled by default.
 
 ```json
 {
@@ -729,9 +781,10 @@ For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents named recreation restores saved native preferences, including model and endpoint settings in `config.toml`.
-A conflicting requested selection can fail validation before registry publication.
-To change the provider or model, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+For a managed image, named recreation for a verified provider or model change keeps the replacement's generated `config.toml`.
+The backup retains the previous file for manual recovery of custom settings.
+For unchanged or unverifiable selections, or custom images, recreation restores saved preferences and can fail validation before registry publication.
+To change the provider or model, follow [Recreate a Deep Agents Sandbox](../inference/manage-inference/switch-providers#recreate-a-deep-agents-sandbox).
 
 </AgentOnly>
 
@@ -1382,7 +1435,7 @@ During that lease, another `launch` still verifies these conditions:
 </AgentOnly>
 <AgentOnly variant="hermes,deepagents">
 
-- The recorded inference selection matches its provider path, and every configured route serves a valid response to a bounded request for the recorded model.
+- The recorded inference selection matches its provider path, and every configured single-model route serves a valid response to a bounded request for the recorded model.
   NVIDIA Endpoints, supported fixed hosted selections, new hosted compatible selections outside the Personal tier, and qualifying new local selections verify their recorded sandbox-attached provider and request the model at its native endpoint without a shared-route models probe.
   Owned Local NVIDIA NIM, retained legacy routes, and other custom routes without an attachment use `inference.local`.
   Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
@@ -1391,9 +1444,33 @@ During that lease, another `launch` still verifies these conditions:
 </AgentOnly>
 - The agent runtime and its required host-side forwards pass their semantic health checks.
 
+<AgentOnly variant="hermes">
+
+For Switchyard routing, inference readiness requires fresh host preflight evidence for the recorded provider identities, revisions, profiles, and sandbox attachments.
+It also verifies the effective policy, installed package, protected routing configuration, credential references, and gateway process identity.
+Missing or changed evidence blocks readiness without changing providers.
+These preflight checks do not send a model request.
+
+Before each gateway launch, including supervised recovery, NemoClaw makes bounded model calls.
+These calls verify judge classification and separate routing and answer usage accounting.
+If judge qualification fails, the gateway remains stopped.
+
+</AgentOnly>
+
+
 <AgentOnly variant="openclaw">
 
-For OpenClaw, `connect --probe-only` also settles the existing allowlisted pairing flow before it publishes the lease. The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration. Its credential-free pairing qualification binds the canonical CLI client, exact paired device identity, required operator role and scopes, owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch. Before accepting that evidence, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway. It skips the complete pairing approval pass only when the evidence still matches exactly and no relevant allowlisted request is pending. Missing, unreadable, malformed, ambiguous, or changed pairing evidence runs the complete pairing approval pass. A relevant allowlisted pending request also runs that complete path, so late scope requests remain eligible for approval.
+For OpenClaw, `connect --probe-only` also settles the existing allowlisted pairing flow before it publishes the lease.
+The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration.
+Its credential-free pairing qualification binds the settled CLI or native terminal user interface (TUI) client, exact paired device identity, and required operator role and scopes.
+It also binds the owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch.
+Native TUI state must have the required grants and no pending pairing requests.
+Qualification does not change its credentials or grants.
+
+Before accepting that evidence, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway.
+It skips the complete pairing approval pass only when the evidence still matches exactly and no relevant allowlisted request is pending.
+Missing, unreadable, malformed, ambiguous, or changed pairing evidence runs the complete pairing approval pass.
+A relevant allowlisted pending request also runs that complete path, so late scope requests remain eligible for approval.
 
 </AgentOnly>
 
@@ -1728,9 +1805,10 @@ For Hermes, the command validates the complete candidate configuration with the 
 <AgentOnly variant="deepagents">
 
 For Deep Agents sandboxes, `config set` is unavailable.
-Managed startup creates the initial `dcode` configuration, but native preference saves and native-home restoration preserve its model and endpoint settings.
+Managed startup creates the initial `dcode` configuration, and native preference saves can update it.
+For a managed image, recreation for a verified provider or model change keeps the replacement's generated configuration and retains the previous file in the backup.
 Managed route and upstream provider metadata remain in protected files outside the native home.
-To change the provider or model without restoring existing preferences, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+To change the provider or model, follow [Recreate a Deep Agents Sandbox](../inference/manage-inference/switch-providers#recreate-a-deep-agents-sandbox).
 Use `$$nemoclaw <name> config get` to read the current values.
 
 </AgentOnly>
@@ -3439,6 +3517,7 @@ If the command cannot confirm the source type, it exits without publishing.
 If the source does not exist, the command exits with status `2`.
 Other failures use a different nonzero status.
 The command downloads to a fresh private temporary directory on the host, verifies that OpenShell wrote an artifact, publishes the artifact to your destination, and removes the temporary directory.
+Directory downloads preserve member filenames that fit the host filesystem limit.
 An existing destination directory is resolved to its canonical path before publication.
 The command refuses an existing file destination that is a symbolic link and a new destination below a symbolic-link parent.
 It checks every component of the destination parent, so it refuses the destination whether or not the directories below the symbolic link already exist.
@@ -3985,7 +4064,7 @@ The command is also available in sandbox-first form as `$$nemoclaw <name> infere
 
 By default, the command syncs the default registered sandbox.
 
-During onboarding, NVIDIA Endpoints, the five fixed hosted providers, and new hosted compatible selections outside the Personal tier use sandbox-attached providers without changing the shared route. Qualified new local selections also receive native attachments during onboarding. At runtime, `inference set` can attach a custom native provider when the sandbox already records a valid native attachment; a retained shared-route sandbox stays on the shared route. Hermes also supports native local switches through `inference set`. For Deep Agents Code provider or model changes, follow [Validate a Different Deep Agents Selection](/user-guide/deepagents/inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection). The following route-conflict rules apply whenever the command changes the shared gateway route, including owned Local NVIDIA NIM, retained legacy and other custom shared routes, and Pi local routes.
+During onboarding, NVIDIA Endpoints, the five fixed hosted providers, and new hosted compatible selections outside the Personal tier use sandbox-attached providers without changing the shared route. Qualified new local selections also receive native attachments during onboarding. At runtime, `inference set` can attach a custom native provider when the sandbox already records a valid native attachment; a retained shared-route sandbox stays on the shared route. Hermes also supports native local switches through `inference set`. For Deep Agents Code provider or model changes, follow [Recreate a Deep Agents Sandbox](/user-guide/deepagents/inference/manage-inference/switch-providers#recreate-a-deep-agents-sandbox). The following route-conflict rules apply whenever the command changes the shared gateway route, including owned Local NVIDIA NIM, retained legacy and other custom shared routes, and Pi local routes.
 Before changing the route, NemoClaw compares it with every same-gateway registry entry, including stopped sandboxes.
 When only the provider or model differs, the command names the affected sandboxes and warns immediately before it re-points the shared route.
 Those sandboxes use the new live route until `connect`, onboarding, or another `inference set` command re-points it.
@@ -4087,11 +4166,12 @@ $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>
 <AgentOnly variant="deepagents">
 
 Deep Agents has no runtime `inference set` path.
-Named recreation with `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` restores the saved `/sandbox/.deepagents/config.toml`.
-Saved model and endpoint preferences can conflict with a requested provider or model.
-In that case, validation stops before registry publication and leaves the replacement sandbox with an unverified route.
+For a managed image, named recreation keeps the replacement's generated configuration when NemoClaw can verify a provider or model change from the recorded selection.
+It restores the remaining saved state and retains the previous `/sandbox/.deepagents/config.toml` in the backup for manual recovery of custom settings.
+For unchanged or unverifiable selections, or custom images, recreation restores the saved configuration.
+If restored preferences conflict with the requested selection, validation stops before registry publication and leaves the replacement sandbox with an unverified route.
 Keep the backup and follow the printed recovery instructions; do not rebuild without verified registry metadata.
-To validate a different selection without restoring existing preferences, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+Follow [Recreate a Deep Agents Sandbox](../inference/manage-inference/switch-providers#recreate-a-deep-agents-sandbox) to change the selection.
 Use `$$nemoclaw <name> status` to inspect the selected sandbox's route.
 
 </AgentOnly>
@@ -4676,16 +4756,16 @@ For OpenClaw, `NEMOCLAW_DASHBOARD_PORT` controls the OpenClaw dashboard forward.
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-For Hermes, `NEMOCLAW_DASHBOARD_PORT` controls the built-in dashboard forward, which defaults to `18789`. The OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`. If `8642` is already held by another sandbox or by a non-OpenShell host listener, onboarding scans `8642` through `8652` and uses the next free API port. Set `NEMOCLAW_HERMES_API_PORT=<N>` before you onboard a new sandbox to pin a port from `8642` through `8652`. If another sandbox or host listener holds the pinned port, onboarding exits instead of selecting a different port. The sandbox relay binds the port when the sandbox starts, so set this variable for an existing sandbox only together with `--recreate-sandbox`. For an existing sandbox, a different value without `--recreate-sandbox` exits before the host forward changes. Set `NEMOCLAW_HERMES_DASHBOARD=1` to enable the optional Hermes dashboard. The dashboard port overrides apply only when this variable is enabled. Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` only when you want the optional in-browser TUI tab.
+For the managed Hermes image, `NEMOCLAW_DASHBOARD_PORT` controls the built-in dashboard forward, which defaults to `18789`. The OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`. If `8642` is already held by another sandbox or by a non-OpenShell host listener, onboarding scans `8642` through `8652` and uses the next free API port. Set `NEMOCLAW_HERMES_API_PORT=<N>` before you onboard a new sandbox to pin a port from `8642` through `8652`. If another sandbox or host listener holds the pinned port, onboarding exits instead of selecting a different port. The sandbox relay binds the port when the sandbox starts, so set this variable for an existing sandbox only together with `--recreate-sandbox`. For an existing sandbox, a different value without `--recreate-sandbox` exits before the host forward changes. The Hermes dashboard always starts. Set `NEMOCLAW_HERMES_DASHBOARD=1` to apply the dashboard port and TUI overrides and to record them for rebuild and forward recovery. Onboarding ignores `NEMOCLAW_HERMES_DASHBOARD_TUI=1` unless `NEMOCLAW_HERMES_DASHBOARD=1` is also set. Set it only when you want the optional in-browser TUI tab.
 
 | Variable                                  | Default | Service                                                                          |
 | ----------------------------------------- | ------- | -------------------------------------------------------------------------------- |
 | `NEMOCLAW_DASHBOARD_PORT`                 | 18789   | Hermes built-in dashboard forward port                                           |
 | `NEMOCLAW_HERMES_API_PORT`                | 8642    | Hermes OpenAI-compatible API forward port                                        |
-| `NEMOCLAW_HERMES_DASHBOARD`               | 0       | Enable the optional Hermes dashboard                                             |
+| `NEMOCLAW_HERMES_DASHBOARD`               | 0       | Managed Hermes image only: apply and record dashboard overrides; the dashboard always starts            |
 | `NEMOCLAW_HERMES_DASHBOARD_PORT`          | 18789   | Hermes dashboard forward port; when set, it must match `NEMOCLAW_DASHBOARD_PORT` |
 | `NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT` | 19119   | Hermes dashboard backend port                                                    |
-| `NEMOCLAW_HERMES_DASHBOARD_TUI`           | 0       | Optional Hermes in-browser TUI tab                                               |
+| `NEMOCLAW_HERMES_DASHBOARD_TUI`           | 0       | Managed Hermes image only: optional in-browser TUI tab                            |
 
 </AgentOnly>
 
@@ -4699,7 +4779,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 | `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `hermes-provider`, `llama-cpp`, `install-llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. On a qualified N1x host, `install-vllm` supplies Deferred preview intent, while another provider supplies standard-onboarding intent and retains its existing requirements. Local NVIDIA NIM remains unavailable on N1x. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. `install-llama-cpp` selects the compatible experimental managed path on DGX Spark, generic NVIDIA GPU, or Windows WSL N1x or Station GB300 hosts and rejects `NEMOCLAW_MODEL`; use `NEMOCLAW_LLAMACPP_RECIPE` for an explicit declarative selection. A qualifying Windows WSL N1x or Station GB300 host automatically selects this provider and its Qwen 3.6 recipe when no provider is requested or recorded. If an operator-managed server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
 | `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. For NVIDIA Endpoints, NemoClaw ignores a retired configured model and uses the agent default. Otherwise, NemoClaw preserves the explicit model across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
-| `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or direct exposure. A new sandbox with no recorded mode defaults to `progressive`. A fresh managed OpenClaw sandbox using local Ollama or vLLM defaults to `direct`, except the accepted Deferred N1x managed-vLLM preview for `nvidia/Qwen3.6-35B-A3B-NVFP4`, which defaults to `progressive`. Existing recorded state takes precedence. `--tool-disclosure` takes precedence over this variable. |
+| `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or direct exposure. A blank value after whitespace trimming is unset. A new sandbox with no recorded mode defaults to `progressive`. A fresh managed OpenClaw sandbox using local Ollama or vLLM defaults to `direct`, except the accepted Deferred N1x managed-vLLM preview for `nvidia/Qwen3.6-35B-A3B-NVFP4`, which defaults to `progressive`. Existing recorded state takes precedence. `--tool-disclosure` takes precedence over this variable. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. Onboarding rejects a URL that contains userinfo, query, or fragment components. It also rejects a URL that contains control characters, percent-encoded control characters, spaces within the URL, shell metacharacters, or other characters outside the URL-safe ASCII set, and a value that is not an absolute HTTP or HTTPS URL. NemoClaw trims ASCII spaces at the start and end of the URL before validation. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication during non-interactive onboarding for an OpenAI-compatible HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Protected service ports remain unavailable. New endpoints cannot use port `11435`; recovery can retain a recorded legacy route on that port only after the auth proxy moves to a different free port and no other protected service owns `11435`. |
 | `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | comma-separated exact hostnames or IP literals | Allows operator-owned RFC1918, CGNAT, or IPv6 unique local destinations through supported inference, managed MCP, and custom-policy registration paths. Link-local metadata and other reserved ranges remain blocked; DNS resolution and address pinning remain active; wildcards are not supported. |

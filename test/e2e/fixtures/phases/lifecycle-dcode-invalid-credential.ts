@@ -29,6 +29,10 @@ const ROUTE_DELAY_MS = 2_000;
 const INVALID_REBUILD_TIMEOUT_MS = 3 * 60_000;
 const SUCCESSFUL_REBUILD_TIMEOUT_MS = 20 * 60_000;
 const DCODE_ACTION_TIMEOUT_MS = 2 * 60_000;
+const SQL_CONVERSATION_PROMPT =
+  "Do not use tools or execute SQL. Keep these examples as conversation context: " +
+  "'SELECT id FROM users WHERE (password = ?)' and " +
+  "'SELECT id FROM users WHERE ((password = ?))'. Reply with exactly one word: PONG";
 const NATIVE_STATE_CASES = [
   ["/sandbox/.nemoclaw-dcode-unknown.txt", "unknown-home"],
   ["/sandbox/workspace/nemoclaw-dcode/project.txt", "workspace"],
@@ -328,18 +332,16 @@ function assertFailedBeforeDestructiveWork(result: ShellProbeResult): void {
   }
 }
 
-function assertDcodeActionSucceeded(result: ShellProbeResult): void {
-  assertExitZero(result, "run DCode action after successful rebuild");
+function assertDcodeActionSucceeded(result: ShellProbeResult, phase: string): unknown {
+  assertExitZero(result, `run DCode action ${phase}`);
   let envelope: unknown;
   try {
     envelope = JSON.parse(result.stdout);
   } catch {
-    throw new Error(
-      `DCode action did not return JSON after successful rebuild: ${resultText(result)}`,
-    );
+    throw new Error(`DCode action did not return JSON ${phase}: ${resultText(result)}`);
   }
   if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) {
-    throw new Error("DCode action returned a non-object JSON envelope after successful rebuild");
+    throw new Error(`DCode action returned a non-object JSON envelope ${phase}`);
   }
   const record = envelope as Record<string, unknown>;
   const data = record.data;
@@ -350,17 +352,20 @@ function assertDcodeActionSucceeded(result: ShellProbeResult): void {
     typeof data !== "object" ||
     Array.isArray(data)
   ) {
-    throw new Error("DCode action returned an invalid JSON envelope after successful rebuild");
+    throw new Error(`DCode action returned an invalid JSON envelope ${phase}`);
   }
   const action = data as Record<string, unknown>;
+  const completion = action.completion as { thread_id?: unknown } | null | undefined;
+  const threadId = completion?.thread_id;
   if (
     action.status !== "success" ||
     action.exit_code !== 0 ||
     typeof action.response !== "string" ||
     action.response.trim() !== "PONG"
   ) {
-    throw new Error(`DCode action was not usable after successful rebuild: ${resultText(result)}`);
+    throw new Error(`DCode action was not usable ${phase}: ${resultText(result)}`);
   }
+  return threadId;
 }
 
 export async function simulateDcodeInvalidCredentialRebuild(
@@ -570,6 +575,68 @@ export async function simulateDcodeInvalidCredentialRebuild(
   if (primaryError) throw primaryError;
   if (restorationError) throw restorationError;
 
+  const seedConversation = await deps.sandbox.exec(
+    instance.sandboxName,
+    ["dcode", "-n", SQL_CONVERSATION_PROMPT, "--json"],
+    {
+      artifactName: "lifecycle-dcode-conversation-seed",
+      env: gatewayEnv(options.gatewayName),
+      redactionValues,
+      timeoutMs: DCODE_ACTION_TIMEOUT_MS,
+    },
+  );
+  const threadId = assertDcodeActionSucceeded(seedConversation, "before successful rebuild");
+  if (
+    typeof threadId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(threadId)
+  ) {
+    throw new Error("DCode did not return a native thread UUID before rebuild");
+  }
+  record("dcode-conversation:seed", seedConversation);
+  const readConversation = async (phase: string): Promise<ShellProbeResult> => {
+    const result = await deps.sandbox.exec(
+      instance.sandboxName,
+      [
+        "/opt/venv/bin/python3",
+        "-I",
+        "-c",
+        "import importlib.resources, runpy, sys; " +
+          "inspector = importlib.resources.files('deepagents_code').joinpath('built_in_skills/deepagents-thread-inspector/scripts/inspect_sessions.py'); " +
+          "sys.argv = [str(inspector), *sys.argv[1:]]; " +
+          "runpy.run_path(str(inspector), run_name='__main__')",
+        threadId,
+        "--db",
+        "/sandbox/.deepagents/.state/sessions.db",
+        "--mode",
+        "transcript",
+      ],
+      {
+        artifactName: `lifecycle-dcode-conversation-${phase}`,
+        env: gatewayEnv(options.gatewayName),
+        redactionValues,
+        timeoutMs: 30_000,
+      },
+    );
+    assertExitZero(result, `read native DCode conversation ${phase}`);
+    record(`dcode-conversation:${phase}`, result);
+    return result;
+  };
+  const conversationBefore = await readConversation("before");
+  const historyBefore = JSON.parse(conversationBefore.stdout) as {
+    thread?: { thread_id?: unknown };
+    turns?: Array<{ messages?: Array<{ role?: unknown; content?: unknown }> }>;
+  };
+  if (
+    historyBefore.thread?.thread_id !== threadId ||
+    !historyBefore.turns?.some((turn) =>
+      turn.messages?.some(
+        (message) => message.role === "user" && message.content === SQL_CONVERSATION_PROMPT,
+      ),
+    )
+  ) {
+    throw new Error("DCode did not persist the SQL-bearing user conversation before rebuild");
+  }
+
   const successfulRebuild = await deps.host.nemoclaw(
     [instance.sandboxName, "rebuild", "--yes", "--verbose"],
     {
@@ -635,9 +702,19 @@ export async function simulateDcodeInvalidCredentialRebuild(
     await assertReady(deps, instance.sandboxName, options, "rebuilt", redactionValues),
   );
 
+  const conversationRebuilt = await readConversation("rebuilt");
+  const historyRebuilt = JSON.parse(conversationRebuilt.stdout) as typeof historyBefore;
+  if (
+    historyRebuilt.thread?.thread_id !== threadId ||
+    JSON.stringify(historyRebuilt.turns) !== JSON.stringify(historyBefore.turns)
+  ) {
+    throw new Error("DCode SQL conversation changed or disappeared after successful rebuild");
+  }
+
+  const resumePrompt = "Reply with exactly one word: PONG";
   const dcodeAction = await deps.sandbox.exec(
     instance.sandboxName,
-    ["dcode", "-n", "Reply with exactly one word: PONG", "--json"],
+    ["dcode", "-r", threadId, "-n", resumePrompt, "--json"],
     {
       artifactName: "lifecycle-dcode-action-rebuilt",
       env: gatewayEnv(options.gatewayName),
@@ -645,8 +722,20 @@ export async function simulateDcodeInvalidCredentialRebuild(
       timeoutMs: DCODE_ACTION_TIMEOUT_MS,
     },
   );
-  assertDcodeActionSucceeded(dcodeAction);
+  assertDcodeActionSucceeded(dcodeAction, "after successful rebuild");
   record("dcode-action:rebuilt", dcodeAction);
+
+  const conversationResumed = await readConversation("resumed");
+  const historyResumed = JSON.parse(conversationResumed.stdout) as typeof historyBefore;
+  if (
+    historyResumed.thread?.thread_id !== threadId ||
+    JSON.stringify(historyResumed.turns?.slice(0, -1)) !== JSON.stringify(historyRebuilt.turns) ||
+    !historyResumed.turns
+      ?.at(-1)
+      ?.messages?.some((message) => message.role === "user" && message.content === resumePrompt)
+  ) {
+    throw new Error("DCode resumed user turn was not appended to the original thread");
+  }
 
   return { profile: "dcode-rebuild-invalid-credential", steps };
 }

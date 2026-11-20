@@ -278,21 +278,20 @@ describe("initial sandbox policy real preset merge", () => {
     ]);
   });
 
-  it("lets the Hermes supervisor read the root-issued expected-exit lease", () => {
-    const prepared = prepareInitialSandboxCreatePolicy(
-      repoPath("agents", "hermes", "policy-additions.yaml"),
-      [],
-      { agentName: "hermes" },
-    );
-    const policy = readPreparedPolicy(prepared);
+  it.each(["/run/nemoclaw/managed-gateway-expected-exit", "/opt/nemo-relay/plugins/switchyard"])(
+    "lets Hermes read the immutable runtime resource %s",
+    (resource) => {
+      const prepared = prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "hermes", "policy-additions.yaml"),
+        [],
+        { agentName: "hermes" },
+      );
+      const policy = readPreparedPolicy(prepared);
 
-    expect(policy.filesystem_policy?.read_only).toContain(
-      "/run/nemoclaw/managed-gateway-expected-exit",
-    );
-    expect(policy.filesystem_policy?.read_write).not.toContain(
-      "/run/nemoclaw/managed-gateway-expected-exit",
-    );
-  });
+      expect(policy.filesystem_policy?.read_only).toContain(resource);
+      expect(policy.filesystem_policy?.read_write).not.toContain(resource);
+    },
+  );
 
   it.each(["startup", "coordinator", "sibling", "ownership"] as const)(
     "allows the OpenClaw restore %s path as read-only code",

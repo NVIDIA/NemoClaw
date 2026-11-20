@@ -29,9 +29,9 @@ import { OPENCLAW_SESSION_EVIDENCE_SCRIPT } from "../live/launch-agent-turn.ts";
 type SessionRecords = Record<string, string[]>;
 
 interface SqliteSessionRecord {
-  eventJson: string;
+  eventJson: string | Uint8Array | null;
   seq: number;
-  sessionId: string;
+  sessionId: string | Uint8Array;
 }
 
 function message(role: "assistant" | "user", content = "nonempty"): string {
@@ -80,16 +80,20 @@ function sqlitePathForSessionRoot(sessionRoot: string): string {
   return join(sessionRoot, "..", "agent", "openclaw-agent.sqlite");
 }
 
-function createSqliteSessionStore(sessionRoot: string, records: SqliteSessionRecord[]): string {
+function createSqliteSessionStore(
+  sessionRoot: string,
+  records: SqliteSessionRecord[],
+  relaxedColumns = false,
+): string {
   const sqlitePath = sqlitePathForSessionRoot(sessionRoot);
   mkdirSync(join(sessionRoot, "..", "agent"), { recursive: true });
   const database = new DatabaseSync(sqlitePath);
   try {
     database.exec(`
       CREATE TABLE transcript_events (
-        session_id TEXT NOT NULL,
-        seq INTEGER NOT NULL,
-        event_json TEXT NOT NULL,
+        session_id ${relaxedColumns ? "ANY" : "TEXT NOT NULL"},
+        seq ${relaxedColumns ? "ANY" : "INTEGER NOT NULL"},
+        event_json ${relaxedColumns ? "ANY" : "TEXT NOT NULL"},
         created_at INTEGER NOT NULL,
         PRIMARY KEY (session_id, seq)
       ) STRICT
@@ -98,7 +102,7 @@ function createSqliteSessionStore(sessionRoot: string, records: SqliteSessionRec
       "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)",
     );
     for (const record of records) {
-      insert.run(record.sessionId, record.seq, record.eventJson, record.seq);
+      insert.run(record.sessionId, record.seq, record.eventJson, 0);
     }
   } finally {
     database.close();
@@ -114,7 +118,7 @@ function appendSqliteSessionRecords(sqlitePath: string, records: SqliteSessionRe
       "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)",
     );
     for (const record of records) {
-      insert.run(record.sessionId, record.seq, record.eventJson, record.seq);
+      insert.run(record.sessionId, record.seq, record.eventJson, 0);
     }
   } finally {
     database.close();
@@ -215,6 +219,7 @@ function runSqliteEvidenceFixture(input: {
   after: SqliteSessionRecord[];
   before?: SqliteSessionRecord[];
   expectedTurns: number;
+  relaxedColumns?: boolean;
 }) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-sqlite-evidence-"));
   const runId = randomUUID().replaceAll("-", "");
@@ -222,7 +227,11 @@ function runSqliteEvidenceFixture(input: {
   const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
   const sessionRoot = join(fixtureRoot, "sessions");
   mkdirSync(sessionRoot);
-  const sqlitePath = createSqliteSessionStore(sessionRoot, input.before ?? []);
+  const sqlitePath = createSqliteSessionStore(
+    sessionRoot,
+    input.before ?? [],
+    input.relaxedColumns,
+  );
   try {
     const baseline = spawnSync(
       process.execPath,
@@ -374,6 +383,131 @@ it("qualifies ordered turns from the OpenClaw 2026.9.1 SQLite transcript store",
   expect(baselineDocument.schemaVersion).toBe(2);
   expect(baselineDocument.sqlite.sessions).toHaveLength(1);
   expect(qualification.status, qualification.stderr).toBe(0);
+});
+
+const SQLITE_SESSION_CANARY = "private-session-canary-984512735";
+const SQLITE_CONTENT_CANARY = "private-transcript-canary-984512735";
+const sqliteDiagnosticRecord = (): SqliteSessionRecord => ({
+  eventJson: message("user", SQLITE_CONTENT_CANARY),
+  seq: 984512735,
+  sessionId: SQLITE_SESSION_CANARY,
+});
+
+it.each([
+  {
+    label: "nonstring session ID",
+    record: () => ({ ...sqliteDiagnosticRecord(), sessionId: Buffer.from(SQLITE_SESSION_CANARY) }),
+    field: "sessionId",
+    type: "object",
+    failedCheck: "sessionIdString",
+    lengths: { sessionIdBytesCapped: null },
+  },
+  {
+    label: "empty session ID",
+    record: () => ({ ...sqliteDiagnosticRecord(), sessionId: "" }),
+    field: "sessionId",
+    type: "string",
+    failedCheck: "sessionIdNonempty",
+    lengths: { sessionIdBytesCapped: 0 },
+  },
+  {
+    label: "oversized UTF-8 session ID",
+    record: () => ({
+      ...sqliteDiagnosticRecord(),
+      sessionId: SQLITE_SESSION_CANARY + "🔒".repeat(129),
+    }),
+    field: "sessionId",
+    type: "string",
+    failedCheck: "sessionIdWithin512Bytes",
+    lengths: { sessionIdBytesCapped: 513 },
+  },
+  {
+    label: "fractional sequence",
+    record: () => ({ ...sqliteDiagnosticRecord(), seq: 984512735.5 }),
+    field: "seq",
+    type: "number",
+    failedCheck: "seqSafeInteger",
+    lengths: {},
+  },
+  {
+    label: "negative sequence",
+    record: () => ({ ...sqliteDiagnosticRecord(), seq: -984512735 }),
+    field: "seq",
+    type: "number",
+    failedCheck: "seqNonnegative",
+    lengths: {},
+  },
+  {
+    label: "nonstring event JSON",
+    record: () => ({ ...sqliteDiagnosticRecord(), eventJson: Buffer.from(SQLITE_CONTENT_CANARY) }),
+    field: "eventJson",
+    type: "object",
+    failedCheck: "eventJsonString",
+    lengths: { eventJsonBytesCapped: null },
+  },
+  {
+    label: "null event JSON",
+    record: () => ({ ...sqliteDiagnosticRecord(), eventJson: null }),
+    field: "eventJson",
+    type: "null",
+    failedCheck: "eventJsonString",
+    lengths: { eventJsonBytesCapped: null },
+  },
+  {
+    label: "oversized event JSON",
+    record: () => ({
+      ...sqliteDiagnosticRecord(),
+      eventJson: SQLITE_CONTENT_CANARY.padEnd(16 * 1024 * 1024 + 1, "x"),
+    }),
+    field: "eventJson",
+    type: "string",
+    failedCheck: "eventJsonWithin16MiB",
+    lengths: { eventJsonBytesCapped: 16 * 1024 * 1024 + 1 },
+  },
+])("reports bounded field metadata for a $label without transcript contents", (input) => {
+  const { baseline, qualification } = runSqliteEvidenceFixture({
+    after: [input.record()],
+    expectedTurns: 1,
+    relaxedColumns: true,
+  });
+  expect(baseline.status).toBe(0);
+  expect(qualification.status).toBe(2);
+  expect(qualification.stdout).toBe("");
+  const diagnostic = JSON.parse(qualification.stderr);
+  expect(Object.keys(diagnostic).sort()).toEqual([
+    "checks",
+    "diagnosticVersion",
+    "lengths",
+    "phase",
+    "reason",
+    "types",
+  ]);
+  expect(diagnostic.reason).toBe("sqlite_session_record_invalid");
+  expect(diagnostic.diagnosticVersion).toBe(1);
+  expect(diagnostic.phase).toBe("qualify");
+  expect(Object.keys(diagnostic.types).sort()).toEqual(["eventJson", "seq", "sessionId"]);
+  expect(diagnostic.types[input.field]).toBe(input.type);
+  expect(Object.keys(diagnostic.checks).sort()).toEqual([
+    "eventJsonString",
+    "eventJsonWithin16MiB",
+    "seqNonnegative",
+    "seqSafeInteger",
+    "sessionIdNonempty",
+    "sessionIdString",
+    "sessionIdWithin512Bytes",
+  ]);
+  expect(diagnostic.checks[input.failedCheck]).toBe(false);
+  expect(Object.values(diagnostic.checks).every((value) => typeof value === "boolean")).toBe(true);
+  expect(Object.keys(diagnostic.lengths).sort()).toEqual([
+    "eventJsonBytesCapped",
+    "sessionIdBytesCapped",
+  ]);
+  expect(diagnostic.lengths).toMatchObject(input.lengths);
+  expect(Buffer.byteLength(qualification.stderr)).toBeLessThanOrEqual(1024);
+  expect(qualification.stderr).not.toContain(SQLITE_SESSION_CANARY);
+  expect(qualification.stderr).not.toContain(SQLITE_CONTENT_CANARY);
+  expect(qualification.stderr).not.toContain("984512735");
+  expect(qualification.stderr).not.toContain("openclaw-agent.sqlite");
 });
 
 it("identifies unsafe SQLite permissions without exposing transcript contents", () => {

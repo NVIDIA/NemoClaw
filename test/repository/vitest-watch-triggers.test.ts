@@ -117,6 +117,12 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it("selects the security review procedure test when its skill changes", () => {
+    expect(triggeredBy(".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md")).toEqual(
+      ["test/security/security-review-paths.test.ts"],
+    );
+  });
+
   it("selects the root network-policy schema consumer", () => {
     expect(triggeredBy("schemas/network-policy.schema.json")).toEqual([
       "test/onboarding/validate-config-schemas.test.ts",
@@ -159,6 +165,9 @@ describe("Vitest opaque-input watch triggers", () => {
     "maps YAML workflow files to the shared display-name contract [%s]",
     (workflowPath) => {
       expect(resolveVitestWatchTests(path.resolve(workflowPath))).toContain(WORKFLOW_NAME_TEST);
+      expect(resolveVitestWatchTests(path.resolve(workflowPath))).toContain(
+        "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      );
     },
   );
 
@@ -318,6 +327,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
+      "test/inference/managed/hermes-policy-cleanup-workflow.test.ts",
       "test/inference/managed/managed-image-discord-workflow-boundary.test.ts",
       "test/e2e/support/managed-podman-docker-guard.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",

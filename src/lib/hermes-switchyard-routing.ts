@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 
 import {
   hostedNativeProvider,
@@ -18,6 +19,7 @@ import {
 export const HERMES_SWITCHYARD_ROUTING_SCHEMA_VERSION = 1 as const;
 export const HERMES_SWITCHYARD_ROUTE_ID = "switchyard" as const;
 export const HERMES_SWITCHYARD_ROUTING_ENV = "NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64" as const;
+export const HERMES_SWITCHYARD_FINGERPRINT_ENV = "NEMOCLAW_HERMES_SWITCHYARD_SHA256" as const;
 export const HERMES_RELAY_PLUGINS_ENV = "HERMES_NEMO_RELAY_PLUGINS_TOML" as const;
 export const HERMES_RELAY_PLUGINS_FILE =
   "/usr/local/share/nemoclaw/hermes-relay-plugins.toml" as const;
@@ -84,6 +86,19 @@ export interface SerializedHermesSwitchyardRouting {
   readonly relayPluginsToml: string;
   readonly relayPluginStateJson: string;
   readonly switchyardDeploymentToml: string;
+}
+
+/** Expected startup inputs, not evidence of activation inside a running gateway. */
+export function fingerprintHermesSwitchyardRouting(
+  files: SerializedHermesSwitchyardRouting,
+): string {
+  return createHash("sha256")
+    .update(
+      [files.relayPluginsToml, files.relayPluginStateJson, files.switchyardDeploymentToml].join(
+        "\0",
+      ),
+    )
+    .digest("hex");
 }
 
 export class HermesSwitchyardRoutingError extends Error {
@@ -366,6 +381,9 @@ function clientAndTargetToml(
     `base_url = ${tomlString(observed.endpointUrl)}`,
     `api_key_env = ${tomlString(observed.credentialEnv)}`,
     "forward_auth = false",
+    // Per client call, including the complete stream; not a whole-turn deadline.
+    "timeout_ms = 120000",
+    "max_retries = 0",
     ...(Object.keys(client.extraHeaders).length > 0
       ? [`extra_headers = ${tomlStringMap(client.extraHeaders)}`]
       : []),

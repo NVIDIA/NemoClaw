@@ -10,6 +10,10 @@ const mocks = vi.hoisted(() => ({
   buildExportConfig: vi.fn(),
   renderCanonicalNemoClawConfig: vi.fn(),
   publishExportFile: vi.fn(),
+  exportOmissions: vi.fn(),
+}));
+vi.mock("../../lib/domain/config/export-omissions", () => ({
+  exportOmissions: mocks.exportOmissions,
 }));
 
 vi.mock("../../lib/config/canonical", () => ({
@@ -35,11 +39,18 @@ vi.mock("../../lib/actions/config/observe-export-source", async (importOriginal)
   observeStableExportSource: mocks.observeStableExportSource,
 }));
 
+import { createHash } from "node:crypto";
 import { Check } from "typebox/value";
 import { ConfigExportResultSchema } from "../../lib/actions/config/export";
 import ConfigExportCommand from "./export";
 
 const documentDigest = "sha256:" + "a".repeat(64);
+/** The result's documentDigest covers the published bytes, report header included. */
+const publishedDigest = () =>
+  "sha256:" +
+  createHash("sha256")
+    .update(String(mocks.publishExportFile.mock.calls[0]![1]), "utf8")
+    .digest("hex");
 const specDigest = "sha256:" + "b".repeat(64);
 const caOmissionNotice =
   "The source's corporate CA configuration is not included in the exported YAML. Review destination trust requirements before deployment.";
@@ -56,7 +67,11 @@ describe("config export command", () => {
       source: { sandboxName: "alpha" },
       attempts: 1,
     });
-    mocks.buildExportConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
+    mocks.exportOmissions.mockReset().mockReturnValue([]);
+    mocks.buildExportConfig.mockReset().mockReturnValue({
+      kind: "NemoClawConfig",
+      spec: { gateway: { endpoint: "http://127.0.0.1:18080" } },
+    });
     mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
       yaml: "kind: NemoClawConfig\n",
       documentDigest,
@@ -96,12 +111,37 @@ describe("config export command", () => {
         { sandboxName: "alpha" },
         expect.objectContaining({ documentName: "team-alpha", documentUid: expect.any(String) }),
       );
-      expect(write).toHaveBeenCalledWith("kind: NemoClawConfig\n", expect.any(Function));
+      expect(write).toHaveBeenCalledWith(
+        expect.stringMatching(/^# nemoclaw-export-report: 1\n[\s\S]*kind: NemoClawConfig\n$/),
+        expect.any(Function),
+      );
       expect(write).toHaveBeenCalledTimes(1);
       expect(notice.mock.calls).toEqual(notices);
       expect(mocks.publishExportFile).not.toHaveBeenCalled();
     },
   );
+
+  it("prints one warning per omitted field on stderr and keeps YAML on stdout (#14580)", async () => {
+    const notice = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.exportOmissions.mockReturnValue([
+      { field: "proxy", kind: "omitted", message: "proxy is not included in the exported YAML: x" },
+      { field: "image.ref", kind: "placeholder", message: "image.ref is a placeholder: y" },
+    ]);
+    vi.spyOn(process.stdout, "write").mockImplementation(((
+      _: string,
+      callback?: (error?: Error | null) => void,
+    ) => {
+      callback?.();
+      return true;
+    }) as typeof process.stdout.write);
+    await expect(
+      ConfigExportCommand.run(["alpha", "--output", "-"], process.cwd()),
+    ).resolves.toBeUndefined();
+    expect(notice.mock.calls).toEqual([
+      ["Warning: proxy is not included in the exported YAML: x"],
+      ["Warning: image.ref is a placeholder: y"],
+    ]);
+  });
 
   it("does not report CA omission when YAML stdout fails (#12146)", async () => {
     const notice = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -212,7 +252,9 @@ describe("config export command", () => {
 
     await expect(
       ConfigExportCommand.run(["alpha", "--output", "-"], process.cwd()),
-    ).rejects.toThrow("Config export failed (not-found).\nThe sandbox was not found.");
+    ).rejects.toThrow(
+      "Config export failed (not-found).\nsource.registry (not-found): The sandbox was not found.",
+    );
     expect(mocks.buildExportConfig).not.toHaveBeenCalled();
     expect(notice).not.toHaveBeenCalled();
   });
@@ -235,7 +277,9 @@ describe("config export command", () => {
     );
 
     expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
-      error: { message: "Config export failed (not-found).\nSandbox missing." },
+      error: {
+        message: "Config export failed (not-found).\nsource.registry (not-found): Sandbox missing.",
+      },
     });
     expect(process.exitCode).not.toBe(0);
     expect(mocks.buildExportConfig).not.toHaveBeenCalled();
@@ -280,7 +324,7 @@ describe("config export command", () => {
         status: "succeeded",
         sourceSandbox: "alpha",
         outputPath: "/tmp/alpha.yaml",
-        documentDigest,
+        documentDigest: publishedDigest(),
         specDigest,
       });
       expect(Check(ConfigExportResultSchema, result)).toBe(true);
@@ -288,7 +332,7 @@ describe("config export command", () => {
       expect(notice.mock.calls).toEqual(notices);
       expect(mocks.publishExportFile).toHaveBeenCalledWith(
         "/tmp/alpha.yaml",
-        "kind: NemoClawConfig\n",
+        expect.stringMatching(/^# nemoclaw-export-report: 1\n[\s\S]*kind: NemoClawConfig\n$/),
         false,
       );
     },
@@ -315,7 +359,7 @@ describe("config export command", () => {
         status: "succeeded",
         sourceSandbox: "alpha",
         outputPath: "/tmp/alpha.yaml",
-        documentDigest,
+        documentDigest: publishedDigest(),
         specDigest,
       });
       expect(Check(ConfigExportResultSchema, result)).toBe(true);
@@ -324,7 +368,7 @@ describe("config export command", () => {
       expect(notice.mock.calls).toEqual(notices);
       expect(mocks.publishExportFile).toHaveBeenCalledWith(
         "/tmp/alpha.yaml",
-        "kind: NemoClawConfig\n",
+        expect.stringMatching(/^# nemoclaw-export-report: 1\n[\s\S]*kind: NemoClawConfig\n$/),
         false,
       );
     },

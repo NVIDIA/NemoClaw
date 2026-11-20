@@ -8,6 +8,9 @@ import {
   encodeSwitchyardProviderBindings,
   HERMES_SWITCHYARD_BINDINGS_ENV,
   HERMES_SWITCHYARD_ROUTING_ENV,
+  HERMES_SWITCHYARD_FINGERPRINT_ENV,
+  fingerprintHermesSwitchyardRouting,
+  serializeHermesSwitchyardRouting,
 } from "../../hermes-switchyard-routing";
 
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
@@ -483,6 +486,14 @@ function mapHermesProfile(
   delete runtimeEnvironment.NEMOCLAW_MESSAGING_PLAN_B64;
   delete runtimeEnvironment[HERMES_SWITCHYARD_ROUTING_ENV];
   delete runtimeEnvironment[HERMES_SWITCHYARD_BINDINGS_ENV];
+  if (profile.agentConfig.switchyardRouting && profile.agentConfig.switchyardBindings) {
+    runtimeEnvironment[HERMES_SWITCHYARD_FINGERPRINT_ENV] = fingerprintHermesSwitchyardRouting(
+      serializeHermesSwitchyardRouting(
+        profile.agentConfig.switchyardRouting,
+        profile.agentConfig.switchyardBindings,
+      ),
+    );
+  }
   runtimeEnvironment.NEMOCLAW_DASHBOARD_PORT =
     profile.dashboard.publicPort === null ? "" : String(profile.dashboard.publicPort);
   runtimeEnvironment.NEMOCLAW_HERMES_DASHBOARD =

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   type ReviewedGatewayUpgradeFixture,
   REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURES,
 } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
@@ -33,6 +35,7 @@ function historicalReleaseCommitRef(nemoclawRef: string): string {
 function assertHistoricalReleaseIdentity(identity: {
   nemoclawCommit: string;
   nemoclawRef: string;
+  installerSha256: string;
 }): void {
   const resolved = spawnSync(
     "git",
@@ -55,6 +58,15 @@ function assertHistoricalReleaseIdentity(identity: {
     resolved.stdout.trim(),
     `Historical NemoClaw release ${identity.nemoclawRef} must resolve to reviewed commit ${identity.nemoclawCommit}`,
   ).toBe(identity.nemoclawCommit);
+  const installer = spawnSync(
+    "git",
+    ["-C", REPO_ROOT, "show", `${identity.nemoclawCommit}:install.sh`],
+    { killSignal: "SIGKILL", timeout: SYNC_SUBPROCESS_TIMEOUT_MS },
+  );
+  expect(installer.status, installer.stderr.toString()).toBe(0);
+  expect(createHash("sha256").update(installer.stdout).digest("hex")).toBe(
+    identity.installerSha256,
+  );
 }
 
 function writeInstallerHarness(sourceRoot: string): {
@@ -298,13 +310,17 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
     expect(dockerfile).toContain("audit signatures");
   }, 30_000);
 
-  it("accepts the v0.0.123 zero-advisory upgrade boundary (#11898)", () => {
-    const dockerfile = runReviewedHistoricalFixture(REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE);
-    expect(dockerfile).not.toContain("audit --omit=dev --audit-level=low");
-    expect(dockerfile).not.toContain(
-      "Skipping current advisory audit for the immutable historical mcporter lock",
-    );
-  }, 30_000);
+  it.each([REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE, REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE])(
+    "accepts the $nemoclawRef zero-advisory upgrade boundary (#14268)",
+    (fixture) => {
+      const dockerfile = runReviewedHistoricalFixture(fixture);
+      expect(dockerfile).not.toContain("audit --omit=dev --audit-level=low");
+      expect(dockerfile).not.toContain(
+        "Skipping current advisory audit for the immutable historical mcporter lock",
+      );
+    },
+    30_000,
+  );
 
   it("rejects an ambiguous historical advisory boundary", () => {
     const fixture = writeHistoricalFixture(2);

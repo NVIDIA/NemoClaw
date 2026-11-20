@@ -14,6 +14,100 @@ import {
   HERMES_SWITCHYARD_LOCAL_UPSTREAM,
   HERMES_SWITCHYARD_PROVISION_CONFIG_HASHES,
 } from "../fixtures/hermes-switchyard-package.ts";
+import {
+  HERMES_SWITCHYARD_BOUNDS_REQUEST,
+  HERMES_SWITCHYARD_BOUNDS_WORKER,
+} from "../fixtures/hermes-switchyard-bounds.ts";
+
+test.each(["efficient", "capable", "judge"])(
+  "%s bounds request selects streaming only for answer clients",
+  (target) => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        HERMES_SWITCHYARD_BOUNDS_REQUEST +
+          String.raw`
+import json
+import sys
+print(json.dumps(bounds_request_body(sys.argv[1])))
+`,
+        target,
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      model: "switchyard",
+      messages: [{ role: "user", content: "Bound this fixture call." }],
+      stream: target !== "judge",
+    });
+  },
+);
+
+test("bounds worker compiles as an isolated Python program", () => {
+  const result = spawnSync(
+    "python3",
+    [
+      "-I",
+      "-c",
+      String.raw`
+import sys
+compile(sys.stdin.read(), '<native-bounds-worker>', 'exec')
+`,
+    ],
+    { input: HERMES_SWITCHYARD_BOUNDS_WORKER, encoding: "utf8", timeout: 10_000 },
+  );
+  expect(result.status, result.stderr).toBe(0);
+});
+
+test.each(["retryable", "buffered-stall", "stream-stall"])(
+  "%s provider fault retains authenticated evidence and releases its server",
+  (fault) => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        HERMES_SWITCHYARD_LOCAL_UPSTREAM +
+          String.raw`
+import sys
+from tempfile import TemporaryDirectory
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+fault = sys.argv[1]
+streaming = fault == 'stream-stall'
+with TemporaryDirectory() as directory:
+    with LocalUpstream('efficient', Path(directory) / 'calls.jsonl',
+                       fault='retryable' if fault == 'retryable' else 'stall') as upstream:
+        request = Request(upstream.base_url + '/chat/completions',
+            data=json.dumps({'model': 'fixture-efficient', 'stream': streaming}).encode(),
+            headers={'authorization': 'Bearer xapp-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY'})
+        if fault == 'retryable':
+            try:
+                urlopen(request, timeout=2)
+                raise AssertionError('retryable fixture succeeded')
+            except HTTPError as error:
+                assert error.code == 503 and error.headers['retry-after'] == '0'
+        else:
+            with urlopen(request, timeout=2) as response:
+                if streaming:
+                    assert json.loads(response.readline().decode().removeprefix('data: '))['choices'][0]['delta']['content'] == 'partial'
+                else:
+                    assert response.read(1) == b' '
+            assert upstream.released.wait(2), 'fixture did not observe client connection release'
+        assert len(upstream.calls) == 1 and len(upstream.faults) == 1
+        assert (Path(directory) / 'calls.jsonl').is_file()
+    assert not upstream.thread.is_alive()
+`,
+        fault,
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+  },
+);
 
 test.each(["reuse-capable", "dedicated"] as const)(
   "%s fixture localizes each production client without changing judge selection or credentials",

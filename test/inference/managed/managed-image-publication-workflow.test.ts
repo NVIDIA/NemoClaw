@@ -29,7 +29,6 @@ import {
 import type { Job, Workflow } from "../../helpers/managed-image-publication-workflow-types";
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
-const reviewedAuditAction = "./.github/actions/ci-reviewed-npm-audit";
 const reviewedAuditSha = "e0769ad0e6783e4108a1f26cc44b162f1f7ecc3f";
 
 function needsOutput(job: string, output: string): string {
@@ -133,7 +132,7 @@ describe("complete managed-image publication workflow", () => {
       "Audit exact PR production npm graphs",
     );
     expect(prAudit.with?.["cache-directory"]).toBe("${{ runner.temp }}/reviewed-npm-audit-cache");
-    expect(prAudit.uses).toBe(reviewedAuditAction);
+    expect(prAudit.uses).toBe("./.trusted-npm-audit/.github/actions/ci-reviewed-npm-audit");
     expect(managedAudit.with?.["cache-directory"]).toBe(
       "${{ runner.temp }}/reviewed-npm-audit-cache",
     );
@@ -450,7 +449,7 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(reviewedAudit).toMatchObject({
       if: "github.event_name == 'pull_request'",
-      permissions: { contents: "read" },
+      permissions: { contents: "read", "pull-requests": "read" },
       "runs-on": "ubuntu-latest",
       "timeout-minutes": 25,
     });
@@ -461,7 +460,7 @@ describe("complete managed-image publication workflow", () => {
       "persist-credentials": false,
     });
     expect(step(reviewedAudit, "Audit exact PR production npm graphs")).toMatchObject({
-      uses: "./candidate/.github/actions/ci-reviewed-npm-audit",
+      uses: "./.trusted-npm-audit/.github/actions/ci-reviewed-npm-audit",
       with: {
         "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
         "report-dir": "artifacts/reviewed-npm-audit",
@@ -871,6 +870,8 @@ describe("complete managed-image publication workflow", () => {
         expect.arrayContaining([
           "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
           "test/e2e/fixtures/hermes-switchyard-package.ts",
+          "test/e2e/fixtures/hermes-switchyard-bounds.ts",
+          "src/lib/hermes-switchyard-routing.ts",
         ]),
       );
       const builder = required(workflow.jobs?.[job], `missing ${job}`);

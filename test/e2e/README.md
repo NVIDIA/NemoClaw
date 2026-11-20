@@ -5,6 +5,13 @@
 
 Direct E2E coverage runs through Vitest.
 
+The Deep Agents Code baseline target owns native conversation preservation across rebuild.
+Its existing invalid-credential lifecycle creates a real `dcode` thread containing parenthesized SQL bind markers.
+The installed thread inspector reads that conversation before and after sandbox replacement.
+After `dcode` resumes, the inspector verifies the new user turn in the original thread.
+Classifier, SQLite TEXT/BLOB, and WAL archive tests own deterministic parsing, credential denials, and database immutability.
+A passing support test validates the scenario wiring; qualification still requires a live result for the tested revision.
+
 The `sandbox-survival` target retains the raw OpenShell stop/start proof and
 also checks cold public OpenClaw recovery on Docker and native Podman. After
 public `stop`, it invokes `recover` once without warming the command transport
@@ -30,6 +37,27 @@ provider attachment, persisted state, native configuration, stop/start, and clea
 The native Hermes rebuild receives the synthetic transport separately from the
 stored bot token. The rebuild still reads that token from its credential store.
 
+The `hermes-e2e` target also exercises the packaged native Switchyard plugin through real
+OpenShell credential injection and egress enforcement. A host-side HTTP fixture supplies a
+healthy provider and a separately listening destination forbidden by the fixture's effective policy.
+Two attached providers have independent issued handles and endpoint bindings. Each handle works
+at its own endpoint; using it at the other healthy endpoint must fail before that peer sees a request.
+The test also checks successful judge/answer routing, a forbidden redirect, direct destination
+denial, provider failure and recovery, caller-auth non-disclosure, and salted scans for both credentials.
+Disabled managed execution and an unmatched model exercise the original-provider continuation
+against an allowed endpoint and the forbidden peer. These controlled callbacks qualify the native
+continuation and OpenShell boundary, not universal Hermes interception or the supervised adaptive journey.
+It restores the fixture policy and removes both providers in `finally`. Only temporary child-process transport configuration changes; production
+provider validation and protected startup files stay unchanged. This does not qualify hosted
+provider TLS, adaptive onboarding, or `inference.local` isolation in a routed sandbox. The
+standard Hermes sandbox can retain that legacy route on the current OpenShell 0.0.116 pin.
+This phase adds no shared-route control or new `inference.local` offering and imposes no policy tier restriction.
+Probe output contains only fixed answers, booleans, observed callback status and bounded failure categories.
+Relay 0.8.x can omit upstream details for unmatched routes; unobserved status stays unavailable rather
+than being reconstructed from provider bodies. Captured probe streams are capped at 4096 bytes.
+Support tests own fixture responses, redacted evidence, and probe syntax; they are not live OpenShell evidence.
+Judge-preflight tests distinguish a withheld probe from a sent request that failed and verify cleanup for both.
+
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
@@ -39,7 +67,8 @@ through the `switchyard` route and requires the classifier to select the efficie
 It then runs the shipped judge qualifier against native routing marks and separate
 judge/answer token accounting. The qualifier's deterministic tests own evidence rejection,
 cleanup, and both gateway launch gates. A separate routed-startup scenario installs the
-production-generated routing files at their root-owned production paths. It starts the real
+production-generated routing files through the production publisher, including its native
+request-free validation and lock. It passes the resulting expected-input fingerprint and starts the real
 entrypoint with resolver placeholders and local provider fixtures on a network-disabled
 container. It covers both a reused capable judge and an explicitly configured dedicated
 judge. Each mode requires the selected judge and answer calls before the gateway listens,
@@ -49,6 +78,18 @@ The packaged qualifier validates classification and separate token accounting be
 continues. This proves the successful entrypoint handoff, not OpenShell credential rewriting
 or real provider access. Container cleanup removes the fixture processes, placeholders, and
 routing files. The clean package probe still leaves its supervised gateway unchanged.
+Each routed-startup mode also checks the native client deadline and retry policy in isolated
+gateway-user processes with authenticated loopback providers. Efficient and capable answer streams
+emit one partial event after 20 seconds and then stall; the selected judge sends a delayed body
+prefix after response headers. Each call must fail at the unchanged 120-second client deadline, with scheduling tolerance,
+and make one attempt. Separate HTTP 503 cases exhaust the configured answer candidates, with
+one failed attempt per physical call. Judge failures stop before answer selection.
+One active answer stream per judge mode is cancelled after its partial event. Caller settlement
+and runtime shutdown each have a five-second bound; the fixture must observe upstream connection
+release before runtime shutdown. Timeout and cancellation cases reject fallback, replay, successful
+stream terminators, and native routing bypass. Every case retains a bounded result before aggregate
+failure. A separate process watchdog fails a hung probe; it cannot establish deadline success.
+The cases run concurrently in separate native processes and are removed with their owned container.
 `support/hermes-switchyard-upstream.test.ts` owns deterministic fixture authentication,
 per-client endpoint localization, and preservation of production judge selection and credentials.
 `test/agents/hermes/hermes-switchyard-package.test.ts`
@@ -788,11 +829,18 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prepare private OpenShell and npm install locations before the historical install, preserving existing private executables. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
+| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89, v0.0.123, and v0.0.141 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prepare private OpenShell and npm install locations before the historical install, preserving existing private executables. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 The gateway fixture sets a canonical private `XDG_BIN_HOME` for both installer generations.
 Its current installer still receives duplicate-slash `HOME` and `XDG_CONFIG_HOME` values for the systemd service scenario.
+
+The v0.0.123 fixture uses one running survivor and one stopped sandbox.
+Both retain workspace-preservation checks; the stopped sandbox also retains its lifecycle check and stopped-phase assertion.
+This replaces the original three-sandbox topology with the smallest mixed-state recovery case.
+The removed second stopped sandbox repeated the same backup, migration, restore, and lifecycle path.
+The live target no longer qualifies recovery with two stopped sandboxes in one upgrade.
+The installer deadline remains 35 minutes; measured runtime for this smaller fixture still requires live qualification.
 
 These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
@@ -806,6 +854,13 @@ Deterministic tests own installer identity, OpenShell release asset selection,
 NemoClaw restore behavior, and Dockerfile patch behavior. The live target does not
 assert OpenClaw database tables, migration checkpoints, or other third-party
 storage details.
+
+The v0.0.141 fixture adds recent-release compatibility with one running and one stopped sandbox.
+It retains the released OpenShell 0.0.116 path, so it does not substitute for historical gateway replacement coverage.
+The existing support tests verify fixture identity, archive pins, and adapter behavior.
+The recent fixture uses the native agent RPC before and after upgrade because its convenience command requests administrator scope.
+Manual PR selection uses the catalogue from trusted `main`; a newly added selector becomes available after that catalogue merges.
+The OpenShell destination and workspace marker repairs in PR #14276 are prerequisites for completing upgrade qualification.
 
 The retained live target owns the released-gateway upgrade and usable-survivor
 boundary. Deterministic rebuild-flow tests own post-backup recreate failure,
@@ -1292,7 +1347,7 @@ The GPU memory-offload assertion also rejects a missing matching process because
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies attached-Ollama and fixed managed-vLLM configuration export on
-native Linux Docker. Each scenario runs the candidate CLI, checks its named service and `image: null`,
+native Linux Docker. Each scenario runs the candidate CLI, checks its named service and placeholder `image`,
 rejects credential disclosure, and retains the generated YAML. The existing CUDA, authentication,
 and inference lifecycle scenarios remain separate. The catalogue allows 150 minutes for this target.
 The fixture retries read-only daemon readiness checks on connection refusal or curl
@@ -1724,10 +1779,13 @@ installation and replacement; JSON plugin inventory proves removal. Those
 postconditions replace redundant install and uninstall exit checks. The same
 checks run for source installs and baked Launchables.
 `rebuild-openclaw` proves a user-installed native plugin survives rebuild with
-no NemoClaw ownership metadata. On the pinned Docker runtime it then kills the exact test-owned
-container, observes `Error`, and requires a different container to restore both the workspace and
-native plugin, with the OpenClaw health endpoint ready. This uses the same identity-fenced disruption
-helper as the MCP target, but reaches recovery independently of MCP networking. The retained receipt
+no NemoClaw ownership metadata. On the pinned Docker runtime, it kills the exact test-owned
+container and observes `Error`. A different container must restore the workspace and native plugin,
+and the OpenClaw health endpoint must become ready. It also stops the source through OpenShell,
+verifies the same source is `Stopped` with its Docker container stopped, and repeats recovery.
+The CLI observer's deterministic tests own the `Stopped` to `not_ready` mapping.
+The identity-fenced disruption helper is shared with the MCP target; native readiness and MCP
+networking remain separate contracts. The retained receipt
 identifies whether native readiness or provider-backed MCP was proved; neither substitutes for the
 other. The original healthy-source checks and all MCP assertions remain in place. `rebuild-hermes` proves native user-plugin and
 lazy-package state survive rebuild. Managed-image activation exercises native

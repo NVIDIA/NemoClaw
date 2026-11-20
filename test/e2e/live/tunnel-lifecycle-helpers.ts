@@ -579,7 +579,7 @@ export async function runTunnelLifecycleContract({
     if (observation > 0) await sleep(15_000);
     const inventory = await host.command(
       host.openshellCommandPath,
-      ["--gateway", TUNNEL_GATEWAY_NAME, "sandbox", "list", "--output", "json"],
+      ["--gateway", TUNNEL_GATEWAY_NAME, "sandbox", "list"],
       {
         artifactName: `sandbox-after-tunnel-stop-${observation}`,
         env: tunnelLifecycleCommandEnv(),
@@ -613,16 +613,23 @@ export async function runTunnelLifecycleContract({
     skip("[Cloudflare fault] Quick-tunnel registration failed during restart before destroy.");
   }
   expect(restart.exitCode, resultText(restart)).toBe(0);
-  const restartedStatus = await host.nemoclaw(["tunnel", "status"], {
-    artifactName: "tunnel-status-before-destroy",
-    env: tunnelLifecycleCommandEnv(),
-    timeoutMs: COMMAND_TIMEOUT_MS,
-  });
-  const restartedStatusText = resultText(restartedStatus);
-  const tunnelPid = extractTunnelPid(restartedStatusText);
-  const restartedUrl = extractTunnelUrl(restartedStatusText);
+  let restartedStatus: ShellProbeResult | undefined;
+  let tunnelPid: number | undefined;
+  let restartedUrl: string | undefined;
+  for (let attempt = 1; attempt <= 15; attempt += 1) {
+    restartedStatus = await host.nemoclaw(["tunnel", "status"], {
+      artifactName: `tunnel-status-before-destroy-${attempt}`,
+      env: tunnelLifecycleCommandEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    const restartedStatusText = resultText(restartedStatus);
+    tunnelPid = extractTunnelPid(restartedStatusText);
+    restartedUrl = extractTunnelUrl(restartedStatusText);
+    if (restartedStatus.exitCode === 0 && tunnelPid && restartedUrl) break;
+    await sleep(1_000);
+  }
   expect(
-    restartedStatus.exitCode === 0 && tunnelPid && restartedUrl,
+    restartedStatus?.exitCode === 0 && tunnelPid && restartedUrl,
     "status must report the restarted cloudflared PID and public URL before destroy",
   ).toBeTruthy();
 
