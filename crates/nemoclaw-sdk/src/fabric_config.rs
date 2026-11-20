@@ -3,10 +3,29 @@
 //! Deployment-owned projection into the public Fabric configuration contract.
 use crate::config::{ConfigError, Document, NamedSandbox};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 /// Resolve deployment references without interpreting native adapter settings.
 /// This exact configuration is planned against the image descriptors and sent to Fabric.
 pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Value, ConfigError> {
+    Ok(projection(document, sandbox)?.0)
+}
+
+/// The Fabric configuration and where each of its fields was authored: a map
+/// from a generated Fabric path to the path of the field the user wrote. A
+/// path stands for everything beneath it, so a rejected `models.default.max_tokens`
+/// finds `<route>.overrides.maxTokens` and a rejected `tools.enabled.x` finds
+/// `agent.tools.enabled.x`. The empty path names the sandbox, for fields the
+/// deployment generates from nothing the user wrote.
+pub type Provenance = BTreeMap<String, String>;
+
+/// The configuration for `sandbox` with the provenance of its fields.
+pub fn projection(
+    document: &Document,
+    sandbox: NamedSandbox<'_>,
+) -> Result<(Value, Provenance), ConfigError> {
+    let mut provenance = Provenance::new();
+    provenance.insert(String::new(), document.sandbox_path(sandbox));
     let harness = document.sandbox_harness(sandbox)?;
     let selection = document.scoped_inference(sandbox)?;
     let mut result = json!({
@@ -61,50 +80,6 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
         result["runtime"]["keep_state"] = true.into();
     }
     for route in &selection.inference.routes {
-        // Match Fabric's adapter_config_compatibility_issues until it is public.
-        // Model extensions can declare legacy sampling fields outside config.accepts.
-        for (field, authored, input_name) in [
-            (
-                "max_tokens",
-                route.overrides.tuning.max_tokens.is_some(),
-                "maxTokens",
-            ),
-            (
-                "temperature",
-                route.overrides.tuning.temperature.is_some(),
-                "temperature",
-            ),
-            ("top_p", route.overrides.tuning.top_p.is_some(), "topP"),
-        ] {
-            let extension = route
-                .overrides
-                .extensions
-                .as_ref()
-                .and_then(|values| values.get(field))
-                .is_some_and(|value| !value.is_null());
-            if (authored || extension)
-                && descriptor.is_some_and(|descriptor| {
-                    let path = format!("models.{field}");
-                    !descriptor["config"]["accepts"]
-                        .as_array()
-                        .is_some_and(|fields| fields.iter().any(|accepted| accepted == &path))
-                        && !(field != "temperature"
-                            && descriptor["extension_schemas"]["model"]["properties"]
-                                .get(field)
-                                .is_some())
-                })
-            {
-                let source = if authored {
-                    input_name.to_owned()
-                } else {
-                    format!("extensions.{field}")
-                };
-                return Err(ConfigError(format!(
-                    "{}.overrides.{source}: the adapter does not accept this model field",
-                    selection.route_path(route)
-                )));
-            }
-        }
         let provider = document.sandbox_route_registration(sandbox, route)?;
         let definition = provider.definition;
         let connection = document.provider_connection(definition)?;
@@ -155,6 +130,49 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
             projected[field] = value.clone();
         }
         result["models"][&route.name] = projected.clone();
+        let route_path = selection.route_path(route);
+        let roles: &[&str] = if route.name == selected.name {
+            &[route.name.as_str(), "default"]
+        } else {
+            &[route.name.as_str()]
+        };
+        for role in roles {
+            provenance.insert(format!("models.{role}"), route_path.clone());
+            let overrides = format!("{route_path}.overrides");
+            for (field, authored) in [
+                ("model", "model"),
+                ("max_tokens", "maxTokens"),
+                ("temperature", "temperature"),
+                ("top_p", "topP"),
+                ("settings", "settings"),
+            ] {
+                provenance.insert(
+                    format!("models.{role}.{field}"),
+                    format!("{overrides}.{authored}"),
+                );
+            }
+            if route.overrides.harness_provider.is_some() {
+                provenance.insert(
+                    format!("models.{role}.provider"),
+                    format!("{overrides}.harnessProvider"),
+                );
+            }
+            // An authored key that isn't safe to print stays under its route.
+            for field in route
+                .overrides
+                .extensions
+                .iter()
+                .flat_map(|values| values.keys())
+                .filter(|field| {
+                    nemoclaw_fabric::capabilities::diagnostic_field(field) == field.as_str()
+                })
+            {
+                provenance.insert(
+                    format!("models.{role}.{field}"),
+                    format!("{overrides}.extensions.{field}"),
+                );
+            }
+        }
         if route.name == selected.name {
             result["models"]["default"] = projected;
         }
@@ -243,7 +261,21 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
     let result = authored;
     serde_json::from_value::<nemo_fabric_core::FabricConfig>(result.clone())
         .map_err(|_| ConfigError::new("invalid public Fabric configuration"))?;
-    Ok(result)
+    // Each authored section keeps its own name in Fabric's configuration, so
+    // the authored path is the declaring definition's path plus the section.
+    let (harness_path, agent_path) = (document.harness_path(sandbox), document.agent_path(sandbox));
+    provenance.insert("harness.adapter_id".into(), format!("{harness_path}.kind"));
+    provenance.insert(
+        "harness.settings".into(),
+        format!("{harness_path}.settings"),
+    );
+    for section in ["runtime", "environment", "discovery", "telemetry", "relay"] {
+        provenance.insert(section.into(), format!("{harness_path}.{section}"));
+    }
+    for section in ["instructions", "tools", "skills", "mcp", "workflow"] {
+        provenance.insert(section.into(), format!("{agent_path}.{section}"));
+    }
+    Ok((result, provenance))
 }
 
 const TRUSTED_HTTP_HOSTS: &str = "insecure_http_model_hosts";

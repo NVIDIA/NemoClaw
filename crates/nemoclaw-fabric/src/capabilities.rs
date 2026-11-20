@@ -22,6 +22,10 @@ pub struct FabricRequirements {
     pub configuration: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filesystem_read: Option<Vec<String>>,
+    /// Where the user wrote each configuration field, keyed by Fabric path,
+    /// so a rejection names the authored field; see `fabric_config::Provenance`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub provenance: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,11 +76,11 @@ fn overall(checks: &[CapabilityCheck]) -> Support {
 }
 
 /// Whether an image can run a configuration's harness: it provides the
-/// selected adapter, that adapter declares the interfaces the configuration
-/// sets, and an explicit filesystem policy lets that adapter read its files. Whether the image's Fabric runtime is compatible is Fabric's to
-/// report when the agent starts. Whether the
-/// harness accepts the configuration is Fabric's to decide, inside the sandbox
-/// when the agent is configured.
+/// selected adapter, Fabric's own compatibility check accepts the configuration
+/// against that adapter's descriptor, and an explicit filesystem policy lets the
+/// adapter read its files. Whether the image's Fabric runtime is compatible is
+/// Fabric's to report when the agent starts, as is a workflow whose target the
+/// image's catalog doesn't describe.
 pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> CompatibilityReport {
     let adapter_id = request
         .configuration
@@ -102,10 +106,7 @@ pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> C
         },
     });
     if let Some(adapter) = adapter {
-        checks.extend(interface_checks(
-            &adapter.descriptor,
-            &request.configuration,
-        ));
+        checks.extend(configuration_checks(catalog, adapter, request));
     }
     if let (Some(adapter), Some(grants)) = (adapter, &request.filesystem_read) {
         // Fabric declares the adapter's own files; the image build declares
@@ -167,156 +168,127 @@ pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> C
     }
 }
 
-const INTERFACES: &str = "harness.settings.interfaces";
+const CONFIGURATION: &str = "fabric_configuration";
 
-/// Whether each interface the configuration sets satisfies the adapter's
-/// descriptor. Fabric's adapters list their interfaces, and each one's schema,
-/// under `settings_schema.properties.interfaces`, closed at both levels; an
-/// adapter that declares none supports none. Each interface object is checked
-/// against its own schema, so a missing port, a wrong type or an out-of-range
-/// value fails the plan before apply instead of failing Fabric's check inside
-/// the sandbox after NemoClaw has created resources. Settings outside the
-/// interfaces, and conditions across them such as OpenClaw's `port_range`
-/// with a dashboard port, are still Fabric's to check when it plans the agent.
-fn interface_checks(descriptor: &Value, configuration: &Value) -> Vec<CapabilityCheck> {
-    let Some(requested) = configuration.pointer("/harness/settings/interfaces") else {
-        return Vec::new();
+/// Whether Fabric's own compatibility check accepts the configuration against
+/// the image's adapter descriptor. Fabric decides what its adapters accept, so
+/// this reports each issue it finds, with the field the user wrote where the
+/// request records one, instead of repeating any of its rules. A workflow needs
+/// its target's descriptor; when the image's catalog has none, the check is left
+/// to Fabric when the agent starts.
+fn configuration_checks(
+    catalog: &FabricCatalog,
+    adapter: &crate::catalog::FabricAdapter,
+    request: &FabricRequirements,
+) -> Vec<CapabilityCheck> {
+    use nemo_fabric_core::{
+        AdapterDescriptor, FabricConfig, FabricError, ResolvedAdapterTargetDescriptor,
+        inspect_adapter_config,
     };
-    let unsupported = |path: String| CapabilityCheck {
-        requirement: "harness_interfaces".into(),
+    let unsupported = |reason: &str| CapabilityCheck {
+        requirement: CONFIGURATION.into(),
         status: Support::Unsupported,
-        // A name that isn't safe to print is reported by its parent setting.
-        reason: format!(
-            "{}: the image's adapter does not support this interface setting",
-            if diagnostic_field(&path) == path {
-                path.as_str()
-            } else {
-                INTERFACES
-            }
-        ),
+        reason: reason.into(),
     };
-    let declared = descriptor
-        .pointer("/settings_schema/properties/interfaces/properties")
-        .and_then(Value::as_object);
-    let Some(requested) = requested.as_object() else {
-        // The value's type is Fabric's to check, unless the adapter takes none.
-        return match declared {
-            Some(_) => Vec::new(),
-            None => vec![unsupported(INTERFACES.into())],
-        };
+    let Ok(config) = serde_json::from_value::<FabricConfig>(request.configuration.clone()) else {
+        return vec![unsupported(
+            "configuration: is not a valid Fabric configuration",
+        )];
     };
-    let mut checks = Vec::new();
-    for (name, settings) in requested {
-        let path = format!("{INTERFACES}.{name}");
-        let Some(schema) = declared.and_then(|declared| declared.get(name)) else {
-            checks.push(unsupported(path));
-            continue;
-        };
-        let fields = schema.get("properties").and_then(Value::as_object);
-        for field in settings
-            .as_object()
-            .into_iter()
-            .flat_map(|settings| settings.keys())
-        {
-            if !fields.is_some_and(|fields| fields.contains_key(field)) {
-                checks.push(unsupported(format!("{path}.{field}")));
-            }
-        }
-        let root = descriptor
-            .pointer("/settings_schema")
-            .unwrap_or(&Value::Null);
-        for (field, problem) in schema_problems(root, schema, settings) {
-            let field = format!("{path}{field}");
-            checks.push(CapabilityCheck {
-                requirement: "harness_interfaces".into(),
-                status: Support::Unsupported,
-                reason: if diagnostic_field(&field) == field {
-                    format!("{field}: {problem}")
-                } else {
-                    format!("{path}: does not satisfy the image's adapter schema")
-                },
+    let Ok(descriptor) = serde_json::from_value::<AdapterDescriptor>(adapter.descriptor.clone())
+    else {
+        return vec![unsupported(
+            "the image's descriptor for the selected adapter is malformed",
+        )];
+    };
+    let target = match &config.workflow {
+        None => None,
+        Some(workflow) => {
+            let found = catalog.targets.iter().find_map(|target| {
+                serde_json::from_value::<ResolvedAdapterTargetDescriptor>(target.clone())
+                    .ok()
+                    .map(|resolved| resolved.descriptor)
+                    .filter(|target| target.id == workflow.target_id)
             });
+            match found {
+                Some(target) => Some(target),
+                None => return Vec::new(),
+            }
         }
-    }
-    checks.sort_by(|left, right| left.reason.cmp(&right.reason));
-    checks.dedup();
+    };
+    // Fabric's reasons are fixed strings, never configured values.
+    let issues: Vec<(String, String)> =
+        match inspect_adapter_config(config, &descriptor, target.as_ref(), true) {
+            Ok(inspection) => inspection
+                .issues
+                .into_iter()
+                .map(|issue| (issue.field, issue.reason))
+                .collect(),
+            Err(
+                FabricError::InvalidConfig { field, reason }
+                | FabricError::AdapterCompatibility { field, reason, .. },
+            ) => vec![(field, reason)],
+            Err(_) => {
+                return vec![unsupported(
+                    "configuration: cannot be inspected against the image's adapter",
+                )];
+            }
+        };
+    let mut checks: Vec<CapabilityCheck> = issues
+        .iter()
+        .map(|(field, reason)| {
+            unsupported(&format!(
+                "{}: {reason}",
+                authored_field(&request.provenance, field)
+            ))
+        })
+        .collect();
+    // The selected model is configured as `default` and under its own role,
+    // which are one authored field.
+    let mut seen = std::collections::BTreeSet::new();
+    checks.retain(|check| seen.insert(check.reason.clone()));
     if checks.is_empty() {
         checks.push(CapabilityCheck {
-            requirement: "harness_interfaces".into(),
+            requirement: CONFIGURATION.into(),
             status: Support::Supported,
-            reason: "the image's adapter declares each configured interface setting".into(),
+            reason: "the image's adapter accepts the configuration".into(),
         });
     }
     checks
 }
 
-/// Refuses every schema reference outside the descriptor, so checking a schema
-/// an image advertises never reads the network or the filesystem.
-struct OfflineSchemas;
-
-impl jsonschema::Retrieve for OfflineSchemas {
-    fn retrieve(
-        &self,
-        uri: &jsonschema::Uri<String>,
-    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
-        Err(format!("external schema retrieval is disabled: {uri}").into())
-    }
-}
-
-/// Where `settings` breaks `schema`, an interface's schema within the
-/// adapter's `settings_schema` (`root`), as field suffixes such as `.port`
-/// with a fixed description; never the rejected value. Unknown fields are
-/// reported by name elsewhere. A schema that doesn't compile offline is left
-/// to Fabric.
-fn schema_problems(root: &Value, schema: &Value, settings: &Value) -> Vec<(String, &'static str)> {
-    use jsonschema::{error::ValidationErrorKind as Kind, paths::LocationSegment};
-    let mut schema = schema.clone();
-    // The interface's schema can use the dialect and definitions of the
-    // settings schema it came from.
-    if let Some(object) = schema.as_object_mut() {
-        for key in ["$schema", "$defs", "definitions"] {
-            if let Some(value) = root.get(key) {
-                object.entry(key).or_insert_with(|| value.clone());
+/// The field the user wrote for a Fabric configuration path: the longest
+/// recorded path that is the field or one of its parents, with the remainder
+/// appended, else the sandbox's, else Fabric's own path. A name that isn't safe
+/// to print is reported by its nearest parent that is.
+fn authored_field(provenance: &std::collections::BTreeMap<String, String>, field: &str) -> String {
+    let mut field = field;
+    loop {
+        if diagnostic_field(field) == field {
+            break;
+        }
+        match field.rsplit_once(['.', '[']) {
+            Some((parent, _)) => field = parent,
+            None => {
+                field = "configuration";
+                break;
             }
         }
     }
-    let Ok(validator) = jsonschema::options()
-        .with_retriever(OfflineSchemas)
-        .build(&schema)
-    else {
-        return Vec::new();
-    };
-    let mut problems = Vec::new();
-    for error in validator.iter_errors(settings) {
-        let mut field: String = error
-            .instance_path()
-            .iter()
-            .map(|segment| match segment {
-                LocationSegment::Property(name) => format!(".{name}"),
-                LocationSegment::Index(index) => format!("[{index}]"),
-            })
-            .collect();
-        let problem = match error.kind() {
-            Kind::AdditionalProperties { .. } | Kind::UnevaluatedProperties { .. } => continue,
-            Kind::Required { property } => {
-                field.push('.');
-                field.push_str(property.as_str().unwrap_or_default());
-                "is required by the image's adapter"
-            }
-            Kind::Type { .. } => "has a type the image's adapter does not accept",
-            Kind::Minimum { .. }
-            | Kind::Maximum { .. }
-            | Kind::ExclusiveMinimum { .. }
-            | Kind::ExclusiveMaximum { .. }
-            | Kind::MultipleOf { .. } => "is out of the range the image's adapter accepts",
-            Kind::Enum { .. } | Kind::Constant { .. } => {
-                "is not a value the image's adapter accepts"
-            }
-            _ => "does not satisfy the image's adapter schema",
-        };
-        problems.push((field, problem));
+    let mut prefix = field;
+    loop {
+        if let Some(authored) = provenance.get(prefix).filter(|_| !prefix.is_empty()) {
+            return format!("{authored}{}", &field[prefix.len()..]);
+        }
+        match prefix.rsplit_once(['.', '[']) {
+            Some((parent, _)) => prefix = parent,
+            None => break,
+        }
     }
-    problems
+    match provenance.get("") {
+        Some(sandbox) => format!("{sandbox}: {field}"),
+        None => field.to_owned(),
+    }
 }
 
 /// A field path or adapter name safe to show in a diagnostic, else `configuration`.

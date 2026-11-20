@@ -441,6 +441,10 @@ These changes between the `v0.1.0-rc10` and `v0.1.0-rc11` tags affect existing d
   Such a selector never matched any traffic.
 - With OpenShell 0.1.9, a policy endpoint whose host is a DNS glob no longer admits a request to a private IP address written as a literal, such as `10.0.0.5`.
   Add an endpoint for that address or list it in the endpoint's `allowed_ips`.
+- Plan asks Fabric, at NVIDIA/NeMo-Fabric `c6d1093d`, whether the image's adapter accepts each sandbox's configuration, and fails before any resource changes when it doesn't.
+  This covers harness settings, model fields, tool settings, and extensions that NemoClaw didn't check before, such as a setting the adapter's schema doesn't declare.
+  Each error names the field you wrote.
+  A workflow is checked at plan only when the image's catalog describes its target.
 - With Fabric at NVIDIA/NeMo-Fabric `main` `135147a0`, an OpenClaw agent's `skills.bundled` also selects the skills that OpenClaw's own extensions ship, such as `canvas`.
   An extension skill that the selection leaves out no longer loads.
   An agent doesn't start when `nvidia.fabric.nooa` has no `workflow.target_id`, or when the Deep Agents `local_shell` backend has neither `tools.enabled` nor `execute` in `tools.blocked`.

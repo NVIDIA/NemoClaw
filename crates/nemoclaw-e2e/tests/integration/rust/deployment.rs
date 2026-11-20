@@ -482,11 +482,8 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
     .unwrap();
     let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
     sandbox.agent.integration_refs = vec!["search".into(), "bookings".into()];
-    sandbox.harness.as_mut().unwrap().settings = Some(
-        serde_json::from_value(serde_json::json!({"native_config":{"tools":{"toolSearch":
-            {"mode":"tools","searchDefaultLimit":8,"maxSearchLimit":20}}}}))
-        .unwrap(),
-    );
+    sandbox.harness.as_mut().unwrap().settings =
+        Some(serde_json::from_value(serde_json::json!({"tools":{"toolSearch":true}})).unwrap());
     sandbox.network = serde_json::from_value(serde_json::json!({
         "tier": "isolated",
         "grants": {"docs": {"endpoints": [{

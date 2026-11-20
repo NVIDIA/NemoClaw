@@ -509,6 +509,7 @@ data fabric_harnesses (version 0)
   binaries_json: string, computed
   compatibility_status: string, computed
   config_json: string, optional
+  config_provenance_json: string, optional
   engine: string, required
   filesystem_read: list(string), optional
   image: string, required

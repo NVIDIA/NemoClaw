@@ -523,10 +523,11 @@ A route can also set `temperature` and `topP`, which the SDK passes to Fabric's 
 `harnessProvider` sets the Fabric model provider the harness uses.
 Without it, the SDK uses the inference provider's API family, `openai` or `anthropic`.
 For example, Hermes's `custom` provider turns reasoning off by default, which a hosted reasoning model might need to answer within Fabric's invocation deadline.
-Planning rejects `maxTokens`, `temperature`, and `topP` when the bundled adapter doesn't accept the field, including when set through `extensions` as `max_tokens`, `temperature`, or `top_p`.
+Planning asks Fabric whether the image's adapter accepts each model field, including a sampling field set through `extensions`.
+It rejects the plan before any resource changes when the adapter doesn't.
 The error names the authored route path.
 Remove that setting or choose an adapter that accepts it.
-Adapters outside the bundled catalog retain Fabric's validation at configuration time, and Fabric validates native values and ranges.
+Fabric validates native values and ranges when it configures the agent.
 
 The pinned OpenClaw adapter takes no native model settings, so its routes leave `overrides.settings` unset.
 For adapters that take them, the SDK forwards `settings` unchanged into the public Fabric model configuration, keeping nested null values intact.
