@@ -783,8 +783,21 @@ describe("parseVllmExtraServeArgs", () => {
     "--trust_remote_code=false",
     "--trust_remote-code",
     "--trust-remote_code=true",
+    "--trust-remote-c",
+    "--trust_remote_c=true",
+    "--trust-remote_c",
+    "--trust_r=true",
+    "--tr",
+    "--t",
+    "--config",
+    "--config=/tmp/vllm.yaml",
+    "--conf",
+    "--con=/tmp/vllm.yaml",
+    "--c",
   ])("rejects remote-code trust through %s", (argument) => {
-    const environment = { [VLLM_EXTRA_ARGS_ENV]: JSON.stringify([argument]) };
+    const environment = {
+      [VLLM_EXTRA_ARGS_ENV]: JSON.stringify([argument, "/tmp/vllm.yaml"]),
+    };
     expect(() => parseVllmExtraServeArgs(environment)).toThrow("must not enable remote model code");
     expect(() =>
       buildVllmServeCommand({ ...VLLM_MODELS[0]!, trustRemoteCode: false }, environment),

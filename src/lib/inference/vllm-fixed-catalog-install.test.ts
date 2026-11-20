@@ -598,8 +598,14 @@ describe("fixed catalog vLLM installs", () => {
     "--trust_remote_code",
     "--trust-remote-code=true",
     "--trust_remote_code=true",
+    "--trust-remote-c",
+    "--trust_remote_c=true",
+    "--t",
+    "--config",
+    "--config=/tmp/vllm.yaml",
+    "--conf",
   ])("rejects the remote-code override %s before Docker work", async (argument) => {
-    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([argument]);
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([argument, "/tmp/vllm.yaml"]);
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const readinessReports = vllmInstallTestReadinessAtMemory(profile, 63_082_733_568);
     await withActualSelectionGuard(readinessReports);

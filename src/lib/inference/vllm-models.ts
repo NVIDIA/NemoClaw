@@ -713,8 +713,14 @@ export function parseVllmExtraServeArgs(env: NodeJS.ProcessEnv = process.env): s
         `${VLLM_EXTRA_ARGS_ENV}[${String(index)}] must not contain control characters.`,
       );
     }
-    if (/^--trust[-_]remote[-_]code(?:=|$)/u.test(trimmed)) {
-      throw new Error(`${VLLM_EXTRA_ARGS_ENV} must not enable remote model code.`);
+    const option = trimmed.split("=", 1)[0]!.replaceAll("_", "-");
+    if (
+      option.length > 2 &&
+      ["--trust-remote-code", "--config"].some((restricted) => restricted.startsWith(option))
+    ) {
+      throw new Error(
+        `${VLLM_EXTRA_ARGS_ENV} must not enable remote model code through trust options or config files.`,
+      );
     }
     return trimmed;
   });

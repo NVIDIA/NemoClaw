@@ -225,6 +225,22 @@ async function removeExactVllmContainer(
     /^[a-f0-9]{64}$/u.test(containerId),
     "cleanup requires the exact full Docker container ID created by this test",
   );
+  const inspection = await host.command(
+    "docker",
+    ["inspect", "--format", "{{.Id}}", VLLM_CONTAINER],
+    { artifactName: `${artifactName}-inspect`, env: e2eEnv(), timeoutMs: 30_000 },
+  );
+  return classifyDockerContainerInspection(inspection) === "absent"
+    ? undefined
+    : removePresentExactVllmContainer(host, containerId, inspection.stdout.trim(), artifactName);
+}
+
+async function removePresentExactVllmContainer(
+  host: HostCliClient,
+  containerId: string,
+  currentContainerId: string,
+  artifactName: string,
+): Promise<void> {
   const result = await host.command(
     "bash",
     [
@@ -232,17 +248,18 @@ async function removeExactVllmContainer(
       "--norc",
       "-c",
       [
-        "set -euo pipefail",
+        "set -uo pipefail",
         `container=${VLLM_CONTAINER}`,
         'expected_id="$1"',
-        'if ! current_id="$(docker inspect --format \'{{.Id}}\' "$container" 2>/dev/null)"; then exit 0; fi',
+        'current_id="$2"',
         '[[ "$current_id" == "$expected_id" ]] || { echo "refusing to remove a replacement $container container" >&2; exit 70; }',
-        'label="$(docker inspect --format \'{{ index .Config.Labels "com.nvidia.nemoclaw.managed-vllm" }}\' "$expected_id")"',
+        'label="$(docker inspect --format \'{{ index .Config.Labels "com.nvidia.nemoclaw.managed-vllm" }}\' "$expected_id")" || exit "$?"',
         '[[ "$label" == "true" ]] || { echo "refusing to remove an unmanaged $container container" >&2; exit 70; }',
         'docker rm -f "$expected_id" >/dev/null',
       ].join("\n"),
       "spark-express-vllm-cleanup",
       containerId,
+      currentContainerId,
     ],
     { artifactName, env: e2eEnv(), timeoutMs: 120_000 },
   );
