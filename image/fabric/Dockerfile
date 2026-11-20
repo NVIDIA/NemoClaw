@@ -128,18 +128,6 @@ FROM runtime-base AS interactive
 COPY --from=node /node/ /
 RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep && rm -rf /var/lib/apt/lists/*
 
-FROM interactive AS openclaw
-# Upstream owns /app as its own user; the sandbox only reads it.
-COPY --from=openclaw-upstream --chown=0:0 /app /app
-# OpenClaw's published image omits its license.
-COPY --from=sources --chmod=0644 /openclaw-LICENSE /opt/nemoclaw/source/openclaw-LICENSE
-COPY --from=openclaw-sources --chmod=0644 /sources/ubrn-source.tgz /sources/cua-driver-source.tar.gz /sources/README.md /opt/nemoclaw/source/openclaw/
-RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
-# catalog.py publishes this declaration: the files the adapter reads, which
-# explicit filesystem grants must allow, and the executables it runs.
-RUN printf '%s\n' '{"nvidia.fabric.openclaw": {"files": ["/app"], "binaries": ["node"]}}' > /opt/nemoclaw/adapters.json
-USER node
-
 FROM base AS openclaw-sources
 ARG SOURCE_DATE_EPOCH=1789516800
 COPY --from=sources /ubrn-source.tgz /sources/ubrn-source.tgz
@@ -154,6 +142,18 @@ RUN mkdir -p /src/cua \
     && cd /src/cua \
     && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
         -I 'gzip -n' -cf /sources/cua-driver-source.tar.gz LICENSE package.json libs/cua-driver
+
+FROM interactive AS openclaw
+# Upstream owns /app as its own user; the sandbox only reads it.
+COPY --from=openclaw-upstream --chown=0:0 /app /app
+# OpenClaw's published image omits its license.
+COPY --from=sources --chmod=0644 /openclaw-LICENSE /opt/nemoclaw/source/openclaw-LICENSE
+COPY --from=openclaw-sources --chmod=0644 /sources/ubrn-source.tgz /sources/cua-driver-source.tar.gz /sources/README.md /opt/nemoclaw/source/openclaw/
+RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
+# catalog.py publishes this declaration: the files the adapter reads, which
+# explicit filesystem grants must allow, and the executables it runs.
+RUN printf '%s\n' '{"nvidia.fabric.openclaw": {"files": ["/app"], "binaries": ["node"]}}' > /opt/nemoclaw/adapters.json
+USER node
 
 FROM base AS hermes-assets
 # Hermes Agent release v0.22.7, which includes its native Relay integration.
