@@ -34,7 +34,7 @@ jobs:
           for label, url in endpoints:
               parsed = urlsplit(url)
               result = {"endpoint": label, "dns": "not tested", "tcp": "not tested",
-                        "tls": "not tested", "http": None}
+                        "tls": "not tested", "http": None, "response_kind": "not read"}
               stage = "dns"
               raw = None
               secured = None
@@ -58,7 +58,18 @@ jobs:
                   connection.request("GET", parsed.path or "/", headers={"User-Agent": "NemoClaw-connectivity-probe"})
                   response = connection.getresponse()
                   result["http"] = response.status
-                  # Never read or log response bodies, headers, cookies, or certificates.
+                  # Classify known JSON schemas without printing bodies or headers.
+                  body = response.read(65536)
+                  try:
+                      document = json.loads(body)
+                      if isinstance(document, dict) and all(key in document for key in ("initialized", "sealed", "standby")):
+                          result["response_kind"] = "Vault health JSON"
+                      elif isinstance(document, dict) and isinstance(document.get("errors"), list):
+                          result["response_kind"] = "Vault-style error JSON"
+                      else:
+                          result["response_kind"] = "other JSON"
+                  except (ValueError, UnicodeDecodeError):
+                      result["response_kind"] = "non-JSON"
               except Exception as error:
                   result[stage] = "failed: " + type(error).__name__
               finally:
@@ -73,9 +84,9 @@ jobs:
 
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write("## Hosted Ubuntu connectivity without credentials\n\n")
-              summary.write("| Endpoint | DNS | TCP | TLS | HTTP |\n|---|---|---|---|---|\n")
+              summary.write("| Endpoint | DNS | TCP | TLS | HTTP | Response kind |\n|---|---|---|---|---|---|\n")
               for result in results:
-                  summary.write("| {endpoint} | {dns} | {tcp} | {tls} | {http} |\n".format(**result))
+                  summary.write("| {endpoint} | {dns} | {tcp} | {tls} | {http} | {response_kind} |\n".format(**result))
               summary.write("\nAny HTTP status proves an HTTPS response, not successful authentication or signing.\n")
               summary.write("No Vault, SSA, or Apple credentials and no GitHub OIDC token were requested.\n")
           if results[0]["http"] is None:
