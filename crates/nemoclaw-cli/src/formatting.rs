@@ -773,7 +773,7 @@ pub(crate) fn render_error(
         Some(Error::Execution {
             uncreated: Some(_), ..
         }) if context.operation == "Apply" => {
-            "OpenShell rejected the sandbox create request, so no sandbox was created. Resources applied earlier remain in the saved state; correct the configuration and apply again, or run destroy."
+            "OpenShell rejected the failed sandbox creates as invalid, so they created nothing. Resources applied earlier remain in the saved state; correct the configuration and apply again, or run destroy."
         }
         _ if matches!(context.operation, "Apply" | "Destroy") => {
             "Resource state is not confirmed. Changes may already have been made; preserve the deployment state directory."
