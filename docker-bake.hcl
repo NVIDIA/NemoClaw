@@ -61,6 +61,14 @@ target "agents" {
   tags = ["${IMAGE_PREFIX}:${harness}"]
 }
 
+# The agent images a release stages. claude stays out: its claude-agent-sdk
+# wheels bundle Anthropic's proprietary Claude Code CLI, which NVIDIA has no
+# permission to redistribute (#13524). CI still builds and checks it with the
+# other agents, and users build it locally.
+group "release-agents" {
+  targets = [for harness in keys(HARNESSES) : harness if harness != "claude"]
+}
+
 target "ollama-proxy" {
   context = "."
   dockerfile = "image/ollama-proxy/Dockerfile"

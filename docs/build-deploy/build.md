@@ -140,6 +140,8 @@ docker image inspect nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
 
 Use the printed immutable reference in `sandboxes.<name>.image.ref`.
 Replace `deepagents` with another harness name, or use `agents` to build them all.
+Releases don't include a `claude` image: it bundles Anthropic's proprietary Claude Code CLI, which NVIDIA can't redistribute.
+Build it on your host with `cargo images build --platform linux/arm64 claude`, or `linux/amd64` on an AMD64 host.
 The AMD64 builds and image tests don't establish successful gateway provisioning or an end-to-end agent response.
 
 On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](../references/fabric-harnesses.md), or build every agent with `cargo images build --platform linux/arm64 agents`.

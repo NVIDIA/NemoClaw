@@ -166,7 +166,7 @@ It then prepares a fresh advisory database, assesses the saved inputs, reports H
 The workflow does not change package visibility.
 Repository writers and package administrators can still publish a draft or change a package by hand, outside the workflow.
 Release candidates run the same assessment report-only: the job attaches `assessment.json`, `assessment.sarif`, and `gate.json` to the private draft and warns, instead of failing, when the policy would block publication.
-The tag's Bake catalog supplies the production agent image names; staging validates them and appends the proxy and runtime images.
+The tag's Bake `release-agents` group supplies the production agent image names, leaving out `claude` ([image licenses](image-licenses.md#images-releases-dont-publish)); staging validates them and appends the proxy and runtime images.
 New harnesses join vulnerability coverage through that catalog, without a separate scanner allowlist or changes to Fabric's adapter contract.
 
 SARIF lists only High and Critical findings: code scanning keeps 5,000 results per run, and a release has thousands of lower-severity findings.
