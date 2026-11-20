@@ -14,8 +14,8 @@ metadata:
 spec:
   gateway:
     management: external
-    runtime:
-      provider: kubernetes
+    target:
+      kubernetes: {}
     endpoint: http://127.0.0.1:17671
   inferenceProviders:
     local:

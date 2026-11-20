@@ -209,7 +209,7 @@ locals {
 }
 
 provider "docker" {
-  host = local.document.spec.gateway.engine
+  host = local.document.spec.gateway.target.docker.engine
 }
 
 resource "docker_image" "model" {

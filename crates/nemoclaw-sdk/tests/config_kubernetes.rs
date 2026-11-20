@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::{Document, Runtime, schema};
+use nemoclaw_sdk::config::{Document, ManagedTarget, schema};
 use serde_json::{Value, json};
 
 fn external_document() -> Value {
     let document =
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
     let mut input = serde_json::to_value(document).unwrap();
-    input["spec"]["gateway"]["runtime"] = json!({"provider": "kubernetes"});
+    input["spec"]["gateway"]["target"] = json!({"kubernetes": {}});
     input["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
         json!({"env":"TEST_IMAGE_METADATA"});
     input
@@ -17,52 +17,32 @@ fn managed_document() -> Value {
     let mut input = external_document();
     input["spec"]["gateway"] = json!({
         "management": "managed",
-        "runtime": {"provider": "kubernetes"},
-        "endpoint": "https://127.0.0.1:17671",
-        "kubernetes": {
+        "target": {"kubernetes": {
             "kubeconfig": {"env": "CLUSTER_KUBECONFIG"},
             "context": "explicit-context",
             "namespace": "owned-gateway",
             "authentication": {"profile": "development"}
-        }
+        }}
     });
     input
 }
 
+/// Sandbox pods' pull Secrets are OpenShell's driver setting, which passes
+/// through `config`; the target holds no pull Secrets of its own.
 #[test]
-fn image_pull_references_accept_only_unique_kubernetes_secret_names() {
-    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
-    for invalid in [
-        json!([""]),
-        json!(["Uppercase"]),
-        json!(["registry/token"]),
-        json!(["registry..token"]),
-        json!(["-registry"]),
-        json!(["registry."]),
-        json!(["registry\n"]),
-        json!(["a".repeat(254)]),
-        json!(["registry", "registry"]),
-        json!([{"name": "registry", "password": "registry-password-sentinel"}]),
-        json!(null),
-    ] {
-        let mut input = managed_document();
-        input["spec"]["gateway"]["kubernetes"]["imagePullSecrets"] = invalid;
-        assert!(!validator.is_valid(&input));
-        let error = Document::parse(input.to_string().as_bytes()).unwrap_err();
-        assert!(error.to_string().contains("imagePullSecrets"));
-        assert!(!error.to_string().contains("registry-password-sentinel"));
-    }
-    let mut document = Document::parse(managed_document().to_string().as_bytes()).unwrap();
-    document
-        .spec
-        .gateway
-        .as_managed_mut()
-        .unwrap()
-        .kubernetes
-        .as_mut()
-        .unwrap()
-        .image_pull_secrets = vec!["registry..token".into()];
-    assert!(document.validate().is_err());
+fn image_pull_secrets_are_openshells_driver_setting_not_a_target_field() {
+    let mut input = managed_document();
+    input["spec"]["gateway"]["config"] = json!({"openshell.drivers.kubernetes": {
+        "image_pull_secrets": ["registry-credentials"]
+    }});
+    let document = Document::parse(input.to_string().as_bytes()).unwrap();
+    assert_eq!(serde_json::to_value(&document).unwrap(), input);
+
+    let mut input = managed_document();
+    input["spec"]["gateway"]["target"]["kubernetes"]["imagePullSecrets"] =
+        json!(["registry-credentials"]);
+    assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
+    assert!(Document::parse(input.to_string().as_bytes()).is_err());
 }
 
 #[test]
@@ -99,26 +79,36 @@ fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults
     }
 }
 
-/// Editors and onboarding read a field's default from its own schema, so a
-/// managed local gateway's defaults stay there even though a Kubernetes
-/// target excludes those fields.
+/// Editors and onboarding read a field's default from its own schema, and
+/// each target's definition holds only its own fields: Docker's socket and the
+/// default port, Podman's port without a socket, and no engine or port on a
+/// cluster.
 #[test]
-fn a_managed_gateway_schema_still_states_its_local_defaults() {
+fn each_target_definition_states_only_its_own_defaults() {
     let schema = schema::input_schema();
-    let managed = schema["$defs"]["Gateway"]["oneOf"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|variant| variant["properties"]["management"]["const"] == "managed")
-        .unwrap();
+    let definition = |name: &str| schema["$defs"][name]["properties"].clone();
+    let docker = definition("DockerTarget");
+    assert_eq!(docker["engine"]["default"], "unix:///var/run/docker.sock");
+    assert_eq!(docker["port"]["default"], 17681);
+    let podman = definition("PodmanTarget");
+    assert!(podman["engine"].get("default").is_none());
+    assert_eq!(podman["port"]["default"], 17681);
     assert_eq!(
-        managed["properties"]["engine"]["default"],
-        "unix:///var/run/docker.sock"
+        schema["$defs"]["PodmanTarget"]["required"],
+        json!(["engine"])
     );
-    assert_eq!(
-        managed["properties"]["endpoint"]["default"],
-        "http://127.0.0.1:17681"
-    );
+    for cluster in ["ManagedKubernetes", "ManagedOpenShift"] {
+        let properties = definition(cluster);
+        for field in [
+            "engine",
+            "port",
+            "networkCIDR",
+            "imagePullPolicy",
+            "endpoint",
+        ] {
+            assert!(properties.get(field).is_none(), "{cluster}.{field}");
+        }
+    }
 }
 
 /// A kubeconfig's exec plugin, such as a cloud CLI, may need the caller's
@@ -127,7 +117,8 @@ fn a_managed_gateway_schema_still_states_its_local_defaults() {
 #[test]
 fn a_managed_target_names_the_variables_its_kubeconfig_needs() {
     let mut input = managed_document();
-    input["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE", "AWS_REGION"]);
+    input["spec"]["gateway"]["target"]["kubernetes"]["environment"] =
+        json!(["AWS_PROFILE", "AWS_REGION"]);
     assert!(jsonschema::is_valid(&schema::input_schema(), &input));
     let document = Document::parse(input.to_string().as_bytes()).unwrap();
     assert_eq!(
@@ -152,7 +143,7 @@ fn a_managed_target_names_the_variables_its_kubeconfig_needs() {
 fn a_target_without_kubeconfig_and_context_uses_the_pods_service_account() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
     let mut input = managed_document();
-    let kubernetes = input["spec"]["gateway"]["kubernetes"]
+    let kubernetes = input["spec"]["gateway"]["target"]["kubernetes"]
         .as_object_mut()
         .unwrap();
     kubernetes.remove("kubeconfig");
@@ -167,7 +158,7 @@ fn a_target_without_kubeconfig_and_context_uses_the_pods_service_account() {
     );
 
     // The listed variables serve a kubeconfig's exec plugin, so they need one.
-    input["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE"]);
+    input["spec"]["gateway"]["target"]["kubernetes"]["environment"] = json!(["AWS_PROFILE"]);
     assert!(!validator.is_valid(&input));
     assert!(Document::parse(input.to_string().as_bytes()).is_err());
 }
@@ -186,11 +177,11 @@ fn listed_variables_cannot_shadow_process_or_runtime_controls() {
         "AWS_PROFILE AWS_REGION",
     ] {
         let mut input = managed_document();
-        input["spec"]["gateway"]["kubernetes"]["environment"] = json!([name]);
+        input["spec"]["gateway"]["target"]["kubernetes"]["environment"] = json!([name]);
         assert!(!validator.is_valid(&input), "{name}");
     }
     let mut repeated = managed_document();
-    repeated["spec"]["gateway"]["kubernetes"]["environment"] =
+    repeated["spec"]["gateway"]["target"]["kubernetes"]["environment"] =
         json!(["AWS_PROFILE", "AWS_PROFILE"]);
     assert!(!validator.is_valid(&repeated));
 }
@@ -213,7 +204,7 @@ fn agent_sandbox_is_a_platform_prerequisite_not_a_setting() {
     // Agent Sandbox must already be installed; the deployment never
     // installs it, so there is nothing to choose.
     let mut input = managed_document();
-    input["spec"]["gateway"]["kubernetes"]["prerequisites"] =
+    input["spec"]["gateway"]["target"]["kubernetes"]["prerequisites"] =
         json!({"agentSandbox": {"management": "existing"}});
     assert!(!jsonschema::is_valid(&schema::input_schema(), &input));
     assert!(Document::parse(input.to_string().as_bytes()).is_err());
@@ -223,13 +214,12 @@ fn agent_sandbox_is_a_platform_prerequisite_not_a_setting() {
 fn managed_kubernetes_requires_explicit_target_and_authentication_choices() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
     for (parent, field) in [
-        ("/spec/gateway", "endpoint"),
-        ("/spec/gateway/kubernetes", "kubeconfig"),
-        ("/spec/gateway/kubernetes/kubeconfig", "env"),
-        ("/spec/gateway/kubernetes", "context"),
-        ("/spec/gateway/kubernetes", "namespace"),
-        ("/spec/gateway/kubernetes", "authentication"),
-        ("/spec/gateway/kubernetes/authentication", "profile"),
+        ("/spec/gateway/target/kubernetes", "kubeconfig"),
+        ("/spec/gateway/target/kubernetes/kubeconfig", "env"),
+        ("/spec/gateway/target/kubernetes", "context"),
+        ("/spec/gateway/target/kubernetes", "namespace"),
+        ("/spec/gateway/target/kubernetes", "authentication"),
+        ("/spec/gateway/target/kubernetes/authentication", "profile"),
     ] {
         let mut input = managed_document();
         input
@@ -247,49 +237,28 @@ fn managed_kubernetes_requires_explicit_target_and_authentication_choices() {
 }
 
 #[test]
-fn managed_kubernetes_rejects_other_transports_targets_and_implicit_authentication() {
+fn managed_kubernetes_rejects_invalid_targets_and_implicit_authentication() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
     for (path, value) in [
-        ("/spec/gateway/endpoint", json!("")),
-        ("/spec/gateway/endpoint", json!("http://127.0.0.1:17671")),
-        ("/spec/gateway/endpoint", json!("https://localhost:17671")),
-        ("/spec/gateway/endpoint", json!("https://127.0.0.2:17671")),
+        ("/spec/gateway/target/kubernetes/context", json!("")),
+        ("/spec/gateway/target/kubernetes/namespace", json!("")),
         (
-            "/spec/gateway/endpoint",
-            json!("https://gateway.example:17671"),
-        ),
-        ("/spec/gateway/endpoint", json!("https://127.0.0.1")),
-        ("/spec/gateway/endpoint", json!("https://127.0.0.1:0")),
-        ("/spec/gateway/endpoint", json!("https://127.0.0.1:65536")),
-        ("/spec/gateway/endpoint", json!("https://127.0.0.1:17671/")),
-        (
-            "/spec/gateway/endpoint",
-            json!("https://127.0.0.1:17671?token=value"),
-        ),
-        (
-            "/spec/gateway/endpoint",
-            json!("https://user:password@127.0.0.1:17671"),
-        ),
-        ("/spec/gateway/kubernetes/context", json!("")),
-        ("/spec/gateway/kubernetes/namespace", json!("")),
-        (
-            "/spec/gateway/kubernetes/namespace",
+            "/spec/gateway/target/kubernetes/namespace",
             json!("Invalid_Namespace"),
         ),
-        ("/spec/gateway/kubernetes/kubeconfig/env", json!("")),
+        ("/spec/gateway/target/kubernetes/kubeconfig/env", json!("")),
         (
-            "/spec/gateway/kubernetes/kubeconfig/env",
+            "/spec/gateway/target/kubernetes/kubeconfig/env",
             json!("/private/kubeconfig"),
         ),
         (
-            "/spec/gateway/kubernetes/authentication/profile",
+            "/spec/gateway/target/kubernetes/authentication/profile",
             json!("none"),
         ),
         (
-            "/spec/gateway/kubernetes/authentication/profile",
+            "/spec/gateway/target/kubernetes/authentication/profile",
             json!("production"),
         ),
-        ("/spec/gateway/runtime/provider", json!("docker")),
     ] {
         let mut input = managed_document();
         *input.pointer_mut(path).unwrap() = value;
@@ -302,37 +271,101 @@ fn managed_kubernetes_rejects_other_transports_targets_and_implicit_authenticati
             );
         }
     }
-    for (field, value) in [
-        ("engine", json!("unix:///var/run/docker.sock")),
-        ("engine", json!("")),
-        ("networkCIDR", json!("172.30.1.0/24")),
-        ("imagePullPolicy", json!("Never")),
-        ("credential", json!({"env":"GATEWAY_TOKEN"})),
+    // Local engine settings belong to the docker and podman targets, and a
+    // managed gateway takes no endpoint, credential, or TLS of its own.
+    for (parent, field, value) in [
         (
+            "/spec/gateway/target/kubernetes",
+            "engine",
+            json!("unix:///var/run/docker.sock"),
+        ),
+        ("/spec/gateway/target/kubernetes", "port", json!(17681)),
+        (
+            "/spec/gateway/target/kubernetes",
+            "networkCIDR",
+            json!("172.30.1.0/24"),
+        ),
+        (
+            "/spec/gateway/target/kubernetes",
+            "imagePullPolicy",
+            json!("Never"),
+        ),
+        (
+            "/spec/gateway/target/kubernetes",
+            "endpoint",
+            json!("https://127.0.0.1:17671"),
+        ),
+        (
+            "/spec/gateway",
+            "endpoint",
+            json!("https://127.0.0.1:17671"),
+        ),
+        (
+            "/spec/gateway",
+            "credential",
+            json!({"env":"GATEWAY_TOKEN"}),
+        ),
+        (
+            "/spec/gateway",
             "tls",
             json!({"ca":{"env":"CA"},"certificate":{"env":"CERT"},"key":{"env":"KEY"}}),
         ),
     ] {
         let mut input = managed_document();
-        let empty_default = field == "engine" && value == json!("");
-        input["spec"]["gateway"][field] = value;
-        assert!(!validator.is_valid(&input), "accepted {field}");
+        input.pointer_mut(parent).unwrap()[field] = value;
+        assert!(!validator.is_valid(&input), "accepted {parent}/{field}");
         assert!(Document::parse(input.to_string().as_bytes()).is_err());
-        if let Ok(document) = serde_json::from_value::<Document>(input)
-            && !empty_default
-        {
-            assert!(document.validate().is_err(), "accepted direct Rust {field}");
-        }
+        assert!(serde_json::from_value::<Document>(input).is_err());
     }
 }
 
+/// Without expose, every command forwards its own free port, so the
+/// document names none; with it, the endpoint is the address clients dial.
 #[test]
-fn managed_kubernetes_accepts_explicit_port_boundaries() {
-    for port in [1, 443, 65535] {
+fn an_exposed_endpoint_is_an_https_origin_with_a_host_and_an_explicit_port() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    let exposed = |endpoint: Value| {
         let mut input = managed_document();
-        input["spec"]["gateway"]["endpoint"] = json!(format!("https://127.0.0.1:{port}"));
-        Document::parse(input.to_string().as_bytes()).unwrap();
+        input["spec"]["gateway"]["target"]["kubernetes"]["expose"] =
+            json!({"endpoint": endpoint, "service": {"type": "NodePort"}});
+        input
+    };
+    for endpoint in [
+        "https://127.0.0.1:1",
+        "https://gateway.example.com:443",
+        "https://10.0.0.5:65535",
+    ] {
+        let input = exposed(json!(endpoint));
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
+        assert_eq!(document.spec.gateway.endpoint().as_deref(), Some(endpoint));
     }
+    for endpoint in [
+        json!(""),
+        json!("http://gateway.example.com:30080"),
+        json!("https://Gateway.example.com:30080"),
+        json!("https://gateway.example.com"),
+        json!("https://gateway.example.com:0"),
+        json!("https://gateway.example.com:65536"),
+        json!("https://gateway.example.com:30080/"),
+        json!("https://gateway.example.com:30080?token=value"),
+        json!("https://user:password@gateway.example.com:30080"),
+        json!(30080),
+    ] {
+        let input = exposed(endpoint.clone());
+        assert!(!validator.is_valid(&input), "accepted {endpoint}");
+        assert!(Document::parse(input.to_string().as_bytes()).is_err());
+        if let Ok(document) = serde_json::from_value::<Document>(input) {
+            assert!(document.validate().is_err(), "accepted direct {endpoint}");
+        }
+    }
+    let mut missing = exposed(json!("https://gateway.example.com:30080"));
+    missing["spec"]["gateway"]["target"]["kubernetes"]["expose"]
+        .as_object_mut()
+        .unwrap()
+        .remove("endpoint");
+    assert!(Document::parse(missing.to_string().as_bytes()).is_err());
+    let document = Document::parse(managed_document().to_string().as_bytes()).unwrap();
+    assert_eq!(document.spec.gateway.endpoint(), None);
 }
 
 #[test]
@@ -357,7 +390,7 @@ fn authored_credentials_cannot_shadow_managed_kubernetes_runtime_controls() {
         "KUBERNETES_SERVICE_PORT_HTTPS",
     ] {
         for path in [
-            "/spec/gateway/kubernetes/kubeconfig",
+            "/spec/gateway/target/kubernetes/kubeconfig",
             "/spec/inferenceProviders/local/credential",
         ] {
             let mut input = managed_document();
@@ -423,7 +456,7 @@ fn managed_kubeconfig_reference_cannot_override_process_controls() {
         "KUBERNETES_SERVICE_PORT_HTTPS",
     ] {
         let mut input = managed_document();
-        input["spec"]["gateway"]["kubernetes"]["kubeconfig"]["env"] = json!(name);
+        input["spec"]["gateway"]["target"]["kubernetes"]["kubeconfig"]["env"] = json!(name);
         assert!(
             !validator.is_valid(&input),
             "accepted kubeconfig reference {name}"
@@ -447,7 +480,7 @@ fn managed_kubeconfig_reference_cannot_override_process_controls() {
         "KUBECONFIG_PATH",
     ] {
         let mut input = managed_document();
-        input["spec"]["gateway"]["kubernetes"]["kubeconfig"]["env"] = json!(name);
+        input["spec"]["gateway"]["target"]["kubernetes"]["kubeconfig"]["env"] = json!(name);
         Document::parse(input.to_string().as_bytes()).unwrap();
     }
 }
@@ -461,7 +494,7 @@ fn managed_kubeconfig_controls_do_not_restrict_other_credential_references() {
         "GOOGLE_APPLICATION_CREDENTIALS",
     ] {
         let mut input = external_document();
-        input["spec"]["gateway"]["runtime"]["provider"] = json!("docker");
+        input["spec"]["gateway"]["target"] = json!({"docker": {}});
         input["spec"]["sandboxes"]["assistant"]["image"]
             .as_object_mut()
             .unwrap()
@@ -498,7 +531,7 @@ fn kubernetes_selects_the_gateway_driver_and_preserves_it_on_export() {
     let input = external_document();
     let document = Document::parse(input.to_string().as_bytes()).unwrap();
     assert_eq!(
-        document.spec.gateway.runtime().provider.as_str(),
+        document.spec.gateway.compute_driver().as_str(),
         "kubernetes"
     );
     assert!(jsonschema::is_valid(&schema::input_schema(), &input));
@@ -506,7 +539,7 @@ fn kubernetes_selects_the_gateway_driver_and_preserves_it_on_export() {
     let imported = Document::parse(exported.as_bytes()).unwrap();
     assert_eq!(imported.digest(), document.digest());
     assert_eq!(
-        imported.spec.gateway.runtime().provider.to_string(),
+        imported.spec.gateway.compute_driver().to_string(),
         "kubernetes"
     );
 }
@@ -551,8 +584,13 @@ fn kubernetes_rejects_local_managed_gateways_without_an_explicit_target() {
 
     let mut document =
         Document::parse(include_bytes!("fixtures/config/managed-ollama.yaml").as_slice()).unwrap();
-    *document.spec.gateway.runtime_mut() =
-        serde_json::from_value::<Runtime>(json!({"provider": "kubernetes"})).unwrap();
+    let cluster = Document::parse(managed_document().to_string().as_bytes()).unwrap();
+    document.spec.gateway.as_managed_mut().unwrap().target =
+        cluster.spec.gateway.as_managed().unwrap().target.clone();
+    assert!(matches!(
+        document.spec.gateway.as_managed().unwrap().target,
+        ManagedTarget::Kubernetes(_)
+    ));
     assert!(document.validate().is_err());
 }
 
@@ -617,7 +655,7 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
         json!(["search", "bookings"]);
     Document::parse(external.to_string().as_bytes()).unwrap();
     let mut oidc = managed_document();
-    oidc["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
+    oidc["spec"]["gateway"]["target"]["kubernetes"]["authentication"] = json!({
         "profile": "oidc",
         "token": {"env": "OPENSHELL_TOKEN"}
     });
@@ -677,14 +715,14 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
         ),
         (
             oidc,
-            "/spec/gateway/kubernetes/authentication/token",
-            "spec.gateway.kubernetes.authentication.token.env",
+            "/spec/gateway/target/kubernetes/authentication/token",
+            "spec.gateway.target.kubernetes.authentication.token.env",
             secret,
         ),
         (
             managed_document(),
-            "/spec/gateway/kubernetes/kubeconfig",
-            "spec.gateway.kubernetes.kubeconfig.env",
+            "/spec/gateway/target/kubernetes/kubeconfig",
+            "spec.gateway.target.kubernetes.kubeconfig.env",
             file,
         ),
     ] {
@@ -705,28 +743,27 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
 }
 
 #[test]
-fn managed_kubernetes_endpoint_and_local_field_errors_state_the_target_rule() {
-    let rule = "managed Kubernetes requires an explicit HTTPS endpoint with a lowercase host and a nonzero port and excludes local engine settings";
-    let mut endpoint = managed_document();
-    endpoint["spec"]["gateway"]["endpoint"] = json!("http://127.0.0.1:17671");
-    let mut local = managed_document();
-    local["spec"]["gateway"]["networkCIDR"] = json!("172.30.1.0/24");
-    for (input, path) in [(endpoint, "spec.gateway.endpoint"), (local, "spec.gateway")] {
-        let error = schema_error(&input);
-        assert!(
-            error.contains(&format!("schema at {path} (line")) && error.contains(rule),
-            "{error}"
-        );
-    }
+fn an_exposed_endpoint_error_states_the_endpoint_rule() {
+    let rule = "expose.endpoint must be https://HOST:PORT with a lowercase DNS name or IPv4 address, a nonzero port, and no path";
+    let mut input = managed_document();
+    input["spec"]["gateway"]["target"]["kubernetes"]["expose"] =
+        json!({"endpoint": "http://127.0.0.1:17671", "service": {"type": "NodePort"}});
+    let error = schema_error(&input);
+    assert!(
+        error.contains("schema at spec.gateway.target.kubernetes.expose.endpoint (line")
+            && error.contains(rule),
+        "{error}"
+    );
 }
 
 #[test]
 fn a_reserved_kubernetes_environment_name_states_the_naming_rule() {
     let mut input = managed_document();
-    input["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE", "KUBECONFIG"]);
+    input["spec"]["gateway"]["target"]["kubernetes"]["environment"] =
+        json!(["AWS_PROFILE", "KUBECONFIG"]);
     let error = schema_error(&input);
     assert!(
-        error.contains("schema at spec.gateway.kubernetes.environment[1] (line")
+        error.contains("schema at spec.gateway.target.kubernetes.environment[1] (line")
             && error.contains(
                 "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
             ),
@@ -745,7 +782,7 @@ fn managed_services_with_a_kubernetes_runtime_state_the_cluster_rule() {
     assert!(
         error.contains("schema at spec.services (line")
             && error.contains(
-                "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
+                "the kubernetes and openshift targets require external inference endpoints; managed services are not supported"
             ),
         "{error}"
     );
@@ -761,7 +798,7 @@ fn an_oidc_profile_takes_openshells_oidc_table_and_development_takes_none() {
     });
     let input = |authentication: &Value, config: Option<Value>| {
         let mut input = managed_document();
-        input["spec"]["gateway"]["kubernetes"]["authentication"] = authentication.clone();
+        input["spec"]["gateway"]["target"]["kubernetes"]["authentication"] = authentication.clone();
         if let Some(config) = config {
             input["spec"]["gateway"]["config"] = config;
         }

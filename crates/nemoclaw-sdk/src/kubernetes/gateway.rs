@@ -18,7 +18,7 @@ pub const KUBECONFIG_ENV: &str = "TF_VAR_nemoclaw_kubeconfig";
 /// separately owned files and Kubernetes objects, never in Helm values/state.
 pub fn values(spec: &Spec) -> Result<Value, Error> {
     spec.validate()?;
-    let target = spec.settings.kubernetes.as_ref().ok_or(Error::State(
+    let target = spec.settings.cluster().ok_or(Error::State(
         "managed Kubernetes gateway settings are missing",
     ))?;
     let image = |reference: &str| {
@@ -69,7 +69,7 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
     // pass through unchanged. The certificate names the endpoint host clients
     // dial; the chart's always names 127.0.0.1 and in-cluster names.
     if let Some(expose) = &target.expose {
-        let endpoint = url::Url::parse(&spec.settings.endpoint)
+        let endpoint = url::Url::parse(&expose.endpoint)
             .map_err(|_| Error::State("invalid managed Kubernetes endpoint"))?;
         // The Service publishes the endpoint's port on every node. The
         // plaintext metrics port stays unpublished: with metrics disabled, the
@@ -105,21 +105,14 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
     }
     // On OpenShift, unset the gateway's UID and fsGroup as the chart's own
     // OpenShift install does, so restricted-v2 assigns the namespace's first
-    // UID and group.
-    if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
+    // UID and group. Once the chart handles OpenShift's IDs itself
+    // (NVIDIA/OpenShell#5483), these values go and the target stays.
+    if matches!(
+        spec.settings.target,
+        crate::config::ManagedTarget::OpenShift(_)
+    ) {
         values["securityContext"] = json!({"runAsUser": null});
         values["podSecurityContext"] = json!({"fsGroup": null});
-    }
-    if !target.image_pull_secrets.is_empty() {
-        values["imagePullSecrets"] = json!(
-            target
-                .image_pull_secrets
-                .iter()
-                .map(|name| json!({"name": name}))
-                .collect::<Vec<_>>()
-        );
-        values["gatewayConfig"]["openshell.drivers.kubernetes"]["image_pull_secrets"] =
-            json!(target.image_pull_secrets);
     }
     // An existing issuer's settings are authored in OpenShell's OIDC table,
     // which passes through below; its CA comes from the user's ConfigMap.
@@ -158,7 +151,7 @@ pub(crate) fn literal(value: &str) -> String {
 }
 
 pub(crate) fn configure(graph: &mut Value, spec: &Spec) -> Result<(), Error> {
-    let target = spec.settings.kubernetes.as_ref().ok_or(Error::State(
+    let target = spec.settings.cluster().ok_or(Error::State(
         "managed Kubernetes gateway settings are missing",
     ))?;
     graph["terraform"]["required_providers"]["helm"] = json!({

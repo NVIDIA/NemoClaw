@@ -36,10 +36,9 @@ const PODMAN_DRIVER_KEYS: [&str; 5] = [
 ];
 /// Keys NemoClaw sets in the chart's `gatewayConfig`; the chart owns the
 /// settings it derives from Kubernetes resources.
-const KUBERNETES_KEYS: [&str; 3] = [
+const KUBERNETES_KEYS: [&str; 2] = [
     "openshell.gateway.auth.allow_unauthenticated_users",
     "openshell.gateway.oidc",
-    "openshell.drivers.kubernetes.image_pull_secrets",
 ];
 
 /// The table holding OpenShell's OIDC settings. NemoClaw owns it under the

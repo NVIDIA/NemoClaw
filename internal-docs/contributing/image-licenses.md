@@ -4,7 +4,15 @@
 # Reviewing Image Licenses
 
 Publishing a v1 image redistributes every component in it, so each image's licenses must allow that before a final release ([#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
-This page states when an image needs open-source review board (OSRB) sign-off, how to review a release's images, and the result for release candidate `v0.1.0-rc10`.
+This page states which images releases don't publish, when an image needs open-source review board (OSRB) sign-off, how to review a release's images, and the result for release candidate `v0.1.0-rc10`.
+
+## Images Releases Don't Publish
+
+Releases don't publish the `claude` image.
+Its claude-agent-sdk wheels bundle the Claude Code CLI, which is Anthropic's proprietary software, "© Anthropic PBC. All rights reserved"; redistributing it needs Anthropic's permission, which NVIDIA doesn't have.
+Staging takes its agent images from the Bake file's `release-agents` group, which leaves `claude` out, so a release doesn't push, list, assess, attest, or publish it.
+CI still builds and checks the image, and users build it locally, as [Building Agent Images](../../docs/build-deploy/build.md#building-agent-images) describes.
+The other images proceed through the review below.
 
 ## When an Image Needs OSRB
 
@@ -104,6 +112,7 @@ The image installs claude-agent-sdk 0.2.166, which is MIT-licensed, and its Linu
 The SBOM lists only the SDK.
 Claude Code is "© Anthropic PBC. All rights reserved", and the SDK's own documentation places its use under Anthropic's [Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms).
 Redistributing that executable in a published image needs OSRB to confirm that Anthropic's terms allow it.
+Releases after `v0.1.0-rc11` leave the image out instead; see [Images Releases Don't Publish](#images-releases-dont-publish).
 
 #### Bun in `opencode`
 

@@ -17,7 +17,7 @@ A package that a workflow's token creates inherits this public repository's visi
 Before the first push, a maintainer creates each package as internal, which makes them its administrator, and grants this repository's Actions write access:
 
 - `v1-ci`, which holds every per-commit image. Grant it the **Admin** role instead, so the image workflow can delete per-commit images older than the latest ten commits.
-- `v1/<image>` for each agent image (`claude`, `codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `opencode`, `pi`, `remote-agent`), and for `ollama-proxy`, `vllm`, and `ollama`.
+- `v1/<image>` for each agent image a release stages (`codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `opencode`, `pi`, `remote-agent`), and for `ollama-proxy`, `vllm`, and `ollama`.
 - Create a package by pushing any image to it with a personal token that has `write:packages`; it starts internal.
 - Then, in the package's settings under **Manage Actions access**, add `NVIDIA/NemoClaw` with the **Write** role.
 
@@ -42,6 +42,10 @@ The [staging workflow](../../.github/workflows/release.yml):
 4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the [CLI bundles](#cli-bundles), their [evidence record](#evidence-record), and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
 
 Only users with push access see a draft release, and the `v1` packages stay internal.
+
+Staging takes the agent images from the Bake file's `release-agents` group: every harness in `HARNESSES` except `claude`, which bundles Anthropic's proprietary Claude Code CLI ([image licenses](image-licenses.md#images-releases-dont-publish)).
+A release doesn't push, list, assess, attest, or publish the `claude` image, and staging doesn't need a `v1/claude` package.
+CI / Images still builds, checks, and pushes it to `v1-ci` with the other agent images.
 
 ## CLI Bundles
 
@@ -128,7 +132,7 @@ Use [image assessment](image-assessment.md) to evaluate the saved SPDX inventori
 Local assessment does not authorize publication.
 
 Deploy with the CLI archive for your platform and the digests the draft lists.
-Docker deployments pull private images through `spec.registries`; Kubernetes deployments use `imagePullSecrets`.
+Docker deployments pull private images through `spec.registries`; Kubernetes deployments use pull Secrets named in `image_pull_secrets` in the `openshell.drivers.kubernetes` table of `spec.gateway.config`.
 
 ## Publishing
 

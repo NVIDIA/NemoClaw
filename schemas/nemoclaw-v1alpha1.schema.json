@@ -427,6 +427,64 @@
       ],
       "type": "object"
     },
+    "DockerTarget": {
+      "additionalProperties": false,
+      "description": "A managed gateway container on a local Docker engine.",
+      "properties": {
+        "engine": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "^(unix:///|npipe:////\\./pipe/)"
+            }
+          ],
+          "default": "unix:///var/run/docker.sock",
+          "description": "The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket.",
+          "type": "string",
+          "x-nemoclaw-default-rule": "Omitted or empty selects Docker's default socket."
+        },
+        "imagePullPolicy": {
+          "$ref": "#/$defs/ImagePullPolicy",
+          "description": "Image acquisition before local container creation: IfNotPresent, the default, or Never.",
+          "enum": [
+            "IfNotPresent",
+            "Never"
+          ],
+          "x-nemoclaw-error": "target.docker.imagePullPolicy accepts IfNotPresent or Never; Always is available on the podman target"
+        },
+        "networkCIDR": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "/24$"
+            }
+          ],
+          "description": "Canonical private IPv4 /24 of the network the gateway and its sandboxes share.",
+          "type": "string",
+          "x-nemoclaw-default-rule": "Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
+        },
+        "port": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 65535,
+              "minimum": 1024
+            }
+          ],
+          "default": 17681,
+          "description": "Loopback TCP port the gateway listens on, from 1024 through 65535. NemoClaw and the OpenShell CLI reach the gateway at `http://127.0.0.1:PORT`.",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        }
+      },
+      "type": "object"
+    },
     "ExplicitPolicy": {
       "additionalProperties": false,
       "description": "Credential-free OpenShell policy. Validation and protocol conversion use the pinned OpenShell policy library.",
@@ -501,7 +559,7 @@
     },
     "ExposureService": {
       "additionalProperties": false,
-      "description": "The Service that publishes a managed Kubernetes gateway.",
+      "description": "The Service that publishes a managed cluster gateway.",
       "properties": {
         "type": {
           "description": "`NodePort` listens on the endpoint's port on every node; the port must be in the cluster's node-port range, 30000 through 32767 by default.",
@@ -517,6 +575,22 @@
       "required": [
         "type"
       ],
+      "type": "object"
+    },
+    "ExternalCluster": {
+      "additionalProperties": false,
+      "description": "No settings: each sandbox's image.metadata stands in for an engine NemoClaw could inspect.",
+      "type": "object"
+    },
+    "ExternalEngine": {
+      "additionalProperties": false,
+      "description": "The engine holding an existing gateway's sandbox images.",
+      "properties": {
+        "engine": {
+          "description": "Engine containing the sandbox images, used only for image metadata inspection. Required for deployment planning; omission permits retained-state teardown.",
+          "type": "string"
+        }
+      },
       "type": "object"
     },
     "ExternalOllama": {
@@ -558,6 +632,67 @@
         "name"
       ],
       "type": "object"
+    },
+    "ExternalTarget": {
+      "description": "Where an existing gateway runs its sandboxes: exactly one of docker, podman, kubernetes, and openshift.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A gateway that runs sandboxes on a Docker engine.",
+          "properties": {
+            "docker": {
+              "$ref": "#/$defs/ExternalEngine",
+              "description": "A gateway that runs sandboxes on a Docker engine."
+            }
+          },
+          "required": [
+            "docker"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A gateway that runs sandboxes on a Podman engine.",
+          "properties": {
+            "podman": {
+              "$ref": "#/$defs/ExternalEngine",
+              "description": "A gateway that runs sandboxes on a Podman engine."
+            }
+          },
+          "required": [
+            "podman"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A gateway that runs sandboxes on a Kubernetes cluster.",
+          "properties": {
+            "kubernetes": {
+              "$ref": "#/$defs/ExternalCluster",
+              "description": "A gateway that runs sandboxes on a Kubernetes cluster."
+            }
+          },
+          "required": [
+            "kubernetes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A gateway that runs sandboxes on an OpenShift cluster.",
+          "properties": {
+            "openshift": {
+              "$ref": "#/$defs/ExternalCluster",
+              "description": "A gateway that runs sandboxes on an OpenShift cluster."
+            }
+          },
+          "required": [
+            "openshift"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "File": {
       "additionalProperties": false,
@@ -614,86 +749,11 @@
       "type": "object"
     },
     "Gateway": {
-      "description": "Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.",
+      "description": "Install a gateway on a local engine or an existing cluster, or connect to an existing gateway.",
       "oneOf": [
         {
           "additionalProperties": false,
-          "allOf": [
-            {
-              "if": {
-                "properties": {
-                  "runtime": {
-                    "properties": {
-                      "provider": {
-                        "const": "podman"
-                      }
-                    },
-                    "required": [
-                      "provider"
-                    ]
-                  }
-                },
-                "required": [
-                  "runtime"
-                ]
-              },
-              "then": {
-                "properties": {
-                  "engine": {
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "engine"
-                ],
-                "x-nemoclaw-error": "Podman requires spec.gateway.engine to name its local API service socket."
-              }
-            }
-          ],
-          "description": "A gateway installed and managed by this deployment. The SDK pins its image.\nManaged Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.",
-          "else": {
-            "properties": {
-              "endpoint": {
-                "anyOf": [
-                  {
-                    "const": ""
-                  },
-                  {
-                    "pattern": "^http://127\\.0\\.0\\.1:[0-9]+/?$"
-                  }
-                ],
-                "default": "http://127.0.0.1:17681"
-              },
-              "engine": {
-                "anyOf": [
-                  {
-                    "const": ""
-                  },
-                  {
-                    "pattern": "^(unix:///|npipe:////\\./pipe/)"
-                  }
-                ],
-                "default": "unix:///var/run/docker.sock"
-              },
-              "networkCIDR": {
-                "anyOf": [
-                  {
-                    "const": ""
-                  },
-                  {
-                    "pattern": "/24$"
-                  }
-                ],
-                "x-nemoclaw-default-rule": "Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
-              }
-            },
-            "required": []
-          },
-          "if": {
-            "required": [
-              "kubernetes"
-            ]
-          },
+          "description": "A gateway installed and managed by this deployment. The SDK pins its image.",
           "properties": {
             "config": {
               "additionalProperties": {
@@ -709,88 +769,29 @@
                   }
                 ]
               },
-              "description": "OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets.",
+              "description": "OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes and OpenShift pass it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets.",
               "type": [
                 "object",
                 "null"
               ]
-            },
-            "endpoint": {
-              "default": "http://127.0.0.1:17681",
-              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://HOST:PORT` with an explicit nonzero port and no trailing slash. Providers forward free local ports of their own to the owned gateway. Without `kubernetes.expose`, the host is `127.0.0.1` and this port is not bound. With it, the endpoint is the lowercase DNS name or IPv4 address and port other clients dial, and the gateway certificate names its host.",
-              "type": "string",
-              "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS endpoint and port: 127.0.0.1 without kubernetes.expose, or the address clients dial with it."
-            },
-            "engine": {
-              "default": "unix:///var/run/docker.sock",
-              "description": "Managed local gateway engine: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket. Excluded by kubernetes.",
-              "type": "string",
-              "x-nemoclaw-default-rule": "With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes."
-            },
-            "imagePullPolicy": {
-              "$ref": "#/$defs/ImagePullPolicy",
-              "description": "Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes."
-            },
-            "kubernetes": {
-              "$ref": "#/$defs/ManagedKubernetes",
-              "description": "Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services."
             },
             "management": {
               "const": "managed",
               "description": "Whether this deployment manages the gateway.",
               "type": "string"
             },
-            "networkCIDR": {
-              "description": "Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes.",
-              "type": "string",
-              "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes."
-            },
             "policyAuthority": {
               "$ref": "#/$defs/PolicyAuthority",
               "description": "Who authors sandbox policy on this gateway; omission means NemoClaw does."
             },
-            "runtime": {
-              "$ref": "#/$defs/Runtime",
-              "description": "Compute driver the gateway runs every sandbox with; omission selects Docker."
+            "target": {
+              "$ref": "#/$defs/ManagedTarget",
+              "description": "Where NemoClaw installs the gateway, which also selects the compute driver it runs every sandbox with. Omission selects Docker with its defaults."
             }
           },
           "required": [
             "management"
           ],
-          "then": {
-            "allOf": [
-              {
-                "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "engine"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "imagePullPolicy"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "networkCIDR"
-                      ]
-                    }
-                  ]
-                }
-              }
-            ],
-            "properties": {
-              "endpoint": {
-                "pattern": "^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
-              }
-            },
-            "required": [
-              "endpoint"
-            ],
-            "x-nemoclaw-error": "managed Kubernetes requires an explicit HTTPS endpoint with a lowercase host and a nonzero port and excludes local engine settings"
-          },
           "title": "Managed gateway",
           "type": "object"
         },
@@ -817,10 +818,6 @@
               "pattern": "^https?://",
               "type": "string"
             },
-            "engine": {
-              "description": "Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead.",
-              "type": "string"
-            },
             "management": {
               "const": "external",
               "description": "Whether this deployment manages the gateway.",
@@ -830,9 +827,9 @@
               "$ref": "#/$defs/PolicyAuthority",
               "description": "Who authors sandbox policy on this gateway; omission means NemoClaw does."
             },
-            "runtime": {
-              "$ref": "#/$defs/Runtime",
-              "description": "Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports."
+            "target": {
+              "$ref": "#/$defs/ExternalTarget",
+              "description": "Where the existing gateway runs its sandboxes; omission selects Docker. Planning checks it against the compute driver the gateway reports."
             },
             "tls": {
               "$ref": "#/$defs/TLS",
@@ -1014,7 +1011,7 @@
           "description": "Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead."
         },
         "ref": {
-          "description": "Immutable image reference, pinned by SHA-256 digest. Required on every runtime; build one as described in the agent image build instructions.",
+          "description": "Immutable image reference, pinned by SHA-256 digest. Required on every gateway target; build one as described in the agent image build instructions.",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
           "type": "string",
           "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"
@@ -1515,7 +1512,7 @@
           }
         }
       ],
-      "description": "Authentication provisioned for a managed Kubernetes gateway.",
+      "description": "Authentication provisioned for a managed cluster gateway.",
       "properties": {
         "caConfigMap": {
           "description": "Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer.",
@@ -1595,35 +1592,25 @@
     },
     "KubernetesExpose": {
       "additionalProperties": false,
-      "allOf": [
-        {
-          "oneOf": [
-            {
-              "required": [
-                "service"
-              ]
-            },
-            {
-              "required": [
-                "route"
-              ]
-            }
-          ],
-          "x-nemoclaw-error": "kubernetes.expose takes exactly one of service and route"
-        }
-      ],
-      "description": "Publication of a managed Kubernetes gateway's endpoint, through exactly one of `service` and `route`.",
+      "description": "Publication of a managed Kubernetes gateway's endpoint through the chart's Service.",
       "properties": {
-        "route": {
-          "$ref": "#/$defs/ExposureRoute",
-          "description": "The gateway chart's own OpenShift Route, which publishes the endpoint's host through the cluster's router and passes TLS through to the gateway by SNI, so TLS and client certificates reach the gateway unchanged. The endpoint's host is a DNS name, since clients send no SNI host name for an IP address, and its port is the one the router serves. Requires `runtime.provider: openshift`."
+        "endpoint": {
+          "description": "The address clients outside the cluster dial: `https://HOST:PORT`, with a lowercase DNS name or IPv4 address and an explicit nonzero port, and no path. The gateway certificate names its host.",
+          "pattern": "^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$",
+          "type": "string",
+          "x-nemoclaw-error": "expose.endpoint must be https://HOST:PORT with a lowercase DNS name or IPv4 address, a nonzero port, and no path"
         },
         "service": {
           "$ref": "#/$defs/ExposureService",
           "description": "The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged."
         }
       },
-      "type": "object"
+      "required": [
+        "endpoint",
+        "service"
+      ],
+      "type": "object",
+      "x-nemoclaw-error": "a kubernetes target's expose takes endpoint and service; only the openshift target publishes the gateway through a route"
     },
     "LlamaCppServing": {
       "additionalProperties": false,
@@ -1698,7 +1685,7 @@
           "context"
         ]
       },
-      "description": "Existing-cluster target for a managed development gateway: an explicit kubeconfig and context, or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. `runtime.provider: openshift` selects the OpenShift profile.",
+      "description": "An existing cluster for a managed gateway, reached with an explicit kubeconfig and context or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. Without expose, NemoClaw reaches the gateway through a port forward on a free local port for each command, so the document names no port.",
       "properties": {
         "authentication": {
           "$ref": "#/$defs/KubernetesAuthentication",
@@ -1772,20 +1759,7 @@
         },
         "expose": {
           "$ref": "#/$defs/KubernetesExpose",
-          "description": "How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host. NemoClaw's own commands still forward a free local port to the gateway pod. Whether a Service or a Route publishes the gateway, and the Service's type, are fixed after the first successful plan."
-        },
-        "imagePullSecrets": {
-          "description": "Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them in the namespace before the first apply, or after the SDK creates it, before its pods need to pull images.",
-          "items": {
-            "maxLength": 253,
-            "minLength": 1,
-            "pattern": "^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$",
-            "type": "string"
-          },
-          "maxItems": 32,
-          "type": "array",
-          "uniqueItems": true,
-          "x-nemoclaw-error": "image pull Secret references must be unique Kubernetes Secret names"
+          "description": "How clients outside the cluster reach the gateway: the endpoint they dial, and the Service or Route that publishes it. The gateway certificate names the endpoint's host. NemoClaw's own commands still forward a free local port to the gateway pod. The endpoint, whether a Service or a Route publishes the gateway, and the Service's type are fixed after the first plan."
         },
         "kubeconfig": {
           "$ref": "#/$defs/FileRef",
@@ -1847,6 +1821,217 @@
         "authentication"
       ],
       "type": "object"
+    },
+    "ManagedOpenShift": {
+      "additionalProperties": false,
+      "dependentRequired": {
+        "context": [
+          "kubeconfig"
+        ],
+        "environment": [
+          "kubeconfig"
+        ],
+        "kubeconfig": [
+          "context"
+        ]
+      },
+      "description": "An existing OpenShift cluster for a managed gateway, with the fields of a kubernetes target. The namespace assigns the gateway's user and group IDs, and expose may also take a Route.",
+      "properties": {
+        "authentication": {
+          "$ref": "#/$defs/KubernetesAuthentication",
+          "description": "How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer."
+        },
+        "context": {
+          "description": "Exact kubeconfig context used for every cluster operation. Requires kubeconfig.",
+          "maxLength": 253,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f]+$",
+          "type": "string"
+        },
+        "environment": {
+          "description": "Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Requires kubeconfig. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state.",
+          "items": {
+            "not": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "PATH",
+                        "HOME",
+                        "USERPROFILE",
+                        "KUBECONFIG",
+                        "TMPDIR",
+                        "TMP",
+                        "TEMP",
+                        "SYSTEMROOT",
+                        "COMSPEC",
+                        "PATHEXT",
+                        "SHELL",
+                        "ENV",
+                        "BASH_ENV",
+                        "IFS",
+                        "CDPATH",
+                        "SSL_CERT_FILE",
+                        "SSL_CERT_DIR",
+                        "REQUESTS_CA_BUNDLE",
+                        "CURL_CA_BUNDLE",
+                        "HTTP_PROXY",
+                        "HTTPS_PROXY",
+                        "ALL_PROXY",
+                        "NO_PROXY",
+                        "KUBERNETES_MASTER",
+                        "KUBERNETES_SERVICE_HOST",
+                        "KUBERNETES_SERVICE_PORT",
+                        "KUBERNETES_SERVICE_PORT_HTTPS"
+                      ]
+                    },
+                    {
+                      "pattern": "^(?:PYTHON|HELM|LD_|DYLD_|TF_|TOFU_|PLUGIN_|NEMOCLAW_INTERNAL_)"
+                    }
+                  ]
+                },
+                {
+                  "const": "NEMOCLAW_KUBERNETES_STATE"
+                },
+                {
+                  "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_|KUBERNETES_SERVICE_)"
+                }
+              ]
+            },
+            "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array",
+          "uniqueItems": true,
+          "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
+        },
+        "expose": {
+          "$ref": "#/$defs/OpenShiftExpose",
+          "description": "How clients outside the cluster reach the gateway: the endpoint they dial, and the Service or Route that publishes it. The gateway certificate names the endpoint's host. NemoClaw's own commands still forward a free local port to the gateway pod. The endpoint, whether a Service or a Route publishes the gateway, and the Service's type are fixed after the first plan."
+        },
+        "kubeconfig": {
+          "$ref": "#/$defs/FileRef",
+          "description": "Environment reference whose value is the local kubeconfig file path. Requires context; omit both to use the pod's service account. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved.",
+          "properties": {
+            "env": {
+              "not": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "PATH",
+                      "HOME",
+                      "USERPROFILE",
+                      "KUBECONFIG",
+                      "TMPDIR",
+                      "TMP",
+                      "TEMP",
+                      "SYSTEMROOT",
+                      "COMSPEC",
+                      "PATHEXT",
+                      "SHELL",
+                      "ENV",
+                      "BASH_ENV",
+                      "IFS",
+                      "CDPATH",
+                      "SSL_CERT_FILE",
+                      "SSL_CERT_DIR",
+                      "REQUESTS_CA_BUNDLE",
+                      "CURL_CA_BUNDLE",
+                      "HTTP_PROXY",
+                      "HTTPS_PROXY",
+                      "ALL_PROXY",
+                      "NO_PROXY",
+                      "KUBERNETES_MASTER",
+                      "KUBERNETES_SERVICE_HOST",
+                      "KUBERNETES_SERVICE_PORT",
+                      "KUBERNETES_SERVICE_PORT_HTTPS"
+                    ]
+                  },
+                  {
+                    "pattern": "^(?:PYTHON|HELM|LD_|DYLD_|TF_|TOFU_|PLUGIN_|NEMOCLAW_INTERNAL_)"
+                  }
+                ]
+              },
+              "x-nemoclaw-error": "kubeconfig environment reference must not shadow process, trust, proxy, or cluster controls"
+            }
+          }
+        },
+        "namespace": {
+          "description": "Namespace for this deployment's gateway and generated development authentication resources. An existing namespace is bound by UID and never changed; a missing one is created. A namespace another NemoClaw deployment created is refused.",
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "namespace",
+        "authentication"
+      ],
+      "type": "object"
+    },
+    "ManagedTarget": {
+      "description": "Where NemoClaw installs a managed gateway: exactly one of docker, podman, kubernetes, and openshift. Each holds only the settings NemoClaw uses to install the gateway there; OpenShell's own settings stay in config and each sandbox's driverConfig.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A gateway container on a local Docker engine, which runs every sandbox on that engine.",
+          "properties": {
+            "docker": {
+              "$ref": "#/$defs/DockerTarget",
+              "description": "A gateway container on a local Docker engine, which runs every sandbox on that engine."
+            }
+          },
+          "required": [
+            "docker"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A gateway container on a local rootless Linux Podman engine, which runs every sandbox on that engine. Rootful, remote, and other platforms are unqualified.",
+          "properties": {
+            "podman": {
+              "$ref": "#/$defs/PodmanTarget",
+              "description": "A gateway container on a local rootless Linux Podman engine, which runs every sandbox on that engine. Rootful, remote, and other platforms are unqualified."
+            }
+          },
+          "required": [
+            "podman"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "OpenShell's gateway chart on an existing Kubernetes cluster, which schedules every sandbox.",
+          "properties": {
+            "kubernetes": {
+              "$ref": "#/$defs/ManagedKubernetes",
+              "description": "OpenShell's gateway chart on an existing Kubernetes cluster, which schedules every sandbox."
+            }
+          },
+          "required": [
+            "kubernetes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "OpenShell's gateway chart on an existing OpenShift cluster, which schedules every sandbox. The namespace assigns the gateway's user and group IDs, and only this target publishes the gateway through a Route.",
+          "properties": {
+            "openshift": {
+              "$ref": "#/$defs/ManagedOpenShift",
+              "description": "OpenShell's gateway chart on an existing OpenShift cluster, which schedules every sandbox. The namespace assigns the gateway's user and group IDs, and only this target publishes the gateway through a Route."
+            }
+          },
+          "required": [
+            "openshift"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "Manifest": {
       "additionalProperties": false,
@@ -2463,6 +2648,64 @@
       },
       "type": "object"
     },
+    "OpenShiftExpose": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "service"
+              ]
+            },
+            {
+              "required": [
+                "route"
+              ]
+            }
+          ],
+          "x-nemoclaw-error": "expose takes exactly one of service and route"
+        },
+        {
+          "if": {
+            "required": [
+              "route"
+            ]
+          },
+          "then": {
+            "properties": {
+              "endpoint": {
+                "not": {
+                  "pattern": "^https://[0-9]+(?:\\.[0-9]+){3}:[0-9]+$"
+                }
+              }
+            }
+          },
+          "x-nemoclaw-error": "expose.route needs an endpoint with a DNS name, because the Route's host is the endpoint's and clients send no SNI host name for an IP address; expose.service accepts an IP address"
+        }
+      ],
+      "description": "Publication of a managed OpenShift gateway's endpoint, through exactly one of service and route.",
+      "properties": {
+        "endpoint": {
+          "description": "The address clients outside the cluster dial: `https://HOST:PORT`, with a lowercase DNS name or IPv4 address and an explicit nonzero port, and no path. The gateway certificate names its host.",
+          "pattern": "^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$",
+          "type": "string",
+          "x-nemoclaw-error": "expose.endpoint must be https://HOST:PORT with a lowercase DNS name or IPv4 address, a nonzero port, and no path"
+        },
+        "route": {
+          "$ref": "#/$defs/ExposureRoute",
+          "description": "The gateway chart's own OpenShift Route, which publishes the endpoint's host through the cluster's router and passes TLS through to the gateway by SNI, so TLS and client certificates reach the gateway unchanged. The endpoint's host is a DNS name, since clients send no SNI host name for an IP address, and its port is the one the router serves. Only the openshift target takes it."
+        },
+        "service": {
+          "$ref": "#/$defs/ExposureService",
+          "description": "The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged."
+        }
+      },
+      "required": [
+        "endpoint"
+      ],
+      "type": "object"
+    },
     "Overrides": {
       "additionalProperties": false,
       "description": "Model settings for one named inference choice.",
@@ -2506,6 +2749,55 @@
       },
       "required": [
         "model"
+      ],
+      "type": "object"
+    },
+    "PodmanTarget": {
+      "additionalProperties": false,
+      "description": "A managed gateway container on a local rootless Linux Podman engine. Podman's socket depends on the user, so engine has no default.",
+      "properties": {
+        "engine": {
+          "description": "The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket.",
+          "minLength": 1,
+          "pattern": "^(unix:///|npipe:////\\./pipe/)",
+          "type": "string",
+          "x-nemoclaw-error": "target.podman.engine must name the local Podman API service socket, such as unix:///run/user/1000/podman/podman.sock, or on Windows a Podman machine's named pipe, such as npipe:////./pipe/podman-machine-default"
+        },
+        "imagePullPolicy": {
+          "$ref": "#/$defs/ImagePullPolicy",
+          "description": "Image acquisition before local container creation: IfNotPresent, the default, Never, or Always, which contacts the registry before creation or restart."
+        },
+        "networkCIDR": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "/24$"
+            }
+          ],
+          "description": "Canonical private IPv4 /24 of the network the gateway and its sandboxes share.",
+          "type": "string",
+          "x-nemoclaw-default-rule": "Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid)."
+        },
+        "port": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 65535,
+              "minimum": 1024
+            }
+          ],
+          "default": 17681,
+          "description": "Loopback TCP port the gateway listens on, from 1024 through 65535. NemoClaw and the OpenShell CLI reach the gateway at `http://127.0.0.1:PORT`.",
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        }
+      },
+      "required": [
+        "engine"
       ],
       "type": "object"
     },
@@ -3103,24 +3395,6 @@
         "name",
         "overrides"
       ],
-      "type": "object"
-    },
-    "Runtime": {
-      "additionalProperties": false,
-      "description": "The compute driver an OpenShell gateway runs sandboxes with. One gateway runs one driver.",
-      "properties": {
-        "provider": {
-          "default": "docker",
-          "description": "Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target, and external inference endpoints. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement.",
-          "enum": [
-            "docker",
-            "podman",
-            "kubernetes",
-            "openshift"
-          ],
-          "type": "string"
-        }
-      },
       "type": "object"
     },
     "Sandbox": {
@@ -4835,7 +5109,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/Sandbox"
           },
-          "description": "Named sandboxes: one to 256 with a kubernetes or openshift gateway runtime, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent.",
+          "description": "Named sandboxes: one to 256 with a kubernetes or openshift gateway target, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent.",
           "minProperties": 1,
           "propertyNames": {
             "pattern": "^[a-z][a-z0-9-]{0,39}$"
@@ -4917,346 +5191,6 @@
   "additionalProperties": false,
   "allOf": [
     {
-      "if": {
-        "not": {
-          "properties": {
-            "spec": {
-              "properties": {
-                "gateway": {
-                  "properties": {
-                    "runtime": {
-                      "properties": {
-                        "provider": {
-                          "const": "podman"
-                        }
-                      },
-                      "required": [
-                        "provider"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "runtime"
-                  ]
-                }
-              },
-              "required": [
-                "gateway"
-              ]
-            }
-          },
-          "required": [
-            "spec"
-          ]
-        }
-      },
-      "then": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "gateway": {
-                "properties": {
-                  "imagePullPolicy": {
-                    "enum": [
-                      "IfNotPresent",
-                      "Never"
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "gateway": {
-                "properties": {
-                  "management": {
-                    "const": "managed"
-                  }
-                },
-                "required": [
-                  "management"
-                ]
-              }
-            },
-            "required": [
-              "gateway"
-            ]
-          }
-        },
-        "required": [
-          "spec"
-        ]
-      },
-      "then": {
-        "else": {
-          "properties": {
-            "spec": {
-              "properties": {
-                "gateway": {
-                  "properties": {
-                    "runtime": {
-                      "properties": {
-                        "provider": {
-                          "enum": [
-                            "docker",
-                            "podman"
-                          ]
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "if": {
-          "properties": {
-            "spec": {
-              "properties": {
-                "gateway": {
-                  "required": [
-                    "kubernetes"
-                  ]
-                }
-              },
-              "required": [
-                "gateway"
-              ]
-            }
-          },
-          "required": [
-            "spec"
-          ]
-        },
-        "then": {
-          "properties": {
-            "spec": {
-              "properties": {
-                "gateway": {
-                  "properties": {
-                    "runtime": {
-                      "properties": {
-                        "provider": {
-                          "enum": [
-                            "kubernetes",
-                            "openshift"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "provider"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "runtime"
-                  ]
-                }
-              },
-              "required": [
-                "gateway"
-              ]
-            }
-          },
-          "required": [
-            "spec"
-          ]
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "gateway": {
-                "properties": {
-                  "kubernetes": {
-                    "not": {
-                      "required": [
-                        "expose"
-                      ]
-                    }
-                  }
-                },
-                "required": [
-                  "kubernetes"
-                ]
-              }
-            },
-            "required": [
-              "gateway"
-            ]
-          }
-        },
-        "required": [
-          "spec"
-        ]
-      },
-      "then": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "gateway": {
-                "properties": {
-                  "endpoint": {
-                    "pattern": "^https://127\\.0\\.0\\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
-                  }
-                },
-                "required": [
-                  "endpoint"
-                ]
-              }
-            },
-            "required": [
-              "gateway"
-            ]
-          }
-        },
-        "required": [
-          "spec"
-        ]
-      },
-      "x-nemoclaw-error": "managed Kubernetes without kubernetes.expose requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port"
-    },
-    {
-      "if": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "gateway": {
-                "properties": {
-                  "kubernetes": {
-                    "properties": {
-                      "expose": {
-                        "required": [
-                          "route"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "expose"
-                    ]
-                  }
-                },
-                "required": [
-                  "kubernetes"
-                ]
-              }
-            },
-            "required": [
-              "gateway"
-            ]
-          }
-        },
-        "required": [
-          "spec"
-        ]
-      },
-      "then": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "gateway": {
-                "properties": {
-                  "runtime": {
-                    "properties": {
-                      "provider": {
-                        "const": "openshift"
-                      }
-                    },
-                    "required": [
-                      "provider"
-                    ]
-                  }
-                },
-                "required": [
-                  "runtime"
-                ]
-              }
-            },
-            "required": [
-              "gateway"
-            ]
-          }
-        },
-        "required": [
-          "spec"
-        ]
-      },
-      "x-nemoclaw-error": "kubernetes.expose.route requires gateway.runtime.provider openshift; on other Kubernetes clusters, publish the gateway with kubernetes.expose.service"
-    },
-    {
-      "if": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "gateway": {
-                "properties": {
-                  "kubernetes": {
-                    "properties": {
-                      "expose": {
-                        "required": [
-                          "route"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "expose"
-                    ]
-                  }
-                },
-                "required": [
-                  "kubernetes"
-                ]
-              }
-            },
-            "required": [
-              "gateway"
-            ]
-          }
-        },
-        "required": [
-          "spec"
-        ]
-      },
-      "then": {
-        "properties": {
-          "spec": {
-            "properties": {
-              "gateway": {
-                "properties": {
-                  "endpoint": {
-                    "not": {
-                      "pattern": "^https://[0-9]+(?:\\.[0-9]+){3}:[0-9]+$"
-                    }
-                  }
-                },
-                "required": [
-                  "endpoint"
-                ]
-              }
-            },
-            "required": [
-              "gateway"
-            ]
-          }
-        },
-        "required": [
-          "spec"
-        ]
-      },
-      "x-nemoclaw-error": "kubernetes.expose.route needs an endpoint with a DNS name, because the Route's host is the endpoint's and clients send no SNI host name for an IP address; kubernetes.expose.service accepts an IP address"
-    },
-    {
       "else": {
         "properties": {
           "spec": {
@@ -5288,22 +5222,23 @@
             "properties": {
               "gateway": {
                 "properties": {
-                  "runtime": {
-                    "properties": {
-                      "provider": {
-                        "enum": [
-                          "kubernetes",
+                  "target": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "kubernetes"
+                        ]
+                      },
+                      {
+                        "required": [
                           "openshift"
                         ]
                       }
-                    },
-                    "required": [
-                      "provider"
                     ]
                   }
                 },
                 "required": [
-                  "runtime"
+                  "target"
                 ]
               }
             },
@@ -5352,22 +5287,23 @@
             "properties": {
               "gateway": {
                 "properties": {
-                  "runtime": {
-                    "properties": {
-                      "provider": {
-                        "enum": [
-                          "kubernetes",
+                  "target": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "kubernetes"
+                        ]
+                      },
+                      {
+                        "required": [
                           "openshift"
                         ]
                       }
-                    },
-                    "required": [
-                      "provider"
                     ]
                   }
                 },
                 "required": [
-                  "runtime"
+                  "target"
                 ]
               }
             },
@@ -5381,74 +5317,17 @@
         ]
       },
       "then": {
-        "allOf": [
-          {
-            "anyOf": [
-              {
-                "properties": {
-                  "spec": {
-                    "properties": {
-                      "gateway": {
-                        "properties": {
-                          "management": {
-                            "const": "external"
-                          }
-                        },
-                        "required": [
-                          "management"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "gateway"
-                    ]
-                  }
-                },
-                "required": [
-                  "spec"
-                ]
-              },
-              {
-                "properties": {
-                  "spec": {
-                    "properties": {
-                      "gateway": {
-                        "properties": {
-                          "management": {
-                            "const": "managed"
-                          }
-                        },
-                        "required": [
-                          "management",
-                          "kubernetes"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "gateway"
-                    ]
-                  }
-                },
-                "required": [
-                  "spec"
-                ]
-              }
-            ]
-          },
-          {
+        "properties": {
+          "spec": {
             "properties": {
-              "spec": {
-                "properties": {
-                  "services": {
-                    "maxProperties": 0
-                  }
-                }
+              "services": {
+                "maxProperties": 0
               }
             }
           }
-        ],
-        "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
-      }
+        }
+      },
+      "x-nemoclaw-error": "the kubernetes and openshift targets require external inference endpoints; managed services are not supported"
     },
     {
       "else": {
@@ -5469,22 +5348,23 @@
             "properties": {
               "gateway": {
                 "properties": {
-                  "runtime": {
-                    "properties": {
-                      "provider": {
-                        "enum": [
-                          "kubernetes",
+                  "target": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "kubernetes"
+                        ]
+                      },
+                      {
+                        "required": [
                           "openshift"
                         ]
                       }
-                    },
-                    "required": [
-                      "provider"
                     ]
                   }
                 },
                 "required": [
-                  "runtime"
+                  "target"
                 ]
               }
             },
@@ -5542,8 +5422,8 @@
   "type": "object",
   "x-nemoclaw-parser-checks": [
     "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
-    "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-    "Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without kubernetes.expose, its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path; with it, the endpoint names a lowercase DNS name or IPv4 address and an explicit port. kubernetes.expose.service has the chart's NodePort Service publish that port, which Kubernetes checks against the cluster's node-port range; kubernetes.expose.route, only with gateway.runtime.provider openshift, has the chart's pass-through Route publish the host, which must be a DNS name, at the port the cluster's router serves. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
+    "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
+    "A managed kubernetes or openshift target requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without expose, the document names no endpoint: each command forwards a free local port to the gateway pod. With it, expose.endpoint names a lowercase DNS name or IPv4 address and an explicit port. expose.service has the chart's NodePort Service publish that port, which Kubernetes checks against the cluster's node-port range; expose.route, only on the openshift target, has the chart's pass-through Route publish the host, which must be a DNS name, at the port the cluster's router serves. Managed inference services are excluded. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
     "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",

@@ -33,6 +33,7 @@ Agents:
   See [agent files](../build-deploy/state.md#agent-files).
 - OpenClaw sessions with kept state no longer fail on turns longer than about a minute or after a few minutes idle ([#14630](https://github.com/NVIDIA/NemoClaw/issues/14630)).
 - A Hermes route to an `anthropic` provider reaches the provider's endpoint whatever its path ([#14538](https://github.com/NVIDIA/NemoClaw/issues/14538)).
+- Agent images build Fabric from its [`v0.7.0`](https://github.com/NVIDIA/NeMo-Fabric/tree/v0.7.0) release tag instead of a commit on its `release/0.7` branch, without patches ([#13318](https://github.com/NVIDIA/NemoClaw/issues/13318)).
 
 Releases:
 
@@ -57,6 +58,8 @@ Installation:
 
 Images:
 
+- Releases no longer stage the `claude` agent image, because it bundles Anthropic's proprietary Claude Code CLI, which NVIDIA can't redistribute ([#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+  Build it locally as [Building Agent Images](../build-deploy/build.md#building-agent-images) describes.
 - Releases stage a llama.cpp runtime image, `llama-cpp`, beside the vLLM and Ollama images.
   It adds the supervisor to llama.cpp's CUDA 13.5 server image from release b12375, whose ARM64 and AMD64 builds carry kernels for GB300 (`sm_103`) and GB10 (`sm_121a`).
   CUDA 13.5 needs NVIDIA driver 580 or newer.
@@ -65,8 +68,8 @@ Images:
 Windows clients:
 
 - The CLI on Windows reaches a local Docker Desktop or Podman engine through its named pipe, such as `npipe:////./pipe/docker_engine`, and hides typed credentials at its prompts.
-  It plans, applies, and destroys a deployment with an external gateway whose `spec.gateway.engine` is that pipe or an `ssh://` engine ([#14631](https://github.com/NVIDIA/NemoClaw/issues/14631)).
-- A managed local gateway also runs from a Windows client: set `spec.gateway.engine` to Docker Desktop's or a Podman machine's named pipe, and the gateway container binds `/var/run/docker.sock` in the engine's Linux VM, where Docker Desktop serves its engine and a Podman machine links its rootful or rootless API socket.
+  It plans, applies, and destroys a deployment with an external gateway whose `spec.gateway.target.docker.engine` or `spec.gateway.target.podman.engine` is that pipe or an `ssh://` engine ([#14631](https://github.com/NVIDIA/NemoClaw/issues/14631)).
+- A managed local gateway also runs from a Windows client: set `spec.gateway.target.docker.engine` to Docker Desktop's named pipe or `spec.gateway.target.podman.engine` to a Podman machine's, and the gateway container binds `/var/run/docker.sock` in the engine's Linux VM, where Docker Desktop serves its engine and a Podman machine links its rootful or rootless API socket.
   On Windows, `nemoclaw onboard` offers the pipe the Docker client selects, otherwise `npipe:////./pipe/docker_engine`, and the default Podman machine's `npipe:////./pipe/podman-machine-default` ([#14632](https://github.com/NVIDIA/NemoClaw/issues/14632)).
   No Windows host has run a deployment.
   See [current limits](../resources/limits.md#platforms-models-and-placement).
@@ -82,8 +85,14 @@ macOS clients:
 Gateways:
 
 - [Current limits](../resources/limits.md#data-and-cleanup) list a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: it leaves its sandboxes in `Error`, and the next apply replaces them ([#13953](https://github.com/NVIDIA/NemoClaw/issues/13953)).
-- While a managed Docker gateway's container is stopped, plan, apply, and destroy fail with an error that names the container and the `docker start` command that starts it, instead of `observation transport failed`.
-  See [troubleshooting](../observability/troubleshooting.md#identifying-the-failure) ([#14626](https://github.com/NVIDIA/NemoClaw/issues/14626)).
+- While a managed Docker or Podman gateway's container is stopped, plan, apply, and destroy fail with an error that names the container and the `docker start` or `podman start` command that starts it, instead of `observation transport failed`.
+  See [troubleshooting](../observability/troubleshooting.md#identifying-the-failure) ([#14626](https://github.com/NVIDIA/NemoClaw/issues/14626), [#14691](https://github.com/NVIDIA/NemoClaw/issues/14691)).
+- `spec.gateway.target` selects where a gateway runs, with exactly one of `docker`, `podman`, `kubernetes`, and `openshift`, each holding only the settings NemoClaw uses there.
+  Omitting it selects Docker with its defaults.
+  Editors offer only the selected target's fields, and an invalid field reports that target's rule.
+  A managed `kubernetes` or `openshift` gateway without `expose` names no address or port: each command forwards a free local port to the gateway pod, and plan and apply report the gateway as `not published`.
+  The `openshift` target takes the fields of `kubernetes`, and only it takes [`expose.route`](../build-deploy/kubernetes.md#through-an-openshift-route), which publishes the gateway at `expose.endpoint`.
+  See [adapting a document to another target](../build-deploy/usage.md#adapting-a-document-to-another-target) and the [breaking change](#breaking-changes-since-v010-rc11).
 
 Recovery:
 
@@ -142,10 +151,9 @@ Inference and models:
 
 Kubernetes and OpenShift:
 
-- `gateway.kubernetes.expose.route` publishes a managed OpenShift gateway at `gateway.endpoint` through the OpenShell chart's pass-through Route, for clients such as the OpenShell CLI.
+- `gateway.target.openshift.expose.route` publishes a managed OpenShift gateway at `expose.endpoint` through the OpenShell chart's pass-through Route, for clients such as the OpenShell CLI.
   `expose.route`'s optional `annotations` reach the Route.
   The gateway certificate names the endpoint's host, and NemoClaw's own commands keep their port forward.
-  Plan refuses `expose.route` unless `gateway.runtime.provider` is `openshift` and the endpoint's host is a DNS name.
   See [publishing through an OpenShift Route](../build-deploy/kubernetes.md#through-an-openshift-route).
 
 Plan and apply:
@@ -303,10 +311,78 @@ See [migration](../get-started/migration.md) for where each earlier task lives n
 
 These changes since the `v0.1.0-rc11` tag affect existing deployments or documents:
 
-- The intent record is now version 26, so this release refuses any deployment that `v0.1.0-rc11` or an earlier build of this branch created, without changing its state.
+- The intent record is now version 31, so this release refuses any deployment that `v0.1.0-rc11` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release.
   See [compatibility](../references/compatibility.md#deployment-state).
 - OpenClaw's `harness.settings.plugins.entries` is now `plugins.bundled.entries`, for plugins that ship with OpenClaw, and `plugins.external.entries`, for plugins you provide; Fabric's OpenClaw adapter no longer accepts `plugins.entries`.
+- `spec.gateway.target` replaces `spec.gateway.runtime` and the gateway's flat settings.
+  The parser rejects the old fields, and plan refuses a changed target on an existing deployment.
+  A managed Docker or Podman gateway takes an integer `port`, 17681 by default, instead of `endpoint`, with `engine`, `networkCIDR`, and `imagePullPolicy` beside it.
+  Before:
+
+  ```yaml
+  gateway:
+    management: managed
+    runtime: {provider: docker}
+    endpoint: http://127.0.0.1:17671
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.20.0.0/24
+  ```
+
+  After:
+
+  ```yaml
+  gateway:
+    management: managed
+    target:
+      docker:
+        port: 17671
+        engine: unix:///var/run/docker.sock
+        networkCIDR: 172.20.0.0/24
+  ```
+
+  A managed Kubernetes gateway's `kubernetes` settings move under `target.kubernetes`, and a published gateway's `endpoint` moves into `expose`.
+  Without `expose`, remove `endpoint`: each command forwards its own free local port.
+  Before:
+
+  ```yaml
+  gateway:
+    management: managed
+    runtime: {provider: kubernetes}
+    endpoint: https://gateway.agents.example.com:30080
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: my-cluster
+      namespace: agents
+      authentication: {profile: development}
+      expose:
+        service: {type: NodePort}
+  ```
+
+  After:
+
+  ```yaml
+  gateway:
+    management: managed
+    target:
+      kubernetes:
+        kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+        context: my-cluster
+        namespace: agents
+        authentication: {profile: development}
+        expose:
+          endpoint: https://gateway.agents.example.com:30080
+          service: {type: NodePort}
+  ```
+
+  - With `runtime: {provider: openshift}`, write the same settings under `target: {openshift: {...}}` instead of `target: {kubernetes: {...}}`.
+  - Move `kubernetes: {imagePullSecrets: [registry-credentials]}` to `config: {openshell.drivers.kubernetes: {image_pull_secrets: [registry-credentials]}}`.
+    The gateway and its helper pods no longer get pull Secrets.
+    See [current limits](../resources/limits.md#platforms-models-and-placement).
+  - On an external gateway, `runtime` and `engine` become the target: `runtime: {provider: podman}` with `engine: unix:///run/user/1000/podman/podman.sock` becomes `target: {podman: {engine: unix:///run/user/1000/podman/podman.sock}}`, and `runtime: {provider: kubernetes}` becomes `target: {kubernetes: {}}`.
+  - JSON results omit `connection.gatewayEndpoint` for a managed Kubernetes or OpenShift gateway without `expose`.
+  - In hand-written HCL, `openshell_kubernetes_storage`, `openshell_kubernetes_auth`, and `openshell_kubernetes_gateway` take no `endpoint`, and `openshell_gateway` takes `kubernetes` without `endpoint`, with `target` in the specification's `settings`, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
+  - In the Rust SDK, `ManagedGateway` and `ExternalGateway` hold `target`, a `ManagedTarget` or an `ExternalTarget`, `Runtime` is removed, and `ManagedKubernetes` has no `image_pull_secrets`.
 
 ### Breaking Changes in v0.1.0-rc11
 
@@ -443,7 +519,7 @@ The builder also accepts `darwin_amd64`, but no release attaches it and CI doesn
 Sandboxes and model services run on Linux engines or clusters.
 The agent and runtime images are built for `linux/arm64` and `linux/amd64`.
 
-| `spec.gateway.runtime.provider` | Accepted | Live tests in CI |
+| `spec.gateway.target` | Accepted | Live tests in CI |
 |---|---|---|
 | `docker` | Managed or external gateway; managed vLLM, Ollama, and container services | Docker suite, the cases on NVIDIA hosted inference, and the GPU cases |
 | `podman` | Managed rootless gateway on a local Linux engine or, from a Windows or macOS client, a Podman machine, or external gateway; model services only on a Docker host through [SSH placement](../agents-inference/remote-service.md) | None |

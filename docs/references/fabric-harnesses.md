@@ -43,6 +43,7 @@ External services remain operated by their owners.
 NemoClaw still owns its deployment's provider registration, endpoint profile, and sandbox.
 
 Build an image for the selected harness using [the agent image procedure](../build-deploy/build.md#building-agent-images).
+Releases don't include an image for `nvidia.fabric.claude`: the image bundles Anthropic's proprietary Claude Code CLI, which NVIDIA can't redistribute, so build it locally as [Building Agent Images](../build-deploy/build.md#building-agent-images) describes.
 Replace example identities, endpoints, and local or placeholder image digests with your own values.
 Keep the image, schema, and bundle matched to the desired configuration.
 [Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) does not change Hermes's adapter identifier.

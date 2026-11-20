@@ -12,7 +12,7 @@ use crate::docker_engine::{self, DATA_ROOT};
 /// The fixed engine socket on Unix, which managed Docker gateways name.
 const MANAGED_ENGINE: &str = "unix:///tmp/nemoclaw-integration/engine.sock";
 use nemoclaw_e2e::{http_fixture, openshell};
-use nemoclaw_sdk::config::{Document, Gateway};
+use nemoclaw_sdk::config::{Document, ExternalTarget, Gateway};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -390,19 +390,28 @@ impl Fixtures {
         // gateway read waits for installation; plan-only scenarios mock Helm
         // and do not connect to a cluster or the gateway.
         if document.spec.gateway.as_kubernetes().is_none() {
-            *document.spec.gateway.endpoint_mut() = shared.gateway_endpoint.clone();
+            nemoclaw_e2e::point_gateway_at(document, &shared.gateway_endpoint);
         }
         let (engine, endpoint) = match &mut document.spec.gateway {
             Gateway::External(gateway) => {
                 gateway.credential = None;
                 gateway.tls = None;
-                (Some(&mut gateway.engine), shared.engine_endpoint.as_str())
+                let engine = match &mut gateway.target {
+                    ExternalTarget::Docker(engine) | ExternalTarget::Podman(engine) => {
+                        Some(&mut engine.engine)
+                    }
+                    ExternalTarget::Kubernetes(_) | ExternalTarget::OpenShift(_) => None,
+                };
+                (engine, shared.engine_endpoint.as_str())
             }
             // A managed gateway needs a local engine. Every platform compiles
             // the Unix socket, so the Docker alias a test file names stays the
             // same; these scenarios run only on Unix.
             gateway => (
-                gateway.as_managed_mut().map(|managed| &mut managed.engine),
+                gateway
+                    .as_managed_mut()
+                    .and_then(|managed| managed.target.local_mut())
+                    .map(|local| &mut local.engine),
                 MANAGED_ENGINE,
             ),
         };

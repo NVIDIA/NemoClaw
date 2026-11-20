@@ -27,7 +27,7 @@ fn gateway_spec(variable: &str) -> Spec {
     assert!(document.spec.gateway.as_managed().is_some());
     assert!(document.spec.services.is_empty());
     assert_eq!(
-        document.spec.gateway.runtime().provider,
+        document.spec.gateway.compute_driver(),
         ComputeDriver::Docker
     );
     let mut random = [0_u8; 16];
@@ -41,12 +41,19 @@ fn gateway_spec(variable: &str) -> Spec {
         .unwrap();
     let mut spec = Spec::from_gateway_row(&storage.kind, &storage.values).unwrap();
     spec.layout = 2;
-    spec.gateway.endpoint = document.spec.gateway.endpoint().into();
+    spec.gateway.target.local_mut().unwrap().port = document
+        .spec
+        .gateway
+        .as_local_managed()
+        .unwrap()
+        .local()
+        .unwrap()
+        .port;
     spec
 }
 
 fn client(spec: &Spec) -> OpenShellClient {
-    let channel = Channel::from_shared(spec.gateway.endpoint.clone())
+    let channel = Channel::from_shared(spec.endpoint())
         .unwrap()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(30))
@@ -83,7 +90,7 @@ async fn start(api: &Docker, engine: &Engine, spec: &Spec) -> OpenShellClient {
     );
     let mut storage = spec.clone();
     storage.layout = 1;
-    storage.gateway.endpoint = "http://127.0.0.1:8080".into();
+    storage.gateway.target.local_mut().unwrap().port = 8080;
     let binding = engine
         .gateway_storage(&storage, "", true)
         .await
@@ -163,7 +170,7 @@ async fn pinned_docker_gateways_reach_ready_without_interfering_with_other_sandb
     assert!(image.contains("@sha256:"));
     assert_ne!(specs[0].owner, specs[1].owner);
     assert_ne!(specs[0].name, specs[1].name);
-    assert_ne!(specs[0].gateway.endpoint, specs[1].gateway.endpoint);
+    assert_ne!(specs[0].endpoint(), specs[1].endpoint());
     assert_ne!(specs[0].network_cidr(), specs[1].network_cidr());
     assert_eq!(specs[0].engine(), specs[1].engine());
     let engine = Engine::connect(specs[0].engine()).unwrap();
@@ -184,10 +191,7 @@ async fn pinned_docker_gateways_reach_ready_without_interfering_with_other_sandb
         );
         assert!(engine.volume(&spec.volume()).await.unwrap().is_none());
         assert!(engine.network(&spec.network()).await.unwrap().is_none());
-        eprintln!(
-            "owned test gateway: {} ({})",
-            spec.name, spec.gateway.endpoint
-        );
+        eprintln!("owned test gateway: {} ({})", spec.name, spec.endpoint());
     }
     for image in [
         DEFAULT_GATEWAY_IMAGE,

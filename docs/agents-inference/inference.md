@@ -442,8 +442,8 @@ Choose a restart policy that doesn't start the model again under the same memory
 ## Using External Ollama Through a Managed Proxy
 
 Run the proxy on the same Linux Docker host as the existing Ollama daemon and installed model.
-With a managed Docker gateway, the proxy inherits `gateway.engine`.
-With an external gateway, declare the proxy service's `engine` as an explicit local Docker engine, a Unix socket or, on Windows, a named pipe, and make its published endpoint reachable from OpenShell.
+With a managed Docker gateway, the proxy inherits the `engine` of its `docker` target.
+With a Podman or external gateway, declare the proxy service's `engine` as an explicit local Docker engine, a Unix socket or, on Windows, a named pipe, and make its published endpoint reachable from OpenShell.
 Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
 The proxy exposes `openai-completions`.
