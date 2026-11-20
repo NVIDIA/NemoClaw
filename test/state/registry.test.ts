@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { managedStartupE2eProfile } from "../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile";
 import { makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
 
 // Use a temp dir so tests don't touch real ~/.nemoclaw.
@@ -905,6 +908,79 @@ describe("registry", () => {
     );
 
     expect(() => registry.getSandbox("alpha")).toThrow(/invalid workload receipt/);
+  });
+
+  it("loads a Teams receipt from before OpenClaw 2026.10.5 and saves it in the current form (#14540)", () => {
+    const teamsValue = { appId: "teams-app", enabled: true };
+    const current = encodeManagedStartupProfile({
+      ...managedStartupE2eProfile("openclaw"),
+      messaging: {
+        plan: {
+          schemaVersion: 1,
+          agent: "openclaw",
+          agentRender: [
+            {
+              channelId: "teams",
+              renderId: "teams-openclaw-channel",
+              hookId: "teams-openclaw-channel",
+              handler: "common.staticOutputs",
+              kind: "json-fragment",
+              agent: "openclaw",
+              target: "openclaw.json",
+              path: "channels.msteams",
+              value: {
+                ...teamsValue,
+                legacyWebhook: { port: 3978 },
+                webhook: { path: "/api/messages" },
+              },
+            },
+          ],
+        },
+      },
+    });
+    const old = JSON.parse(Buffer.from(current, "base64url").toString("utf8"));
+    old.messaging.plan.agentRender[0].value = {
+      ...teamsValue,
+      webhook: { path: "/api/messages", port: 3978 },
+    };
+    const encoded = Buffer.from(JSON.stringify(old), "utf8").toString("base64url");
+    const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
+    fs.mkdirSync(path.dirname(regFile), { recursive: true });
+    fs.writeFileSync(
+      regFile,
+      JSON.stringify({
+        defaultSandbox: "alpha",
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            workload: {
+              schemaVersion: 1,
+              kind: "managed-image",
+              reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"1".repeat(64)}`,
+              release: "v0.0.130",
+              sourceRevision: "2".repeat(40),
+              sourceCohort: "ghrun-1-1",
+              capabilityContractVersion: 1,
+              startupProfileContractVersion: 1,
+              encodedProfile: encoded,
+              startupProfileSha256: sha256(encoded),
+              credentialProxyReplayRequired: false,
+              shared: true,
+            },
+          },
+        },
+      }),
+    );
+
+    expect(registry.getSandbox("alpha").workload).toMatchObject({
+      encodedProfile: current,
+      startupProfileSha256: sha256(current),
+    });
+    registry.updateSandbox("alpha", { model: "new-model" });
+    expect(JSON.parse(fs.readFileSync(regFile, "utf-8")).sandboxes.alpha.workload).toMatchObject({
+      encodedProfile: current,
+      startupProfileSha256: sha256(current),
+    });
   });
 
   it("does not serialize an invalid workload receipt", () => {

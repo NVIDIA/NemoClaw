@@ -55,6 +55,34 @@ export function authorizeTeamsOpenClawWebhookField(
   return [{ path: ["value", "webhook"], value: webhook }];
 }
 
+/**
+ * Convert the stock Teams render written before OpenClaw 2026.10.5, which kept
+ * the listener port inside `webhook`, to the current shape. Returns null unless
+ * the entry is exactly that old render: the current render contract must accept
+ * the converted entry, so identity and field checks stay in one place.
+ */
+export function upgradeLegacyTeamsOpenClawWebhookRender(
+  entry: unknown,
+): Record<string, unknown> | null {
+  if (!isPlainDataObject(entry)) return null;
+  const value = ownDataPropertyValue(entry, "value");
+  if (!isPlainDataObject(value) || Object.hasOwn(value, "legacyWebhook")) return null;
+  const webhook = ownDataPropertyValue(value, "webhook");
+  if (
+    !isPlainDataObject(webhook) ||
+    !hasExactlyOwnDataProperties(webhook, ["path", "port"]) ||
+    ownDataPropertyValue(webhook, "path") !== TEAMS_OPENCLAW_WEBHOOK_RENDER_CONTRACT.webhookPath
+  ) {
+    return null;
+  }
+  const port = ownDataPropertyValue(webhook, "port");
+  const upgraded = {
+    ...entry,
+    value: { ...value, webhook: { path: webhook.path }, legacyWebhook: { port } },
+  };
+  return authorizeTeamsOpenClawWebhookField(upgraded).length === 1 ? upgraded : null;
+}
+
 function isPlainDataObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
