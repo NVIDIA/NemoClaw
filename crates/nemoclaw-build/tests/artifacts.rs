@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_build::{bundle_version, extract_tofu, source_version};
+use nemoclaw_build::{build_kind, bundle_version, extract_tofu, source_version, stamped_version};
 use std::io::{Cursor, Write};
 use std::path::Path;
 fn git(repository: &Path, args: &[&str]) {
@@ -55,6 +55,36 @@ fn bundle_reports_the_tag_of_a_clean_tagged_checkout_and_its_sources_otherwise()
         dev,
         "no repository"
     );
+}
+#[test]
+fn a_release_build_stamps_its_build_number_and_a_source_build_reads_dev() {
+    let repository = tempfile::tempdir().unwrap();
+    let repository = repository.path();
+    let dev = "0.1.0-dev.0123456789abcdef";
+    git(repository, &["init", "--quiet"]);
+    std::fs::write(repository.join("Cargo.toml"), "first").unwrap();
+    git(repository, &["add", "Cargo.toml"]);
+    git(repository, &["commit", "--quiet", "--message", "first"]);
+
+    let source = stamped_version(repository, dev, Some("42"));
+    assert_eq!(source, dev, "source build keeps its source version");
+    assert_eq!(build_kind(&source), "dev");
+
+    git(repository, &["tag", "v1.0.0"]);
+    let release = stamped_version(repository, dev, Some("42"));
+    assert_eq!(release, "1.0.0-42", "release build");
+    assert_eq!(build_kind(&release), "release");
+
+    let unnumbered = stamped_version(repository, dev, None);
+    assert_eq!(unnumbered, "1.0.0", "tagged build without a number");
+    assert_eq!(build_kind(&unnumbered), "dev");
+    assert_eq!(
+        stamped_version(repository, dev, Some("4x2")),
+        "1.0.0",
+        "malformed build number is ignored"
+    );
+    assert_eq!(build_kind("1.0.0-rc1-7"), "release");
+    assert_eq!(build_kind("1.0.0-rc1"), "dev");
 }
 #[test]
 fn provider_version_changes_with_content_and_paths_but_not_input_order() {
