@@ -57,6 +57,8 @@ Installation:
 
 Images:
 
+- Releases no longer stage the `claude` agent image, because it bundles Anthropic's proprietary Claude Code CLI, which NVIDIA can't redistribute ([#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+  Build it locally as [Building Agent Images](../build-deploy/build.md#building-agent-images) describes.
 - Releases stage a llama.cpp runtime image, `llama-cpp`, beside the vLLM and Ollama images.
   It adds the supervisor to llama.cpp's CUDA 13.5 server image from release b12375, whose ARM64 and AMD64 builds carry kernels for GB300 (`sm_103`) and GB10 (`sm_121a`).
   CUDA 13.5 needs NVIDIA driver 580 or newer.
@@ -82,8 +84,8 @@ macOS clients:
 Gateways:
 
 - [Current limits](../resources/limits.md#data-and-cleanup) list a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: it leaves its sandboxes in `Error`, and the next apply replaces them ([#13953](https://github.com/NVIDIA/NemoClaw/issues/13953)).
-- While a managed Docker gateway's container is stopped, plan, apply, and destroy fail with an error that names the container and the `docker start` command that starts it, instead of `observation transport failed`.
-  See [troubleshooting](../observability/troubleshooting.md#identifying-the-failure) ([#14626](https://github.com/NVIDIA/NemoClaw/issues/14626)).
+- While a managed Docker or Podman gateway's container is stopped, plan, apply, and destroy fail with an error that names the container and the `docker start` or `podman start` command that starts it, instead of `observation transport failed`.
+  See [troubleshooting](../observability/troubleshooting.md#identifying-the-failure) ([#14626](https://github.com/NVIDIA/NemoClaw/issues/14626), [#14691](https://github.com/NVIDIA/NemoClaw/issues/14691)).
 - `spec.gateway.target` selects where a gateway runs, with exactly one of `docker`, `podman`, `kubernetes`, and `openshift`, each holding only the settings NemoClaw uses there.
   Omitting it selects Docker with its defaults.
   Editors offer only the selected target's fields, and an invalid field reports that target's rule.

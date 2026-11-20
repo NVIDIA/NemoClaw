@@ -778,6 +778,64 @@ async fn schema_commands_do_not_require_inference_credentials() {
     assert_eq!(secrets.0.load(Ordering::SeqCst), 2);
 }
 
+/// A plan that fails while a managed Podman gateway's container is stopped
+/// names the container and the `podman` command that starts it. A gateway
+/// whose container runs keeps OpenTofu's error.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_stopped_podman_gateway_container_is_named_with_how_to_start_it() {
+    const NAME: &str = "nc-0123456789abcdef-gateway";
+    let bundle_directory = tempfile::tempdir().unwrap();
+    let bundle = fixture_bundle(bundle_directory.path());
+    fs::create_dir_all(bundle.tofu().parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("/bin/sh", bundle.tofu()).unwrap();
+    let state_directory = tempfile::tempdir().unwrap();
+    let store = Store::open(state_directory.path()).unwrap();
+    // The full plan fails reading the gateway's objects through the stopped
+    // gateway; a refresh of the gateway alone succeeds.
+    fs::write(
+        state_directory.path().join("plan"),
+        "case \" $* \" in *' -refresh-only '*) : > gateway.plan; exit 0;; esac\n\
+         echo 'Resource observation: observation transport failed' >&2\nexit 1\n",
+    )
+    .unwrap();
+    let document =
+        Document::parse(include_bytes!("../../../../examples/managed-podman.yaml").as_slice())
+            .unwrap();
+    let engine = document.spec.gateway.as_managed().unwrap().engine();
+    let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
+    let cancel = CancellationToken::new();
+    let plan_with_gateway = |running: &str| {
+        let refreshed = json!({"prior_state": {"values": {"root_module": {"resources": [{
+            "address": "openshell_podman_gateway.runtime",
+            "values": {"name": NAME, "engine": engine, "running": running}
+        }]}}}});
+        fs::write(
+            state_directory.path().join("show"),
+            format!("printf '%s\\n' '{refreshed}'\n"),
+        )
+        .unwrap();
+        deployment.saved_plan(&bundle, &store, &document, "apply.plan", &cancel)
+    };
+
+    let Err(error) = plan_with_gateway("true").await else {
+        panic!("a plan through an unreachable gateway succeeded");
+    };
+    assert!(
+        error.to_string().contains("observation transport failed"),
+        "{error}"
+    );
+
+    let Err(error) = plan_with_gateway("false").await else {
+        panic!("a plan through a stopped gateway succeeded");
+    };
+    let Error::GatewayStopped { name, start } = error else {
+        panic!("expected the stopped gateway's error, got {error}");
+    };
+    assert_eq!(name, NAME);
+    assert_eq!(start, format!("podman --url {engine} start {NAME}"));
+}
+
 fn fixture_bundle(directory: &Path) -> Bundle {
     Bundle {
         directory: directory.into(),

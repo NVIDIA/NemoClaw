@@ -65,8 +65,9 @@ jobs:
           echo "source=$source" >> "$GITHUB_OUTPUT"
           echo "rebuild=$rebuild" >> "$GITHUB_OUTPUT"
           # Evaluate the Bake configuration here, without publication credentials;
-          # only the agent names reach the stage job, which validates them.
-          catalog=$(docker buildx bake --print agents | jq -ce --arg candidate "$GITHUB_SHA" --arg source "$source" \
+          # only the agent names reach the stage job, which validates them. The
+          # release-agents group leaves out images releases can't redistribute.
+          catalog=$(docker buildx bake --print release-agents | jq -ce --arg candidate "$GITHUB_SHA" --arg source "$source" \
             '{candidate_revision:$candidate,source_revision:$source,agents:(.target | keys)}')
           echo "catalog=$catalog" >> "$GITHUB_OUTPUT"
           echo "Agent and proxy images from \`$source\`; rebuilt: $rebuild." >> "$GITHUB_STEP_SUMMARY"

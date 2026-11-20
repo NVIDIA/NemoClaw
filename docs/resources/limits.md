@@ -32,6 +32,7 @@ The following installation and release limits apply:
 |---|---|---|
 | No published final release: the [release archives](../get-started/install.md) are on draft releases, which only maintainers see. Others [build the bundle from source](../build-deploy/build.md#building-a-native-bundle). | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`291723b`][v1-291723b]: issue, and only draft releases exist |
 | The release executables are neither signed nor notarized for macOS or Windows. | [#14621](https://github.com/NVIDIA/NemoClaw/issues/14621) | [`291723b`][v1-291723b]: code, issue |
+| Releases don't include a `claude` agent image: it bundles Anthropic's proprietary Claude Code CLI, which NVIDIA can't redistribute. Build it locally as [Building Agent Images](../build-deploy/build.md#building-agent-images) describes. | [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) | [`43c9dc9`][v1-43c9dc9]: issue |
 | The SDK and provider packages are not published. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | No support policy or enterprise deployment qualification. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue |
 
@@ -176,3 +177,4 @@ Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#is
 [v1-5223fdc]: https://github.com/NVIDIA/NemoClaw/tree/5223fdc0b6c9a7ec0b7d86b9c11699eb3de1a206
 [v1-ffe5406]: https://github.com/NVIDIA/NemoClaw/tree/ffe5406498c6a27c068ad52a56ddcfb1cb37b904
 [v1-e7e1857]: https://github.com/NVIDIA/NemoClaw/tree/e7e1857514f4bed9269eeaf6786bcdb2d6d0ade3
+[v1-43c9dc9]: https://github.com/NVIDIA/NemoClaw/tree/43c9dc9cea1dea3bd59057fd18d96ed799475e9c
