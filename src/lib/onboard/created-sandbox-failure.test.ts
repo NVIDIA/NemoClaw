@@ -404,6 +404,18 @@ describe("unconfirmed create reporting (#14323)", () => {
     expect(formatCreateOutputTail(output)).toBe("passphrase=<REDACTED>\nsafe diagnostic");
   });
 
+  it("redacts bare-carriage-return headers before normalizing line endings", () => {
+    expect(formatCreateOutputTail("Authorization:\ropaque-bare-cr\rnext diagnostic")).toBe(
+      "Authorization: <REDACTED>\nnext diagnostic",
+    );
+  });
+
+  it("retains no words of an unquoted passphrase", () => {
+    expect(
+      formatCreateOutputTail("passphrase: correct horse battery staple\nnext diagnostic"),
+    ).toBe("passphrase: <REDACTED>\nnext diagnostic");
+  });
+
   it("returns null for empty create output", () => {
     expect(formatCreateOutputTail("")).toBeNull();
     expect(formatCreateOutputTail("  \n \n")).toBeNull();

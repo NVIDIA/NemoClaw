@@ -45,10 +45,12 @@ const CREATE_OUTPUT_TAIL_LINES = 12;
 export function formatCreateOutputTail(output: string | null | undefined): string | null {
   if (!output) return null;
   // Normalize display controls before redaction so they cannot split credential names.
-  const visibleOutput = stripVTControlCharacters(output)
-    .replace(/\r\n?/gu, "\n")
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu, "");
+  const visibleOutput = stripVTControlCharacters(output).replace(
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu,
+    "",
+  );
   const lines = redactFullWithUrls(visibleOutput)
+    .replace(/\r\n?/gu, "\n")
     .split(/\r?\n/u)
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0);

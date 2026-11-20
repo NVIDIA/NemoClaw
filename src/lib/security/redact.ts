@@ -164,6 +164,14 @@ const FULL_REDACT_PATTERNS: [RegExp, string][] = [
   ...quotedSecretAssignmentPatterns(CAMEL_SECRET_ASSIGNMENT_KEY_SOURCE, "g"),
   ...quotedSecretAssignmentPatterns("KEY", "g"),
   [
+    /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_)?passphrase["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32}))(?![ \t]*["'])[^\r\n]*/gi,
+    "$1<REDACTED>",
+  ],
+  [
+    /((?:^|[^A-Za-z0-9])[A-Za-z0-9]{1,128}Passphrase["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32}))(?![ \t]*["'])[^\r\n]*/g,
+    "$1<REDACTED>",
+  ],
+  [
     /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:key|token|secret|credential|password|passwd|passphrase|pass)|(?:x[-_])?api[-_]key|token|secret|credential|password|passwd|passphrase|pass)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]+((?:"|')?)/gi,
     "$1<REDACTED>$2",
   ],

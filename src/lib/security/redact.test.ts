@@ -46,6 +46,18 @@ describe("redactFullWithUrls", () => {
     expect(redactFull(input)).toBe(expected);
     expect(redactFullWithUrls(input)).toBe(expected);
   });
+
+  it.each(
+    ["passphrase", "SSH_PASSPHRASE", "sshPassphrase"].flatMap((key) =>
+      ["=", ": ", " "].map((separator) => [key, separator]),
+    ),
+  )("redacts complete unquoted %s values separated by %s", (key, separator) => {
+    const input = `${key}${separator}correct horse battery staple\nnext diagnostic`;
+    const expected = `${key}${separator}<REDACTED>\nnext diagnostic`;
+    expect(redactFull(input)).toBe(expected);
+    expect(redactFullWithUrls(input)).toBe(expected);
+    expect(redactFullWithUrls(expected)).toBe(expected);
+  });
 });
 
 describe("redact", () => {
