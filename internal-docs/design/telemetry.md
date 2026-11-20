@@ -3,16 +3,19 @@
 
 # Telemetry Design
 
-The `nemoclaw` CLI sends one small, flat record when a command that changes a deployment finishes.
+The `nemoclaw` CLI sends one flat record when a command that changes a deployment or its configuration finishes.
 This page defines that record: when it is sent, every field with its values and source, and what is never sent.
-The [security guide](../../docs/security/security.md) tells users what is sent and how to turn it off.
+The sender is not built yet, and [#13995](https://github.com/NVIDIA/NemoClaw/issues/13995) tracks it.
+Before it ships, [Security and Credential Ownership](../../docs/security/security.md) must tell users what is sent and how to turn it off.
 
 ## Goals
 
-- Send as much as the product questions need, and no more.
+The record has these goals:
+
+- Send only the fields that the product questions in [Parameters](#parameters) need.
 - Count unique installs, not only commands.
-- Keep CI, QA, and source builds out of reports.
-- Keep the record easy to change without breaking readers.
+- Send nothing from CI, and label QA runs and source builds so that reports can exclude them.
+- Let the record change without breaking the queries and charts that read it.
 
 ## When a Record Is Sent
 
@@ -23,22 +26,30 @@ The CLI sends one record when one of these commands finishes:
 - `onboard`, only when it writes the configuration
 
 `plan` and `export` send nothing.
-There is no separate install or upgrade event; the install ID file carries that information (see [Install ID File](#install-id-file)).
+No separate install or upgrade event exists.
+The `firstRun` and `previousVersion` fields, which come from the [install ID file](#install-id-file), carry that information.
 
 The CLI sends nothing in these cases:
 
 - `NEMOCLAW_DISABLE_TELEMETRY` is exactly `1`.
 - One of these CI variables is set: `CI`, `GITHUB_ACTIONS`, `TF_BUILD`, `BUILD_ID`, `TEAMCITY_VERSION`, `CODEBUILD_BUILD_ID`.
-- `NEMOCLAW_TELEMETRY_TEST_LABEL` is set but does not match `qa-<run>:<case>:attempt-N`.
-- The process runs under the test suite.
+  A variable counts as set when it is present, not empty, and not `false` or `0` in any letter case.
+  For example, `CI=true` and `BUILD_ID=8812` stop the record, and `CI=false` does not.
+- `NEMOCLAW_TELEMETRY_TEST_LABEL` is set but is not a valid test label (refer to [Field Rules](#field-rules)).
+- The sender is a unit-test build (`cfg(test)`).
+  Tests that run the built CLI set `NEMOCLAW_DISABLE_TELEMETRY=1` or a loopback endpoint through the shared test helper, and a guard test proves that the test suite posts nowhere else.
 
-Telemetry is on by default and documented; the CLI does not prompt.
+Telemetry is on by default, and the CLI does not prompt for consent.
 
-The sender makes one POST with a 3 second limit.
+The sender makes one HTTP POST request with a 3-second timeout.
 It ignores every send error and never changes the command's output or exit code.
-It posts only to the fixed collector endpoint or to a loopback address.
+It posts only to the fixed collector endpoint, `https://events.telemetry.data.nvidia.com/v1.1/events/json`, which is a constant in the sender and the same endpoint NemoClaw Classic uses.
+For tests, `NEMOCLAW_TELEMETRY_ENDPOINT` can point the sender at a local receiver.
+The sender honors it only when it is `http://127.0.0.1:<port>` or `http://[::1]:<port>` and ignores any other value.
 
 ## Envelope
+
+Each record has these envelope keys:
 
 | Key | Value | Source |
 |---|---|---|
@@ -50,54 +61,83 @@ It posts only to the fixed collector endpoint or to a loopback address.
 | `clientVer` | The `version` value | Bundle version stamp |
 | `deviceOS` | The `os` value | Command host |
 | `cpuArchitecture` | The `arch` value | Command host |
-| `deviceId` | The `installId` value if the collector stores it, else the collector's placeholder | Install ID file |
-| Other identity keys | The collector's placeholder | Constant |
+| `deviceId` | The `installId` value if the collector stores it, otherwise the collector's placeholder; the TEST probe, [#14029](https://github.com/NVIDIA/NemoClaw/issues/14029), decides which | Install ID file |
+| Other identity keys | The collector's placeholder; the TEST signup, [#14676](https://github.com/NVIDIA/NemoClaw/issues/14676), records the collector's list of these keys | Constant |
 
 ## Parameters
 
-All parameters are flat and at the top level.
+All parameters are top-level keys.
 Every parameter is present in every record.
-Each field is an accepted design decision; the Purpose column says what it is for.
+The Purpose column names the product question that each field answers.
 
 | Field | Type | Values | Source | Purpose |
 |---|---|---|---|---|
-| `nvidiaSource` | Word | `nemoclaw` | Constant | Separates NemoClaw records from other products on the shared collector |
-| `installId` | Word | Random UUID (v4) | Install ID file, created on first run | Counts unique installs |
-| `firstRun` | Boolean | `true` / `false` | `true` only when this run created the install ID file | Counts new installs |
-| `testLabel` | Word | Empty, or `qa-<run>:<case>:attempt-N` | `NEMOCLAW_TELEMETRY_TEST_LABEL` | Separates QA runs from real use |
-| `buildKind` | Word | `release` / `dev` / `other` | Bundle version stamp; a source build is `dev` | Separates source builds from releases |
-| `version` | Word | For example `1.0.0-412` | `NEMOCLAW_BUNDLE_VERSION` | Version adoption |
-| `previousVersion` | Word | A version, or `none` | Install ID file: the version of the last run if it differs, else `none` | Upgrade paths |
-| `operation` | Word | `onboard` / `apply` / `destroy` / `other` | The command | Create, update, and teardown rhythm |
-| `outcome` | Word | `succeeded` / `failed` / `cancelled` / `other` | The command result | Whether setup works |
-| `effect` | Word | `initial` / `update` / `none` / `teardown` / `authored` / `other` | `OperationResult.changes`; `authored` for `onboard` | Create, update, and teardown rhythm |
-| `failureStage` | Word | `none` / `validate` / `initialize` / `plan` / `apply` / `finish` / `destroy` / `other` | Progress events | Where commands fail |
-| `durationMs` | Integer | Milliseconds, 0 or more | Progress events | How long commands take |
-| `os` | Word | `linux` / `macos` / `windows` / `other` | `std::env::consts::OS` | Support and test matrix |
-| `arch` | Word | `x86_64` / `arm64` / `other` | `std::env::consts::ARCH`; `aarch64` is sent as `arm64` | Support and test matrix |
-| `hostContext` | Word | `native` / `wsl` / `other` | Kernel release string | Support and test matrix |
-| `deploymentSource` | Word | `brev` / `omnistation` / `colossus` / `none` / `other` | Image marker; see [Deployment Source Marker](#deployment-source-marker) | Where NemoClaw runs |
-| `cloud` | Word | `gcp` / `azure` / `aws` / `other` / `unknown` | DMI vendor string | Where NemoClaw runs |
-| `hardware` | Word | `dgx-spark` / `dgx-station` / `rtx-spark` / `jetson` / `mac` / `nvidia-gpu` / `other` / `unknown` | DMI product name and devicetree | Which machines run NemoClaw |
-| `harnesses` | List of words | Fabric catalog harness IDs, else `other` | Configuration | Agent harness share |
-| `models` | List of free text | Model names as written; see [Field Rules](#field-rules) | Configuration, default route of each sandbox | Model family share |
-| `inferenceHosts` | List of words | `local` / `build.nvidia.com` / `inference.nvidia.com` / `openai` / `anthropic` / `other` | Configuration endpoint host, matched on the machine | Local or hosted inference, and which provider |
-| `computeDriver` | Word | `docker` / `podman` / `kubernetes` / `openshift` / `other` / `unknown` | Configuration | Which runtime runs the sandboxes |
-| `sandboxCount` | Integer | 0 or more | Configuration | Deployment size |
-| `agentCount` | Integer | 0 or more | Configuration | Deployment size |
-| `webSearch` | Word | `brave` / `tavily` / `none` / `other` / `unknown` | Configuration | Optional feature use |
-| `mcpConfigured` | Boolean | `true` / `false` | Configuration | Optional feature use |
+| `nvidiaSource` | String | `nemoclaw` | Constant | Which product sent the record? |
+| `installId` | String | Random UUID (v4) | Install ID file, created on first run | How many unique installs are there? |
+| `firstRun` | Boolean | `true` or `false` | `true` only when this run created the install ID file | How many new installs are there? |
+| `testLabel` | String | Empty, or `qa-<run>:<case>:attempt-<n>` | `NEMOCLAW_TELEMETRY_TEST_LABEL` | Is the record from a QA run rather than other use? |
+| `buildKind` | String | `release`, `dev`, or `other` | Bundle version stamp; a build from a commit that is not exactly a release tag, or that has local changes, is stamped and sent as `dev` | Is the record from a release or a source build? |
+| `version` | String | For example, `1.0.0-412` | Bundle version stamp (`NEMOCLAW_BUNDLE_VERSION` at build time) | Which versions are in use? |
+| `previousVersion` | String | A version, or `none` | Install ID file: the version of the last run that sent a record if it differs from `version`, otherwise `none` | Which upgrade paths do users take? |
+| `operation` | String | `onboard`, `apply`, `destroy`, or `other` | The command | Which commands run, and how often? |
+| `outcome` | String | `succeeded`, `failed`, `cancelled`, or `other` | The command result | Do commands succeed? |
+| `effect` | String | `initial`, `update`, `none`, `teardown`, `authored`, or `other` | `OperationResult.changes`; `authored` for `onboard` | Does a run create, update, or tear down a deployment? |
+| `failureStage` | String | `none`, `validate`, `initialize`, `plan`, `apply`, `finish`, `destroy`, or `other` | The last progress event before the failure; refer to [Field Rules](#field-rules) | Where do commands fail? |
+| `durationMs` | Integer | Milliseconds, 0 or more | Progress events | How long do commands take? |
+| `os` | String | `linux`, `macos`, `windows`, or `other` | `std::env::consts::OS` | Which operating systems must be supported and tested? |
+| `arch` | String | `x86_64`, `arm64`, or `other` | `std::env::consts::ARCH`; `aarch64` is sent as `arm64` | Which chip architectures must be supported and tested? |
+| `hostContext` | String | `native`, `wsl`, or `other` | Kernel release string | Does NemoClaw run natively or under WSL? |
+| `deploymentSource` | String | `brev`, `omnistation`, `colossus`, `none`, or `other` | Image marker; refer to [Deployment Source Marker](#deployment-source-marker) | Which NVIDIA platform image does NemoClaw run on? |
+| `cloud` | String | `gcp`, `azure`, `aws`, `other`, or `unknown` | DMI vendor string | Which cloud does NemoClaw run on? |
+| `hardware` | String | `dgx-spark`, `dgx-station`, `rtx-spark`, `jetson`, `mac`, `nvidia-gpu`, `other`, or `unknown` | DMI product name and devicetree | Which machines run NemoClaw? |
+| `harnesses` | List of strings | Fabric catalog harness IDs, else `other` | Configuration | Which agent harnesses are used? |
+| `models` | List of strings | Model names as written; refer to [Field Rules](#field-rules) | Configuration, default route of each sandbox | Which model families are used? |
+| `inferenceHosts` | List of strings | `local`, `build.nvidia.com`, `inference.nvidia.com`, `openai`, `anthropic`, or `other` | Configuration endpoint host, matched on the machine | Is inference local or hosted, and from which provider? |
+| `computeDriver` | String | `docker`, `podman`, `kubernetes`, `openshift`, `other`, or `unknown` | Configuration | Which runtime runs the sandboxes? |
+| `sandboxCount` | Integer | 0 or more | Configuration | How large are deployments? |
+| `agentCount` | Integer | 0 or more | Configuration | How large are deployments? |
+| `webSearch` | String | `brave`, `tavily`, `none`, `other`, or `unknown` | Configuration | Which optional features are used? |
+| `mcpConfigured` | Boolean | `true` or `false` | Configuration | Which optional features are used? |
 
 ## Field Rules
 
-- `models`: a name is sent as written, up to 64 characters.
+- For `models`, the sender sends each name as written, up to 64 characters.
   A name that contains `://` or is longer than 64 characters is sent as `unknown`.
   Only the default route of each sandbox is read.
-- `harnesses`: an ID in the bundled Fabric catalog is sent as written; any other ID is sent as `other`.
-- `inferenceHosts`: the sender matches the endpoint host on the machine and sends the matched word, never the address.
+- For `testLabel`, a valid label matches `^qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2}$`, the same rule NemoClaw Classic uses.
+  `<run>` is 1 to 32 characters and `<case>` is 1 to 40, each made of lowercase letters, digits, and `-`.
+  `<n>` is 1 to 999.
+  For example, `qa-1120a:onboard-hermes:attempt-2` is valid, and a label that holds a path is not.
+- For `harnesses`, the sender sends an ID in the bundled Fabric catalog as written and sends any other ID as `other`.
+- For `inferenceHosts`, the sender matches the endpoint host on the machine and sends the matched word, never the address.
   An unmatched host is `other`.
-- `effect`: `authored` means `onboard` wrote the configuration; the other words come from the OpenTofu change list.
-- `deploymentSource` and `cloud` are independent: a Brev machine on GCP sends `brev` and `gcp`.
+- For `effect`, the sender reads the OpenTofu actions in `OperationResult.changes` (`create`, `update`, `delete`, `read`, or `no-op`).
+  A replace shows as `delete` and `create`.
+  The sender maps them to one word:
+
+  | Command | Changes | `effect` |
+  |---|---|---|
+  | `apply` | Every change is `no-op` or `read` | `none` |
+  | `apply` | Every change is `create` only | `initial` |
+  | `apply` | Any other set of changes | `update` |
+  | `destroy` | Any | `teardown` |
+  | `onboard` | Not read, because `onboard` wrote the configuration | `authored` |
+  | `apply` or `destroy` that fails or is cancelled | None returned | `other` |
+- For `failureStage`, the sender uses the last progress event that the command emitted before it failed:
+
+  | Last event | `failureStage` |
+  |---|---|
+  | None | `validate` |
+  | `Validating` (OpenTofu `init` is running) | `initialize` |
+  | `Planning` | `plan` |
+  | `Applying` | `apply` |
+  | `Readiness` | `finish` |
+  | `Destroying` | `destroy` |
+
+  A command that succeeds sends `none`.
+  `onboard` always sends `none`, because it sends a record only after it writes the configuration.
+- `deploymentSource` and `cloud` are independent.
+  For example, a Brev machine on GCP sends `brev` and `gcp`.
 - For `destroy`, the configuration fields come from the saved document `<state-dir>/intent.json`.
 - If the sender cannot read the configuration, for example when `apply` fails at `validate` or `intent.json` is missing on `destroy`, it sends these values:
   - `computeDriver` and `webSearch`: `unknown`
@@ -110,7 +150,7 @@ Each field is an accepted design decision; the Purpose column says what it is fo
 ## Deployment Source Marker
 
 `deploymentSource` reads a marker that the machine image sets.
-NemoClaw does not detect the platform itself; it only reads the marker.
+NemoClaw does not detect the platform itself.
 
 | Value | Meaning |
 |---|---|
@@ -119,28 +159,37 @@ NemoClaw does not detect the platform itself; it only reads the marker.
 | `other` | The marker holds a well-formed value that is not on the list |
 
 A host without a valid marker is never counted as Brev.
-The image owners must set the marker; for Brev, that is the owners of `brevdev/nemoclaw-image`.
-The marker's name and location are fixed when host detection is built (#14681).
+The image owners must set the marker.
+For Brev, the owners of the [brevdev/nemoclaw-image](https://github.com/brevdev/nemoclaw-image) repository set it.
+Host detection, which [#14681](https://github.com/NVIDIA/NemoClaw/issues/14681) tracks, will define the marker's name and location.
 
 ## Record Rules
 
 - Every closed list of words has `other`.
   Unknown input never produces free text.
-  The only free text in the record is the model name, the test label, and the version.
-- A value the sender cannot read is the word `unknown`; there are no per-field status companions.
-- Lists hold plain words, sorted, with no duplicates.
-  If the collector does not index lists, each list becomes one value, or `mixed` when the record has more than one distinct value.
-- Location is not sent; the collector adds coarse location from the sender's IP address.
+  The only free text in the record is the model names, the test label, the version, and the previous version.
+- A value the sender cannot read is sent as `unknown`.
+  No field has a separate status field.
+  These are the exceptions: `os`, `arch`, and `hostContext` send `other`, `deploymentSource` sends `none`, and an unread configuration sends the values in [Field Rules](#field-rules).
+- Lists are sorted and hold no duplicates.
+  If the collector does not index lists, the sender sends each list as one value: its only value, or `mixed` when the list has more than one value.
+  An empty list stays empty.
+  The TEST probe, [#14029](https://github.com/NVIDIA/NemoClaw/issues/14029), decides whether this fallback ships.
+  If it ships, `mixed` joins the values of each list field.
+- The record does not include location.
+  The collector derives a coarse location from the IP address of the request.
 - Changes are additive only.
-  A 5.x minor version adds fields; it never renames a field, removes a field, or changes a field's meaning.
-- Messaging and tools are not in 5.0; a later 5.x minor version adds them.
+  A 5.x minor version can add fields.
+  It never renames a field, removes a field, or changes a field's meaning.
+- Version 5.0 has no messaging or tool fields.
+  A later 5.x minor version is planned to add them.
 - The record does not cover people who run OpenTofu directly without the `nemoclaw` CLI.
 
 ## Never Sent
 
 The record never carries any of these:
 
-- Names: deployment, sandbox, service, agent, user, or host
+- Deployment, sandbox, service, agent, user, or host names
 - File paths
 - URLs and endpoint addresses
 - IP addresses and resource addresses
@@ -151,8 +200,16 @@ The record never carries any of these:
 
 ## Install ID File
 
-The sender keeps `telemetry.json` in the user configuration folder.
-It holds:
+The sender keeps `telemetry.json` in a `nemoclaw` directory under the user configuration directory of the operating system:
+
+| OS | Directory |
+|---|---|
+| Linux | `$XDG_CONFIG_HOME/nemoclaw`, or `~/.config/nemoclaw` when `XDG_CONFIG_HOME` is not set |
+| macOS | `~/Library/Application Support/nemoclaw` |
+| Windows | `%APPDATA%\nemoclaw` |
+
+The file is per user, not per deployment, so it is never in the `--state-dir` directory.
+The file holds these values:
 
 - The install ID, a random UUID created on first run and not derived from the machine
 - The version of the last run that sent a record
@@ -162,9 +219,12 @@ Deleting the file creates a new install ID on the next run.
 ## OpenShell Telemetry
 
 The OpenShell gateway that NemoClaw manages has its own telemetry, separate from this record.
-Passing NemoClaw's off switch to the managed gateway needs an accepted change to the [accepted scope](scope.md) first.
+`NEMOCLAW_DISABLE_TELEMETRY` does not turn off the managed gateway's telemetry.
+Passing it to the gateway first requires an accepted change to the [scope](scope.md).
 
 ## Classic Schema
 
-NemoClaw Classic sends schema 4.x under the same client ID; this record is schema 5.0.
-If the collector cannot keep both schema lines live, these same fields go into the next 4.x schema, and the field list does not change.
+NemoClaw Classic sends schema 4.x under the same client ID.
+This record is schema 5.0.
+If the collector cannot accept schema 4.x and 5.0 at the same time, the record uses the next 4.x schema version.
+Its fields stay the same, and only `eventSchemaVer` and `eventSysVer` change.
