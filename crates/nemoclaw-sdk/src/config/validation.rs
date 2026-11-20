@@ -87,7 +87,7 @@ impl Document {
                 require(
                     selected_providers
                         .iter()
-                        .all(|provider| !reserved_for_web_search(&provider.name)),
+                        .all(|provider| !reserved_for_web_search(provider.name)),
                     "brave-search and tavily-search names are reserved for web search",
                 )?;
                 search.validate(std::iter::once(sandbox.agent.name.as_str()))?;

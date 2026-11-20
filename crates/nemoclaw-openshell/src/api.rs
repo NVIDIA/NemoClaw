@@ -113,8 +113,8 @@ pub fn definition(
         .to_string(),
     )
     .map_err(|_| ObservationError::Query)?;
-    // OpenShell's gateway validates the profile's rules when it is imported;
-    // apply the same validation here so a plan fails before any change.
+    // OpenShell owns rule validation: apply its policy validation so a plan
+    // fails on rules it rejects, before any change.
     openshell_policy::validate_and_canonicalize_sandbox_policy(policy.clone())
         .map_err(|_| ObservationError::Query)?;
     let key = if sandbox_env.is_empty() {
