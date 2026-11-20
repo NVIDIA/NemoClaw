@@ -50,17 +50,15 @@ Missing, changed, or unavailable evidence blocks verification without changing p
 
 ## Switchyard event evidence
 
-The NemoClaw Hermes plugin observes the existing process's Relay subscriber API when managed
-routing is configured. It does not initialize Relay or change routing. The observer verifies the
-protected configuration fingerprint before registration and deregisters on plugin unload.
+The existing Hermes plugin subscribes to Relay only for fingerprint-verified managed routing.
+It does not initialize Relay or change routing, and deregisters on plugin unload.
 
-Gateway log records prefixed with `[switchyard-evidence]` contain native scope ancestry, Hermes
-turn boundaries, classifier decisions, judge/answer roles, model SHA-256 identities, and token
-counts. Model hashes bind selections to the protected deployment. The projection omits prompts,
-responses, private reasoning, arbitrary metadata, provider errors, and credential values.
-Unknown schemas or unbound models are not accepted as routing evidence.
+`[switchyard-evidence]` gateway logs contain UUID ancestry, turn boundaries, classifier decisions,
+judge/answer roles, and model hashes bound to the deployment. They omit token metrics, prompts,
+answers, private reasoning, arbitrary metadata, provider errors, and credentials.
+Decision and call marks accept only their named version-1 schema or Relay's schema-less form.
 
-Capture stops after 4096 projected records per process and emits a `truncated` record.
-Capture errors report incomplete evidence; they do not establish a successful routing turn.
-Process IDs and sequence numbers distinguish restart generations. Consumers must reject missing,
-truncated, or uncorrelated evidence instead of treating an ordinary answer as adaptive proof.
+Capture stops after 4096 records plus a truncation marker. Each record, including failure markers,
+has a random recorder-instance ID, PID, and sequence; the instance ID distinguishes restarts.
+Installation failures identify a non-secret configuration, Relay, subscriber, or unload stage.
+Missing, failed, truncated, or uncorrelated capture does not prove adaptive routing.

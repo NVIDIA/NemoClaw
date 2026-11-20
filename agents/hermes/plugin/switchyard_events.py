@@ -22,8 +22,6 @@ import uuid
 
 DECISION = "switchyard.routing.decision"
 CALL = "switchyard.routing.llm_call"
-TOKENS = "switchyard.routing.llm_tokens"
-MAX_TOKENS = 2**53 - 1
 
 
 def _uuid(value):
@@ -40,10 +38,6 @@ def _model(value, models):
     if type(value) is not str or value not in models:
         return None
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _count(value):
-    return type(value) is int and 0 <= value <= MAX_TOKENS
 
 
 def project(event, models):
@@ -67,7 +61,10 @@ def project(event, models):
             return None
         record.update(kind="scope", phase=phase, hermes_turn=name == "hermes.turn")
         return record
-    if kind != "mark" or name not in (DECISION, CALL, TOKENS):
+    if kind != "mark" or name not in (DECISION, CALL):
+        return None
+    # Switchyard 0.3.0 names each mark's v1 schema; Relay also permits None.
+    if getattr(event, "data_schema", None) not in (None, {"name": name, "version": "1"}):
         return None
     data = getattr(event, "data", None)
     if type(data) is not dict:
@@ -81,7 +78,7 @@ def project(event, models):
         if evidence.get("source") != "llm-classifier":
             return None
         record.update(selected_model_sha256=selected, source="llm-classifier")
-    elif name == CALL:
+    else:
         role = data.get("call_role")
         allowed = models[:1] if role == "routing" else models[1:]
         selected = _model(data.get("selected_model"), allowed)
@@ -89,32 +86,6 @@ def project(event, models):
         if role not in ("routing", "answer") or selected is None or outcome not in ("ok", "error"):
             return None
         record.update(call_role=role, selected_model_sha256=selected, outcome=outcome)
-    else:
-        if getattr(event, "data_schema", None) != {
-            "name": "nemo.relay.metric_measurements", "version": "1"
-        }:
-            return None
-        measurements = data.get("measurements")
-        if type(measurements) is not list or not 0 < len(measurements) <= 64:
-            return None
-        projected = []
-        for measurement in measurements:
-            if type(measurement) is not dict or measurement.get("name") != TOKENS:
-                return None
-            attributes = measurement.get("attributes")
-            if type(attributes) is not dict:
-                return None
-            role = attributes.get("call_role")
-            allowed = models[:1] if role == "routing" else models[1:]
-            selected = _model(attributes.get("target_model"), allowed)
-            token_type = attributes.get("token_type")
-            value = measurement.get("value")
-            if (role not in ("routing", "answer") or selected is None
-                    or token_type not in ("input", "output", "total") or not _count(value)):
-                return None
-            projected.append({"call_role": role, "target_model_sha256": selected,
-                              "token_type": token_type, "value": value})
-        record["measurements"] = projected
     return record
 
 
@@ -126,6 +97,7 @@ class Observer:
         self.emit = emit
         self.limit = limit
         self.count = 0
+        self.instance_id = str(uuid.uuid4())
         self.stopped = False
         self.lock = threading.Lock()
 
@@ -140,13 +112,16 @@ class Observer:
                 if self.count >= self.limit:
                     record = {"schema": 1, "kind": "truncated"}
                     self.stopped = True
-                self.count += 1
-                record.update(pid=os.getpid(), sequence=self.count)
-                self.emit(json.dumps(record, separators=(",", ":"), allow_nan=False))
+                self._emit(record)
             except Exception:
                 # Do not log exception text or the native event on this boundary.
                 self.stopped = True
-                self.emit('{"schema":1,"kind":"capture_failed"}')
+                self._emit({"schema": 1, "kind": "capture_failed"})
+
+    def _emit(self, record):
+        self.count += 1
+        record.update(instance_id=self.instance_id, pid=os.getpid(), sequence=self.count)
+        self.emit(json.dumps(record, separators=(",", ":"), allow_nan=False))
 
     def stop(self):
         with self.lock:
@@ -166,6 +141,7 @@ def install(ctx):
     if not expected:
         return False
     logger = logging.getLogger("gateway.nemoclaw_switchyard")
+    stage = "configuration"
     try:
         if re.fullmatch(r"[a-f0-9]{64}", expected) is None:
             raise ValueError("invalid routing identity")
@@ -183,10 +159,12 @@ def install(ctx):
             "/opt/nemoclaw-hermes-config/qualify-switchyard-judge.py",
         )
         models = qualifier.selected_models(tomllib.loads(files["switchyardDeploymentToml"]))
+        stage = "relay"
         import nemo_relay
 
         observer = Observer(models, lambda line: logger.info("[switchyard-evidence] %s", line))
         name = "nemoclaw.switchyard.evidence"
+        stage = "subscriber"
         nemo_relay.subscribers.register(name, observer)
 
         def cleanup():
@@ -194,11 +172,12 @@ def install(ctx):
             nemo_relay.subscribers.deregister(name)
 
         try:
+            stage = "unload"
             ctx.on_unload(cleanup)
         except Exception:
             cleanup()
             raise
     except Exception:
-        logger.warning("[switchyard-evidence] capture unavailable; routing evidence is incomplete")
+        logger.warning("[switchyard-evidence] capture unavailable (%s); routing evidence is incomplete", stage)
         return False
     return True
