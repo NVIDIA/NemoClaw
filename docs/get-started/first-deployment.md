@@ -117,7 +117,7 @@ Keep the deployment identity and state directory for the lifetime of this exerci
    | `metadata.uid` | The fresh UUID. Keep it for this deployment's lifetime. |
    | `metadata.name` | A label for this deployment. |
    | `spec.gateway.endpoint` | The existing gateway's client-reachable endpoint. |
-   | `spec.gateway.engine` | The Docker or Podman engine containing the selected image. Match `spec.gateway.runtime.provider`. |
+   | `spec.gateway.target.docker.engine` | The Docker engine containing the selected image. For a Podman engine, set `spec.gateway.target.podman.engine` instead. |
    | `spec.inferenceProviders.local.endpoint` | The inference base URL reachable by the gateway. |
    | `spec.inferenceProviders.local.provider` and `.api` | The endpoint's protocol and API. The example uses `openai` with `openai-responses`. |
    | `spec.sandboxes.assistant.image.ref` | The immutable image reference from the build. |
