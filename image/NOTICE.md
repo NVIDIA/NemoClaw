@@ -32,6 +32,7 @@ The Claude image installs claude-agent-sdk, whose wheels bundle the Claude Code 
 The Codex image retains `codex-LICENSE` and `codex-NOTICE` from Codex 0.154.0, including its Ratatui attribution, under `/opt/nemoclaw/source/`.
 The Deep Agents image retains `langsmith-LICENSE` from LangSmith 0.11.1 and `sqlite-vec-LICENSE-MIT` from sqlite-vec 0.1.9 there; sqlite-vec offers MIT as a license choice.
 The Hermes image retains `anydoc-LICENSE` from firecrawl-anydoc 0.2.4, including the Sideguide Technologies copyright notice, and `xterm-LICENSE` from the dashboard's xterm.js 6.0.0 there.
+It also retains `jetbrains-mono-OFL.txt` for the three JetBrains Mono terminal webfonts, matched to their upstream source revision by file hash.
 `/opt/nemoclaw/source/hermes/` retains frontend notices and an inventory of the packages observed in the dashboard rebuild and the published TUI's module labels.
 The inventory identifies upstream declarations that still lack a standalone license file; its presence does not resolve those notices or establish redistribution coverage for the commercial font files.
 These files are unmodified upstream copies whose exact source commits and SHA-256 values `versions.json` pins.

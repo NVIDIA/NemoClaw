@@ -11,6 +11,8 @@ Its upstream license and notices remain in `/opt/hermes` and the retained source
 This file names Copyright (c) 2026 Sideguide Technologies Inc.; `versions.json` pins its URL and SHA-256.
 `/opt/nemoclaw/source/xterm-LICENSE` retains the unmodified xterm.js 6.0.0 MIT notice from commit `f447274f430fd22513f6adbf9862d19524471c04`, matching its npm package.
 The dashboard bundles xterm.js; this notice preserves the xterm.js authors, SourceLair, and Christopher Jeffrey credits.
+`/opt/nemoclaw/source/jetbrains-mono-OFL.txt` retains the JetBrains Mono copyright and SIL Open Font License 1.1 from revision `19371302b95d218af43299bce79ddbddd0bc364d`.
+Its Regular, Bold, and Italic webfonts match the three shipped `fonts-terminal` files byte for byte.
 `/opt/nemoclaw/source/hermes/hermes-NOTICES.md` retains original license/notice texts and available package declarations for the 108 packages observed in a local dashboard rebuild and the published TUI's module labels.
 `hermes-inventory.json` beside it records exact npm archive URLs, integrity values, notice hashes, and observed bundle membership.
 It identifies four packages whose inspected upstream material declares MIT without supplying a standalone license file: `@nous-research/ui`, `unicode-animations`, `react-remove-scroll-bar`, and `@alcalzone/ansi-tokenize`.

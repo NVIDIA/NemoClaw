@@ -100,6 +100,7 @@ Both inspected Hermes images ship seven commercial font styles: Collapse Regular
 Their unhashed copies under `hermes_cli/web_dist/fonts/` match both the pinned Hermes source and the exact `@nous-research/ui` 0.19.1 npm package by SHA-256; the images also include fingerprinted asset copies.
 The font metadata identifies Blaze Type for Collapse and Rules, and Pangram Pangram for Mondwest.
 Neuebit exists in that npm source package but was not found in the inspected Hermes images.
+The three JetBrains Mono terminal webfonts are separate: they match upstream revision `19371302b95d218af43299bce79ddbddd0bc364d`, and the Hermes recipe retains that revision's copyright and SIL Open Font License 1.1 in `jetbrains-mono-OFL.txt`.
 
 The foundries publish separate [Blaze Type licensing terms](https://blazetype.eu/eula/) and [Pangram Pangram licensing terms](https://pangrampangram.com/pages/eula).
 Those terms distinguish embedding/distribution uses and license scope; a package-level MIT declaration does not establish that scope for third-party font files.

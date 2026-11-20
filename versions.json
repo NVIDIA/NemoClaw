@@ -207,6 +207,10 @@
       "cua-source.tar.gz": {
         "url": "https://codeload.github.com/trycua/cua/tar.gz/36987990b292537770fe2df3a9e6dee2ef43db2f",
         "sha256": "4f57fb435eaae04f378145671d5c5473fca28997af9d223d6a00d3ac185de379"
+      },
+      "jetbrains-mono-OFL.txt": {
+        "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/19371302b95d218af43299bce79ddbddd0bc364d/OFL.txt",
+        "sha256": "a76abf002c49097d146e86740a3105a5d00450b1592e820a1109a8c5680cd697"
       }
     },
     "ollama": {
@@ -258,7 +262,7 @@
       },
       "llama-source.tar.gz": {
         "url": "https://codeload.github.com/ggml-org/llama.cpp/tar.gz/9d25e0014c4b4b316873c01f4938c0e3c687287d",
-        "sha256": "ab8af3648c06dd17b6a811b06d9b98bdcf4c149b09edc4b42a4aa3fef4fd9554"
+        "sha256": "16807cb72e989e2191b2e6d99aa8d3d859ab870ce82fb352b52663fc10e287c6"
       }
     }
   },
