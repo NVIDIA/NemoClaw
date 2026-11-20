@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
     && cp /proxy.Dockerfile /tmp/proxy-source/Dockerfile \
     && install -m 0644 /source-instructions.md /out/usr/share/doc/nemoclaw-ollama-proxy/SOURCES.md \
     && cd /tmp/proxy-source && mkdir .cargo \
-    && cargo vendor --quiet --locked --versioned-dirs vendor > .cargo/config.toml \
+    && cargo vendor --locked --versioned-dirs vendor > .cargo/config.toml \
     && rm -f .cargo_vcs_info.json \
     && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
         -I 'gzip -n' -cf /out/usr/share/doc/nemoclaw-ollama-proxy/proxy-source.tar.gz . \
