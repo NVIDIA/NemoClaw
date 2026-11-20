@@ -57,6 +57,8 @@ Installation:
 
 Images:
 
+- Releases no longer stage the `claude` agent image, because it bundles Anthropic's proprietary Claude Code CLI, which NVIDIA can't redistribute ([#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+  Build it locally as [Building Agent Images](../build-deploy/build.md#building-agent-images) describes.
 - Releases stage a llama.cpp runtime image, `llama-cpp`, beside the vLLM and Ollama images.
   It adds the supervisor to llama.cpp's CUDA 13.5 server image from release b12375, whose ARM64 and AMD64 builds carry kernels for GB300 (`sm_103`) and GB10 (`sm_121a`).
   CUDA 13.5 needs NVIDIA driver 580 or newer.
