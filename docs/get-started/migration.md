@@ -4,7 +4,8 @@
 # Assessing Migration From an Earlier Version
 
 The desired-state SDK, schema, and state format do not promise compatibility with the earlier product.
-The current CLI has no general state adoption or migration command; [#14580](https://github.com/NVIDIA/NemoClaw/issues/14580) tracks a documented path from the earlier product's configuration export to a v1 deployment.
+The current CLI has no state adoption or migration command.
+To start a v1 deployment from an earlier deployment's settings, [convert its configuration export](#starting-from-the-earlier-export).
 Keep the earlier deployment's tooling, configuration, and state while evaluating a separate v1 deployment.
 
 NemoClaw has no upgrade, native-data transfer or rollback procedure: native data belongs to the harness, and moving its storage belongs to the platform.
@@ -40,6 +41,32 @@ Use the [field reference](../reference/configuration.md) from the bundle's sourc
 
 The [validator](../../crates/nemoclaw-sdk/src/config/validation.rs) rejects unsupported combinations, and [state validation](../../crates/nemoclaw-sdk/src/state/mod.rs) rejects incompatible retained intent.
 These checks aren't a conversion mechanism.
+
+## Starting From the Earlier Export
+
+The earlier product's `nemoclaw config export` writes v1 YAML for one sandbox.
+That YAML can't be planned as written: its image is a placeholder, and it reuses the earlier deployment's identity and gateway port.
+The [V0 migration skill](../../.agents/skills/nemoclaw-v0-migration/SKILL.md) completes it; an assistant with this checkout can follow it, or you can follow its steps yourself.
+It leaves the earlier deployment untouched and moves no native data.
+
+1. On the earlier deployment's host, export the sandbox with the CLI of a V0 release with the export report:
+
+   ```sh
+   nemoclaw config export SANDBOX --output v0-export.yaml
+   ```
+
+   File output requires Linux; on other hosts use `--output -` and redirect it.
+   A refused export writes no YAML and prints one `<field> (<category>): <reason>` line per capability it cannot carry, such as messaging or host mounts.
+   Check those capabilities in the task map above before continuing without them.
+2. Read the comment block at the top of the export.
+   Each line names a setting the export left out, replaced with a placeholder, or rewrote.
+   An export without the first line `# nemoclaw-export-report: 1` comes from a release without the report; export again with a release that writes it.
+3. Ask the assistant to read `.agents/skills/nemoclaw-v0-migration/SKILL.md` and complete the export.
+   It assigns a fresh UUID, state directory, and free gateway port, selects an agent image, replaces the parts of the policy that describe the earlier image, writes the settings v1 can hold, and lists the ones it can't.
+4. Review the completed YAML and the list of lost settings, then plan it as step 4 below describes.
+
+The skill lists the harnesses and revisions it has been run with.
+Deep Agents exports and exports with managed inference services are untested.
 
 ## Evaluating v1 Beside the Existing Deployment
 

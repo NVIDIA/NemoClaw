@@ -660,7 +660,8 @@ An unchanged exported document can be reapplied without restarting the sandbox.
 | A reply through your chosen native interface | That interface, agent, route, and model completed the tested turn | Support for untested providers, models, tools, or long conversations |
 
 An empty `changes` list on apply doesn't skip configuration or readiness checks.
-After apply, send a short prompt through the [native agent interface](agents.md#choosing-native-access), or explicitly select an [owned live smoke test](../../internal-docs/contributing/live-tests.md).
+After apply, follow the [native request procedure](agents.md#running-one-headless-openclaw-request) for the pinned OpenClaw exercise, or choose the [interface access procedure](interfaces.md#reaching-an-agent-interface) for another enabled interface.
+An [owned live smoke test](../../internal-docs/contributing/live-tests.md) is a separate qualification path.
 Those checks can incur inference charges and can affect agent history.
 Failure doesn't undo a successful deployment.
 Use the selected adapter's public input and output contract for an explicit invocation.
