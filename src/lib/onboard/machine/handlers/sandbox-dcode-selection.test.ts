@@ -73,7 +73,6 @@ describe("handleSandboxState live DCode selection", () => {
     expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
       resolved: expect.any(Object),
       recreate: false,
-      toolDisclosure: "progressive",
       observabilityEnabled: true,
       endpointSource: null,
       observabilityRequestedExplicitly: true,
@@ -216,7 +215,6 @@ describe("handleSandboxState live DCode selection", () => {
       resolved: expect.any(Object),
       recreate: true,
       reservePublishedRouteAfterBackup: expect.any(Function),
-      toolDisclosure: "progressive",
       observabilityEnabled: false,
       endpointSource: null,
       dcodeAutoApprovalMode: "disabled",
@@ -240,7 +238,6 @@ describe("handleSandboxState live DCode selection", () => {
       resolved: expect.any(Object),
       recreate: true,
       reservePublishedRouteAfterBackup: expect.any(Function),
-      toolDisclosure: "progressive",
       observabilityEnabled: false,
       endpointSource: null,
       dcodeAutoApprovalMode: "disabled",

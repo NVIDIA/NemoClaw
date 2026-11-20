@@ -87,6 +87,47 @@ describe("onboard tool-disclosure flow", () => {
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
   });
 
+  it("keeps a live sandbox's recorded mode when no mode is requested (#13975)", () => {
+    const result = prepareSandboxToolDisclosure(
+      "alpha",
+      null,
+      false,
+      () => ({
+        existingEntry: { name: "alpha", toolDisclosure: "direct" },
+        preservedMcpState: undefined,
+        liveExists: true,
+      }),
+      null,
+    );
+
+    expect(result).toMatchObject({
+      effectiveToolDisclosure: "direct",
+      toolDisclosureMigrationNeeded: false,
+    });
+  });
+
+  it("still refuses a selected mode that differs from a live sandbox's recorded mode (#13975)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    interceptExit();
+
+    expect(() =>
+      prepareSandboxToolDisclosure(
+        "alpha",
+        null,
+        false,
+        () => ({
+          existingEntry: { name: "alpha", toolDisclosure: "direct" },
+          preservedMcpState: undefined,
+          liveExists: true,
+        }),
+        "progressive",
+      ),
+    ).toThrow("EXIT:1");
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("sandbox records tool disclosure 'direct', but 'progressive'"),
+    );
+  });
+
   it("fails before session or registry mutation for invalid recorded state", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     interceptExit();

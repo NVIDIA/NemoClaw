@@ -44,7 +44,6 @@ import type {
 } from "../../../state/onboard-session";
 import { type SandboxEntry, type SandboxRemovalReceipt } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
-import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import {
   clearCheckpointResourceProfile,
   recordCheckpointEffectGroup,
@@ -127,6 +126,7 @@ import {
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
   hasMessagingChannelConfigDrift,
+  createIntentToolDisclosureFields,
   hermesSwitchyardRoutingCreateIntentFields,
   initialOpenClawToolDisclosure,
   isValidSavedResourceProfile,
@@ -2114,7 +2114,7 @@ class SandboxStateFlow<
       resolved,
       recreate,
       ...apfCreateIntentFields(this.options.apfInterceptorRequested === true),
-      toolDisclosure:
+      ...createIntentToolDisclosureFields(
         initialOpenClawToolDisclosure({
           fresh:
             decision.kind === "create" &&
@@ -2128,7 +2128,10 @@ class SandboxStateFlow<
           entry: registeredEntry,
           sessionId: state.session?.sessionId,
           env: this.options.env,
-        }) ?? toolDisclosureOrDefault(state.session?.toolDisclosure),
+        }),
+        state.session,
+        this.options.env,
+      ),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(endpointUrl ? { endpointUrl } : {}),

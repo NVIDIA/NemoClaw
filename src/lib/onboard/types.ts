@@ -63,7 +63,8 @@ export interface SandboxCreateIntent {
   readonly reservePublishedRouteAfterBackup?: () => void | Promise<void>;
   /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
   readonly apfInterceptorRequested?: true;
-  readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
+  /** Present only for a selection. Omitted when a fresh session's default seed is the only mode. */
+  readonly toolDisclosure?: import("../tool-disclosure").ToolDisclosure;
   readonly observabilityEnabled: boolean;
   /** Present only when the operator explicitly selected observability on or off. */
   readonly observabilityRequestedExplicitly?: true;

@@ -164,6 +164,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
         toolDisclosure: rebuildDurableConfig.toolDisclosure,
+        // Rebuild resolves the mode from the request or the recorded sandbox, and the
+        // recreate must build exactly that mode, so the inner resume treats it as selected.
+        toolDisclosureRequestedExplicitly: true,
         observabilityEnabled: recreateOptions.observabilityEnabled,
         observabilityRequestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,

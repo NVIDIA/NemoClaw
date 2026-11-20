@@ -849,6 +849,8 @@ describe("rebuildSandbox flow: lifecycle", () => {
       expect.objectContaining({ toolDisclosure: "direct" }),
     );
     expect(harness.session.toolDisclosure).toBe("direct");
+    // The inner resume must request the rebuilt mode rather than keep the recorded one (#13975).
+    expect(harness.session.toolDisclosureRequestedExplicitly).toBe(true);
     expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
       gatewayName: "nemoclaw",
       workspace: "default",

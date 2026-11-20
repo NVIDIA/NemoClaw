@@ -400,6 +400,11 @@ export interface Session {
   resourceProfile: SessionResourceProfile | null;
   /** Selected preference, retained even when a model-specific safeguard downgrades it. */
   toolDisclosure: ToolDisclosure;
+  /**
+   * Present only when `--tool-disclosure` or its environment variable selected `toolDisclosure`.
+   * Absent for the seeded default and for sessions saved before this field existed (#13975).
+   */
+  toolDisclosureRequestedExplicitly?: true;
   /** Enables credential-free OTLP trace export to NemoClaw's fixed local collector boundary. */
   observabilityEnabled: boolean;
   /** True when observability was explicitly enabled or disabled for this resumable run. */
@@ -1145,6 +1150,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ),
     resourceProfile: parseSessionResourceProfile(overrides.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
+    ...(overrides.toolDisclosureRequestedExplicitly === true
+      ? { toolDisclosureRequestedExplicitly: true as const }
+      : {}),
     dcodeAutoApprovalMode: overrides.dcodeAutoApprovalMode ?? null,
     dcodeAutoApprovalRequestedExplicitly: overrides.dcodeAutoApprovalRequestedExplicitly === true,
     observabilityEnabled: overrides.observabilityEnabled === true,
@@ -1298,6 +1306,9 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxPromptProgress: parseSandboxPromptProgress(data.sandboxPromptProgress, data),
     resourceProfile: parseSessionResourceProfile(data.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
+    ...(data.toolDisclosureRequestedExplicitly === true
+      ? { toolDisclosureRequestedExplicitly: true as const }
+      : {}),
     dcodeAutoApprovalMode:
       data.dcodeAutoApprovalMode === "disabled" || data.dcodeAutoApprovalMode === "thread-opt-in"
         ? data.dcodeAutoApprovalMode

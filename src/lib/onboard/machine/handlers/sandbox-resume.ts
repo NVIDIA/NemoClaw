@@ -66,6 +66,24 @@ export function initialOpenClawToolDisclosure(input: {
   return resolveToolDisclosureRequest(null, input.env) ?? (n1xDefault ? "progressive" : "direct");
 }
 
+/**
+ * Build the create intent's tool-disclosure request. A new session only seeds the default
+ * mode, so omit it unless something selected it: a recorded sandbox keeps its mode (#13975).
+ * A resumed session counts as selected only when it recorded that a flag or environment
+ * variable chose its mode, so a session saved before this fix resumes without a request too.
+ */
+export function createIntentToolDisclosureFields(
+  initial: ToolDisclosure | null,
+  session: Pick<Session, "toolDisclosure" | "toolDisclosureRequestedExplicitly"> | null | undefined,
+  env: NodeJS.ProcessEnv,
+): { toolDisclosure?: ToolDisclosure } {
+  if (initial) return { toolDisclosure: initial };
+  return session?.toolDisclosureRequestedExplicitly === true ||
+    resolveToolDisclosureRequest(null, env) !== null
+    ? { toolDisclosure: toolDisclosureOrDefault(session?.toolDisclosure) }
+    : {};
+}
+
 export interface SandboxResumeSignals {
   readonly resume: boolean;
   readonly resumeAgentChanged: boolean;
@@ -168,9 +186,12 @@ export function resolveToolDisclosureResumeSignals(
   const migrationNeeded = Boolean(registryEntry && registryEntry.toolDisclosure === undefined);
   return {
     toolDisclosureMigrationNeeded: migrationNeeded,
+    // Only a mode the operator selected can drift. The seeded default says nothing about
+    // a sandbox that records another mode, so it must not recreate that sandbox (#13975).
     toolDisclosureChanged: Boolean(
       registryEntry &&
       !migrationNeeded &&
+      session?.toolDisclosureRequestedExplicitly === true &&
       recorded !== toolDisclosureOrDefault(session?.toolDisclosure),
     ),
   };

@@ -781,6 +781,12 @@ async function prepareResumeSession(
 
   deps.updateSession((current: Session) => {
     deps.applySessionRecovery(current);
+    if (input.requestedToolDisclosure) {
+      // Record the selection so create, drift and conflict checks treat this resume's mode as
+      // chosen, rather than reading the session's seeded default (#13975).
+      current.toolDisclosure = input.requestedToolDisclosure;
+      current.toolDisclosureRequestedExplicitly = true;
+    }
     if (typeof input.requestedObservabilityEnabled === "boolean") {
       current.observabilityEnabled = input.requestedObservabilityEnabled;
       current.observabilityRequestedExplicitly = true;
@@ -829,6 +835,7 @@ function prepareFreshSession(
   const session = deps.createSession({
     mode: mode(input.nonInteractive),
     toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
+    ...(input.requestedToolDisclosure ? { toolDisclosureRequestedExplicitly: true as const } : {}),
     observabilityEnabled: input.requestedObservabilityEnabled === true,
     observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
     dcodeAutoApprovalMode: input.requestedDcodeAutoApprovalMode ?? null,
