@@ -837,6 +837,7 @@ async fn a_stopped_podman_gateway_container_is_named_with_how_to_start_it() {
 }
 
 /// The Spark fixture, a vLLM service on the local Docker engine, and its graph.
+#[cfg(unix)]
 fn spark() -> (Document, Value) {
     let document =
         Document::parse(include_bytes!("../../tests/fixtures/config/spark.yaml").as_slice())
