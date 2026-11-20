@@ -311,7 +311,7 @@ impl Deployment {
         }
         if record.document.spec.gateway.endpoint() != document.spec.gateway.endpoint() {
             return Err(Error::Conflict(
-                "state is bound to a different deployment UID or gateway",
+                "state is bound to a different gateway endpoint: the target's port, expose.endpoint, or an external gateway's endpoint stays as first planned; create a separate deployment to change it",
             ));
         }
         record.allocate_missing_generations(&document)?;

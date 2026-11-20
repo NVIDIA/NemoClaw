@@ -355,8 +355,11 @@ impl Spec {
         let port = |endpoint: String| {
             endpoint
                 .strip_prefix("http://127.0.0.1:")
-                .and_then(|port| port.parse::<u16>().ok())
-                .filter(|port| port.to_string() == endpoint["http://127.0.0.1:".len()..])
+                .and_then(|text| {
+                    text.parse::<u16>()
+                        .ok()
+                        .filter(|port| port.to_string() == text)
+                })
                 .ok_or(Error::Conflict("invalid managed gateway attribute"))
         };
         let (layout, port) = match (kind, compute_driver) {
@@ -645,15 +648,18 @@ impl Spec {
     ///
     /// # Errors
     /// Returns an error for invalid specifications, unsupported runtime layouts,
-    /// missing endpoint or service data, or launch configuration serialization.
+    /// a gateway without a local engine, missing service data, or launch
+    /// configuration serialization.
     pub fn container(&self, data_path: &str) -> Result<ContainerCreateBody, Error> {
         self.validate_runtime()?;
         let mut host = json!({"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges"],"RestartPolicy":{"Name":"no","MaximumRetryCount":0},"LogConfig":{"Type":"json-file","Config":{"max-size":"32m","max-file":"3"}},"Memory":0,"MemorySwap":0,"ShmSize":0});
         let mut config = json!({"Image":self.image(),"User":"","Labels":self.labels()?});
         if self.kind == GATEWAY_KIND {
-            let url = url::Url::parse(&self.endpoint())
-                .map_err(|_| Error::Conflict("invalid gateway endpoint"))?;
-            let port = url.port().ok_or(Error::Conflict("missing gateway port"))?;
+            let port = self
+                .gateway
+                .local()
+                .ok_or(Error::Conflict("managed gateway requires a local engine"))?
+                .port;
             config["User"] = json!("0:0");
             let launch = gateway_launch(self.compute_driver, &self.name, port, data_path);
             config["Env"] = json!(launch.env);
@@ -675,7 +681,7 @@ impl Spec {
                 host["NetworkMode"] = json!(self.network());
                 host["PortBindings"] = json!({format!("{port}/tcp"):[
                     {
-                        "HostIp":url.host_str().ok_or(Error::Conflict("missing gateway host"))?,
+                        "HostIp":"127.0.0.1",
                         "HostPort":port.to_string()
                     }
                 ]});

@@ -227,16 +227,16 @@ fn container(target: &Target) -> Result<Value, Error> {
     let spec = spec(target)?;
     if target.kind == crate::managed::GATEWAY_KIND {
         let launch = spec.container("/NEMOCLAW_GATEWAY_DATA")?;
-        let endpoint = url::Url::parse(&spec.endpoint())
-            .map_err(|_| Error::State("invalid gateway endpoint"))?;
-        let port = endpoint
-            .port()
-            .ok_or(Error::State("missing gateway port"))?;
+        let port = spec
+            .gateway
+            .local()
+            .ok_or(Error::State("gateway requires a local engine"))?
+            .port;
         // The engine socket is a host-path bind rather than a mount: Docker
         // Desktop rewrites a socket mount's source unless it is the first
         // mount, and the provider orders mounts by its own set hash.
         return Ok(
-            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":endpoint.host_str().ok_or(Error::State("missing gateway host"))?,"protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"}],"volumes":[{"host_path":crate::config::engine_socket(spec.gateway.engine()).ok_or(Error::State("gateway requires a local engine"))?,"container_path":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"unless-stopped","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
+            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":"127.0.0.1","protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"}],"volumes":[{"host_path":crate::config::engine_socket(spec.gateway.engine()).ok_or(Error::State("gateway requires a local engine"))?,"container_path":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"unless-stopped","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
         );
     }
     let process = spec

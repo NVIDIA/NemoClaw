@@ -44,7 +44,8 @@ Match the symptom to its next action:
 |---|---|
 | Unknown field, duplicate key, or rejected combination | Use the [document path and source position](#correcting-a-document-validation-error), then compare the input with the matching [configuration reference](../reference/configuration.md). |
 | Bundle or schema hash failure | Follow [bundle rebuilding](../build-deploy/build.md#building-a-native-bundle) and keep the selected bundle unchanged during operations. |
-| `state is bound to a different deployment UID or gateway` | Restore the original UID and gateway endpoint. A new target needs separate state and resources. |
+| `state is bound to a different deployment UID or gateway` | Restore the original `metadata.uid` and gateway `management`. To switch between a managed and an external gateway, create a new deployment. |
+| `state is bound to a different gateway endpoint` | Restore the port or endpoint the deployment was first planned with: the target's `port`, `expose.endpoint`, or an external gateway's `endpoint`. To use another, create a new deployment. |
 | `state is bound to a different gateway target` | Restore the target the deployment was first planned with. To use another, create a new deployment as [Adapting a Document to Another Target](../build-deploy/usage.md#adapting-a-document-to-another-target) describes. |
 | A gateway volume, network, or initializer container `belongs to another state directory or deployment` | Destroy kept that deployment's gateway storage. Apply with the state directory that created it, or [remove the retained resources](../build-deploy/usage.md#removing-retained-resources) and apply with a new `metadata.uid`. Nothing is adopted. |
 | `the kubeconfig has no context named NAME` | The gateway target's `context` names a context that the kubeconfig lacks. Correct the context or the kubeconfig, then plan again. Nothing changed. |

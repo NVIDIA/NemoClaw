@@ -1344,6 +1344,65 @@ async fn changing_the_gateway_target_preserves_saved_state() {
     }
 }
 
+/// The endpoint is the address clients dial, so plan and apply refuse a
+/// changed port, `expose.endpoint`, or external endpoint, and name the
+/// endpoint, before they read or change anything.
+#[tokio::test]
+async fn changing_the_gateway_endpoint_preserves_saved_state() {
+    let bundle_directory = guard_bundle();
+    let external =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    let mut moved = external.clone();
+    let Gateway::External(gateway) = &mut moved.spec.gateway else {
+        panic!("expected an external gateway");
+    };
+    gateway.endpoint = "http://127.0.0.1:17672".into();
+    moved.validate().unwrap();
+    let mut local = external.clone();
+    local.spec.gateway = Gateway::Managed(Default::default());
+    local.defaults();
+    local.validate().unwrap();
+    let mut ported = local.clone();
+    let gateway = ported.spec.gateway.as_managed_mut().unwrap();
+    gateway.target.local_mut().unwrap().port += 1;
+    ported.validate().unwrap();
+    let (kubernetes, _) = kubernetes_context();
+    let exposed = |endpoint: &str| {
+        let mut value = serde_json::to_value(&kubernetes).unwrap();
+        value["spec"]["gateway"]["target"]["kubernetes"]["expose"] =
+            json!({"endpoint": endpoint, "service": {"type": "NodePort"}});
+        Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+    };
+    let (published, republished) = (
+        exposed("https://127.0.0.1:30851"),
+        exposed("https://127.0.0.1:30852"),
+    );
+    for (original, changed) in [
+        (&external, &moved),
+        (&local, &ported),
+        (&published, &republished),
+    ] {
+        let state_directory = tempfile::tempdir().unwrap();
+        let store = Store::open(state_directory.path()).unwrap();
+        store.save(&Record::new(original.clone()).unwrap()).unwrap();
+        drop(store);
+        let intent = state_directory.path().join("intent.json");
+        let before = fs::read(&intent).unwrap();
+        let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
+        for apply in [false, true] {
+            let error = deployment
+                .run(changed, &CancellationToken::new(), apply)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, Error::Conflict(message) if message.starts_with("state is bound to a different gateway endpoint:")),
+                "{error:?}"
+            );
+            assert_eq!(fs::read(&intent).unwrap(), before);
+        }
+    }
+}
+
 #[test]
 fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
     let address = "docker_container.runtime";
