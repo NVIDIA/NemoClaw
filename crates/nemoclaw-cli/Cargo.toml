@@ -23,6 +23,13 @@ serde-saphyr.workspace = true
 tokio = { workspace = true, features = ["signal", "io-std", "io-util", "net"] }
 
 tempfile.workspace = true
+# Telemetry: the 5.0 record, its generated schema, the install ID, and the sender.
+getrandom.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+schemars.workspace = true
+serde.workspace = true
+time = { workspace = true, features = ["macros"] }
 
 [target.'cfg(unix)'.dependencies]
 nix.workspace = true
@@ -39,6 +46,7 @@ path = "src/main.rs"
 workspace = true
 
 [dev-dependencies]
+jsonschema.workspace = true
 vt100 = "0.16.2"
 
 [target.'cfg(unix)'.dev-dependencies]

@@ -1,0 +1,175 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "schemaMeta": {
+    "schemaVersion": "5.0",
+    "clientId": "2247027956751513",
+    "clientName": "NemoClaw",
+    "definitionVersion": "2.0",
+    "personalization": "anonymous"
+  },
+  "description": "One finished NemoClaw v1 CLI command that changes a deployment, as a flat record of categories, counts, and a random install ID.",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/events/nemoclaw_deployment_finished"
+    }
+  ],
+  "definitions": {
+    "types": {},
+    "events": {
+      "nemoclaw_deployment_finished": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "nvidiaSource": {
+            "type": "string",
+            "enum": ["nemoclaw"]
+          },
+          "installId": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|unknown)$"
+          },
+          "firstRun": {
+            "type": "boolean"
+          },
+          "testLabel": {
+            "type": "string",
+            "maxLength": 96,
+            "pattern": "^(?:|qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2})$"
+          },
+          "buildKind": {
+            "type": "string",
+            "enum": ["release", "dev", "other"]
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "previousVersion": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "operation": {
+            "type": "string",
+            "enum": ["onboard", "apply", "destroy", "other"]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": ["succeeded", "failed", "cancelled", "other"]
+          },
+          "effect": {
+            "type": "string",
+            "enum": ["initial", "update", "none", "teardown", "authored", "other"]
+          },
+          "failureStage": {
+            "type": "string",
+            "enum": ["none", "validate", "initialize", "plan", "apply", "finish", "destroy", "other"]
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "os": {
+            "type": "string",
+            "enum": ["linux", "macos", "windows", "other"]
+          },
+          "arch": {
+            "type": "string",
+            "enum": ["x86_64", "arm64", "other"]
+          },
+          "hostContext": {
+            "type": "string",
+            "enum": ["native", "wsl", "other", "unknown"]
+          },
+          "deploymentSource": {
+            "type": "string",
+            "enum": ["brev", "omnistation", "colossus", "none", "other"]
+          },
+          "cloud": {
+            "type": "string",
+            "enum": ["gcp", "azure", "aws", "none", "other", "unknown"]
+          },
+          "hardware": {
+            "type": "string",
+            "enum": ["dgx-spark", "dgx-station", "rtx-spark", "jetson", "mac", "nvidia-gpu", "other", "unknown"]
+          },
+          "harnesses": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "inferenceHosts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["local", "build.nvidia.com", "inference.nvidia.com", "openai", "anthropic", "other"]
+            }
+          },
+          "computeDriver": {
+            "type": "string",
+            "enum": ["docker", "podman", "kubernetes", "openshift", "other", "unknown"]
+          },
+          "sandboxCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "agentCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "webSearch": {
+            "type": "string",
+            "enum": ["brave", "tavily", "none", "other", "unknown"]
+          },
+          "mcpConfigured": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "nvidiaSource",
+          "installId",
+          "firstRun",
+          "testLabel",
+          "buildKind",
+          "version",
+          "previousVersion",
+          "operation",
+          "outcome",
+          "effect",
+          "failureStage",
+          "durationMs",
+          "os",
+          "arch",
+          "hostContext",
+          "deploymentSource",
+          "cloud",
+          "hardware",
+          "harnesses",
+          "models",
+          "inferenceHosts",
+          "computeDriver",
+          "sandboxCount",
+          "agentCount",
+          "webSearch",
+          "mcpConfigured"
+        ],
+        "description": "One finished apply, destroy, or configuration-writing onboard: build and version, command outcome and failure stage, host OS, chip and platform category, harness, model, inference host and runtime categories, counts, optional features, and QA label.",
+        "eventMeta": {
+          "service": "telemetry",
+          "gdpr": {
+            "category": "functional",
+            "description": "Anonymous command and configuration categories, model and harness names as configured, and a random, user-resettable install ID; no user, host, deployment or sandbox names, credentials, content, URLs, endpoint or IP addresses, file paths, image names, or error text."
+          }
+        }
+      }
+    }
+  }
+}
