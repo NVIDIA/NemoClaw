@@ -664,7 +664,7 @@ describe("created sandbox identity gate", () => {
       .mockReturnValueOnce("alpha Ready")
       .mockReturnValueOnce("[]");
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("exact durable sandbox");
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("exact durable identity");
 
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.any(String),
@@ -986,7 +986,7 @@ describe("created sandbox identity gate", () => {
       );
 
       await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-        "OpenShell did not return one exact durable sandbox identity before post-create effects",
+        "cannot confirm the sandbox was created",
       );
 
       expect(
@@ -1142,9 +1142,7 @@ describe("created sandbox identity gate", () => {
     const error = await runSandboxGpuCreateFlow(input, deps).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(Error);
-    expect(String(error)).toContain(
-      "did not return one exact durable sandbox identity before post-create effects",
-    );
+    expect(String(error)).toContain("cannot confirm the sandbox was created");
     expect(String(error)).not.toContain(nonce);
     expect(String(error)).not.toContain(outputCanary);
     expect(String(error)).toContain("selector-identity-mismatch");
@@ -1181,13 +1179,11 @@ describe("created sandbox identity gate", () => {
     });
 
     expect(error).toBeInstanceOf(Error);
-    expect(String(error)).toContain(
-      "did not return one exact durable sandbox identity before post-create effects",
-    );
+    expect(String(error)).toContain("cannot confirm the sandbox was created");
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringMatching(
         new RegExp(
-          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\. Sandbox 'alpha'.*Gateway 'nemoclaw'`,
+          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\. NemoClaw could not confirm one exact durable sandbox identity for this create attempt's label on 'alpha' through gateway 'nemoclaw'`,
           "u",
         ),
       ),
@@ -1392,7 +1388,7 @@ describe("created sandbox identity gate", () => {
     });
 
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "did not return one exact durable sandbox identity before post-create effects",
+      "cannot confirm the sandbox was created",
     );
 
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(

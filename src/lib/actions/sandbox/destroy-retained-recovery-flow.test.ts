@@ -198,6 +198,7 @@ describe("destroySandbox retained recovery flow", () => {
         expect.stringContaining(
           `Diagnostic reference: retained recovery record ID ${recovery.recordId}`,
         ),
+        expect.stringMatching(/backup/i),
       ]);
     },
   );
@@ -934,6 +935,8 @@ describe("destroySandbox retained recovery flow", () => {
       expect(harness.errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("could not select exactly one recovery record"),
       );
+      // The refusal must say where the user's backup is (or that none exists), #14323.
+      expect(harness.errorSpy).toHaveBeenCalledWith(expect.stringMatching(/backup/i));
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
         expect.anything(),

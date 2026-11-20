@@ -7,6 +7,7 @@ import { R, YW } from "../../cli/terminal-style";
 import { prompt as askPrompt } from "../../credentials/store";
 import type { DestroySandboxOptions } from "../../domain/lifecycle/options";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
+import { getLatestBackup } from "../../state/sandbox";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
@@ -82,4 +83,26 @@ export async function confirmSandboxDestroy(
   }
   console.log("  Cancelled.");
   return false;
+}
+
+/** Tell the user where the pre-upgrade or pre-rebuild backup is, without touching it. */
+export function printRetainedBackupLocation(sandboxName: string): void {
+  let backupPath: string | null = null;
+  try {
+    backupPath = getLatestBackup(sandboxName)?.backupPath ?? null;
+  } catch {
+    console.error(
+      `  NemoClaw could not read the rebuild-backups directory for '${sandboxName}', so it cannot say whether a backup exists. Check the directory permissions before any manual cleanup.`,
+    );
+    return;
+  }
+  if (backupPath) {
+    console.error(
+      `  Latest backup found at: ${backupPath} (native-home.tar should hold the agent home and workspace). NemoClaw has not checked that the archive is intact. Copy the directory somewhere safe and verify it before any manual cleanup.`,
+    );
+  } else {
+    console.error(
+      `  No complete backup was found for '${sandboxName}' under the NemoClaw rebuild-backups directory.`,
+    );
+  }
 }

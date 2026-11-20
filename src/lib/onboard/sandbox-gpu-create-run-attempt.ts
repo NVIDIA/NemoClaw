@@ -20,7 +20,9 @@ import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import {
   createSandboxRecoveryContext,
+  formatCreateOutputTail,
   formatRetainedSandboxRecoveryMessage,
+  unconfirmedCreateMessage,
   reportSandboxCreateFailure,
 } from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
@@ -546,6 +548,12 @@ export function createSandboxGpuCreateAttemptRunner(
         throw new Error(persistenceFailureMessage, { cause: persistenceCause });
       }
     };
+    const printUnconfirmedCreateOutput = (output: string | null | undefined): void => {
+      const tail = formatCreateOutputTail(output);
+      if (!tail) return;
+      console.error("  Last OpenShell create output:");
+      for (const line of tail.split("\n")) console.error(`    ${line}`);
+    };
     const waitForCreatedSandboxPublication = (sandboxId: string): void => {
       try {
         waitForCreatedOpenShellSandboxPublication(sandboxId, input, deps);
@@ -661,9 +669,13 @@ export function createSandboxGpuCreateAttemptRunner(
       try {
         sandboxId = settleCreatedIdentity();
       } catch (error) {
+        printUnconfirmedCreateOutput(createResult?.output);
         persistIdentitySettlementRecovery();
         throw new Error(
-          `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects${error instanceof CreatedSandboxIdentityError ? ` (${error.diagnostic})` : ""}.`,
+          unconfirmedCreateMessage(
+            input.sandboxName,
+            error instanceof CreatedSandboxIdentityError ? error.diagnostic : null,
+          ),
           { cause: error },
         );
       }
@@ -899,7 +911,7 @@ export function createSandboxGpuCreateAttemptRunner(
       if (failure.kind === "sandbox_create_incomplete") {
         console.warn("");
         console.warn(
-          `  Create stream exited with code ${createResult.status} after sandbox was created.`,
+          `  Create stream exited with code ${createResult.status}; its output reported a created sandbox, which is not yet confirmed.`,
         );
         console.warn("  Checking whether the sandbox reaches Ready state...");
       } else if (
@@ -974,9 +986,13 @@ export function createSandboxGpuCreateAttemptRunner(
       try {
         sandboxId = settledAmbiguousSandboxId ?? settleCreatedIdentity();
       } catch (error) {
+        printUnconfirmedCreateOutput(createResult?.output);
         persistIdentitySettlementRecovery();
         throw new Error(
-          `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects${error instanceof CreatedSandboxIdentityError ? ` (${error.diagnostic})` : ""}.`,
+          unconfirmedCreateMessage(
+            input.sandboxName,
+            error instanceof CreatedSandboxIdentityError ? error.diagnostic : null,
+          ),
           { cause: error },
         );
       }

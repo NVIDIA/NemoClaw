@@ -56,6 +56,7 @@ import * as registry from "../../state/registry";
 import {
   assertSandboxDestroyCommandAvailable,
   confirmSandboxDestroy,
+  printRetainedBackupLocation,
 } from "./destroy-confirmation";
 import {
   executeSandboxDestroy,
@@ -880,6 +881,8 @@ async function destroySandboxUnlocked(
     console.error(
       `  Diagnostic reference: retained recovery record ID${diagnosticRecordIds.includes(",") ? "s" : ""} ${diagnosticRecordIds}.`,
     );
+    // The user's files may exist only in the pre-upgrade backup (#14323), so name it here.
+    printRetainedBackupLocation(sandboxName);
     requestSandboxDestroyExit(1);
   }
   const retainedSandboxIdentityFingerprint =

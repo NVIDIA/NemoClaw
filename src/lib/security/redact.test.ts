@@ -38,6 +38,14 @@ describe("redactFullWithUrls", () => {
   ])("fully redacts URL credentials for %s", (_case, value, expected) => {
     expect(redactFullWithUrls(value)).toBe(expected);
   });
+  it.each([
+    ["passphrase=opaquePhraseValue", "passphrase=<REDACTED>"],
+    ["SSH_PASSPHRASE=opaquePhraseValue", "SSH_PASSPHRASE=<REDACTED>"],
+    ["sshPassphrase=opaquePhraseValue", "sshPassphrase=<REDACTED>"],
+  ])("redacts passphrase assignment vector %#", (input, expected) => {
+    expect(redactFull(input)).toBe(expected);
+    expect(redactFullWithUrls(input)).toBe(expected);
+  });
 });
 
 describe("redact", () => {
@@ -125,6 +133,11 @@ describe("redactForLog", () => {
     [
       "CUSTOM_SECRET='opaque secret value' safe diagnostic",
       "CUSTOM_SECRET='<REDACTED>' safe diagnostic",
+    ],
+    ['passphrase="opaque phrase value" safe diagnostic', 'passphrase="<REDACTED>" safe diagnostic'],
+    [
+      "sshPassphrase='opaque phrase value' safe diagnostic",
+      "sshPassphrase='<REDACTED>' safe diagnostic",
     ],
   ])("redacts the complete quoted assignment in %s", (assignment, expected) => {
     expect(redactFull(assignment)).toBe(expected);
