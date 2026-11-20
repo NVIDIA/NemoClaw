@@ -164,6 +164,11 @@ export function isValidHermesApiPort(value: unknown): value is number {
  */
 export function readHermesApiPort(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env[HERMES_API_PORT_ENV];
+  // A present-but-blank value is unset, the same rule the callers apply when
+  // they test `env[HERMES_API_PORT_ENV]?.trim()`. Without this guard a
+  // template-expanded empty value fails the parse as an invalid port and
+  // aborts a re-onboard that would otherwise reuse the recorded port.
+  if (raw !== undefined && raw.trim() === "") return HERMES_OPENAI_API_PORT;
   let port: number;
   try {
     port = parseServicePortOverride(HERMES_API_PORT_ENV, raw, HERMES_OPENAI_API_PORT);
