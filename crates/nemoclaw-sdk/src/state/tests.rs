@@ -3,6 +3,48 @@
 
 use super::*;
 
+/// A state write that runs out of space names the state directory and the
+/// file it left unchanged; any other failed write keeps its error.
+#[test]
+fn a_state_write_out_of_space_names_the_directory_and_keeps_the_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("intent.json");
+    let full = write_failed(
+        nemoclaw_runtime::Error::StorageFull("cannot write and sync state file"),
+        &path,
+    );
+    let Error::OutOfSpace(out_of_space) = &full else {
+        panic!("{full:?}");
+    };
+    assert_eq!(
+        out_of_space.target,
+        nemoclaw_backend::StorageTarget::DeploymentState {
+            directory: directory.path().into()
+        }
+    );
+    assert_eq!(out_of_space.kept, nemoclaw_backend::Kept::State);
+    #[cfg(unix)]
+    assert!(out_of_space.available.is_some());
+    let message = full.to_string();
+    for expected in [
+        format!(
+            "NemoClaw's write of intent.json ran out of space in the deployment state directory {}",
+            directory.path().display()
+        ),
+        "keeping every file in it, then run the command again".into(),
+        "; intent.json is unchanged; state retained\ncannot write and sync state file: no space left on device".into(),
+    ] {
+        assert!(message.contains(&expected), "missing {expected:?}: {message}");
+    }
+    assert!(matches!(
+        write_failed(
+            nemoclaw_runtime::Error::State("cannot write and sync state file"),
+            &path
+        ),
+        Error::State("cannot write and sync state file")
+    ));
+}
+
 #[test]
 fn container_generations_survive_reopen_and_service_removal() {
     let mut document = crate::config::Document::parse(

@@ -9,6 +9,7 @@ mod error;
 mod identity;
 mod observation;
 mod secrets;
+mod storage;
 
 pub use contract::{Backend, Mutation, Row};
 pub use endpoint::{forbidden_address, validate_endpoint, validate_endpoint_url};
@@ -20,6 +21,7 @@ pub use observation::{
     refresh,
 };
 pub use secrets::{EnvironmentSecrets, Secrets};
+pub use storage::{Kept, OutOfSpace, StorageTarget, Writer};
 
 /// Names the directory, in the deployment's private state, where providers
 /// keep a backend's own message about a failed operation. Only the SDK sets

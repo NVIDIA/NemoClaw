@@ -59,7 +59,14 @@ pub enum Error {
         /// created anything, when those rejections were the only reported
         /// apply failures. Absent for incomplete output or any other failure.
         uncreated: Option<Vec<String>>,
+        /// The error diagnostics that report a write out of space: each one's
+        /// resource address, or `None` for OpenTofu's own. Empty for output
+        /// that is incomplete or withheld.
+        out_of_space: Box<[Option<String>]>,
     },
+    /// A write ran out of space.
+    #[error("{0}")]
+    OutOfSpace(Box<crate::OutOfSpace>),
     #[error("operation interrupted; retain state and reapply the same configuration")]
     Cancelled,
     #[error("managed service connection refused; inventory is unknown")]
@@ -96,13 +103,16 @@ impl From<nemoclaw_runtime::Error> for Error {
             nemoclaw_runtime::Error::Hardware(e) => {
                 Self::Observation(crate::ObservationError::Hardware(e))
             }
-            nemoclaw_runtime::Error::State(e) => Self::State(e),
+            nemoclaw_runtime::Error::State(e) | nemoclaw_runtime::Error::StorageFull(e) => {
+                Self::State(e)
+            }
             nemoclaw_runtime::Error::Conflict(e) => Self::Conflict(e),
             nemoclaw_runtime::Error::Protection(diagnostic) => Self::Execution {
                 operation: "memory protection".into(),
                 diagnostic,
                 postcondition_failures: None,
                 uncreated: None,
+                out_of_space: Box::default(),
             },
             nemoclaw_runtime::Error::Cancelled => Self::Cancelled,
             nemoclaw_runtime::Error::ServiceStarting => Self::ServiceStarting,

@@ -45,7 +45,7 @@ mod gateway_observation;
 #[doc(hidden)]
 pub mod services;
 mod state;
-pub use nemoclaw_backend::Error;
+pub use nemoclaw_backend::{Error, Kept, OutOfSpace, StorageTarget, Writer};
 pub mod bundle;
 #[cfg(all(test, unix))]
 #[path = "../../test-support/executable.rs"]

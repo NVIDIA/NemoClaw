@@ -76,6 +76,8 @@ toml = { version = "1.1", default-features = false, features = ["display", "serd
 [target.'cfg(unix)'.dependencies]
 # Interrupts OpenTofu alone, not the provider plugins in its process group.
 nix.workspace = true
+# Free space in a deployment's state directory, for a write that ran out of it.
+rustix = { workspace = true, features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 widestring = "1"

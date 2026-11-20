@@ -6,6 +6,7 @@ mod tests;
 
 mod export;
 mod opentofu;
+mod out_of_space;
 mod plan;
 mod reporting;
 pub use reporting::{
@@ -441,7 +442,17 @@ impl Deployment {
             }
             if !*unreported {
                 record.forget_unstarted_creations(&earlier, started);
-                store.save(&record)?;
+                // When the apply ran out of space too, its error says how to
+                // recover, and the record saved before it still lists these
+                // creations as pending.
+                if let Err(error) = store.save(&record)
+                    && !matches!(
+                        (&error, &applied),
+                        (Error::OutOfSpace(_), Err(Error::OutOfSpace(_)))
+                    )
+                {
+                    return Err(error);
+                }
             }
         }
         applied?;

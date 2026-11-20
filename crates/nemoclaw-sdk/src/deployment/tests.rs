@@ -836,6 +836,200 @@ async fn a_stopped_podman_gateway_container_is_named_with_how_to_start_it() {
     assert_eq!(start, format!("podman --url {engine} start {NAME}"));
 }
 
+/// The Spark fixture, a vLLM service on the local Docker engine, and its graph.
+fn spark() -> (Document, Value) {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/spark.yaml").as_slice())
+            .unwrap();
+    let generations = Record::new(document.clone()).unwrap().generations;
+    let graph = compile::compile(&document, &generations, "0.1.0").unwrap();
+    (document, graph)
+}
+
+/// Applies the Spark fixture against a scripted OpenTofu that runs `script`
+/// in the state directory, prints `diagnostics` as its JSON UI, and fails.
+#[cfg(unix)]
+async fn out_of_space_apply(script: &str, diagnostics: &[Value]) -> (Error, tempfile::TempDir) {
+    let bundle_directory = tempfile::tempdir().unwrap();
+    let bundle = fixture_bundle(bundle_directory.path());
+    fs::create_dir_all(bundle.tofu().parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("/bin/sh", bundle.tofu()).unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let store = Store::open(state.path()).unwrap();
+    let (document, graph) = spark();
+    let deployment = Deployment::new(state.path(), bundle_directory.path());
+    deployment.prepare(&bundle, &store, &graph).unwrap();
+    let events = std::iter::once(json!({"type": "version", "ui": "1.2"}))
+        .chain(
+            diagnostics
+                .iter()
+                .map(|diagnostic| json!({"type": "diagnostic", "diagnostic": diagnostic})),
+        )
+        .map(|event| format!("{event}\n"))
+        .collect::<String>();
+    fs::write(state.path().join("events"), events).unwrap();
+    fs::write(
+        state.path().join("apply"),
+        format!("{script}\ncat events\nexit 1\n"),
+    )
+    .unwrap();
+    let error = deployment
+        .tofu(
+            &bundle,
+            &store,
+            &document,
+            &["apply", "-input=false", "-no-color", "apply.plan"],
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    (error, state)
+}
+
+/// An apply whose write runs out of space names the storage it ran out of,
+/// what the failure kept, and how to retry: an image pull in the engine's
+/// Docker root, a model service's write to its volume, and OpenTofu's save
+/// of the state in the deployment state directory.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_apply_out_of_space_names_the_storage_and_what_was_kept() {
+    const ENGINE: &str = "unix:///var/run/docker.sock";
+    let (_, graph) = spark();
+    let (image, _) = graph["resource"]["docker_image"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .find(|(_, image)| {
+            image["name"]
+                .as_str()
+                .unwrap()
+                .starts_with("fixture-runtime@")
+        })
+        .unwrap();
+    let image = format!("docker_image.{image}");
+    let pull = json!({
+        "severity": "error",
+        "summary": "Unable to read Docker image into resource",
+        "detail": "unable to pull image fixture-runtime: failed to register layer: write /var/lib/docker/overlay2/l/model.bin: no space left on device",
+        "address": image,
+    });
+    let (error, _) = out_of_space_apply("", &[pull]).await;
+    let message = error.to_string();
+    for expected in [
+        format!("OpenTofu apply of {image} ran out of space in the Docker root of engine {ENGINE}"),
+        format!("`docker --host {ENGINE} system df`"),
+        "nemoclaw.nvidia.com/uid".into(),
+        "; resources retained\n".into(),
+        "failed to register layer".into(),
+    ] {
+        assert!(
+            message.contains(&expected),
+            "missing {expected:?}: {message}"
+        );
+    }
+
+    let readiness = "data.vllm_readiness.inference_service_inference_qwen";
+    assert!(graph["data"]["vllm_readiness"]["inference_service_inference_qwen"].is_object());
+    let volume = graph["resource"]["docker_volume"]["inference_storage_inference_qwen"]["name"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let write = json!({
+        "severity": "error",
+        "summary": "Resource observation",
+        "detail": "service runtime stopped: managed service process exited; its final output follows, and the container log has all of it; correct the cause and reapply:\nOSError: [Errno 28] No space left on device",
+        "address": readiness,
+    });
+    let (error, _) = out_of_space_apply("", &[write]).await;
+    let message = error.to_string();
+    for expected in [
+        format!(
+            "OpenTofu apply of {readiness} ran out of space in volume {volume} on engine {ENGINE}"
+        ),
+        "without removing the volume".into(),
+        "the volume keeps what was written to it; resources retained\n".into(),
+    ] {
+        assert!(
+            message.contains(&expected),
+            "missing {expected:?}: {message}"
+        );
+    }
+
+    let save = json!({
+        "severity": "error",
+        "summary": "Failed to save state",
+        "detail": "Error saving state: failed to write state: write terraform.tfstate: no space left on device",
+    });
+    let persist = |detail: &str| json!({"severity": "error", "summary": "Failed to persist state to backend", "detail": detail});
+    let (error, state) = out_of_space_apply(
+        "",
+        &[
+            save.clone(),
+            json!({
+                "severity": "error",
+                "summary": "Failed to create local state file",
+                "detail": "Error creating local state file for recovery: write errored.tfstate: no space left on device",
+            }),
+            persist("the raw state data is printed above as a JSON object"),
+        ],
+    )
+    .await;
+    let message = error.to_string();
+    for expected in [
+        format!(
+            "OpenTofu apply ran out of space in the deployment state directory {}, which has ",
+            state.path().display()
+        ),
+        "then run the same command again with the same configuration".into(),
+        "OpenTofu couldn't save the state, so it can miss what this run changed\n".into(),
+    ] {
+        assert!(
+            message.contains(&expected),
+            "missing {expected:?}: {message}"
+        );
+    }
+
+    let (error, _) = out_of_space_apply(
+        ": > errored.tfstate",
+        &[
+            save,
+            persist("the state has been written to the file \"errored.tfstate\""),
+        ],
+    )
+    .await;
+    let message = error.to_string();
+    for expected in [
+        "restore errored.tfstate as OpenTofu's message below says before any other operation",
+        "OpenTofu kept the state it couldn't save in errored.tfstate\n",
+    ] {
+        assert!(
+            message.contains(expected),
+            "missing {expected:?}: {message}"
+        );
+    }
+}
+
+/// A resource that ran out of space somewhere the graph doesn't say keeps
+/// OpenTofu's error, rather than naming storage it might not have used.
+#[cfg(unix)]
+#[tokio::test]
+async fn out_of_space_in_unplaced_storage_keeps_opentofus_error() {
+    let (error, _) = out_of_space_apply(
+        "",
+        &[json!({
+            "severity": "error",
+            "summary": "Apply incomplete",
+            "detail": "sandbox create failed: no space left on device",
+            "address": "openshell_sandbox.assistant",
+        })],
+    )
+    .await;
+    assert_eq!(
+        error.to_string(),
+        "OpenTofu apply failed: Apply incomplete\nsandbox create failed: no space left on device"
+    );
+}
+
 fn fixture_bundle(directory: &Path) -> Bundle {
     Bundle {
         directory: directory.into(),

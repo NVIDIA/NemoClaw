@@ -3348,6 +3348,7 @@ dependencies = [
  "regex",
  "reqwest 0.13.5",
  "ring",
+ "rustix",
  "rustls",
  "schemars 1.2.3",
  "serde",

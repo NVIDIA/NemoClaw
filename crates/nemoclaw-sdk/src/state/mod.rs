@@ -479,7 +479,7 @@ impl Store {
     }
     pub fn save(&self, record: &Record) -> Result<(), Error> {
         record.validate()?;
-        save_json(&self.directory.join("intent.json"), record).map_err(Into::into)
+        save_json(&self.directory.join("intent.json"), record)
     }
     pub async fn bindings(
         &self,
@@ -626,4 +626,51 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
     }
     Ok(bindings)
 }
-pub(crate) use nemoclaw_runtime::files::{atomic_write, save_json};
+
+/// Writes `bytes` to the file at `path` in a deployment's state as one step.
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    nemoclaw_runtime::files::atomic_write(path, bytes).map_err(|error| write_failed(error, path))
+}
+
+/// Saves `value` as JSON to the file at `path` in a deployment's state as one
+/// step.
+pub(crate) fn save_json(path: &Path, value: &impl Serialize) -> Result<(), Error> {
+    nemoclaw_runtime::files::save_json(path, value).map_err(|error| write_failed(error, path))
+}
+
+/// The error for a failed write of the state file at `path`. One that ran out
+/// of space names the directory and the space it has free; the file keeps its
+/// earlier content.
+fn write_failed(error: nemoclaw_runtime::Error, path: &Path) -> Error {
+    let (nemoclaw_runtime::Error::StorageFull(_), Some(directory), Some(file)) =
+        (&error, path.parent(), path.file_name())
+    else {
+        return error.into();
+    };
+    Error::OutOfSpace(Box::new(nemoclaw_backend::OutOfSpace {
+        writer: nemoclaw_backend::Writer::NemoClaw {
+            file: file.to_string_lossy().into_owned(),
+        },
+        target: nemoclaw_backend::StorageTarget::DeploymentState {
+            directory: directory.into(),
+        },
+        available: available_space(directory),
+        kept: nemoclaw_backend::Kept::State,
+        diagnostic: error.to_string(),
+    }))
+}
+
+/// The bytes that unprivileged writes can still use on the file system that
+/// holds `directory`, when this host can tell.
+pub(crate) fn available_space(directory: &Path) -> Option<u64> {
+    #[cfg(unix)]
+    {
+        let filesystem = rustix::fs::statvfs(directory).ok()?;
+        filesystem.f_bavail.checked_mul(filesystem.f_frsize)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        None
+    }
+}

@@ -114,6 +114,7 @@ pub(crate) async fn run_with_progress(
         diagnostic: "cannot launch bundled executable".into(),
         postcondition_failures: None,
         uncreated: None,
+        out_of_space: Box::default(),
     })?;
     // This SDK fact is independent of optional child UI/download events and
     // their redaction or transport. A failed spawn cannot have changed resources.
@@ -241,6 +242,23 @@ pub(crate) async fn run_with_progress(
     };
     let stderr_text = String::from_utf8_lossy(&diagnostic).into_owned();
     diagnostic.fill(0);
+    let out_of_space = if overflow || diagnostic_overflow || withhold_child_text {
+        Vec::new()
+    } else if stderr_text.is_empty() {
+        observations::out_of_space(&output)
+            .into_iter()
+            .map(|address| {
+                address.map(|mut address| {
+                    redact(&mut address, &redactions);
+                    address
+                })
+            })
+            .collect()
+    } else if observations::reports_out_of_space(&stderr_text) {
+        vec![None]
+    } else {
+        Vec::new()
+    };
     let message = if overflow || diagnostic_overflow {
         // Output cut at its capture limit can end inside a credential that
         // redaction then no longer matches, so none of it is shown.
@@ -268,6 +286,7 @@ pub(crate) async fn run_with_progress(
         diagnostic: message.trim().into(),
         postcondition_failures,
         uncreated,
+        out_of_space: out_of_space.into_boxed_slice(),
     })
 }
 
@@ -1510,6 +1529,7 @@ async fn unrelated_credentials_preserve_native_context_through_json_capture() {
         diagnostic,
         postcondition_failures,
         uncreated,
+        out_of_space,
     } = error
     else {
         panic!("expected the child execution failure");
@@ -1518,6 +1538,7 @@ async fn unrelated_credentials_preserve_native_context_through_json_capture() {
     assert_eq!(diagnostic, format!("{summary}\n{detail}"));
     assert!(postcondition_failures.is_none());
     assert!(uncreated.is_none());
+    assert!(out_of_space.is_empty());
     assert!(
         received
             .lock()
@@ -1543,6 +1564,21 @@ async fn progress_resource_addresses_redact_credentials() {
     let events = format!("{:?}", received.lock().unwrap());
     assert!(events.contains("openshell_sandbox.[redacted]"));
     assert!(!events.contains("secret-sentinel"));
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn out_of_space_addresses_redact_credentials() {
+    let directory = tempfile::tempdir().unwrap();
+    let error = run(directory.path(), Path::new("/bin/sh"),
+        &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"diagnostic","diagnostic":{"severity":"error","summary":"write failed","detail":"no space left on device","address":"docker_volume.secret-sentinel"}}'; exit 1"#],
+        &[("CUSTOM_CREDENTIAL".into(), "secret-sentinel".into())].into(),
+        &CancellationToken::new())
+        .await.unwrap_err();
+    let Error::Execution { out_of_space, .. } = error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(*out_of_space, [Some("docker_volume.[redacted]".to_owned())]);
 }
 
 #[cfg(all(test, unix))]

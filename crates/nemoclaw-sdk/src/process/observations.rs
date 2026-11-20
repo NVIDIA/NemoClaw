@@ -73,6 +73,33 @@ pub(super) fn uncreated_resources(output: &[u8]) -> Option<Vec<String>> {
     (!uncreated.is_empty()).then_some(uncreated)
 }
 
+/// Whether `text` reports a write that ran out of space, in the words of
+/// Linux, macOS, or Windows.
+pub(super) fn reports_out_of_space(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    ["no space left on device", "not enough space on the disk"]
+        .iter()
+        .any(|words| text.contains(words))
+}
+
+/// The error diagnostics that report a write out of space: each one's
+/// resource address, or `None` for a diagnostic of OpenTofu's own.
+pub(super) fn out_of_space(output: &[u8]) -> Vec<Option<String>> {
+    output
+        .split(|byte| *byte == b'\n')
+        .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
+        .filter(|event| event["type"] == "diagnostic" && event["diagnostic"]["severity"] == "error")
+        .filter(|event| {
+            ["summary", "detail"].iter().any(|key| {
+                event["diagnostic"][key]
+                    .as_str()
+                    .is_some_and(reports_out_of_space)
+            })
+        })
+        .map(|event| event["diagnostic"]["address"].as_str().map(str::to_owned))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,5 +151,19 @@ mod tests {
         let mut truncated = stream(vec![failed_check()]);
         truncated.extend_from_slice(b"{unfinished");
         assert_eq!(postcondition_failures(&truncated), None);
+    }
+
+    #[test]
+    fn out_of_space_errors_keep_their_address_and_others_are_ignored() {
+        let output = stream(vec![
+            json!({"type":"diagnostic", "diagnostic":{"severity":"error", "summary":"Unable to create volume", "detail":"write: No space left on device", "address":"docker_volume.storage"}}),
+            json!({"type":"diagnostic", "diagnostic":{"severity":"error", "summary":"Failed to save state", "detail":"There is not enough space on the disk."}}),
+            json!({"type":"diagnostic", "diagnostic":{"severity":"warning", "summary":"no space left on device", "address":"docker_image.warned"}}),
+            json!({"type":"diagnostic", "diagnostic":{"severity":"error", "summary":"Apply incomplete", "address":"docker_image.other"}}),
+        ]);
+        assert_eq!(
+            out_of_space(&output),
+            vec![Some("docker_volume.storage".into()), None]
+        );
     }
 }

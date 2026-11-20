@@ -1573,6 +1573,7 @@ mod tests {
             diagnostic: "sandbox/coder start failed (pi_model_unknown); agent runtime is unavailable; resources retained".into(),
             postcondition_failures: None,
             uncreated: None,
+            out_of_space: Box::default(),
         };
         for mutated in [false, true] {
             let cli =
@@ -1690,6 +1691,7 @@ mod tests {
             diagnostic: "first line\nnext line\u{1b}[2J".into(),
             postcondition_failures: None,
             uncreated: None,
+            out_of_space: Box::default(),
         };
         let text = render_error(&error, OutputFormat::Text, &RenderContext::new(&cli));
         assert!(text.contains("first line\nnext line"));

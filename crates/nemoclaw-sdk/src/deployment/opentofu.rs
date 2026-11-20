@@ -52,7 +52,8 @@ impl Deployment {
                 cancel,
             ),
         )
-        .await?;
+        .await
+        .map_err(|error| super::out_of_space::classify(error, &store.directory))?;
         Ok(())
     }
     pub(super) fn prepare(
@@ -89,7 +90,6 @@ impl Deployment {
             format!("provider_installation {{\n filesystem_mirror {{ path = {quoted} }}\n}}\n")
                 .as_bytes(),
         )
-        .map_err(Into::into)
     }
     pub(super) async fn tofu(
         &self,
@@ -130,6 +130,7 @@ impl Deployment {
             }
         })
         .await
+        .map_err(|error| super::out_of_space::classify(error, &store.directory))
     }
     pub(super) async fn saved_plan(
         &self,

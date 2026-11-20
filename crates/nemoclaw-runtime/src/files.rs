@@ -11,7 +11,7 @@ use std::{
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     let parent = path.parent().ok_or(Error::State("invalid state path"))?;
     let mut file = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|_| Error::State("cannot create atomic state write"))?;
+        .map_err(|error| write_failed(&error, "cannot create atomic state write"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -21,14 +21,24 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     }
     file.write_all(bytes)
         .and_then(|()| file.as_file().sync_all())
-        .map_err(|_| Error::State("cannot write and sync state file"))?;
+        .map_err(|error| write_failed(&error, "cannot write and sync state file"))?;
     file.persist(path)
-        .map_err(|_| Error::State("cannot commit state file"))?;
+        .map_err(|error| write_failed(&error.error, "cannot commit state file"))?;
     #[cfg(unix)]
     File::open(parent)
         .and_then(|directory| directory.sync_all())
-        .map_err(|_| Error::State("cannot sync state directory"))?;
+        .map_err(|error| write_failed(&error, "cannot sync state directory"))?;
     Ok(())
+}
+
+/// The error for a state write step that failed with `error`, keeping
+/// whether its file system ran out of space.
+fn write_failed(error: &std::io::Error, step: &'static str) -> Error {
+    if error.kind() == std::io::ErrorKind::StorageFull {
+        Error::StorageFull(step)
+    } else {
+        Error::State(step)
+    }
 }
 pub fn save_json(path: &Path, value: &impl Serialize) -> Result<(), Error> {
     let mut bytes =
@@ -52,6 +62,29 @@ pub fn hash_file(path: &Path) -> Result<String, Error> {
         hash.update(&buffer[..count]);
     }
     Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+#[cfg(test)]
+mod write_failure_tests {
+    use super::*;
+
+    #[test]
+    fn a_full_file_system_is_kept_apart_from_other_write_failures() {
+        let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
+        assert!(matches!(
+            write_failed(&full, "cannot write and sync state file"),
+            Error::StorageFull("cannot write and sync state file")
+        ));
+        assert_eq!(
+            write_failed(&full, "cannot write and sync state file").to_string(),
+            "cannot write and sync state file: no space left on device"
+        );
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(matches!(
+            write_failed(&denied, "cannot write and sync state file"),
+            Error::State("cannot write and sync state file")
+        ));
+    }
 }
 
 #[cfg(all(test, unix))]

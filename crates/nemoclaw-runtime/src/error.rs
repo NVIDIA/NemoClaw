@@ -14,6 +14,9 @@ pub enum Error {
     Hardware(#[from] crate::hardware::HardwareDiagnostic),
     #[error("{0}")]
     State(&'static str),
+    /// A state write failed because its file system has no space left.
+    #[error("{0}: no space left on device")]
+    StorageFull(&'static str),
     #[error("{0}")]
     Conflict(&'static str),
     #[error("operation interrupted; retain state and reapply the same configuration")]
