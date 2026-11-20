@@ -1081,6 +1081,7 @@ export function createSetupNim(
         nimContainer,
         allowToolsIncompatible,
         ollamaContextWindowFloor: getOllamaContextWindowFloorForAgent(agent?.name ?? null),
+        nonInteractive: deps.isNonInteractive(),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         inferenceCapabilityCache,

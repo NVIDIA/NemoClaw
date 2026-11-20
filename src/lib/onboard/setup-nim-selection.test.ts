@@ -3,9 +3,14 @@
 
 import assert from "node:assert/strict";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { requireValue } from "../core/require-value";
+import {
+  applyCompatibleEndpointContextWindow,
+  applyDetectedEndpointContextWindow,
+  resetCompatibleEndpointContextWindowAutoState,
+} from "../inference/compatible-endpoint-context";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import {
   abortFailedNimStartup,
@@ -14,6 +19,14 @@ import {
   resolveCompatibleEndpointSelection,
   type SetupNimSelectionState,
 } from "./setup-nim-selection";
+
+vi.mock("../inference/compatible-endpoint-context", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../inference/compatible-endpoint-context")>();
+  return {
+    ...actual,
+    applyCompatibleEndpointContextWindow: vi.fn(actual.applyCompatibleEndpointContextWindow),
+  };
+});
 
 function makeState(): SetupNimSelectionState {
   return {
@@ -387,4 +400,76 @@ describe("createRemoteModelValidator", () => {
       assert.equal(receivedOptions?.useNvidiaEndpointProbePayload, true);
     },
   );
+  describe("agent context window floor on custom endpoints (#14067)", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+      resetCompatibleEndpointContextWindowAutoState();
+    });
+
+    async function validateCustom(floor: number, nonInteractive = false) {
+      const state = makeState();
+      state.provider = "openai-compatible";
+      state.endpointUrl = "https://compatible.example/v1";
+      state.model = "model-a";
+      state.ollamaContextWindowFloor = floor;
+      state.nonInteractive = nonInteractive;
+      const logLines: string[] = [];
+      const { validateSelectedRemoteModel } = createRemoteModelValidator({
+        OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
+        ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
+        requireValue,
+        isBackToSelection: (_value): _value is never => false,
+        validateCustomOpenAiLikeSelection: async () => ({ ok: true, api: "openai-completions" }),
+        validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+        validateAnthropicSelectionWithRetryMessage: async () => ({ ok: false, retry: "selection" }),
+        validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        shouldRequireResponsesToolCalling: () => false,
+        shouldSkipResponsesProbe: () => false,
+        getProbeAuthMode: () => undefined,
+        log: (message) => logLines.push(message),
+      });
+      const result = await validateSelectedRemoteModel({
+        selected: { key: "custom" },
+        remoteConfig: { label: "Custom", endpointUrl: "https://x.example/v1", helpUrl: null },
+        state,
+        selectedCredentialEnv: "OPENAI_API_KEY",
+      });
+      return { result, logLines };
+    }
+
+    it("rejects a context window below the agent floor", async () => {
+      vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "32768");
+      const { result, logLines } = await validateCustom(64_000);
+      assert.equal(result, "retry-model");
+      expect(logLines.join("\n")).toContain(
+        "NEMOCLAW_CONTEXT_WINDOW=32768 is below the 64000 tokens this agent requires. Raise or unset NEMOCLAW_CONTEXT_WINDOW.",
+      );
+    });
+
+    it("blames the model when the endpoint reported the context window", async () => {
+      vi.mocked(applyCompatibleEndpointContextWindow).mockImplementationOnce(async () => {
+        applyDetectedEndpointContextWindow(32768);
+      });
+      const { result, logLines } = await validateCustom(64_000);
+      assert.equal(result, "retry-model");
+      expect(logLines.join("\n")).toContain(
+        "model-a has a 32768-token context window, below the 64000 this agent requires. Choose a larger model.",
+      );
+    });
+
+    it("fails without a prompt in non-interactive mode", async () => {
+      vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "32768");
+      await expect(validateCustom(64_000, true)).rejects.toThrow(
+        "Raise or unset NEMOCLAW_CONTEXT_WINDOW",
+      );
+    });
+
+    it("keeps a window at or above the floor, and agents without a higher floor", async () => {
+      vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "64000");
+      assert.equal((await validateCustom(64_000)).result, "selected");
+      vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "32768");
+      assert.equal((await validateCustom(16_384)).result, "selected");
+    });
+  });
 });
