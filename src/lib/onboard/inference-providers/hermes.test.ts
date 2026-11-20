@@ -473,6 +473,62 @@ describe("native Hermes Provider setup", () => {
     },
   );
 
+  // #12898: the curated Hermes Provider onboarding flow passes the product-defined
+  // managed inference endpoint (hostedNativeProvider("hermes-provider").endpoint) as
+  // an explicit endpointUrl. It is a DNS-backed HTTPS URL, so the generic persisted-
+  // config validator would reject it; the native Hermes path must accept it without
+  // any DNS resolution instead.
+  it("accepts the product-defined Hermes Provider endpoint from the curated OAuth flow without DNS pinning (#12898)", async () => {
+    const productEndpoint = hostedNativeProvider("hermes-provider")!.endpoint;
+    const productDefinition = hostedNativeProvider("hermes-provider", productEndpoint)!;
+    const productReceipt = {
+      schemaVersion: 1 as const,
+      profileId: productDefinition.profileId,
+      providerName: productDefinition.providerName,
+      providerId: "native-identity",
+      endpointUrl: productEndpoint,
+      allowedIps: ["8.8.8.8"],
+    };
+    const lookup = vi.fn(async () => {
+      throw new Error("the product-defined Hermes endpoint must not require DNS resolution");
+    });
+    const prepareNativeProvider = vi.fn(async () => productReceipt);
+    const register = vi.fn(async (_sandbox, options) => {
+      await options.registerInferenceCredential({
+        apiKey: "host-secret",
+        credentialEnv: "OPENAI_API_KEY",
+        baseUrl: productEndpoint,
+      });
+      return {
+        auth_method: "oauth",
+        credential_env: "OPENAI_API_KEY",
+        inference_base_url: productEndpoint,
+      };
+    });
+    const deps = makeDeps({
+      lookup,
+      getNativeProviderAuthority: () => undefined,
+      prepareNativeProvider,
+      normalizeHermesAuthMethod: () => "oauth",
+      resolveHermesNousApiKey: () => null,
+      hermesProviderAuth: {
+        isHermesProviderRegistered: vi.fn(),
+        ensureHermesProviderApiKeyCredentials: register,
+        ensureHermesProviderOAuthCredentials: register,
+      },
+    });
+    const result = await setupHermesProviderInference(
+      { ...makeArgs(productEndpoint), provider: "hermes-provider" },
+      deps as never,
+    );
+    expect(result).toEqual({
+      ok: true,
+      nativeInference: { endpointUrl: productEndpoint, credentialEnv: "OPENAI_API_KEY" },
+    });
+    expect(lookup).not.toHaveBeenCalled();
+    expect(prepareNativeProvider).toHaveBeenCalledExactlyOnceWith("host-secret", productEndpoint);
+  });
+
   it("reuses exact registered authority noninteractively without another login", async () => {
     const prepareNativeProvider = vi.fn(async () => receipt);
     const deps = makeDeps({
