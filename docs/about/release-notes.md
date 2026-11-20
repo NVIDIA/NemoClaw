@@ -82,8 +82,8 @@ macOS clients:
 Gateways:
 
 - [Current limits](../resources/limits.md#data-and-cleanup) list a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: it leaves its sandboxes in `Error`, and the next apply replaces them ([#13953](https://github.com/NVIDIA/NemoClaw/issues/13953)).
-- While a managed Docker gateway's container is stopped, plan, apply, and destroy fail with an error that names the container and the `docker start` command that starts it, instead of `observation transport failed`.
-  See [troubleshooting](../observability/troubleshooting.md#identifying-the-failure) ([#14626](https://github.com/NVIDIA/NemoClaw/issues/14626)).
+- While a managed Docker or Podman gateway's container is stopped, plan, apply, and destroy fail with an error that names the container and the `docker start` or `podman start` command that starts it, instead of `observation transport failed`.
+  See [troubleshooting](../observability/troubleshooting.md#identifying-the-failure) ([#14626](https://github.com/NVIDIA/NemoClaw/issues/14626), [#14691](https://github.com/NVIDIA/NemoClaw/issues/14691)).
 
 Recovery:
 
