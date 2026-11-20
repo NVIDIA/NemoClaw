@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { beforeAll } from "vitest";
 
 import { expect, test } from "../../../../test/helpers/owned-test-resources";
 import { SOURCE_REQUIRE_HOOK } from "../../../../test/helpers/source-loader-options";
@@ -14,6 +15,34 @@ import { SOURCE_REQUIRE_HOOK } from "../../../../test/helpers/source-loader-opti
 // (#14689). This deadline allows slower runners and still reports the child's
 // stderr before the 30 s test timeout.
 const REBUILD_CHILD_TIMEOUT_MS = 20_000;
+
+beforeAll(() => {
+  const rootDir = fileURLToPath(new URL("../../../../", import.meta.url));
+  const catalogDir = path.join(rootDir, "dist/managed-inference");
+  fs.mkdirSync(catalogDir, { recursive: true });
+  const stagingDir = fs.mkdtempSync(path.join(catalogDir, "rebuild-entry-lock-"));
+  const stagedCatalog = path.join(stagingDir, "catalog.json");
+  try {
+    // Source-loaded inference modules need the real catalog even without a CLI build.
+    execFileSync(
+      process.execPath,
+      [
+        "--require",
+        SOURCE_REQUIRE_HOOK,
+        "-e",
+        "require(process.argv[1]).generateServingCatalog({ rootDir: process.argv[2], outputPath: process.argv[3] });",
+        fileURLToPath(new URL("../../inference/serving/generate-catalog.ts", import.meta.url)),
+        rootDir,
+        stagedCatalog,
+      ],
+      { cwd: rootDir, timeout: REBUILD_CHILD_TIMEOUT_MS, stdio: "pipe" },
+    );
+    // Other test workers must only see complete catalog bytes.
+    fs.renameSync(stagedCatalog, path.join(catalogDir, "catalog.json"));
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+}, REBUILD_CHILD_TIMEOUT_MS);
 
 function firstOutput(child: ChildProcess, label: string, stderr: () => string): Promise<unknown> {
   return Promise.race([
@@ -73,6 +102,10 @@ test.for(["registered", "missing"] as const)(
         { env, stdio: ["ignore", "pipe", "pipe"] },
       ),
     );
+    let holderStderr = "";
+    holder.stderr!.setEncoding("utf8").on("data", (chunk: string) => {
+      holderStderr += chunk;
+    });
     // Load the rebuild entry while the holder starts, then run it once the locks are held.
     const rebuild = resources.ownChild(
       spawn(
@@ -109,7 +142,7 @@ test.for(["registered", "missing"] as const)(
     });
     const closed = once(rebuild, "close");
     await Promise.all([
-      firstOutput(holder, "lock holder", () => ""),
+      firstOutput(holder, "lock holder", () => holderStderr),
       firstOutput(rebuild, "rebuild entry", () => stderr),
     ]);
     const onboardLock = path.join(stateDir, "onboard.lock");
