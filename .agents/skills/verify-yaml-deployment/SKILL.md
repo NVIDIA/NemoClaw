@@ -201,7 +201,7 @@ When destroy fails, keep the state directory and the bundle: they are the only r
 Run destroy and the removal below in one sequence, never concurrently: removing the state or bundle mid-destroy fails it and strands the deployment.
 
 Destroy retains the gateway's storage and, for a managed model service, its model data.
-Remove what this run created with [Remove Retained Resources](../../../docs/build-deploy/usage.md#remove-retained-resources), selecting by this run's UID only:
+Remove what this run created with [Removing Retained Resources](../../../docs/build-deploy/usage.md#removing-retained-resources), selecting by this run's UID only:
 
 ```sh
 owner_label="label=nemoclaw.nvidia.com/uid=$UID_"
@@ -222,7 +222,7 @@ docker network ls --quiet --filter "$owner_label" | xargs -r docker network rm
 docker ps --all --format '{{.Names}}' | grep -c "^openshell-$WORKSPACE--" || true
 ```
 
-Both counts must be 0; otherwise keep the state directory and the bundle, as [Remove Retained Resources](../../../docs/build-deploy/usage.md#remove-retained-resources) requires.
+Both counts must be 0; otherwise keep the state directory and the bundle, as [Removing Retained Resources](../../../docs/build-deploy/usage.md#removing-retained-resources) requires.
 Then remove them and check that the evidence still lists:
 
 ```sh

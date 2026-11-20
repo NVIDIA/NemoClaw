@@ -5,18 +5,17 @@
 
 Write the shortest text that lets the reader act correctly.
 Apply this guide to explanatory prose, including documentation, agent messages, commit bodies, review comments, and user-visible text.
+Load the [NVIDIA style guidelines](.agents/skills/nvidia-style-guide/SKILL.md) for voice, tone, and house style; this guide adds the rules specific to this repository.
 Preserve literal code, commands, identifiers, output, product names, and quotations.
 
 ## Be Clear
 
 - Lead with the result or the reader's next action.
-- Use familiar words, active verbs, and consistent terms.
-- Name the actor, action, and object; put conditions before dependent instructions.
-- Keep sentences focused and remove repetition, filler, and unsupported judgments.
+- Put conditions before dependent instructions.
+- Remove unsupported judgments.
 - Keep a modifier only when it distinguishes something relevant to the passage; if every Y in context is X, write Y.
 - Give each qualifier one meaning and name the distinction directly instead of writing ordinary, real, or deterministic; never imply a mode, option, or command that does not exist.
 - Include technical detail when it changes a decision or explains a constraint.
-- Use lists for steps or parallel facts, and tables for comparisons.
 - Use `must` for requirements, `may` for permission, `can` for capability, and `should` for recommendations.
 - Explain reasons and invariants in code comments; name observable behavior and its conditions in test titles.
 
