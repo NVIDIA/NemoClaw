@@ -25,12 +25,15 @@ The unmodified bundle retains its licenses, notices, attributions, schema, and m
 
 Images that run Node.js retain its license, which carries the notices of the libraries its executable bundles, at `/usr/local/share/doc/node/LICENSE`.
 OpenClaw's published image omits OpenClaw's MIT license, so the OpenClaw image retains the license from the pinned release's commit at `/opt/nemoclaw/source/openclaw-LICENSE`.
+Its native UBJS and CUA component sources and CUA's runtime modification script are retained under `/opt/nemoclaw/source/openclaw/`; [OpenClaw Native Sources](fabric/OPENCLAW-SOURCES.md) records the revisions and extraction/build instructions.
 Bun's image omits Bun's license, so the OpenCode image retains it at `/opt/nemoclaw/source/bun-LICENSE.md`; Bun statically links JavaScriptCore and TinyCC, which are under LGPL-2.1.
 The Claude image installs claude-agent-sdk, whose wheels bundle the Claude Code CLI; Claude Code is Anthropic's proprietary software under [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance), not the SDK's MIT license.
 
 The Codex image retains `codex-LICENSE` and `codex-NOTICE` from Codex 0.154.0, including its Ratatui attribution, under `/opt/nemoclaw/source/`.
 The Deep Agents image retains `langsmith-LICENSE` from LangSmith 0.11.1 and `sqlite-vec-LICENSE-MIT` from sqlite-vec 0.1.9 there; sqlite-vec offers MIT as a license choice.
 The Hermes image retains `anydoc-LICENSE` from firecrawl-anydoc 0.2.4, including the Sideguide Technologies copyright notice, and `xterm-LICENSE` from the dashboard's xterm.js 6.0.0 there.
+`/opt/nemoclaw/source/hermes/` retains frontend notices and an inventory of the packages observed in the dashboard rebuild and the published TUI's module labels.
+The inventory identifies upstream declarations that still lack a standalone license file; its presence does not resolve those notices or establish redistribution coverage for the commercial font files.
 These files are unmodified upstream copies whose exact source commits and SHA-256 values `versions.json` pins.
 Move these notice pins with the corresponding versions in Fabric's or Hermes's dependency lock.
 They supplement retained upstream attributions; they do not establish complete notice or source coverage for embedded native executables or frontend bundles.

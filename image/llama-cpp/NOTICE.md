@@ -29,7 +29,13 @@ The overlay retains these additional unmodified upstream files under `/opt/nemoc
 The UI lock pins that brand revision.
 The brand permission covers qualifying commercial redistribution to identify or refer to Llama.app and llama.cpp; it does not grant unrestricted trademark use or imply endorsement.
 The overlay does not modify those assets.
-These notices cover the named components only; complete notice and original-source coverage for the UI's shipped JavaScript bundle remains part of [the image license review](../../internal-docs/contributing/image-licenses.md#remaining-release-evidence).
+`llama-ui-NOTICES.md` retains original license and notice texts for 190 npm packages observed in a local client-bundle rebuild.
+`llama-ui-inventory.json` records their archive URLs, integrity values, notice hashes, and observed bundle membership.
+It includes the exact upstream license files omitted from the rehype-katex and remark-math packages, and fastdom's complete MIT grant from its published README.
+The map describes the local rebuild; it does not claim byte-identical release output or exhaustive coverage of code already bundled within an npm package.
+`llama-source.tar.gz` retains the unmodified llama.cpp source archive at the revision above, including the UI source, npm lockfile, engine source, build definitions, and upstream notices.
+It does not vendor every external UI dependency or supply the source of the base image's operating-system and proprietary components.
+Final bundle/source reconciliation remains part of [the image license review](../../internal-docs/contributing/image-licenses.md#remaining-release-evidence).
 The overlay preserves the base image filesystem and doesn't replace its notices: the NVIDIA CUDA libraries under the CUDA EULA at `/usr/local/cuda-13.5/EULA.txt`, NVIDIA's container license at `/NGC-DL-CONTAINER-LICENSE`, and the Ubuntu packages' copyright files under `/usr/share/doc`.
 
 The NemoClaw integration added on 2026-11-19 supplies the shared supervisor and selects it as the entrypoint.

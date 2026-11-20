@@ -133,11 +133,27 @@ FROM interactive AS openclaw
 COPY --from=openclaw-upstream --chown=0:0 /app /app
 # OpenClaw's published image omits its license.
 COPY --from=sources --chmod=0644 /openclaw-LICENSE /opt/nemoclaw/source/openclaw-LICENSE
+COPY --from=openclaw-sources --chmod=0644 /sources/ /opt/nemoclaw/source/openclaw/
 RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
 # catalog.py publishes this declaration: the files the adapter reads, which
 # explicit filesystem grants must allow, and the executables it runs.
 RUN printf '%s\n' '{"nvidia.fabric.openclaw": {"files": ["/app"], "binaries": ["node"]}}' > /opt/nemoclaw/adapters.json
 USER node
+
+FROM base AS openclaw-sources
+ARG SOURCE_DATE_EPOCH=1789516800
+COPY --from=sources /ubrn-source.tgz /sources/ubrn-source.tgz
+COPY --from=sources /cua-source.tar.gz /tmp/cua-source.tar.gz
+COPY image/fabric/OPENCLAW-SOURCES.md /sources/README.md
+# Keep the driver subtree, license, and package metadata from the pinned repo.
+RUN mkdir -p /src/cua \
+    && tar -xzf /tmp/cua-source.tar.gz -C /src/cua --strip-components=1 \
+        cua-36987990b292537770fe2df3a9e6dee2ef43db2f/LICENSE \
+        cua-36987990b292537770fe2df3a9e6dee2ef43db2f/package.json \
+        cua-36987990b292537770fe2df3a9e6dee2ef43db2f/libs/cua-driver \
+    && cd /src/cua \
+    && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+        -I 'gzip -n' -cf /sources/cua-driver-source.tar.gz LICENSE package.json libs/cua-driver
 
 FROM base AS hermes-assets
 # Hermes Agent release v0.22.7, which includes its native Relay integration.
@@ -166,6 +182,7 @@ RUN case "$TARGETARCH" in amd64|arm64) ;; *) exit 1 ;; esac \
 
 FROM interactive AS hermes
 COPY --from=sources --chmod=0644 /anydoc-LICENSE /xterm-LICENSE /opt/nemoclaw/source/
+COPY image/fabric/hermes-NOTICES.md image/fabric/hermes-inventory.json /opt/nemoclaw/source/hermes/
 COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
 COPY --from=switchyard-assets /opt/nemo-relay /opt/nemo-relay

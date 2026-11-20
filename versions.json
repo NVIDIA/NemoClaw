@@ -199,6 +199,14 @@
       "xterm-LICENSE": {
         "url": "https://raw.githubusercontent.com/xtermjs/xterm.js/f447274f430fd22513f6adbf9862d19524471c04/LICENSE",
         "sha256": "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd"
+      },
+      "ubrn-source.tgz": {
+        "url": "https://registry.npmjs.org/uniffi-bindgen-react-native/-/uniffi-bindgen-react-native-0.31.0-3.tgz",
+        "sha256": "fc26ac2ac4d3a7010b988d5b8621a33a26881be0413d9c73088f2231ca086640"
+      },
+      "cua-source.tar.gz": {
+        "url": "https://codeload.github.com/trycua/cua/tar.gz/36987990b292537770fe2df3a9e6dee2ef43db2f",
+        "sha256": "4f57fb435eaae04f378145671d5c5473fca28997af9d223d6a00d3ac185de379"
       }
     },
     "ollama": {
@@ -247,6 +255,10 @@
       "llama-ui-nerdamer-LICENSE": {
         "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/tools/ui/src/lib/vendors/nerdamer-prime/LICENSE",
         "sha256": "c9f52548869a0a2e63a7100055c54cebf36b9327c8fc2da7cf9ca8dddc2f1cca"
+      },
+      "llama-source.tar.gz": {
+        "url": "https://codeload.github.com/ggml-org/llama.cpp/tar.gz/9d25e0014c4b4b316873c01f4938c0e3c687287d",
+        "sha256": "ab8af3648c06dd17b6a811b06d9b98bdcf4c149b09edc4b42a4aa3fef4fd9554"
       }
     }
   },
