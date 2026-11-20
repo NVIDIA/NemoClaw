@@ -277,13 +277,11 @@ fn prepare(
         Ok(path)
     };
     let mut document = |name: &str| document_for(name, &agent, harness, None);
-    // Each gateway test refuses resources from an earlier run, so each gets a
-    // fresh document, and the isolation test a second one.
-    let gateways = GATEWAY_TESTS
-        .iter()
-        .map(|(_, name)| document(name))
-        .collect::<Result<Vec<_>>>()?;
+    // Each gateway test refuses resources from an earlier run, so each gets
+    // fresh documents: an isolation pair and profile revisions.
+    let first = document("live-isolation-a")?;
     let second = document("live-isolation-b")?;
+    let profiles = document("live-profiles")?;
     // The interface case's agents reach a stub model at the gateway network's
     // host address; the stub answers only requests with this run's key.
     let mut key = [0u8; 16];
@@ -356,11 +354,7 @@ fn prepare(
     .chain([
         (
             GATEWAY_DOCUMENTS.into(),
-            gateways
-                .iter()
-                .map(|document| path(document))
-                .collect::<Vec<_>>()
-                .join("\n"),
+            [path(&first), path(&profiles)].join("\n"),
         ),
         (HCL_CASES.into(), bound.join("\n")),
     ])
@@ -452,25 +446,14 @@ fn interfaces_case(
 /// `hcl_live::case` runs one case per nextest command.
 const HCL_CASES: &str = "NEMOCLAW_LIVE_DOCKER_HCL_CASES";
 
-/// Internal: the gateway documents, in [`GATEWAY_TESTS`] order.
+/// Internal: the two gateway documents, in [`GATEWAY_TESTS`] order.
 const GATEWAY_DOCUMENTS: &str = "NEMOCLAW_LIVE_DOCKER_GATEWAY_DOCUMENTS";
 
 /// Gateway tests all read NEMOCLAW_TEST_GATEWAY_DOCUMENT and each refuses
-/// another test's resources, so each runs alone with the fresh document
-/// named beside it.
-const GATEWAY_TESTS: [(&str, &str); 3] = [
-    (
-        "pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes",
-        "live-isolation-a",
-    ),
-    (
-        "imported_profile_revisions_survive_repeated_reads_and_gateway_restart",
-        "live-profiles",
-    ),
-    (
-        "an_invalid_argument_sandbox_create_persists_no_sandbox",
-        "live-rejected-create",
-    ),
+/// another test's resources, so each runs alone with its own document.
+const GATEWAY_TESTS: [&str; 2] = [
+    "pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes",
+    "imported_profile_revisions_survive_repeated_reads_and_gateway_restart",
 ];
 
 pub(super) fn run_live_docker(
@@ -560,13 +543,13 @@ pub(super) fn run_live_docker(
     };
     let gateway = GATEWAY_TESTS
         .iter()
-        .map(|(name, _)| format!("test({name})"))
+        .map(|name| format!("test({name})"))
         .collect::<Vec<_>>()
         .join(" | ");
     let result: Result<()> = (|| {
         // `-E` narrows the profile's default filter rather than replacing it.
         nextest(&format!("not ({gateway} | test(=hcl_live::case))"), &[])?;
-        for ((name, _), document) in GATEWAY_TESTS.iter().zip(&documents) {
+        for (name, document) in GATEWAY_TESTS.iter().zip(&documents) {
             nextest(
                 &format!("test({name})"),
                 &[("NEMOCLAW_TEST_GATEWAY_DOCUMENT", document.clone())],

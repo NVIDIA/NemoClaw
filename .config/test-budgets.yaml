@@ -34,9 +34,8 @@ integration:
   wall_seconds: 300
   test_seconds: 90
 
-# The live-docker wall budget covers one nextest command for its other tests,
-# one per gateway test (three), and one per selected HCL case, for six
-# commands when both cases are selected.
+# The live-docker wall budget covers three nextest commands plus one per
+# selected HCL case, for five commands when both cases are selected.
 # Before the HCL E2E migration, the suite took at most 255 s on linux_amd64
 # and 210 s on linux_arm64 in 11 v1 runs with the runtime rebuild test, and
 # 228 s in one linux_arm64 run without it.

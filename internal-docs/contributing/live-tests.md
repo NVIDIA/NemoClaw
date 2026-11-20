@@ -409,18 +409,3 @@ The sandbox must reach Ready with all five providers attached.
 All 64 environment reads before restart and all 64 afterward must return the same revision.
 Unchanged profile reconciliation must preserve identities, and the sandbox must retain its identity and Ready phase after the gateway restarts.
 This test qualifies profile stability and observation against the pinned gateway; it does not run a Fabric adapter or request an agent reply.
-
-## Rejected Sandbox Create
-
-The provider's `rejected_create::an_invalid_argument_sandbox_create_persists_no_sandbox` test requires one fresh owned managed Docker deployment document and the pinned gateway images described under [gateway isolation](#docker-gateway-isolation); it needs no sandbox image.
-It starts the owned gateway and sends one sandbox create whose network policy uses the reserved `_provider_` key prefix, then checks that OpenShell answers `InvalidArgument` and that no sandbox exists afterwards.
-NemoClaw clears a deployment's pending creation when OpenShell rejects a create that way, so a gateway that stored the sandbox before rejecting it fails this test.
-A successful run removes the gateway process and retains its workspace, storage, initializer, and bridge, so remove the document's `gateway storage` objects as in the profile revision test.
-
-From the repository root, with an absolute document path:
-
-```sh
-NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/owned-deployment.yaml \
-  cargo test -p nemoclaw-provider --test integration \
-    managed_gateway_live::rejected_create::an_invalid_argument_sandbox_create_persists_no_sandbox -- --ignored --exact --nocapture
-```

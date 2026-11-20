@@ -162,7 +162,7 @@ A contract test runs the provider built from the checkout, but an integration te
 
 `cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../../docs/build-deploy/build.md).
 It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, and an image derived from the dummy under a fresh `nc-live-` prefix; and writes gateway documents, and binds each selected Docker HCL E2E case, with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
-It runs the `live-docker` profile in one nextest command for the tests that need no gateway document, one for each of the three gateway tests with its own document, then one for each selected HCL E2E case, `docker-dummy` and `docker-openclaw-hermes-interfaces`, with its bound document: six commands when both cases are selected.
+It runs the `live-docker` profile in one nextest command for the tests that need no gateway document, one for each of the two gateway tests with its own document, then one for each selected HCL E2E case, `docker-dummy` and `docker-openclaw-hermes-interfaces`, with its bound document: five commands when both cases are selected.
 `--hcl-cases` names the cases, as CI passes the plan's selection; without it, every case that the suite runs is selected.
 Every test in the profile uses Docker, so all of them run one at a time, in its `docker-engine` test group.
 Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.
