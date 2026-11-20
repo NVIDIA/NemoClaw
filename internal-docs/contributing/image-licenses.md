@@ -40,6 +40,22 @@ Hermes's TUI bundle retains some inline attribution; its dashboard's notice cove
 OpenClaw already ships the TypeScript source of `@ubjs/core` and MPL headers in `@ubjs/node`'s JavaScript wrapper.
 Its CUA platform package retains `node-runtime-NOTICE.md`, which describes the modified MPL runtime and its source/build script; do not describe all UBJS source or CUA notice evidence as absent.
 
+## Retained Rust Dependency Sources
+
+Every Fabric agent now retains `fabric-vendor.tar.gz` beside the pinned `fabric.tar.gz`.
+The added archive contains the sources and notices for all external packages in Fabric's Cargo.lock and a relative Cargo source-replacement configuration.
+The native Python wheel uses that vendor tree with Cargo offline.
+The original Fabric source archive remains unmodified.
+
+The proxy retains `proxy-source.tar.gz` under `/usr/share/doc/nemoclaw-ollama-proxy/`.
+It contains the packaged proxy source, its pruned lockfile, Rust toolchain pin, vendored dependency sources and notices, and rebuild instructions.
+The image compiles and tests the extracted archive with Cargo offline and networking disabled.
+The existing supervisor archive already supplies the runtime supervisor and its vendored dependencies.
+
+Refer to [Retained Rust Sources](../../image/SOURCES.md) for the in-image paths and extraction commands.
+These archives cover the named Rust components and their locked Cargo dependency sources; standard-library/toolchain source and other native/frontend dependencies remain separate review inputs.
+The vendor trees include build and platform dependencies, so a vendored package is not proof it is linked into a Linux binary.
+
 ## Remaining Release Evidence
 
 [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) tracks these requirements for the release owner and image maintainers.
@@ -50,7 +66,7 @@ NIM is a separate local-build target, not part of this release catalog.
 | --- | --- |
 | Every shipping image | Applicable approval coverage; exact component versions, patches, notices, and source delivery tied to the final platform manifest digest |
 | Debian and Ubuntu bases | Applicable inherited coverage or delivery of the exact required source packages and patches, with recipient instructions and retention ownership |
-| Fabric, proxy, and native harness binaries | Build-specific dependency/source mapping, including native Codex and Code Mode binaries; source delivery beyond notice lists and lockfiles |
+| Fabric, proxy, and native harness binaries | Verify the retained Rust source archives in the final images; reconcile standard-library/toolchain source coverage and other native binaries, including Codex and Code Mode |
 | Deep Agents and Hermes | Native wheel source coverage; Fetch Use 0.4.0's exact notice; original source and notices for Hermes's prebuilt dashboard and TUI |
 | OpenClaw, Pi, and OpenCode | Shipped npm/native dependency mapping, including OpenClaw's MPL components and Bun's applicable source and relinking delivery |
 | llama.cpp UI | Complete shipped JavaScript dependency/source/notice mapping beyond the named vendored libraries and brand assets already retained |

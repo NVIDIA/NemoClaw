@@ -8,6 +8,9 @@ Fabric owns the adapter implementations, native schemas, and configuration mappi
 NemoClaw preserves the upstream descriptors.
 NemoClaw doesn't patch the Fabric runtime or its adapter implementations.
 Upstream notices remain in installed wheels and the retained source archive under `/opt/nemoclaw/source/`.
+`fabric-vendor.tar.gz` retains Fabric's locked Cargo dependency sources and their original notices beside `fabric.tar.gz`.
+The native Python wheel compiles with Cargo offline against that vendor tree.
+Refer to [Retained Rust Sources](SOURCES.md), retained at `/opt/nemoclaw/source/local/SOURCES.md`, for extraction and rebuild instructions.
 See [Fabric's license](fabric/FABRIC-LICENSE) and the notices beside its adapter sources.
 
 Image dependency installation exports Fabric's pinned root `uv.lock` with `uv export --frozen --no-default-groups --no-emit-local`, selecting the Python adapter's extra when present.

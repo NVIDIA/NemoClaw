@@ -62,11 +62,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /src/fabric /wheels \
     && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1
+# Retain Cargo's exact locked source closure beside the original Fabric archive.
+# The relative vendor configuration also makes the native wheel use those files.
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git \
+    cd /src/fabric \
+    && mkdir -p .cargo \
+    && cargo vendor --locked --versioned-dirs vendor > .cargo/config.toml \
+    && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+        -I 'gzip -n' -cf /sources/fabric-vendor.tar.gz vendor .cargo
 # Archive extraction gives every Fabric revision the same paths and timestamps,
 # so a shared Cargo target cache can link a newer binding against an older core.
 # Share downloads only; compiled artifacts stay in this source-specific layer.
 RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry \
-    uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
+    cd /src/fabric \
+    && CARGO_NET_OFFLINE=true uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/sdk/python/nemo-fabric-evidence \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapter-contract/python \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common \
@@ -77,7 +86,7 @@ ARG HARNESS
 ARG ADAPTER
 ARG EXTRA
 COPY image/fabric/ /build/
-COPY image/NOTICE.md docker-bake.hcl .dockerignore /build/
+COPY image/NOTICE.md image/SOURCES.md docker-bake.hcl .dockerignore /build/
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
     && sh /build/inputs.sh lock /wheels > /own-requirements.txt \
@@ -90,6 +99,7 @@ FROM base AS runtime-base
 COPY --from=harness-wheels /opt/fabric /opt/fabric
 COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.txt
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
+COPY --from=harness-wheels --chmod=0644 /sources/fabric-vendor.tar.gz /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
 COPY image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
