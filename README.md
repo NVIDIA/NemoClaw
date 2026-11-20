@@ -42,7 +42,7 @@ Images are cached; no inference requests are sent, and only the plan-review paus
 
 - [Understand NemoClaw](docs/about/overview.md).
 - [Get started with NemoClaw Agent Configs](docs/get-started/first-deployment.md).
-- [Build a native bundle](docs/build-deploy/build.md).
+- [Build NemoClaw from source](docs/build-deploy/build.md) until the first release, or to build a revision that has no release.
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).

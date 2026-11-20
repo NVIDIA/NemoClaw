@@ -55,7 +55,7 @@
       "title": "Building and Deploying",
       "pages": [
         {
-          "title": "Building Local Artifacts",
+          "title": "Building NemoClaw From Source",
           "source": "docs/build-deploy/build.md",
           "slug": "build"
         },
