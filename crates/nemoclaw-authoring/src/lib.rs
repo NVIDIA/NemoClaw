@@ -39,6 +39,10 @@ pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, Par
 pub use provider_presets::ProviderPreset;
 pub use target_assessment::{CompatibilityStatus, DiscoveryAssessment, assess_target};
 
+/// Where the documentation says how to build an agent image.
+pub const BUILD_AGENT_IMAGES: &str =
+    "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images";
+
 mod fingerprint;
 mod sdk_schema;
 mod settings;

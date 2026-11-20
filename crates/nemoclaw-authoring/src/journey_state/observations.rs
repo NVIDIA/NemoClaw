@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::BUILD_AGENT_IMAGES;
 
 impl JourneyState {
     /// Resolve questions and readiness against the observations gathered so far.
@@ -298,10 +299,6 @@ impl JourneyState {
         Ok(())
     }
 }
-
-/// Where the documentation says how to build an agent image.
-const BUILD_AGENT_IMAGES: &str =
-    "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images";
 
 /// Only a reachable server's explicit authentication requirement establishes
 /// this condition. A denied key or unreachable catalog remains a real failure.

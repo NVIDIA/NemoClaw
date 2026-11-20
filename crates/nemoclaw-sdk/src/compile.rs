@@ -406,11 +406,46 @@ pub(crate) fn deployment_graph(
     } else {
         Vec::new()
     };
+    sandbox_images_first(&mut graph, document);
     Ok(Compiled {
         graph,
         objects,
         runtime,
     })
+}
+
+/// Make every resource except the image pulls wait for each pulled sandbox
+/// image's read, which fails when the pull fails or the image doesn't fit its
+/// sandbox. A rejected image then leaves no gateway, storage, or agent
+/// configuration to destroy. Pulls still run side by side.
+fn sandbox_images_first(graph: &mut Value, document: &Document) {
+    let gates: Vec<Value> = sandbox_image_pulls(document)
+        .into_keys()
+        .map(|sandbox| {
+            json!(format!(
+                "data.fabric_harnesses.{}_acquired",
+                crate::discovery_graph::harness_read(&sandbox)
+            ))
+        })
+        .collect();
+    if gates.is_empty() {
+        return;
+    }
+    let Some(resources) = graph["resource"].as_object_mut() else {
+        return;
+    };
+    for (kind, instances) in resources {
+        if kind == "docker_image" {
+            continue;
+        }
+        for attrs in instances
+            .as_object_mut()
+            .into_iter()
+            .flat_map(|map| map.values_mut())
+        {
+            crate::docker_compute::add_dependencies(attrs, &gates);
+        }
+    }
 }
 
 /// Add the runtime graph to the objects graph. Objects change only after the

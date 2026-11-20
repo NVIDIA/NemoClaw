@@ -288,7 +288,8 @@ fn external_ollama_compiles_only_the_proxy_and_its_model_check() {
         json!([
             "docker_container.ollama_proxy_ollama-auth",
             "data.openshell_gateway.apply",
-            "data.ollama_proxy_readiness.ollama_proxy_ollama-auth"
+            "data.ollama_proxy_readiness.ollama_proxy_ollama-auth",
+            "data.fabric_harnesses.sandbox_assistant_acquired"
         ])
     );
     assert!(

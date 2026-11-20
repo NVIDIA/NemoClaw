@@ -10,6 +10,9 @@ pub(super) struct Plan {
     pub resource_drift: Vec<ResourceChange>,
     #[serde(default)]
     pub planned_values: Value,
+    /// The state after refresh, which holds the data reads made while planning.
+    #[serde(default)]
+    pub prior_state: Value,
 }
 /// A planned change, with OpenShell refs rewritten into the row fields they
 /// carry so it compares with compiled rows.
@@ -859,6 +862,70 @@ pub(super) mod discovery_tests {
         assert_eq!(deferred.len(), 2);
         assert!(deferred.iter().all(|message| message.contains("Fabric")));
         assert!(!format!("{deferred:?}").contains("secret-sentinel"));
+    }
+
+    #[test]
+    fn an_image_the_engine_does_not_hold_is_reported_absent_once() {
+        let absent = FabricObservation {
+            status: ObservationStatus::Unavailable,
+            ..FabricObservation::unknown("")
+        };
+        // The read that waits for the pull is unknown until apply.
+        let plan: Plan = serde_json::from_value(json!({
+            "planned_values": {"outputs": {"discovery": {"value": {
+                "engine": encoded(available_engine()),
+                "sandbox_assistant": encoded(absent),
+                "sandbox_assistant_acquired": null,
+                "sandbox_other": encoded(FabricObservation::unknown("no label"))
+            }}}}
+        }))
+        .unwrap();
+        let deferred = deferred(&plan);
+        let [absent, unknown] = deferred.as_slice() else {
+            panic!("expected one message per sandbox: {deferred:?}");
+        };
+        assert!(absent.contains("not on the selected engine"), "{absent}");
+        assert!(absent.contains("build.md#build-agent-images"), "{absent}");
+        assert!(!absent.contains("metadata"), "{absent}");
+        assert!(unknown.contains("image metadata or compatibility is incomplete"));
+    }
+
+    /// OpenTofu omits an output that is partly unknown, and keeps the reads
+    /// it made while planning in prior_state rather than planned_values.
+    #[test]
+    fn reads_made_while_planning_are_reported_when_the_output_waits_for_apply() {
+        let absent = FabricObservation {
+            status: ObservationStatus::Unavailable,
+            ..FabricObservation::unknown("")
+        };
+        let plan: Plan = serde_json::from_value(json!({
+            "planned_values": {
+                "outputs": {"discovery": {"sensitive": false}},
+                "root_module": {"resources": [{
+                    "mode": "data",
+                    "address": "data.fabric_harnesses.sandbox_assistant_acquired",
+                    "values": {}
+                }]}
+            },
+            "prior_state": {"values": {"root_module": {"resources": [
+                {
+                    "mode": "data",
+                    "address": "data.host_engine.current",
+                    "values": {"engine_json": encoded(available_engine())}
+                },
+                {
+                    "mode": "data",
+                    "address": "data.fabric_harnesses.sandbox_assistant",
+                    "values": {"observation_json": encoded(absent)}
+                }
+            ]}}}
+        }))
+        .unwrap();
+        let deferred = deferred(&plan);
+        let [absent] = deferred.as_slice() else {
+            panic!("expected only the absent image: {deferred:?}");
+        };
+        assert!(absent.contains("not on the selected engine"), "{absent}");
     }
 }
 

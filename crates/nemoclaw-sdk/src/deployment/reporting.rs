@@ -223,9 +223,28 @@ impl DiscoveryReport {
                     Reported::Plan(PlanObservation::Service { ready, .. }) => *ready == Some(true),
                     Reported::Plan(PlanObservation::Unresolved { .. }) => false,
                 };
-                (!resolved).then(|| unverified_message(name))
+                if resolved || self.absent_image(acquired_by(name)) {
+                    return None;
+                }
+                Some(if self.absent_image(Some(name)) {
+                    ABSENT_IMAGE.to_owned()
+                } else {
+                    unverified_message(name)
+                })
             })
             .collect()
+    }
+    /// Whether the read `name` found that the engine doesn't hold its image.
+    fn absent_image(&self, name: Option<&str>) -> bool {
+        use crate::discovery::ObservationStatus::Unavailable;
+        name.and_then(|name| self.observations.get(name))
+            .is_some_and(|observation| {
+                matches!(
+                    observation,
+                    ReportedObservation::Discovery(DiscoveryObservation::Fabric(value))
+                        if value.status == Unavailable
+                )
+            })
     }
     pub(super) fn gateway_target(&mut self, document: &Document) {
         if self.observations.contains_key("gateway") {
@@ -264,6 +283,15 @@ fn observation_name(address: &str) -> Option<String> {
         .find_map(|prefix| address.strip_prefix(prefix).map(str::to_owned))
     }
 }
+/// The attribute holding the observation of the read at `address`, as the
+/// discovery graph reports it.
+fn observation_attribute(address: &str) -> &'static str {
+    match address.strip_prefix("data.host_engine.") {
+        Some("current") => "engine_json",
+        Some(_) => "hardware_json",
+        None => "observation_json",
+    }
+}
 pub(super) fn category(name: &str) -> &'static str {
     if name == "engine" {
         "engine"
@@ -280,6 +308,15 @@ pub(super) fn category(name: &str) -> &'static str {
     } else {
         "fabric"
     }
+}
+/// What plan says about an image the engine doesn't hold. The read that waits
+/// for its pull is unknown until apply and adds nothing to it.
+const ABSENT_IMAGE: &str = "Selected image is not on the selected engine, so its Fabric capabilities are unverified. Apply pulls it before creating anything else; to build one, see https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images";
+/// The plan-time read whose image the read `name` waits for a pull of.
+fn acquired_by(name: &str) -> Option<&str> {
+    (category(name) == "fabric")
+        .then(|| name.strip_suffix("_acquired"))
+        .flatten()
 }
 pub(super) fn unverified_message(name: &str) -> String {
     match category(name){
@@ -317,9 +354,9 @@ impl Plan {
                     continue;
                 };
                 if let Some(name) = observation_name(address).or_else(|| prerequisites(address)) {
-                    result
-                        .entry(name)
-                        .or_insert_with(|| resource["values"]["observation_json"].clone());
+                    result.entry(name).or_insert_with(|| {
+                        resource["values"][observation_attribute(address)].clone()
+                    });
                 } else if let Some(name) = crate::services::provider_types::READINESS_TYPES
                     .iter()
                     .find_map(|(_, source)| address.strip_prefix(&format!("data.{source}.")))
@@ -336,9 +373,19 @@ impl Plan {
                 && let Some(name) =
                     observation_name(&change.address).or_else(|| prerequisites(&change.address))
             {
+                result.entry(name).or_insert_with(|| {
+                    change.change.after[observation_attribute(&change.address)].clone()
+                });
+            }
+        }
+        for read in self.reads_made_while_planning() {
+            let Some(address) = read["address"].as_str() else {
+                continue;
+            };
+            if let Some(name) = observation_name(address).or_else(|| prerequisites(address)) {
                 result
                     .entry(name)
-                    .or_insert_with(|| change.change.after["observation_json"].clone());
+                    .or_insert_with(|| read["values"][observation_attribute(address)].clone());
             }
         }
         // A managed gateway's engine facts and its prerequisites are separate
@@ -363,6 +410,17 @@ impl Plan {
             }
         }
         result
+    }
+    /// The data reads OpenTofu made while planning. It keeps them in
+    /// prior_state, not planned_values, so they are missing from a discovery
+    /// output that is partly unknown until apply.
+    fn reads_made_while_planning(&self) -> impl Iterator<Item = &Value> {
+        self.prior_state
+            .pointer("/values/root_module/resources")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|resource| resource["mode"] == "data")
     }
     /// Called only after the existing ownership, drift and transition checks pass.
     pub(super) fn discovery_report(
@@ -393,6 +451,14 @@ impl Plan {
                     .targets
                     .entry(name)
                     .or_insert_with(|| DiscoveryTarget::from_values(&change.change.after));
+            }
+        }
+        for read in self.reads_made_while_planning() {
+            if let Some(name) = read["address"].as_str().and_then(observation_name) {
+                report
+                    .targets
+                    .entry(name)
+                    .or_insert_with(|| DiscoveryTarget::from_values(&read["values"]));
             }
         }
         for (name, value) in self.discovery_values() {

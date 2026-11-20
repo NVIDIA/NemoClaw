@@ -5,10 +5,12 @@
 //! SDK document the review saves, so the summary cannot disagree with it.
 
 use super::labels;
-use nemoclaw_authoring::{CompatibilityStatus, ProviderPreset};
+use nemoclaw_authoring::{BUILD_AGENT_IMAGES, CompatibilityStatus, ProviderPreset};
 use nemoclaw_sdk::{
     config::{Document, InferenceTarget, Integration, NamedSandbox, NetworkPolicy},
-    discovery::{CredentialRequest, DiscoveryObservations, ObservationStatus},
+    discovery::{
+        CredentialRequest, DiscoveryObservations, DiscoveryQuery, ObservationStatus, plan_queries,
+    },
 };
 use std::path::Path;
 
@@ -129,7 +131,11 @@ pub(super) fn rows(document: &Document, facts: &Facts<'_>) -> Vec<Row> {
             }
         }
         rows.push(Row::plain("Runs on", runs_on(document)));
-        rows.push(image_row(sandbox, facts.target));
+        rows.push(image_row(
+            sandbox,
+            facts.target,
+            image_absent(document, sandbox, facts.observations),
+        ));
         rows.push(Row::plain("Network", network(sandbox, search, apis)));
     }
     for reference in document.credential_names() {
@@ -231,14 +237,41 @@ fn runs_on(document: &Document) -> String {
     }
 }
 
-/// The image and the target's verdict on it and its engine.
-fn image_row(sandbox: NamedSandbox<'_>, target: Option<CompatibilityStatus>) -> Row {
+/// Whether plan's read of the sandbox's image found that the engine doesn't hold it.
+fn image_absent(
+    document: &Document,
+    sandbox: NamedSandbox<'_>,
+    observations: &DiscoveryObservations,
+) -> bool {
+    plan_queries(document)
+        .unwrap_or_default()
+        .iter()
+        .any(|query| match query {
+            DiscoveryQuery::Fabric(request) if request.image == sandbox.image.ref_ => observations
+                .get(request)
+                .is_some_and(|observed| observed.status == ObservationStatus::Unavailable),
+            _ => false,
+        })
+}
+
+/// The image and the target's verdict on it and its engine. An image the
+/// engine doesn't hold says where to get one, since apply can't start without it.
+fn image_row(sandbox: NamedSandbox<'_>, target: Option<CompatibilityStatus>, absent: bool) -> Row {
     let image = &sandbox.image.ref_;
     let value = if image.is_empty() {
         "none".to_owned()
     } else {
         image.clone()
     };
+    if absent && target != Some(CompatibilityStatus::Conflict) {
+        return Row {
+            status: Some(Status::attention("not present")),
+            detail: Some(format!(
+                "Apply pulls it from its registry; to build one instead, see {BUILD_AGENT_IMAGES}"
+            )),
+            ..Row::plain("Image", value)
+        };
+    }
     let status = match target {
         Some(CompatibilityStatus::Compatible) => Status::fine("compatible"),
         Some(CompatibilityStatus::Conflict) => Status::attention("conflict"),
