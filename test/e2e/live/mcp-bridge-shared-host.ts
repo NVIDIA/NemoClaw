@@ -35,19 +35,47 @@ export async function withMcpDnsAnswers<T>(
   const directory = fs.mkdtempSync(path.join(scratch, "mcp-shared-host-dns-"));
   const preload = path.join(directory, "lookup.cjs");
   const observed = path.join(directory, "observed.json");
+  const callbackPreload = path.join(directory, "callback.cjs");
   try {
     fs.writeFileSync(
       preload,
       `
-const dns = require("node:dns/promises");
-const original = dns.lookup;
+const promises = require("node:dns/promises");
+const childProcess = require("node:child_process");
+const originalPromisesLookup = promises.lookup;
+const originalExecFile = childProcess.execFile;
+const target = ${JSON.stringify(hostname)};
 const answers = ${JSON.stringify(addresses)};
-dns.lookup = async (hostname, options) => {
-  if (hostname !== ${JSON.stringify(hostname)} || options?.all !== true) {
-    return original.call(dns, hostname, options);
-  }
+function selectedAnswers() {
   require("node:fs").writeFileSync(${JSON.stringify(observed)}, JSON.stringify(answers));
   return answers.map(answer => ({ ...answer }));
+}
+promises.lookup = async (hostname, options) => {
+  if (hostname !== target || options?.all !== true) {
+    return originalPromisesLookup.call(promises, hostname, options);
+  }
+  return selectedAnswers();
+};
+// Status clears loader environment variables. Load only this fixture explicitly in its DNS child.
+childProcess.execFile = function(file, args, ...rest) {
+  const options = rest[0];
+  const boundedLookup = file === process.execPath && Array.isArray(args) && args.length === 4 &&
+    args[0] === "-e" && args[1].includes('require("node:dns").lookup(') &&
+    args[2] === "--" && args[3] === target &&
+    options?.env?.NODE_OPTIONS === "" && options?.env?.NODE_PATH === "";
+  return originalExecFile.call(this, file,
+    boundedLookup ? ["--require", ${JSON.stringify(callbackPreload)}, ...args] : args, ...rest);
+};
+module.exports = selectedAnswers;
+`,
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      callbackPreload,
+      // Only the recognized, host-bound resolver child loads this callback fixture.
+      `const answers = require(${JSON.stringify(preload)});
+require("node:dns").lookup = (_hostname, _options, callback) => {
+  queueMicrotask(() => callback(null, answers()));
 };
 `,
       { mode: 0o600 },

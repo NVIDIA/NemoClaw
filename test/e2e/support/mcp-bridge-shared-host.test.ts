@@ -8,6 +8,7 @@ import https from "node:https";
 import path from "node:path";
 import os from "node:os";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { SOURCE_REQUIRE_HOOK } from "../../helpers/source-loader-options";
 import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "../live/mcp-provider-rewrite-probe.ts";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
 import { createMcpFixtureTls } from "../fixtures/mcp-fixture-tls.ts";
@@ -71,13 +72,20 @@ it("rejects an unused DNS preload and removes it when the add fails", async () =
   expect(fs.existsSync(directory)).toBe(false);
 });
 
-function lookupSharedHostAnswers(nodeOptions: string): Array<{ address: string; family: number }> {
+function lookupSharedHostAnswers(
+  nodeOptions: string,
+  bounded = false,
+): Array<{ address: string; family: number }> {
   return JSON.parse(
     execFileSync(
       process.execPath,
       [
+        "--require",
+        SOURCE_REQUIRE_HOOK,
         "-e",
-        'require("node:dns/promises").lookup("shared.example.test", { all: true }).then(answers => process.stdout.write(JSON.stringify(answers)))',
+        bounded
+          ? 'require("./src/lib/adapters/dns/resolve.js").resolveHostAddressesBounded("shared.example.test", 2_000).then(answers => process.stdout.write(JSON.stringify(answers)))'
+          : 'require("node:dns/promises").lookup("shared.example.test", { all: true }).then(answers => process.stdout.write(JSON.stringify(answers)))',
       ],
       { env: { ...process.env, NODE_OPTIONS: nodeOptions }, encoding: "utf8", timeout: 10_000 },
     ),
@@ -114,7 +122,7 @@ it.each(["shared-one", "shared-two"])(
         const [, , command, server] = args;
         const nodeOptions = options.env.NODE_OPTIONS;
         const answers = nodeOptions
-          ? lookupSharedHostAnswers(nodeOptions)
+          ? lookupSharedHostAnswers(nodeOptions, command === "status")
           : server === driftingServer
             ? liveAnswers
             : firstAnswers;
@@ -367,7 +375,7 @@ it.each([
     vi.spyOn(reliability, "addBridgeAndReadStatus").mockImplementation(
       async (_host, _sandbox, options) => {
         lookupSharedHostAnswers(options.addNodeOptions!);
-        lookupSharedHostAnswers(options.statusNodeOptions!);
+        lookupSharedHostAnswers(options.statusNodeOptions!, true);
         return "";
       },
     );
