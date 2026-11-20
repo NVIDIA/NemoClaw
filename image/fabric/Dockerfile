@@ -61,12 +61,22 @@ COPY --from=sources /fabric.tar.gz /sources/fabric.tar.gz
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /src/fabric /wheels \
+    && install -m 0644 "$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html" /sources/rust-COPYRIGHT-library.html \
     && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1
+# Retain Cargo's exact locked source closure beside the original Fabric archive.
+# The relative vendor configuration also makes the native wheel use those files.
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git \
+    cd /src/fabric \
+    && mkdir -p .cargo \
+    && cargo vendor --locked --versioned-dirs vendor > .cargo/config.toml \
+    && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+        -I 'gzip -n' -cf /sources/fabric-vendor.tar.gz vendor .cargo
 # Archive extraction gives every Fabric revision the same paths and timestamps,
 # so a shared Cargo target cache can link a newer binding against an older core.
 # Share downloads only; compiled artifacts stay in this source-specific layer.
 RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry \
-    uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
+    cd /src/fabric \
+    && CARGO_NET_OFFLINE=true uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/sdk/python/nemo-fabric-evidence \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapter-contract/python \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common \
@@ -77,7 +87,7 @@ ARG HARNESS
 ARG ADAPTER
 ARG EXTRA
 COPY image/fabric/ /build/
-COPY image/NOTICE.md docker-bake.hcl .dockerignore /build/
+COPY image/NOTICE.md image/SOURCES.md docker-bake.hcl .dockerignore /build/
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
     && sh /build/inputs.sh lock /wheels > /own-requirements.txt \
@@ -90,6 +100,7 @@ FROM base AS runtime-base
 COPY --from=harness-wheels /opt/fabric /opt/fabric
 COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.txt
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
+COPY --from=harness-wheels --chmod=0644 /sources/fabric-vendor.tar.gz /sources/rust-COPYRIGHT-library.html /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
 COPY image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
@@ -106,15 +117,64 @@ RUN test -n "$ADAPTER_ID" \
     && printf '{"%s": {"files": [], "binaries": []}}\n' "$ADAPTER_ID" > /opt/nemoclaw/adapters.json
 USER node
 
+FROM base AS codex-sources
+ARG TARGETARCH
+COPY --from=sources /codex-source.tar.gz /codex-libcap-source.tar.xz /sources/
+COPY --from=sources /codex-rust-notices.tar.xz /codex-rg-arm64-rust-notices.tar.xz /codex-rg-amd64-rust-notices.tar.xz /tmp/
+# Extract notices only; the compiler distributions stay in this build stage.
+RUN python3 - <<'PY'
+import os
+import tarfile
+from pathlib import Path
+
+rg_version = {"arm64": "1.97.0", "amd64": "nightly"}[os.environ["TARGETARCH"]]
+inputs = [
+    ("/sources/codex-source.tar.gz", "codex-6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/vendor/bubblewrap/COPYING", "codex-bubblewrap-COPYING"),
+    ("/sources/codex-libcap-source.tar.xz", "libcap-2.75/License", "codex-libcap-License"),
+    ("/tmp/codex-rust-notices.tar.xz", "rustc-1.95.0-x86_64-unknown-linux-gnu/rustc/share/doc/rust/COPYRIGHT-library.html", "codex-rust-COPYRIGHT-library.html"),
+    (f"/tmp/codex-rg-{os.environ['TARGETARCH']}-rust-notices.tar.xz", f"rustc-{rg_version}-x86_64-unknown-linux-gnu/rustc/share/doc/rust/COPYRIGHT-library.html", "codex-rg-rust-COPYRIGHT-library.html"),
+]
+for archive, member, output in inputs:
+    with tarfile.open(archive) as source:
+        Path("/sources", output).write_bytes(source.extractfile(member).read())
+PY
+
+FROM generic AS codex
+# The locked Codex wheels omit these project-specific license and notice files.
+COPY --from=sources --chmod=0644 /codex-LICENSE /codex-NOTICE /opt/nemoclaw/source/
+COPY --from=sources --chmod=0644 /codex-rg-LICENSE-MIT /codex-zsh-LICENCE /opt/nemoclaw/source/
+COPY --from=codex-sources --chmod=0644 /sources/codex-source.tar.gz /sources/codex-libcap-source.tar.xz /sources/codex-bubblewrap-COPYING /sources/codex-libcap-License /sources/codex-rust-COPYRIGHT-library.html /sources/codex-rg-rust-COPYRIGHT-library.html /opt/nemoclaw/source/
+COPY image/fabric/CODEX-SOURCES.md /opt/nemoclaw/source/codex/README.md
+
+FROM generic AS deepagents
+# These exact release notices supplement Fabric's attribution placeholders.
+COPY --from=sources --chmod=0644 /langsmith-LICENSE /sqlite-vec-LICENSE-MIT /opt/nemoclaw/source/
+
 FROM runtime-base AS interactive
 COPY --from=node /node/ /
 RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep && rm -rf /var/lib/apt/lists/*
+
+FROM base AS openclaw-sources
+ARG SOURCE_DATE_EPOCH=1789516800
+COPY --from=sources /ubrn-source.tgz /sources/ubrn-source.tgz
+COPY --from=sources /cua-source.tar.gz /tmp/cua-source.tar.gz
+COPY image/fabric/OPENCLAW-SOURCES.md /sources/README.md
+# Keep the driver subtree, license, and package metadata from the pinned repo.
+RUN mkdir -p /src/cua \
+    && tar -xzf /tmp/cua-source.tar.gz -C /src/cua --strip-components=1 \
+        cua-36987990b292537770fe2df3a9e6dee2ef43db2f/LICENSE.md \
+        cua-36987990b292537770fe2df3a9e6dee2ef43db2f/package.json \
+        cua-36987990b292537770fe2df3a9e6dee2ef43db2f/libs/cua-driver \
+    && cd /src/cua \
+    && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+        -I 'gzip -n' -cf /sources/cua-driver-source.tar.gz LICENSE.md package.json libs/cua-driver
 
 FROM interactive AS openclaw
 # Upstream owns /app as its own user; the sandbox only reads it.
 COPY --from=openclaw-upstream --chown=0:0 /app /app
 # OpenClaw's published image omits its license.
 COPY --from=sources --chmod=0644 /openclaw-LICENSE /opt/nemoclaw/source/openclaw-LICENSE
+COPY --from=openclaw-sources --chmod=0644 /sources/ubrn-source.tgz /sources/cua-driver-source.tar.gz /sources/README.md /opt/nemoclaw/source/openclaw/
 RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
 # catalog.py publishes this declaration: the files the adapter reads, which
 # explicit filesystem grants must allow, and the executables it runs.
@@ -147,6 +207,10 @@ RUN case "$TARGETARCH" in amd64|arm64) ;; *) exit 1 ;; esac \
         -C /opt/nemo-relay/plugins/switchyard --strip-components=1
 
 FROM interactive AS hermes
+COPY --from=sources --chmod=0644 /anydoc-LICENSE /xterm-LICENSE /jetbrains-mono-OFL.txt /opt/nemoclaw/source/
+COPY image/fabric/hermes-NOTICES.md /opt/nemoclaw/source/hermes/
+COPY --from=sources --chmod=0644 /hermes-pillow-heif-source.tar.gz /hermes-libheif-source.tar.gz /hermes-libde265-source.tar.gz /hermes-x265-source.tar.gz /opt/nemoclaw/source/hermes/
+COPY image/fabric/HERMES-SOURCES.md /opt/nemoclaw/source/hermes/README.md
 COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
 COPY --from=switchyard-assets /opt/nemo-relay /opt/nemo-relay

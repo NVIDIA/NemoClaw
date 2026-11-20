@@ -8,6 +8,10 @@ Fabric owns the adapter implementations, native schemas, and configuration mappi
 NemoClaw preserves the upstream descriptors.
 NemoClaw doesn't patch the Fabric runtime or its adapter implementations.
 Upstream notices remain in installed wheels and the retained source archive under `/opt/nemoclaw/source/`.
+`fabric-vendor.tar.gz` retains Fabric's locked Cargo dependency sources and their original notices beside `fabric.tar.gz`.
+The native Python wheel compiles with Cargo offline against that vendor tree.
+`rust-COPYRIGHT-library.html` retains the standard-library notices from the Rust toolchain that compiles the wheel.
+Refer to [Retained Rust Sources](SOURCES.md), retained at `/opt/nemoclaw/source/local/SOURCES.md`, for extraction and rebuild instructions.
 See [Fabric's license](fabric/FABRIC-LICENSE) and the notices beside its adapter sources.
 
 Image dependency installation exports Fabric's pinned root `uv.lock` with `uv export --frozen --no-default-groups --no-emit-local`, selecting the Python adapter's extra when present.
@@ -22,8 +26,19 @@ The unmodified bundle retains its licenses, notices, attributions, schema, and m
 
 Images that run Node.js retain its license, which carries the notices of the libraries its executable bundles, at `/usr/local/share/doc/node/LICENSE`.
 OpenClaw's published image omits OpenClaw's MIT license, so the OpenClaw image retains the license from the pinned release's commit at `/opt/nemoclaw/source/openclaw-LICENSE`.
+Its native UBJS and CUA component sources and CUA's runtime modification script are retained under `/opt/nemoclaw/source/openclaw/`; [OpenClaw Native Sources](fabric/OPENCLAW-SOURCES.md) records the revisions and extraction/build instructions.
 Bun's image omits Bun's license, so the OpenCode image retains it at `/opt/nemoclaw/source/bun-LICENSE.md`; Bun statically links JavaScriptCore and TinyCC, which are under LGPL-2.1.
 The Claude image installs claude-agent-sdk, whose wheels bundle the Claude Code CLI; Claude Code is Anthropic's proprietary software under [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance), not the SDK's MIT license.
+
+The Codex image retains `codex-LICENSE` and `codex-NOTICE` from Codex 0.154.0, including its Ratatui attribution, under `/opt/nemoclaw/source/`.
+[Codex Sources and Notices](fabric/CODEX-SOURCES.md) describes its retained source, Bubblewrap license, ripgrep/Zsh notices, and matching Rust standard-library notices.
+The Deep Agents image retains `langsmith-LICENSE` from LangSmith 0.11.1 and `sqlite-vec-LICENSE-MIT` from sqlite-vec 0.1.9 there; sqlite-vec offers MIT as a license choice.
+The Hermes image retains `anydoc-LICENSE` from firecrawl-anydoc 0.2.4, including the Sideguide Technologies copyright notice, and `xterm-LICENSE` from the dashboard's xterm.js 6.0.0 there.
+It also retains `jetbrains-mono-OFL.txt` for the three JetBrains Mono terminal webfonts, matched to their upstream source revision by file hash.
+These files are unmodified upstream copies whose exact source commits and SHA-256 values `versions.json` pins.
+`/opt/nemoclaw/source/hermes/hermes-NOTICES.md` retains frontend dependency notices.
+Move these notice pins with the corresponding versions in Fabric's or Hermes's dependency lock.
+They supplement retained upstream attributions; they do not establish complete notice or source coverage for embedded native executables or frontend bundles.
 
 OpenClaw installs the pinned search plugin archives through its native installer; the image packages them in OpenClaw’s bundled-plugin directory.
 Examples select plugin IDs without filesystem paths.

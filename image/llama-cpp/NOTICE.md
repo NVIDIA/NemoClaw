@@ -19,7 +19,20 @@ The upstream image keeps no llama.cpp license, so the overlay retains these unmo
 - `xxhash-LICENSE`: xxHash, BSD-2-Clause.
 
 The other libraries llama.cpp compiles into the server, miniaudio, stb_image, subprocess.h, and the SHA-1 and SHA-256 code, state public-domain or MIT-0 terms in their sources.
-The web interface built into `llama-server` bundles JavaScript packages whose notices this overlay doesn't retain.
+The web interface built into `llama-server` also uses third-party code and assets.
+The overlay retains these additional unmodified upstream files under `/opt/nemoclaw/source/`, with URLs and SHA-256 values pinned in `versions.json`:
+
+- `llama-ui-big-integer-LICENSE` and `llama-ui-nerdamer-LICENSE`: the MIT notices from the UI's vendored source at the llama.cpp revision above.
+- `llama-brand-LICENSE` and `llama-brand-BRAND-USAGE.md`: the brand license and additional commercial redistribution permission from [ggml-org/llama-brand](https://github.com/ggml-org/llama-brand/tree/f05540643c1ca2a18d732ed6491c839686da9a3a), the source of the marks used to identify llama.cpp in its UI.
+- `llama-brand-fonts-OFL.txt`: the Geist font copyright and SIL Open Font License 1.1 from that same brand revision.
+
+The UI lock pins that brand revision.
+The brand permission covers qualifying commercial redistribution to identify or refer to Llama.app and llama.cpp; it does not grant unrestricted trademark use or imply endorsement.
+The overlay does not modify those assets.
+`llama-ui-NOTICES.md` retains frontend dependency license and notice texts, including upstream notices omitted from the rehype-katex and remark-math packages and fastdom's MIT grant.
+`llama-source.tar.gz` retains the unmodified llama.cpp source archive at the revision above, including the UI source, npm lockfile, engine source, build definitions, and upstream notices.
+It does not vendor every external UI dependency or supply the source of the base image's operating-system and proprietary components.
+Final bundle/source reconciliation remains part of [the image license review](../../internal-docs/contributing/image-licenses.md#remaining-release-evidence).
 The overlay preserves the base image filesystem and doesn't replace its notices: the NVIDIA CUDA libraries under the CUDA EULA at `/usr/local/cuda-13.5/EULA.txt`, NVIDIA's container license at `/NGC-DL-CONTAINER-LICENSE`, and the Ubuntu packages' copyright files under `/usr/share/doc`.
 
 The NemoClaw integration added on 2026-11-19 supplies the shared supervisor and selects it as the entrypoint.

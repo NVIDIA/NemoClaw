@@ -17,9 +17,9 @@ variable "AGENT_PLATFORM" {
 
 variable "HARNESSES" {
   default = {
-    deepagents     = { stage = "generic", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents", extra = "deepagents" }
+    deepagents     = { stage = "deepagents", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents", extra = "deepagents" }
     claude         = { stage = "generic", adapter = "claude", adapter_id = "nvidia.fabric.claude", extra = "claude" }
-    codex          = { stage = "generic", adapter = "codex", adapter_id = "nvidia.fabric.codex", extra = "codex" }
+    codex          = { stage = "codex", adapter = "codex", adapter_id = "nvidia.fabric.codex", extra = "codex" }
     mini-swe-agent = { stage = "generic", adapter = "mini-swe-agent", adapter_id = "nvidia.fabric.mini-swe-agent", extra = "mini-swe-agent" }
     nooa           = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa", extra = "nooa" }
     nooa-bench     = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa.bench-agent", extra = "nooa" }
