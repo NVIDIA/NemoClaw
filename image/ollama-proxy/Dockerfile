@@ -38,7 +38,9 @@ FROM ${RUST_IMAGE} AS build
 RUN apk add --no-cache musl-dev
 COPY --from=source /out/ /out/
 WORKDIR /proxy
-RUN tar -xzf /out/usr/share/doc/nemoclaw-ollama-proxy/proxy-source.tar.gz -C /proxy
+# Prepare the archived toolchain's components before disabling networking.
+RUN tar -xzf /out/usr/share/doc/nemoclaw-ollama-proxy/proxy-source.tar.gz -C /proxy \
+    && rustup show active-toolchain
 RUN --network=none --mount=type=cache,target=/target \
     cargo build --locked --offline --release --target-dir /target \
     && install -D -m 0755 /target/release/nemoclaw-ollama-proxy /out/usr/local/bin/nemoclaw-ollama-proxy
