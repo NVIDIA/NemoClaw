@@ -153,8 +153,8 @@
   "imageSources": {
     "fabric": {
       "fabric.tar.gz": {
-        "url": "https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/56a4207b3c7edacd6e0cceea0af7815d2df274ca",
-        "sha256": "f66e2623690b9cf60e1c94fdd08504267748946936cf84139661c80798fa089c"
+        "url": "https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/c6d1093df8db41d0dc922c27b9166fa48f1db21b",
+        "sha256": "d5789a57d38e3cd09e11bb8c4348800409e42bef76265bac688cb3ea2e0d83c4"
       },
       "hermes.tar.gz": {
         "url": "https://codeload.github.com/NousResearch/hermes-agent/tar.gz/b200f5bc60e31588ba2cb60e288029c4a54ba5fa",

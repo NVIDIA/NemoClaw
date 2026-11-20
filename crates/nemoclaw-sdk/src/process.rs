@@ -113,6 +113,7 @@ pub(crate) async fn run_with_progress(
         operation: args.first().unwrap_or(&"command").to_string(),
         diagnostic: "cannot launch bundled executable".into(),
         postcondition_failures: None,
+        uncreated: None,
     })?;
     // This SDK fact is independent of optional child UI/download events and
     // their redaction or transport. A failed spawn cannot have changed resources.
@@ -223,7 +224,7 @@ pub(crate) async fn run_with_progress(
         }
         return Ok(output);
     }
-    let postcondition_failures = if args.first() == Some(&"apply")
+    let (postcondition_failures, uncreated) = if args.first() == Some(&"apply")
         && args.contains(&"-json")
         && status.as_ref().is_ok_and(|status| status.code() == Some(1))
         && valid_ui
@@ -231,9 +232,12 @@ pub(crate) async fn run_with_progress(
         && !overflow
         && !diagnostic_overflow
     {
-        observations::postcondition_failures(&output)
+        (
+            observations::postcondition_failures(&output),
+            observations::uncreated_resources(&output),
+        )
     } else {
-        None
+        (None, None)
     };
     let stderr_text = String::from_utf8_lossy(&diagnostic).into_owned();
     diagnostic.fill(0);
@@ -263,6 +267,7 @@ pub(crate) async fn run_with_progress(
         operation: args.first().unwrap_or(&"command").to_string(),
         diagnostic: message.trim().into(),
         postcondition_failures,
+        uncreated,
     })
 }
 
@@ -1504,6 +1509,7 @@ async fn unrelated_credentials_preserve_native_context_through_json_capture() {
         operation,
         diagnostic,
         postcondition_failures,
+        uncreated,
     } = error
     else {
         panic!("expected the child execution failure");
@@ -1511,6 +1517,7 @@ async fn unrelated_credentials_preserve_native_context_through_json_capture() {
     assert_eq!(operation, "apply");
     assert_eq!(diagnostic, format!("{summary}\n{detail}"));
     assert!(postcondition_failures.is_none());
+    assert!(uncreated.is_none());
     assert!(
         received
             .lock()

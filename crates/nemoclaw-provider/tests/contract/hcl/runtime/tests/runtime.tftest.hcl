@@ -9,6 +9,18 @@ run "contracts" {
 
   assert {
     condition = (
+      jsondecode(data.vllm_nim_runtime.llama.spec).kind == "nim"
+      && jsondecode(data.vllm_nim_runtime.llama.spec).backend == "vllm"
+      && jsondecode(data.vllm_nim_runtime.llama.spec).model.name == "meta/llama-3.1-8b-instruct"
+      && data.vllm_nim_runtime.llama.launch.port == 18888
+      && data.vllm_nim_runtime.llama.launch.key_env == "NEMOCLAW_INFERENCE_KEY"
+      && data.vllm_nim_runtime.llama.requirements.gpu_count == 1
+    )
+    error_message = "The native NIM contract must preserve its explicit backend, model, port, and service credential interface."
+  }
+
+  assert {
+    condition = (
       local.vllm.kind == "vllm"
       && local.vllm.model.repository == "Qwen/Qwen3-4B"
       && local.vllm.serving.modelName == "qwen"
@@ -61,4 +73,14 @@ run "contracts" {
     }
     error_message = "The proxy contract is its whole configuration: ${data.ollama_proxy_runtime.qwen.spec}"
   }
+  assert {
+    condition = (
+      jsondecode(data.vllm_llama_cpp_runtime.muse.spec).kind == "llamaCpp"
+      && data.vllm_llama_cpp_runtime.muse.launch.port == 18899
+      && data.vllm_llama_cpp_runtime.muse.launch.key_env == "NEMOCLAW_INFERENCE_KEY"
+      && data.vllm_llama_cpp_runtime.muse.requirements.gpu_count == 1
+    )
+    error_message = "The GGUF contract must decode and expose its serving port and authenticated launch."
+  }
+
 }

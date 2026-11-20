@@ -159,6 +159,8 @@ async fn container_readiness_exports_the_server_ref_with_its_observed_credential
 fn spec_model(contract: &str) -> String {
     match nemoclaw_runtime::RuntimeSpec::decode(contract).unwrap() {
         nemoclaw_runtime::RuntimeSpec::Vllm(service) => service.served_model().to_owned(),
-        nemoclaw_runtime::RuntimeSpec::Ollama(_) => unreachable!("a vLLM contract"),
+        _ => {
+            unreachable!("a vLLM contract")
+        }
     }
 }

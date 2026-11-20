@@ -24,7 +24,7 @@ The overlay preserves the base image filesystem and doesn't replace its notices:
 
 The NemoClaw integration added on 2026-11-19 supplies the shared supervisor and selects it as the entrypoint.
 It doesn't patch llama.cpp; `llama-server` stays at `/app/llama-server`.
-The supervisor doesn't run llama.cpp yet.
+The supervisor runs `llama-server` for a `llamaCpp` service.
 
 The retained supervisor archive contains the exact Rust sources, vendored dependency sources and notices, and the build instructions used by this artifact.
 `/opt/nemoclaw/source/rust-COPYRIGHT-library.html` retains the notices of the Rust standard library the supervisor links.

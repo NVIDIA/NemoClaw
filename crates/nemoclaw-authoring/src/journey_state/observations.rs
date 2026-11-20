@@ -215,24 +215,25 @@ impl JourneyState {
     }
 
     /// Answer the sandbox image question with the one image the engine holds
-    /// for the harness, unless the document names another. The read depends
-    /// on the harness, the runtime and the engine, so it waits until none of
-    /// their questions is open.
+    /// for the harness, unless the document names another, and say whether it
+    /// answered. The read depends on the harness, the runtime and the engine,
+    /// so it waits until none of their questions is open.
     pub fn answer_single_agent_images(
         &mut self,
         capabilities: &Capabilities,
         observations: &DiscoveryObservations,
-    ) {
+    ) -> bool {
         let Ok(resolution) = self.resolve(capabilities) else {
-            return;
+            return false;
         };
         let open = |id: &str| resolution.questions().iter().any(|open| open.id() == id);
         if open(RUNTIME_PROVIDER)
             || open(GATEWAY_ENGINE_PATH)
             || harness_question(&self.authored.values).is_some_and(|id| open(&id))
         {
-            return;
+            return false;
         }
+        let mut answered = false;
         for question in resolution.questions() {
             let Some(observed) = self
                 .agent_images_request(question.id())
@@ -253,12 +254,15 @@ impl JourneyState {
                 continue;
             }
             // A reference the schema rejects leaves the question to its user.
-            let _ = self.answer(
-                capabilities,
-                question.id(),
-                Some(Value::String(only.clone())),
-            );
+            answered |= self
+                .answer(
+                    capabilities,
+                    question.id(),
+                    Some(Value::String(only.clone())),
+                )
+                .is_ok();
         }
+        answered
     }
 
     /// The chosen runtime of a managed gateway without an authored engine, when
@@ -397,7 +401,7 @@ impl JourneyState {
 
 /// Where the documentation says how to build an agent image.
 const BUILD_AGENT_IMAGES: &str =
-    "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images";
+    "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images";
 
 /// Only a reachable server's explicit authentication requirement establishes
 /// this condition. A denied key or unreachable catalog remains a real failure.

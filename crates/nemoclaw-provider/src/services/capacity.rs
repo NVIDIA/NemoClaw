@@ -52,6 +52,8 @@ fn parse(
             let service = match RuntimeSpec::decode(encoded)? {
                 RuntimeSpec::Vllm(service) => CapacityService::Vllm(*service),
                 RuntimeSpec::Ollama(service) => CapacityService::Ollama(*service),
+                RuntimeSpec::LlamaCpp(service) => CapacityService::LlamaCpp(*service),
+                RuntimeSpec::Nim(service) => CapacityService::Nim(*service),
             };
             Ok((service, false))
         })
@@ -175,6 +177,20 @@ fn account(services: &[(CapacityService, bool)], capacity: &Capacity) -> Result<
                     service.memory.host_reserve_gib,
                 )
             }
+            CapacityService::LlamaCpp(service) => {
+                service.check_memory(capacity, *starting)?;
+                (
+                    service.memory_architecture(),
+                    service.memory.host_reserve_gib as i64,
+                )
+            }
+            CapacityService::Nim(service) => {
+                service.check_memory(capacity, *starting)?;
+                (
+                    service.memory_architecture(),
+                    service.memory.host_reserve_gib as i64,
+                )
+            }
             CapacityService::Vllm(service) => {
                 vllm::check_memory(service, capacity, *starting)?;
                 (
@@ -199,6 +215,8 @@ fn account(services: &[(CapacityService, bool)], capacity: &Capacity) -> Result<
             let budget = match service {
                 CapacityService::Ollama(service) => ollama::budget(service, capacity)?,
                 CapacityService::Vllm(service) => vllm::gpu_budget(service, total)?,
+                CapacityService::LlamaCpp(service) => service.gpu_bytes(),
+                CapacityService::Nim(service) => service.gpu_bytes(),
             };
             sum.checked_add(budget).ok_or_else(overflow)
         })
@@ -240,6 +258,8 @@ fn account(services: &[(CapacityService, bool)], capacity: &Capacity) -> Result<
 }
 
 enum CapacityService {
+    Nim(nemoclaw_runtime::nim::NimService),
+    LlamaCpp(nemoclaw_runtime::llama_cpp::LlamaCppService),
     Ollama(ManagedOllama),
     Vllm(nemoclaw_runtime::vllm::Service),
 }

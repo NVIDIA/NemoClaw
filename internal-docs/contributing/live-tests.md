@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Run Live Tests
+# Running Live Tests
 
 Live tests require explicit configuration and must touch only resources owned by the test.
 Use a dedicated deployment UID, state directory, and immutable bundle.
@@ -11,7 +11,7 @@ Do not run all ignored tests against a shared deployment.
 
 ## Kubernetes Gateway Without the Helm CLI
 
-On native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#build-agent-images), run the live tests with a fresh kind cluster:
+On native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#building-agent-images), run the live tests with a fresh kind cluster:
 
 ```sh
 cargo ci build
@@ -44,13 +44,13 @@ The new digest makes the node fetch the index from the registry, although the no
 Before its first apply, the `tests/e2e/hcl/kind` module releases a chart twice with the bundled Helm provider, as a platform and an operator would prepare the cluster: once for the namespaces, the pull Secret, and the CA, and once for the stub model and the issuer, whose release waits until both are ready:
 
 - The deployment's namespace, which holds the registry's image pull Secret. For `kind-kubernetes-oidc`, it also has the UID-range annotations its test file supplies, as OpenShift prepares a project, and holds the CA of the existing issuer.
-- A stub model server in its own namespace: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000. It answers every `POST /v1/chat/completions` with the same streamed chat completion. The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../../docs/build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) describes.
+- A stub model server in its own namespace: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000. It answers every `POST /v1/chat/completions` with the same streamed chat completion. The inference profile names that Service by its cluster DNS name, without a key, as [Using a Model Server in the Cluster](../../docs/build-deploy/kubernetes.md#using-a-model-server-in-the-cluster) describes.
 - For `kind-kubernetes-oidc`, an existing OIDC issuer in its own namespace: the SDK's development issuer objects, without the NetworkPolicy that admits only a gateway in the issuer's namespace.
 
 `hcl_live::issuer` creates the issuer's key material and one token for the case's audience, which is the deployment UID; OpenTofu cannot sign a token.
 The token stays in a private credentials file in the run's `work` directory, which the `cli` and `verifier` modules export as the case's `token.env` variable.
 The gateway uses the `oidc` authentication profile, so the apply and the replies show that it accepts the issuer's tokens and that each sandbox pulled its image with the pull Secret.
-The chart's NodePort Service [publishes](../../docs/build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster) the gateway at the kind node's address.
+The chart's NodePort Service [publishes](../../docs/build-deploy/kubernetes.md#publishing-the-gateway-outside-the-cluster) the gateway at the kind node's address.
 NemoClaw's operations still reach the gateway through the SDK's port-forward; the probe instead dials the node's address with the gateway's client certificate and the token, as another client would, and checks that the gateway's certificate names it.
 Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage.
 The test runner then uninstalls both releases, which deletes their namespaces; it does not wait for Kubernetes to finish deleting them.
@@ -271,14 +271,14 @@ It checks that the collected architecture matches the selected Docker daemon's r
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the dummy agent, agent interface, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the dummy agent, agent interface, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#running-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
 
 ## Dummy Agent Lifecycle
 
-The `docker-dummy` [HCL E2E scenario](#hcl-e2e-scenarios) deploys an image derived from the [reference dummy image](agent-image-maintenance.md#qualify-the-reference-contract-image) through a managed Docker gateway.
+The `docker-dummy` [HCL E2E scenario](#hcl-e2e-scenarios) deploys an image derived from the [reference dummy image](agent-image-maintenance.md#qualifying-the-reference-contract-image) through a managed Docker gateway.
 The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
-Its gateway allows driver configuration, and its sandbox mounts a named volume on `/sandbox/workspace`, as [Keep Agent Files on Mounted Volumes](../../docs/build-deploy/state.md#keep-agent-files-on-mounted-volumes) describes; the `tests/e2e/hcl/volume` module creates the volume before the first apply and gives it to the agent image's user, UID 10001.
+Its gateway allows driver configuration, and its sandbox mounts a named volume on `/sandbox/workspace`, as [Keeping Agent Files on Mounted Volumes](../../docs/build-deploy/state.md#keeping-agent-files-on-mounted-volumes) describes; the `tests/e2e/hcl/volume` module creates the volume before the first apply and gives it to the agent image's user, UID 10001.
 The agent must reply with the configured `reply` setting, and the `tests/e2e/hcl/command` module must write a marker file in the workspace as that user.
 The gateway registers an external middleware that `hcl_live::case` serves on the host, beside an HTTP recorder that counts the requests it receives; the sandbox's explicit policy permits the recorder at the gateway network's host address, which the middleware binding selects, and at the default Docker bridge's gateway, which the binding excludes.
 From the sandbox, a request the middleware allows must reach the recorder once, a request it denies must return 403 without reaching the recorder, a request on which the middleware returns a service error must also return 403 without reaching the recorder because the binding is `fail_closed`, and a request to the excluded address must reach the recorder without reaching the middleware.
@@ -292,15 +292,15 @@ To run the scenario by hand, bind the template the same way and follow [HCL E2E 
 
 ## Agent Interfaces
 
-The `docker-openclaw-hermes-interfaces` [HCL E2E scenario](#hcl-e2e-scenarios) deploys OpenClaw's Control UI and Hermes's API server, dashboard, and terminal interface through one managed Docker gateway, and reaches them as [Reach an Agent Interface](../../docs/agents-inference/interfaces.md#reach-an-agent-interface) describes.
+The `docker-openclaw-hermes-interfaces` [HCL E2E scenario](#hcl-e2e-scenarios) deploys OpenClaw's Control UI and Hermes's API server, dashboard, and terminal interface through one managed Docker gateway, and reaches them as [Reaching an Agent Interface](../../docs/agents-inference/interfaces.md#reaching-an-agent-interface) describes.
 `cargo ci live-docker` runs it: it installs the pinned OpenShell CLI by checksum, binds the case to a fresh UID, gateway port and subnet, stub address, and the run's OpenClaw and Hermes images, and passes a fresh model key as `NEMOCLAW_TEST_INTERFACES_MODEL_KEY` and `TF_VAR_model_key`.
 Before apply, the `tests/e2e/hcl/model` module runs a stub model with the bundled Docker provider: the pinned `nginx-unprivileged` image that the development issuer runs, on the host network at the port the case's `model` provider names.
-It lists one model and answers every OpenAI chat completion, and every Anthropic Messages request at `/anthropic/v1/messages`, as Anthropic-compatible gateways serve them, with the same reply, streamed when the request asks.
+It lists one model and answers every OpenAI chat completion, and every Anthropic Messages request at `/anthropic/v1/messages`, as Anthropic-compatible gateways serve them, or at `/custom/v1/messages`, with the same reply, streamed when the request asks.
 It refuses a Messages request without that key in `x-api-key`, where Anthropic's API takes it, and any other request without it as a bearer credential.
 Each skill's description is a marker, and the reply ends with the name of each skill whose marker the request holds.
 The `tests/e2e/hcl/volume` module also creates the workspace, artifacts, and two skills volumes for each of the `claw` and `hermes` sandboxes, named for the run's UID, and writes their skills, owned by the agent image's user.
 Each of those agents' `skills.directories` lists a writable folder of skills on one volume and one skill on another, and refuses duplicate names, as [Skills on a Mounted Volume](../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes; OpenClaw's skill volume is read-only and Hermes's writable, OpenClaw's folder holds two skills and a file that isn't one, and Hermes's folder is empty.
-A third sandbox, `hermes-messages`, runs a second Hermes agent without skills, whose route reaches the same stub through an `anthropic` provider at `/anthropic/v1`: Hermes uses an `anthropic` provider's endpoint only when its host is an Anthropic, Claude, or Azure host or its path ends in `/anthropic` or `/anthropic/v1`, and calls `https://api.anthropic.com` otherwise.
+A third sandbox, `hermes-messages`, runs a second Hermes agent without skills, whose route reaches the same stub through an `anthropic` provider at `/custom/v1`: Hermes itself treats an `anthropic` endpoint as Anthropic's only for an Anthropic, Claude, or Azure host or a path ending in `/anthropic` or `/anthropic/v1`, so its answers show that Fabric configures Hermes to call the endpoint whatever its path.
 Apply must start the three agents, and report each interface's port, sign-in, and token file.
 A harness offers the model the skills it finds, so each reply below must name the skills on that agent's volumes: `notes` for Hermes, and `digest`, `review`, and `translate` for OpenClaw.
 Whether the agent loads and follows a skill is not checked live; Fabric's tests check what each harness loads.
@@ -343,7 +343,7 @@ The stub also names a marker in the changed instructions, so each changed agent'
 In each new sandbox, the workspace and artifacts markers and the skills' hashes must be as before, and for Hermes, its kept native home, `/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/hermes`, must still hold the request that its first runtime answered and the prompt typed in its terminal UI, which shows that the terminal UI's turn ran on the runtime's Hermes home.
 `openshell sandbox list --ids` must list each new sandbox and not the old one, whose runtime ran in it.
 `tofu test` removes the caller's volumes after the case; `docker-dummy` checks that destroy keeps a caller's volume.
-Conversation continuity after a replacement is out of scope ([#14495](https://github.com/NVIDIA/NemoClaw/issues/14495)), and Fabric's [Hermes E2E test](https://github.com/NVIDIA/NeMo-Fabric/blob/56a4207b3c7edacd6e0cceea0af7815d2df274ca/tests/e2e/test_hermes_e2e.py#L450), not this case, checks that the next runtime loads a skill Hermes created with its own tools ([#14289](https://github.com/NVIDIA/NemoClaw/issues/14289)).
+Conversation continuity after a replacement is out of scope ([#14495](https://github.com/NVIDIA/NemoClaw/issues/14495)), and Fabric's [Hermes E2E test](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/tests/e2e/test_hermes_e2e.py#L450), not this case, checks that the next runtime loads a skill Hermes created with its own tools ([#14289](https://github.com/NVIDIA/NemoClaw/issues/14289)).
 The SDK, contract, and integration suites own the rest: which changes replace a sandbox, plan and apply agreement, the order in which the old runtime stops and the new one starts, and an unchanged apply after a replacement ([#14290](https://github.com/NVIDIA/NemoClaw/issues/14290)).
 
 ## Docker Gateway Isolation
@@ -362,7 +362,7 @@ Successful completion removes both owned sandboxes and gateway processes, but re
 The test calls the provider and SDK directly and creates no OpenTofu state directory.
 Keep the input documents to identify the retained resources.
 Another run requires fresh deployment UUIDs, ports, and subnets; the test refuses the previous run's retained resources.
-After a successful run, remove each document's `gateway storage` objects with [Remove Retained Resources](../../docs/build-deploy/usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
+After a successful run, remove each document's `gateway storage` objects with [Removing Retained Resources](../../docs/build-deploy/usage.md#removing-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
 
 From the repository root, with absolute document paths and the local sandbox image's actual digest:
 
@@ -394,7 +394,7 @@ A successful run deletes the sandbox, provider registrations, profiles, and gate
 Retained gateway storage contains signing and encryption keys.
 The test creates no OpenTofu state; keep the input document to identify its resources, and use fresh inputs for another run.
 Failures retain resources for diagnosis; inspect only the printed owned gateway and its sandbox before cleanup.
-After a successful run, remove the document's `gateway storage` objects with [Remove Retained Resources](../../docs/build-deploy/usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
+After a successful run, remove the document's `gateway storage` objects with [Removing Retained Resources](../../docs/build-deploy/usage.md#removing-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
 
 From the repository root, with an absolute document path and the local sandbox image's actual digest:
 

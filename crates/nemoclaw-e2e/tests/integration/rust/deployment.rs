@@ -213,6 +213,73 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     assert!(fixture.state.lock().unwrap().workspaces.is_empty());
 }
 
+/// OpenShell validates a sandbox create before it stores anything, so the
+/// provider's report of an `InvalidArgument` rejection, carried through
+/// OpenTofu, leaves no pending creation behind.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn an_invalid_sandbox_create_leaves_a_deployment_that_can_be_corrected_and_destroyed() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    fixture.state.lock().unwrap().reject_rpc = Some((
+        "CreateSandbox",
+        tonic::Code::InvalidArgument,
+        "network policy key uses a reserved prefix".into(),
+    ));
+    let error = deployment.apply(&document, &cancel).await.unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            nemoclaw_sdk::Error::Execution { uncreated: Some(uncreated), .. }
+                if uncreated.len() == 1 && uncreated[0].starts_with("openshell_sandbox.")
+        ),
+        "only the sandbox create is reported as having made nothing: {error:?}"
+    );
+    fixture.state.lock().unwrap().reject_rpc = None;
+    deployment
+        .plan_destroy(&cancel)
+        .await
+        .expect("no pending creation holds destroy back");
+    // A pending creation would require the sandbox's original policy.
+    let mut corrected = document.clone();
+    corrected
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .network
+        .grants
+        .insert(
+            "docs".into(),
+            serde_json::from_value(serde_json::json!({"endpoints": [{
+                "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
+                "rules": [{"allow": {"method": "GET", "path": "/**"}}]
+            }]}))
+            .unwrap(),
+        );
+    deployment
+        .apply(&corrected, &cancel)
+        .await
+        .expect("the corrected configuration applies");
+    assert_eq!(fixture.state.lock().unwrap().sandboxes.len(), 1);
+    assert_eq!(
+        deployment.destroy(&cancel).await.unwrap().outcome,
+        Outcome::Destroyed
+    );
+    let state = fixture.state.lock().unwrap();
+    assert!(state.sandboxes.is_empty());
+    assert!(state.workspaces.is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn shell_restriction_and_restore_replace_only_the_target_sandbox() {
