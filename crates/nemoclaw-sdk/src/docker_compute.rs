@@ -715,7 +715,7 @@ fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
     }
     Ok(())
 }
-fn add_dependencies(attrs: &mut Value, dependencies: &[Value]) {
+pub(crate) fn add_dependencies(attrs: &mut Value, dependencies: &[Value]) {
     let mut all = attrs["depends_on"].as_array().cloned().unwrap_or_default();
     for dependency in dependencies {
         if !all.contains(dependency) {

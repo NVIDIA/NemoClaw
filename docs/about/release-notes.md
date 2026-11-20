@@ -16,7 +16,18 @@ Refer to [the overview](overview.md) for implemented boundaries and [the CLI ref
 
 ### Changes Since v0.1.0-rc12
 
-No change has reached `v1` since the `v0.1.0-rc12` tag yet.
+These changes reached `v1` after the `v0.1.0-rc12` tag.
+
+Agents:
+
+- Agent images build Fabric from its [`v0.7.0`](https://github.com/NVIDIA/NeMo-Fabric/tree/v0.7.0) release tag instead of a commit on its `release/0.7` branch, without patches ([#13318](https://github.com/NVIDIA/NemoClaw/issues/13318)).
+
+Plan and apply:
+
+- Apply pulls every agent image and reads its catalog label before it creates the gateway, its storage and network, or any agent configuration, so a pull that fails or an image that doesn't fit its sandbox leaves nothing to destroy ([#14596](https://github.com/NVIDIA/NemoClaw/issues/14596)).
+  Before, apply failed after creating the gateway, which remained until destroy.
+- Plan and the `nemoclaw onboard` review report an agent image that the engine doesn't hold as not present, and link the [agent image build instructions](../build-deploy/build.md#building-agent-images).
+  See [pulling from private registries](../build-deploy/usage.md#pulling-from-private-registries).
 
 ### Changes in v0.1.0-rc12
 
