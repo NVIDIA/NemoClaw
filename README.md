@@ -8,13 +8,14 @@
 Configure and deploy sandboxed AI agents from a YAML file.
 Choose agents, models, tools, and network access, then preview and apply deployment changes through the CLI or Rust SDK.
 
-This development branch currently requires [building from source](docs/build-deploy/build.md).
+NemoClaw Agent Configs is a release candidate.
+Until its first release, [build it from source](docs/build-deploy/build.md).
 
 ### What You Can Do
 
 Each capability links to the guide that configures it:
 
-| Capability | Current Support |
+| Capability | What You Can Do |
 |---|---|
 | Run OpenClaw or Hermes | Deploy each agent in an NVIDIA OpenShell sandbox and connect through its [native interfaces](docs/agents-inference/interfaces.md). |
 | Choose model connections | Connect to hosted endpoints, or run managed vLLM, Ollama, or llama.cpp services. Refer to [inference configuration](docs/agents-inference/inference.md) for supported paths. |
@@ -26,12 +27,9 @@ Each capability links to the guide that configures it:
 
 Support depends on the selected agent, image, model, and platform.
 Check [current limits](docs/resources/limits.md) before choosing a configuration.
-[Outside v1 Scope](docs/resources/out-of-scope.md) explains what v1 leaves to other components by design.
+[Out of Scope](docs/resources/out-of-scope.md) explains what Agent Configs leaves to other components by design.
 
-**Coming from Classic?** Use the [migration guide](docs/get-started/migration.md) to assess your workflows and evaluate a separate deployment while keeping your existing setup available.
-The guide also identifies [questions that still need scope analysis](docs/get-started/migration.md#needs-scope-analysis).
-Track remaining parity work in [Roadmap: Bring agreed Classic features to v1](https://github.com/NVIDIA/NemoClaw/milestone/14).
-The [Roadmap: GTC DC 2026](https://github.com/NVIDIA/NemoClaw/milestone/12) milestone tracks broader release preparation separately.
+**Coming from NemoClaw Classic, the earlier version?** Use the [migration guide](docs/get-started/migration.md) to assess your workflows and evaluate a separate deployment while keeping your existing setup available.
 
 ### Watching a Deployment
 

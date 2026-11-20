@@ -23,6 +23,6 @@ Refer to [Release Notes](release-notes.md).
 
 ## Where to Start
 
-Coming from Classic? Use the [migration guide](../get-started/migration.md) to assess your workflows before evaluating a separate deployment.
+Coming from Classic, the earlier version of NemoClaw? Use the [migration guide](../get-started/migration.md) to assess your workflows before evaluating a separate deployment.
 
 For a first deployment, [check prerequisites](../get-started/prerequisites.md) and follow the [guided OpenClaw deployment](../get-started/first-deployment.md). For a different environment, [Architecture Overview](architecture-overview.md) explains the deployment flow and ownership, and [Ecosystem](ecosystem.md) distinguishes the adjacent products. Before changing an existing deployment, [review data retention](../build-deploy/state.md#deletion-and-retention) and [recovery](../build-deploy/usage.md#updates-and-recovery).

@@ -3,14 +3,10 @@
 
 # Current Limits
 
-v1 is in development; the inspected release records contain draft release candidates but no published final release.
-This page lists what v1 does not do yet or has not tested, with the open GitHub issue that tracks each where one exists.
+NemoClaw Agent Configs is a release candidate and has no published final release.
+This page lists what Agent Configs does not do yet or has not tested, with the open GitHub issue that tracks each where one exists.
 Other pages state a limit where it affects a procedure and link the same issue.
-Unlike these limits, the responsibilities in [Outside v1 Scope](out-of-scope.md) are left to other components by design.
-Review planned Classic parity work in [Roadmap: Bring agreed Classic features to v1](https://github.com/NVIDIA/NemoClaw/milestone/14).
-The milestone maintains its feature list, so this page does not repeat it.
-The [migration guide's scope questions](../get-started/migration.md#needs-scope-analysis) cover distributed inference, native memory search, and MCP credential rotation.
-Those decisions and verifications remain unresolved.
+Unlike these limits, the responsibilities in [Out of Scope](out-of-scope.md) are left to other components by design.
 
 The **Last Verified** column links the `v1` commit each row was last checked against, then what was checked.
 That commit's `versions.json` pins the upstream sources, and its `image/fabric/Dockerfile` pins the OpenClaw image:
@@ -130,7 +126,7 @@ The following data and cleanup limits apply:
 |---|---|---|
 | Native conversation continuity across runtime replacement. | [Per-harness limits](../build-deploy/state.md#choosing-what-to-retain-for-each-harness), which depend on Fabric and the selected harness | [`cb8ef25`][v1-cb8ef25]: docs |
 | Durable data for generic application containers: their writable volume is disposable, and replacement or destroy can lose it. This differs from caller-supplied volumes mounted in an agent sandbox. | By design: [application storage](../build-deploy/container-services.md#deciding-whether-the-image-fits) | [`e7e1857`][v1-e7e1857]: docs |
-| Moving data from the earlier product to v1 and back. | No NemoClaw procedure: native data belongs to the harness, and moving its storage belongs to the platform ([migration](../get-started/migration.md)) | [`cb8ef25`][v1-cb8ef25]: docs |
+| Moving data from the earlier product to Agent Configs and back. | No NemoClaw procedure: native data belongs to the harness, and moving its storage belongs to the platform ([migration](../get-started/migration.md)) | [`cb8ef25`][v1-cb8ef25]: docs |
 | Keeping a sandbox across a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: after the gateway runs again, the sandbox refuses the supervisor that OpenShell starts for it and goes to `Error` with `StartFailed`, and the next apply replaces it, which deletes its files outside mounted volumes and its conversation history. A graceful restart, such as `docker restart`, keeps the sandbox. | [#13953](https://github.com/NVIDIA/NemoClaw/issues/13953), [NVIDIA/OpenShell#4910](https://github.com/NVIDIA/OpenShell/issues/4910) | [`291723b`][v1-291723b]: issue, plus a DGX Spark run where 9 of 9 SIGKILLed gateways lost their Hermes sandbox and 12 of 12 graceful restarts kept it |
 
 ## Security
@@ -168,7 +164,7 @@ The following documentation site limits apply:
 | Limit | Issue | Last Verified |
 |---|---|---|
 | Public publication of the combined documentation site, with a check of its legacy routes | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
-| Search and docs MCP scoped to v1 | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
+| Search and docs MCP scoped to the Agent Configs guides | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 | Packaged installation of the documentation skill for assistant clients | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 
 Managed [llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) accepts pinned public GGUF files on one CUDA GPU.

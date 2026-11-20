@@ -7,9 +7,6 @@ The desired-state SDK, schema, and state format do not promise compatibility wit
 The current CLI has no state adoption or migration command.
 To start a v1 deployment from an earlier deployment's settings, [convert its configuration export](#starting-from-the-earlier-export).
 Keep the earlier deployment's tooling, configuration, and state while evaluating a separate NemoClaw Agent Configs deployment.
-Track remaining Classic parity work in [Roadmap: Bring agreed Classic features to v1](https://github.com/NVIDIA/NemoClaw/milestone/14).
-The separate [Roadmap: GTC DC 2026](https://github.com/NVIDIA/NemoClaw/milestone/12) milestone tracks broader release preparation.
-Milestone placement or issue closure does not establish support for a complete user workflow.
 
 NemoClaw has no upgrade, native-data transfer or rollback procedure: native data belongs to the harness, and moving its storage belongs to the platform.
 The evaluation steps below create a separate deployment.
@@ -35,18 +32,6 @@ Choose the current owner of the task rather than translating earlier CLI command
 | Manage messaging, MCP servers, or arbitrary plugins | Messaging: [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037); NemoClaw doesn't manage MCP servers; see [additional agent integrations](../agents-inference/agents.md#additional-agent-integrations) |
 | Provision a model router, managed NIM/llama.cpp, or distributed inference | Managed [llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) and [native NIM candidate with qualification limits](../agents-inference/models.md#native-nim-candidate): [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); NemoClaw has no Model Router |
 | Install a telemetry collector or reuse Deep Agents trace-export setup | NemoClaw doesn't provision collectors or export Deep Agents traces; [Hermes Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) writes trace artifacts in the sandbox |
-
-## Needs Scope Analysis
-
-These questions remain unresolved.
-They establish neither a parity commitment nor a permanent exclusion like those in [Outside v1 Scope](../resources/out-of-scope.md).
-Track agreed work in [Roadmap: Bring agreed Classic features to v1](https://github.com/NVIDIA/NemoClaw/milestone/14).
-
-| Workflow | Existing Context | Decision or Verification Needed |
-|---|---|---|
-| Run one model across multiple machines | Classic implements managed distributed vLLM on [two NVIDIA DGX Sparks](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/inference/set-up-vllm-on-two-dgx-sparks.mdx), marked Experimental with physical two-machine E2E qualification pending. Its [two-DGX-Station Ray and vLLM path](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/inference/set-up-vllm-on-two-dgx-stations.mdx) is a Deferred evaluation. | Decide whether Agent Configs should provision and manage the multi-machine server lifecycle or connect to an operator-managed endpoint. The earlier parity discussion assumed Classic had no implementation, so that premise needs correction. [#14608](https://github.com/NVIDIA/NemoClaw/issues/14608) leaves multi-machine serving outside agreed parity. [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) covers multiple GPUs on one host. |
-| Use native memory search | Classic documents [embedding-backed memory search](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/configure-agents/configure-memory-search.mdx). | Confirm which native harness indexing and search behavior must carry over, then verify that path. Excluding a separate NemoClaw memory subsystem does not exclude native memory features. |
-| Rotate MCP credentials | The [credential rotation guide](../security/credential-rotation.md) describes replacement and revocation, including credentials held by running processes. | Verify the MCP credential path with a running agent, including replacement, restart, and revocation. Documented steps alone do not establish live qualification. |
 
 ## Keeping Deployment Identities Separate
 
@@ -90,7 +75,7 @@ Use a separate identity and state directory so the comparison doesn't mutate an 
 1. Record the earlier deployment's version, tooling, configuration, state, endpoints, and native data you need to retain.
    Use that version's documentation and tools to inspect it.
 2. Check the task mapping above for workflows you rely on.
-   If a workflow you need is in [current limits](../resources/limits.md) or [Outside v1 Scope](../resources/out-of-scope.md), keep the earlier deployment available rather than assuming feature parity.
+   If a workflow you need is in [current limits](../resources/limits.md) or [Out of Scope](../resources/out-of-scope.md), keep the earlier deployment available rather than assuming feature parity.
 3. Build a separate matched v1 bundle and images, then prepare a fresh UUID and dedicated state directory using [the first-deployment guide](first-deployment.md).
    Check names, exposed ports, model capacity, and credentials so the evaluation doesn't overwrite or exhaust the original deployment's resources.
 4. Plan and apply only the new v1 configuration/state.
