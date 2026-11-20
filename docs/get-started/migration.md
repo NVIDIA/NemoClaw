@@ -6,7 +6,7 @@
 The desired-state SDK, schema, and state format do not promise compatibility with the earlier product.
 The current CLI has no state adoption or migration command.
 To start a v1 deployment from an earlier deployment's settings, [convert its configuration export](#starting-from-the-earlier-export).
-Keep the earlier deployment's tooling, configuration, and state while evaluating a separate v1 deployment.
+Keep the earlier deployment's tooling, configuration, and state while evaluating a separate NemoClaw Agent Configs deployment.
 
 NemoClaw has no upgrade, native-data transfer or rollback procedure: native data belongs to the harness, and moving its storage belongs to the platform.
 The evaluation steps below create a separate deployment.
@@ -75,7 +75,7 @@ Use a separate identity and state directory so the comparison doesn't mutate an 
 1. Record the earlier deployment's version, tooling, configuration, state, endpoints, and native data you need to retain.
    Use that version's documentation and tools to inspect it.
 2. Check the task mapping above for workflows you rely on.
-   If a workflow you need is in [current limits](../resources/limits.md), keep the earlier deployment available rather than assuming feature parity.
+   If a workflow you need is in [current limits](../resources/limits.md) or [Out of Scope](../resources/out-of-scope.md), keep the earlier deployment available rather than assuming feature parity.
 3. Build a separate matched v1 bundle and images, then prepare a fresh UUID and dedicated state directory using [the first-deployment guide](first-deployment.md).
    Check names, exposed ports, model capacity, and credentials so the evaluation doesn't overwrite or exhaust the original deployment's resources.
 4. Plan and apply only the new v1 configuration/state.

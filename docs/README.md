@@ -3,7 +3,7 @@
 
 # Documentation Index
 
-These guides describe NemoClaw v1 at this documentation checkout (including `v1` through `1c516ec915df8450f13e29cdb2e63ec1ce9cf62b`). Use a bundle, example, and image built from the implementation revision you operate. The [first-deployment tutorial](get-started/first-deployment.md) is an exception: it pins `637bdb6276309ea71d1f1fcb68fff518fe2db926` and OpenShell 0.1.7. Follow that worktree's build instructions and generated schema for the exercise, not this checkout's newer build guide.
+These guides describe NemoClaw Agent Configs, a release candidate built from the `v1` branch. Use a bundle, example, and image built from the implementation revision you operate. The [first-deployment tutorial](get-started/first-deployment.md) is an exception: it pins `637bdb6276309ea71d1f1fcb68fff518fe2db926` and OpenShell 0.1.7. Follow that worktree's build instructions and generated schema for the exercise, not this checkout's newer build guide.
 
 The [field reference](reference/configuration.md) and JSON Schema are generated from this checkout's SDK, not from the tutorial's pinned worktree. [Release Notes](about/release-notes.md) describe changes in this checkout, including OpenShell 0.1.9. [Current Limits](resources/limits.md) lists unimplemented or untested paths. Do not treat contracts from different revisions as interchangeable.
 
@@ -79,13 +79,14 @@ Look up the interface contract of your source revision before adapting a command
 
 ## Resources
 
-Use these sources to find help, development status, and currently documented limits.
+Use these sources to find help, development status, currently documented limits, and scope.
 
 | Reader goal | Guide |
 |---|---|
 | Find version-matched documentation and reporting channels | [Project resources](resources/resources.md) |
 | Check release status | [Release Notes](about/release-notes.md) |
 | Find unimplemented or unqualified paths | [Current limits](resources/limits.md) |
+| Find what Agent Configs leaves to other components by design | [Out of Scope](resources/out-of-scope.md) |
 
 ## Security
 
