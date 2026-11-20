@@ -176,7 +176,8 @@ impl Deployment {
             replaced = true;
         }
     }
-    /// Why a plan failed, when the managed Docker gateway's container is stopped.
+    /// Why a plan failed, when the managed Docker or Podman gateway's
+    /// container is stopped.
     ///
     /// OpenTofu refreshes the gateway's objects through the gateway, and it
     /// can't defer that refresh until apply starts the container
@@ -191,16 +192,28 @@ impl Deployment {
         document: &Document,
         cancel: &CancellationToken,
     ) -> Option<Error> {
-        const ADDRESS: &str = "docker_container.managed_gateway_runtime";
-        let gateway = document
-            .spec
-            .gateway
-            .as_managed()
-            .filter(|gateway| gateway.runtime.provider == ComputeDriver::Docker)?;
+        let gateway = document.spec.gateway.as_managed()?;
+        // The Docker provider refreshes a stopped container as must_run=false,
+        // and NemoClaw's Podman gateway as running="false".
+        let (address, attribute, stopped, client) = match gateway.runtime.provider {
+            ComputeDriver::Docker => (
+                "docker_container.managed_gateway_runtime",
+                "must_run",
+                Value::Bool(false),
+                "docker --host",
+            ),
+            ComputeDriver::Podman => (
+                "openshell_podman_gateway.runtime",
+                "running",
+                Value::from("false"),
+                "podman --url",
+            ),
+            ComputeDriver::Kubernetes | ComputeDriver::OpenShift => return None,
+        };
         let environment = self
             .provider_environment(document, &store.directory, false)
             .ok()?;
-        let target = format!("-target={ADDRESS}");
+        let target = format!("-target={address}");
         let refreshed = crate::process::run(
             &store.directory,
             &bundle.tofu(),
@@ -233,15 +246,14 @@ impl Deployment {
         let values = &plan["prior_state"]["values"]["root_module"]["resources"]
             .as_array()?
             .iter()
-            .find(|resource| resource["address"] == ADDRESS)?["values"];
-        // The Docker provider refreshes a stopped container as must_run=false.
-        if values["must_run"] != false {
+            .find(|resource| resource["address"] == address)?["values"];
+        if values[attribute] != stopped {
             return None;
         }
         let name = values["name"].as_str()?;
         Some(Error::GatewayStopped {
             name: name.into(),
-            start: format!("docker --host {} start {name}", gateway.engine),
+            start: format!("{client} {} start {name}", gateway.engine),
         })
     }
     pub(super) fn provider_environment(
