@@ -15,13 +15,19 @@ Staging takes its agent images from the Bake file's `release-agents` group, whic
 CI still builds and checks the image, and users build it locally, as [Building Agent Images](../../docs/build-deploy/build.md#building-agent-images) describes.
 The other images proceed through the review below.
 
-## Release Approval Coverage
+## When an Image Needs OSRB
 
-Before publication, the release owner must record the applicable container approval, inherited approval coverage, or exception with OSRB/Legal.
-A permissive license classification alone does not establish that an image is approved for release.
-Existing approved base or product coverage can reduce the review to additions and changes; a package or digest change does not by itself establish that a separate approval is required.
-Keep private approval and contract details in the appropriate private review record.
-CUDA and other proprietary components also need their applicable redistribution terms checked.
+An image needs no OSRB sign-off when every component's license allows redistribution with only its notices: MIT, Apache-2.0, BSD, ISC, and similar permissive licenses.
+The image must still retain those notices.
+An image needs OSRB sign-off when it contains any of these:
+
+- a component under a third-party proprietary license;
+- a component under a copyleft license, such as GPL, LGPL, AGPL, or MPL, whose source or notice terms apply;
+- a component whose license is unknown or missing.
+
+NVIDIA proprietary components, such as CUDA libraries, need no OSRB sign-off under this rule; their own license's redistribution terms still apply.
+
+OSRB hasn't confirmed whether permissive-only images, such as `ollama-proxy`, need sign-off; [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) tracks the question.
 
 ## Retained Sources and Notices
 
@@ -50,7 +56,6 @@ No automated license gate establishes these release decisions; review each final
 
 This is a historical technical assessment, not current release approval.
 The verdicts and gaps below describe rc10; use [Remaining Release Evidence](#remaining-release-evidence) for current closeout work.
-The historical proxy verdict describes permissive license findings, not an exemption from container approval.
 
 This review covers both platforms of every image that `v0.1.0-rc10` staged from [`5716c39`](https://github.com/NVIDIA/NemoClaw/commit/5716c39bc26a16532033d1e4c6e44636fe7aa983).
 Images built from later commits, such as the vLLM 0.34.0 and Hermes Agent 0.22.7 upgrades, need their own review.
