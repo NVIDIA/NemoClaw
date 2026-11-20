@@ -478,10 +478,8 @@ Older unfinished records without per-resource recovery evidence still require th
 If managed gateway or inference runtime apply fails, revised intent or teardown can proceed using recorded bindings and the existing ownership checks.
 The same applies when an OpenShell-graph apply only observes resources, updates or deletes established bindings, or changes disposable compute.
 Runtime recovery doesn't clear pending OpenShell creations.
-When OpenShell rejects a sandbox create as an invalid argument, nothing was created, so the apply clears that sandbox's pending creation and the output no longer says that resource state is unconfirmed.
-Correct the configuration and apply again, or run destroy.
-A deployment already stuck on such a rejection recovers the same way: reapply its original configuration, and the repeated rejection clears the pending creation.
-This applies only when every failed operation in that apply was such a rejection.
+When OpenShell rejects a new sandbox's create as an invalid argument, it has stored nothing, so the apply drops that sandbox's pending creation: correct the configuration and apply again, or run destroy.
+This applies only when every error in that apply was such a rejection.
 Any other create failure, including a lost reply, keeps the pending-creation guard in place.
 Preserve that record and its original bundle rather than deleting state or attempting adoption from another state directory.
 Export remains unavailable during pending creation recovery or unfinished teardown.
