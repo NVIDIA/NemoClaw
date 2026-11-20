@@ -116,12 +116,14 @@ GitHub Actions publishes Fern docs from the same source files that `npm run docs
 Docs PRs get Fern previews when they change `docs/`, `fern/`, or docs build inputs.
 The preview workflow publishes to the staging Fern instance with a `pr-<number>` preview ID and posts the preview URL on the PR when `FERN_TOKEN` is available.
 
-After a docs PR merges, pushes to `main` publish the affected docs to the staging Fern instance.
+After a docs PR merges, pushes to `main` (or `v0` after the rename) publish the affected docs to the staging Fern instance.
 The staging publish job regenerates agent variants, validates Fern docs, publishes staging, and deletes the merged PR preview when it can map the merge commit back to a PR.
 
+The v0 project keeps the `/nemoclaw` mount to redirect existing unversioned and `/latest/` links. Its product pages live under `/nemoclaw/v0/`. Selecting **v1** opens the independent v1 project. The v1 branch owns the nested `/nemoclaw/v1/` mount. Each branch publishes only its own content and retains its own release history.
+
 Public docs publish automatically when a `v*.*.*` release tag is pushed.
-The public publish job runs in the `docs-public` environment, verifies that the tag commit is reachable from `origin/main`, regenerates agent variants, validates Fern docs, and publishes to the public Fern instance.
-If the tag does not point to a commit on `main`, the job stops before installing dependencies or running Fern.
+The public publish job runs in the `docs-public` environment, verifies that the tag commit is reachable from `origin/v0` (or `origin/main` before the rename), regenerates agent variants, validates Fern docs, and publishes to the public Fern instance.
+If the tag does not point to a commit on the v0 release branch, the job stops before installing dependencies or running Fern.
 
 ## Starter Prompt Generation
 

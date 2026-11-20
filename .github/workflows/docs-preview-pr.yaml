@@ -5,7 +5,7 @@ name: Docs / Validate and Preview PR Docs
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, v0]
     types: [opened, reopened, synchronize]
     paths:
       - "docs/**"
@@ -14,6 +14,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "scripts/generate-starter-prompt.mts"
+      - "scripts/fern-preview-config.mts"
       - "scripts/sync-agent-variant-docs.mts"
       - ".github/workflows/docs-preview-pr.yaml"
 
@@ -75,8 +76,9 @@ jobs:
           PREVIEW_ID: pr-${{ github.event.pull_request.number }}
         run: |
           FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
+          node scripts/fern-preview-config.mts "$RUNNER_TEMP/v0-preview"
           set +e
-          OUTPUT=$(cd fern && npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE" --preview --id "$PREVIEW_ID" 2>&1)
+          OUTPUT=$(cd "$RUNNER_TEMP/v0-preview/fern" && npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE" --preview --id "$PREVIEW_ID" 2>&1)
           STATUS=$?
           set -e
           echo "$OUTPUT"
