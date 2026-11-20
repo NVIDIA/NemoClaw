@@ -32,14 +32,9 @@ env:
 jobs:
   preview:
     name: Docs / Validate and publish PR preview
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
       - name: Check Fern preview availability
         id: fern-preview
         env:
@@ -51,6 +46,33 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Skipping Fern docs preview because FERN_TOKEN is unavailable. This is expected for fork PRs and repos without Fern preview credentials configured."
           fi
+
+      - name: Checkout the v1 documentation source
+        if: steps.fern-preview.outputs.enabled == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: v1
+          persist-credentials: false
+
+      - name: Set up the v1 documentation renderer
+        if: steps.fern-preview.outputs.enabled == 'true'
+        uses: ./.github/actions/setup-rust
+        with:
+          platform: linux_amd64
+          cache-prefix: native-bundle-v4
+          save-cache: "false"
+
+      - name: Render the v1 guides for this preview
+        if: steps.fern-preview.outputs.enabled == 'true'
+        run: |
+          cargo run --locked -p nemoclaw-build -- docs
+          cp -R fern/_generated "$RUNNER_TEMP/v1-guide"
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -68,6 +90,10 @@ jobs:
           npm run docs:prepare
           npm run docs:validate
 
+      - name: Assemble both products for the PR preview
+        if: steps.fern-preview.outputs.enabled == 'true'
+        run: node scripts/fern-preview-config.mts "$RUNNER_TEMP/v0-preview" "$RUNNER_TEMP/v1-guide"
+
       - name: Generate preview URL
         if: ${{ steps.fern-preview.outputs.enabled == 'true' }}
         id: generate-docs
@@ -76,16 +102,16 @@ jobs:
           PREVIEW_ID: pr-${{ github.event.pull_request.number }}
         run: |
           FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
-          node scripts/fern-preview-config.mts "$RUNNER_TEMP/v0-preview"
           set +e
           OUTPUT=$(cd "$RUNNER_TEMP/v0-preview/fern" && npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE" --preview --id "$PREVIEW_ID" 2>&1)
           STATUS=$?
           set -e
           echo "$OUTPUT"
           URL=$(echo "$OUTPUT" | sed -nE 's/.*Published docs to (https?:\/\/[^[:space:]]+).*/\1/p' | head -n1)
+          if [ "$STATUS" -ne 0 ]; then exit "$STATUS"; fi
           if [ -z "$URL" ]; then
             echo "::error::Failed to generate preview URL. See fern output above."
-            exit "$STATUS"
+            exit 1
           fi
           FERN_ORG=$(node -p "require('./fern/fern.config.json').organization")
           INSTANCE_PATH="${FERN_STAGING_INSTANCE#*/}"
@@ -100,7 +126,7 @@ jobs:
             echo "::error::Preview URL must match ${EXPECTED_BASE} or start with ${EXPECTED_PREFIX}; got ${URL}."
             exit 1
           fi
-          echo "preview_url=$URL" >> "$GITHUB_OUTPUT"
+          echo "preview_url=$EXPECTED_BASE" >> "$GITHUB_OUTPUT"
 
       - name: Post or update PR comment
         if: ${{ steps.fern-preview.outputs.enabled == 'true' }}
@@ -109,7 +135,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PREVIEW_URL: ${{ steps.generate-docs.outputs.preview_url }}
         run: |
-          BODY=":herb: **Preview your docs:** <${PREVIEW_URL}>"
+          BODY="**Documentation preview** · [v0 home](${PREVIEW_URL%/}/v0/user-guide/openclaw/home) · [v1 home](${PREVIEW_URL%/}/v1/home)"
           MARKER="<!-- fern-preview-docs -->"
           BODY="${BODY}
 
