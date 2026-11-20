@@ -154,6 +154,84 @@ describe("live DCode selection drift", () => {
     },
   );
 
+  it.each([
+    [
+      "runtime reports it without the slash",
+      "https://generativelanguage.googleapis.com/v1beta/openai",
+    ],
+    [
+      "runtime reports it with the slash",
+      "https://generativelanguage.googleapis.com/v1beta/openai/",
+    ],
+  ])(
+    "accepts the Gemini identity regardless of a trailing endpoint slash: %s (#14604)",
+    async (_name, observedEndpoint) => {
+      const read = createDcodeSelectionDriftReader(
+        bufferedExecutor(() =>
+          identity({
+            Route: "inference",
+            Provider: "gemini-api",
+            Model: "openai:gemini-3.6-flash",
+            Endpoint: observedEndpoint,
+          }),
+        ),
+        () => "nemoclaw-18081",
+      );
+      expect(
+        await read(
+          "alpha",
+          "gemini-api",
+          "gemini-3.6-flash",
+          null,
+          "https://generativelanguage.googleapis.com/v1beta/openai/",
+          true,
+        ),
+      ).toMatchObject({
+        changed: false,
+        providerChanged: false,
+        modelChanged: false,
+        unknown: false,
+      });
+    },
+  );
+
+  it.each([
+    "https://generativelanguage.googleapis.com/v1beta/other",
+    "https://generativelanguage.googleapis.com/v1beta/openai/extra",
+    "https://generativelanguage.googleapis.com/v1beta/openai//",
+    "https://generativelanguage.googleapis.com/v1beta/openai/?route=other",
+    "https://generativelanguage.googleapis.com/v1beta/openai#route",
+    "https://user:password@generativelanguage.googleapis.com/v1beta/openai",
+    "https://generativelanguage.googleapis.com:8443/v1beta/openai",
+    "https://example.test/v1beta/openai",
+    "http://generativelanguage.googleapis.com/v1beta/openai",
+  ])(
+    "still reports drift for a different Gemini endpoint: %s (#14604)",
+    async (observedEndpoint) => {
+      const read = createDcodeSelectionDriftReader(
+        bufferedExecutor(() =>
+          identity({
+            Route: "inference",
+            Provider: "gemini-api",
+            Model: "openai:gemini-3.6-flash",
+            Endpoint: observedEndpoint,
+          }),
+        ),
+        () => "nemoclaw-18081",
+      );
+      expect(
+        await read(
+          "alpha",
+          "gemini-api",
+          "gemini-3.6-flash",
+          null,
+          "https://generativelanguage.googleapis.com/v1beta/openai/",
+          true,
+        ),
+      ).toMatchObject({ changed: true, providerChanged: true, unknown: false });
+    },
+  );
+
   it("preserves the existing native NVIDIA route without a hosted attachment", () => {
     expect(
       getExpectedDcodeInferenceIdentity("nvidia-prod", "model-a", null, null, false),
@@ -457,6 +535,15 @@ describe("DCode selection through production completion", () => {
       behavior: "accepts the authenticated native local identity",
       endpointUrl: "http://localhost:8000/v1",
       attachmentEndpoint: "http://host.openshell.internal:8000/v1",
+      observedEndpoint: "http://host.openshell.internal:8000/v1",
+      observedModel: "openai:nvidia/nemotron-3-ultra-550b-a55b",
+      expectedError: "registration reached",
+      registrationCount: 1,
+    },
+    {
+      behavior: "accepts a native local identity reported without the endpoint's terminal slash",
+      endpointUrl: "http://localhost:8000/v1",
+      attachmentEndpoint: "http://host.openshell.internal:8000/v1/",
       observedEndpoint: "http://host.openshell.internal:8000/v1",
       observedModel: "openai:nvidia/nemotron-3-ultra-550b-a55b",
       expectedError: "registration reached",
