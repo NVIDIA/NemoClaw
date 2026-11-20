@@ -794,7 +794,7 @@ pub(crate) fn render_error(
             "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
         )),
         Some(Error::DockerModelUpdateRefused { service }) => Some(Cow::Owned(format!(
-            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/agents-inference/inference.md#set-container-limits-and-update-policy."
+            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/agents-inference/inference.md#setting-container-limits-and-update-policy."
         ))),
         _ => None,
     };
@@ -1589,7 +1589,7 @@ mod tests {
             let help = json["help"].as_str().unwrap();
             for expected in [
                 "spec.services.qwen.updatePolicy: Recreate",
-                "docs/agents-inference/inference.md#set-container-limits-and-update-policy",
+                "docs/agents-inference/inference.md#setting-container-limits-and-update-policy",
             ] {
                 assert!(help.contains(expected), "missing {expected}: {help}");
             }

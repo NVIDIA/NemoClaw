@@ -1,19 +1,21 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Diagnose a Failed Deployment Operation
+# Diagnosing a Failed Deployment Operation
 
 Retain the original YAML, matching bundle, and entire state directory when an operation fails.
-Retry the failed stage with `nemoclaw plan FILE` or `nemoclaw apply FILE` after resolving the cause; do not rerun authoring and replace the deployment identity.
+Retry the failed stage with `nemoclaw plan FILE` or `nemoclaw apply FILE` after resolving the cause.
+Do not rerun authoring and replace the deployment identity.
 Do not delete bindings or substitute a fresh state directory to bypass an ownership error.
-See [state locations](../build-deploy/state.md) and the [recovery procedure](../build-deploy/usage.md#updates-and-recovery).
+Refer to [state locations](../build-deploy/state.md) and the [recovery procedure](../build-deploy/usage.md#updates-and-recovery).
 
-## Capture the Failing Operation
+## Capturing the Failing Operation
 
-Record the command, exit status, stderr, source revision/bundle, state path, and the step at which the operation stopped.
-The CLI writes operation results to stdout and failures to stderr; it has no separate persistent CLI log.
+Record the command, exit status, stderr, source revision or bundle, state path, and the step at which the operation stopped.
+The CLI writes operation results to stdout and failures to stderr.
+It has no separate persistent CLI log.
 Do not rerun apply just to collect output after an uncertain mutation.
-First resolve the reported failure using the table below.
+First resolve the reported failure using the following table.
 
 When planning is appropriate, collect a read-only runtime preview from the directory containing `deployment.yaml`:
 
@@ -27,43 +29,46 @@ printf 'Exit status: %s\nDiagnostics: %s\n' "$diagnostic_status" "$diagnostic_di
 Replace the YAML and state paths with the ones from the failed operation.
 Planning can write local planning files, but does not mutate runtime resources.
 For an unfinished destroy, use `plan --destroy -o json` with the same state instead of the YAML command.
-On nonzero exit, read `plan.stderr`; empty stdout does not mean the deployment has no changes.
-Review diagnostics before sharing them: endpoints, resource identities, and agent output may be private even when credential values are redacted.
+On nonzero exit, read `plan.stderr`.
+Empty stdout does not mean the deployment has no changes.
+Review diagnostics before sharing them: endpoints, resource identities, and agent output might be private even when credential values are redacted.
 Do not attach environment dumps, TLS private keys, interface tokens, or the entire state directory to a public report.
 
-## Identify the Failure
+## Identifying the Failure
 
-Start with the failed phase; apply readiness, endpoint reachability, and a native reply are different outcomes.
+Start with the failed phase.
+Apply readiness, endpoint reachability, and a native reply are different outcomes.
+Match the symptom to its next action:
 
-| Symptom | Next action |
+| Symptom | Next Action |
 |---|---|
-| Unknown field, duplicate key, or rejected combination | Use the [document path and source position](#correct-a-document-validation-error), then compare the input with the matching [configuration reference](../reference/configuration.md) |
-| Bundle or schema hash failure | Follow [bundle rebuilding](../build-deploy/build.md#build-a-native-bundle) and keep the selected bundle unchanged during operations |
-| `state is bound to a different deployment UID or gateway` | Restore the original UID and gateway endpoint; a new target needs separate state and resources |
-| `state is bound to a different gateway target` | Restore the target the deployment was first planned with; to use another, create a new deployment as [Adapt a Document to Another Target](../build-deploy/usage.md#adapt-a-document-to-another-target) describes |
-| A gateway volume, network, or initializer container `belongs to another state directory or deployment` | Destroy kept that deployment's gateway storage. Apply with the state directory that created it, or [remove the retained resources](../build-deploy/usage.md#remove-retained-resources) and apply with a new `metadata.uid`; nothing is adopted |
-| `the kubeconfig has no context named NAME` | The gateway target's `context` names a context that the kubeconfig lacks; correct the context or the kubeconfig, then plan again. Nothing changed |
-| Plan says the gateway's port is in use, or the gateway subnet overlaps an existing Docker network | Another deployment or process holds it. Before the deployment's first successful plan, set the target's `port` to a free port or its `networkCIDR` to a free private `/24` and plan again; a failed plan binds nothing. After that, the port is bound: free it instead |
-| `unfinished apply has different intent` | Reapply the exact YAML from the unfinished operation before trying another configuration |
-| Deployment lock error | Check for another operation using the same state directory; a lock failure does not authorize state deletion |
-| Authentication, transport, or incomplete-observation error | Restore access to the selected service; failed observation does not establish absence or authorize recreation. For a persistently unknown runtime after an invocation failure, follow the [replacement procedure](../build-deploy/usage.md#replace-workloads-after-an-unusable-runtime) |
-| Ownership, generation, or durable identity mismatch | Inspect the selected gateway/engine and retained deployment identity; do not adopt or replace a different resource |
-| Provider-profile identity mismatch after upgrading a bundle | Check the [gateway profile format break](../references/provider.md#gateway-profile-format-upgrade); old `profile-v1` profiles require the original bundle for teardown or a separate deployment |
-| Plan would remove or replace a resource | Check [update constraints](../build-deploy/usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment |
-| Managed model replacement is refused by `updatePolicy: Preserve` | The update requires replacing a running Docker model container. Keep the current configuration, or explicitly choose `spec.services.<name>.updatePolicy: Recreate` after reviewing the [downtime and recovery limits](../agents-inference/inference.md#set-container-limits-and-update-policy) |
-| Interrupted apply | Resolve the cause and reapply the original YAML with its retained state |
-| Kubernetes or OpenShift apply fails when Helm's wait times out | Read the gateway's log as [Diagnose a Kubernetes Gateway Startup Failure](#diagnose-a-kubernetes-gateway-startup-failure) shows |
-| Plan, apply, or destroy names the gateway's Helm release that the state does not record | Follow [recovery from an unfinished Helm install](../build-deploy/usage.md#recover-from-an-unfinished-helm-install): if the release is this deployment's, remove it with `helm uninstall`, then rerun |
-| `managed gateway container NAME is not running` | Plan, apply, and destroy read the deployment's sandboxes and other objects through the gateway, so they stop before any change while its Docker container is stopped, for example after `docker stop` or `docker kill`. Run the `docker --host ENGINE start NAME` command that the error names, then rerun the operation. A gateway that was killed can leave its sandboxes in `Error`; the next plan replaces them, as [current limits](../resources/limits.md#data-and-cleanup) describe |
-| Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
-| `adapter/<id> compatibility rejected` | Read the named sandbox and field; fix or remove that interface setting, or choose an adapter that declares it, then plan again. See [enabling an interface](../agents-inference/interfaces.md#enable-an-interface) |
-| `the adapter does not accept this model field` | Read the authored route path. Remove the named tuning or `extensions` field, or choose an adapter that accepts it, then plan again. Planning checks bundled adapter support for `maxTokens`, `temperature`, and `topP`, including their extension forms |
-| `Fabric runtime operation failed at STAGE (CODE)` | Read Fabric's message in the file the error names, in the state directory's `diagnostics` directory; it can contain secrets, so read it privately. Then follow [agent interface diagnosis](../agents-inference/interfaces.md#diagnose-failures) |
-| Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](../agents-inference/interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
-| A plan replaces a sandbox because `sandbox exited` | OpenShell reports that the sandbox exited; read why with `openshell logs SANDBOX --source sandbox`. Applying replaces it, deleting its files and history; see [replacing workloads](../build-deploy/usage.md#replace-workloads-after-an-unusable-runtime) |
-| `runtime_unavailable` | The runtime stopped while its sandbox runs, for example after its gateway restarted. Plan and apply again: the plan updates the agent because `agent runtime is not running`, and apply starts a new runtime in the same sandbox. If the plan shows no change, read why with `openshell logs SANDBOX --source sandbox` and follow the [whole-deployment replacement procedure](../build-deploy/usage.md#replace-workloads-after-an-unusable-runtime), including loss of sandbox files and history |
-| `state_in_use` | Another runtime, or native processes that outlived one, still own the agent's kept state under `/sandbox/artifacts`, for example in another sandbox that mounts the same volume, so Fabric started no runtime. Apply already stops the agent's previous runtime in its own sandbox first. Stop the others, or replace the sandbox that runs them, then apply again |
-| `runtime_busy` | The agent was handling a request, so Fabric didn't stop its runtime and nothing changed. Run the apply or destroy again after the request finishes |
+| Unknown field, duplicate key, or rejected combination | Use the [document path and source position](#correcting-a-document-validation-error), then compare the input with the matching [configuration reference](../reference/configuration.md). |
+| Bundle or schema hash failure | Follow [bundle rebuilding](../build-deploy/build.md#building-a-native-bundle) and keep the selected bundle unchanged during operations. |
+| `state is bound to a different deployment UID or gateway` | Restore the original UID and gateway endpoint. A new target needs separate state and resources. |
+| `state is bound to a different gateway target` | Restore the target the deployment was first planned with. To use another, create a new deployment as [Adapting a Document to Another Target](../build-deploy/usage.md#adapting-a-document-to-another-target) describes. |
+| A gateway volume, network, or initializer container `belongs to another state directory or deployment` | Destroy kept that deployment's gateway storage. Apply with the state directory that created it, or [remove the retained resources](../build-deploy/usage.md#removing-retained-resources) and apply with a new `metadata.uid`. Nothing is adopted. |
+| `the kubeconfig has no context named NAME` | The gateway target's `context` names a context that the kubeconfig lacks. Correct the context or the kubeconfig, then plan again. Nothing changed. |
+| Plan says the gateway's port is in use, or the gateway subnet overlaps an existing Docker network | Another deployment or process holds it. Before the deployment's first successful plan, set the target's `port` to a free port or its `networkCIDR` to a free private `/24` and plan again. A failed plan binds nothing. After that, the port is bound: free it instead. |
+| `unfinished apply has different intent` | Reapply the exact YAML from the unfinished operation before trying another configuration. |
+| Deployment lock error | Check for another operation using the same state directory. A lock failure does not authorize state deletion. |
+| Authentication, transport, or incomplete-observation error | Restore access to the selected service. Failed observation does not establish absence or authorize recreation. For a persistently unknown runtime after an invocation failure, follow the [replacement procedure](../build-deploy/usage.md#replacing-workloads-after-an-unusable-runtime). |
+| Ownership, generation, or durable identity mismatch | Inspect the selected gateway or engine and the retained deployment identity. Do not adopt or replace a different resource. |
+| Provider-profile identity mismatch after upgrading a bundle | Check the [gateway profile format break](../references/provider.md#gateway-profile-format-upgrade). Old `profile-v1` profiles require the original bundle for teardown or a separate deployment. |
+| Plan would remove or replace a resource | Check [update constraints](../build-deploy/usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment. |
+| Managed model replacement is refused by `updatePolicy: Preserve` | The update requires replacing a running Docker model container. Keep the current configuration, or explicitly choose `spec.services.<name>.updatePolicy: Recreate` after reviewing the [downtime and recovery limits](../agents-inference/inference.md#setting-container-limits-and-update-policy). |
+| Interrupted apply | Resolve the cause and reapply the original YAML with its retained state. |
+| Kubernetes or OpenShift apply fails when Helm's wait times out | Read the gateway's log as [Diagnosing a Kubernetes Gateway Startup Failure](#diagnosing-a-kubernetes-gateway-startup-failure) shows. |
+| Plan, apply, or destroy names the gateway's Helm release that the state does not record | Follow [recovery from an unfinished Helm install](../build-deploy/usage.md#recovering-from-an-unfinished-helm-install): if the release is this deployment's, remove it with `helm uninstall`, then rerun. |
+| `managed gateway container NAME is not running` | Plan, apply, and destroy read the deployment's sandboxes and other objects through the gateway, so they stop before any change while its Docker container is stopped, for example after `docker stop` or `docker kill`. Run the `docker --host ENGINE start NAME` command that the error names, then rerun the operation. A gateway that was killed can leave its sandboxes in `Error`. The next plan replaces them, as [current limits](../resources/limits.md#data-and-cleanup) describe. |
+| Unfinished destroy | Resume destroy with the same state. Other operations refuse unfinished teardown. |
+| `adapter/<id> compatibility rejected` | Read the named sandbox and field. Fix or remove that interface setting, or choose an adapter that declares it, then plan again. Refer to [enabling an interface](../agents-inference/interfaces.md#enabling-an-interface). |
+| `the adapter does not accept this model field` | Read the authored route path. Remove the named tuning or `extensions` field, or choose an adapter that accepts it, then plan again. Planning checks bundled adapter support for `maxTokens`, `temperature`, and `topP`, including their extension forms. |
+| `Fabric runtime operation failed at STAGE (CODE)` | Read NVIDIA NeMo Fabric's message in the file the error names, in the state directory's `diagnostics` directory. It can contain secrets, so read it privately. Then follow [agent interface diagnosis](../agents-inference/interfaces.md#diagnosing-failures). |
+| Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](../agents-inference/interfaces.md#diagnosing-failures). Retained public configuration checks do not audit native files or tokens. |
+| A plan replaces a sandbox because `sandbox exited` | NVIDIA OpenShell reports that the sandbox exited. Read why with `openshell logs SANDBOX --source sandbox`. Applying replaces it, deleting its files and history. Refer to [replacing workloads](../build-deploy/usage.md#replacing-workloads-after-an-unusable-runtime). |
+| `runtime_unavailable` | The runtime stopped while its sandbox runs, for example after its gateway restarted. Plan and apply again: the plan updates the agent because `agent runtime is not running`, and apply starts a new runtime in the same sandbox. If the plan shows no change, read why with `openshell logs SANDBOX --source sandbox` and follow the [whole-deployment replacement procedure](../build-deploy/usage.md#replacing-workloads-after-an-unusable-runtime), including loss of sandbox files and history. |
+| `state_in_use` | Another runtime, or native processes that outlived one, still own the agent's kept state under `/sandbox/artifacts`, for example in another sandbox that mounts the same volume, so Fabric started no runtime. Apply already stops the agent's previous runtime in its own sandbox first. Stop the others, or replace the sandbox that runs them, then apply again. |
+| `runtime_busy` | The agent was handling a request, so Fabric did not stop its runtime and nothing changed. Run the apply or destroy again after the request finishes. |
 
 OpenShell can add paths of its own, such as read-only `/var/log`, when it loads a sandbox policy.
 NemoClaw accepts those additions when the policy first loads, as long as every declared rule is intact, and records the loaded policy's hash.
@@ -74,41 +79,49 @@ The [SDK errors](../../crates/nemoclaw-backend/src/error.rs), [plan checks](../.
 An ownership error is not fixed by renaming a resource, deleting `intent.json`, editing OpenTofu state, or rerunning with a fresh state path against the same resources.
 Retain the original binding while investigating the selected gateway and engine.
 
-## Correct a Document Validation Error
+## Correcting a Document Validation Error
 
 Schema errors identify the document field, the violated constraint, and the source line and column.
-For example, `spec.services.qwen.memory.kvCacheGiB` identifies the `qwen` service; `spec.sandboxes.assistant.agent.inference.routes[1]` identifies the second route of the `assistant` sandbox's agent.
-Array indices start at zero; source lines and columns start at one, and columns count characters.
+For example, `spec.services.qwen.memory.kvCacheGiB` identifies the `qwen` service.
+`spec.sandboxes.assistant.agent.inference.routes[1]` identifies the second route of the `assistant` sandbox's agent.
+Array indices start at zero.
+Source lines and columns start at one, and columns count characters.
 Valid declaration names appear in paths, while arbitrary map keys appear as `[entry]` and rejected values remain omitted.
-YAML syntax and duplicate-key errors also include source positions without copying source snippets.
-Later semantic checks, such as unresolved references, retain their existing named-field diagnostics and may lack source positions.
+YAML syntax and duplicate-key errors also include source positions without copying source text.
+Later semantic checks, such as unresolved references, retain their existing named-field diagnostics and might lack source positions.
 
 For `kvCacheGiB`, use `0` or an integer from `4` through `12` when `gpuMemoryUtilization` is absent.
-With `gpuMemoryUtilization`, `kvCacheGiB` must be omitted or zero; see the [Memory reference](../reference/configuration.md#memory) for defaults and related settings.
+With `gpuMemoryUtilization`, `kvCacheGiB` must be omitted or zero.
+Refer to the [Memory reference](../reference/configuration.md#memory) for defaults and related settings.
 An `empty document` error means no configuration content was supplied.
-All explicit YAML tags, including `!!binary`, `!!str`, `!!map`, and `!!seq`, are rejected; write the intended value directly and quote strings when needed.
+All explicit YAML tags, including `!!binary`, `!!str`, `!!map`, and `!!seq`, are rejected.
+Write the intended value directly and quote strings when needed.
 Tag-like text inside a quoted or block string is preserved.
 
 Correct the input, then rerun plan with the same state directory before choosing apply.
 
-## Recover a Managed Gateway Startup Failure
+## Recovering a Managed Gateway Startup Failure
 
 If a managed Docker gateway stops during readiness, the error names its container and reports the observed exit code, or `unknown` when unavailable.
-Read that container's logs on the configured engine using the [log collection procedure](#inspect-an-openshell-sandbox-failure).
-The readiness diagnostic omits raw engine errors and log contents because they may contain credentials.
-A running but unreachable gateway reports a transport failure; check its endpoint and engine access before retrying.
+Read that container's logs on the configured engine using the [log collection procedure](#inspecting-an-openshell-sandbox-failure).
+The readiness diagnostic omits raw engine errors and log contents because they can contain credentials.
+A running but unreachable gateway reports a transport failure.
+Check its endpoint and engine access before retrying.
 
 Keep the YAML, matching bundle, and state directory.
-After correcting the image or configuration problem, reapply using the retained state; Docker may replace disposable gateway compute while NemoClaw verifies its retained storage and keys.
-If retiring the deployment, preview and [destroy](../build-deploy/usage.md#destroy) it with the same state directory.
+After correcting the image or configuration problem, reapply using the retained state.
+Docker can replace disposable gateway compute while NemoClaw verifies its retained storage and keys.
+If retiring the deployment, preview and [destroy](../build-deploy/usage.md#destroying) it with the same state directory.
 Gateway readiness is omitted during teardown, so failed bootstrap with saved bindings can be cleaned up before a successful reapply.
-If OpenShell resources were already created, their refresh and deletion still require a reachable gateway; restore it before destroying them.
+If OpenShell resources were already created, their refresh and deletion still require a reachable gateway.
+Restore it before destroying them.
 
-### Diagnose a Kubernetes Gateway Startup Failure
+### Diagnosing a Kubernetes Gateway Startup Failure
 
-When a managed Kubernetes or OpenShift gateway can't start, apply fails when Helm's 10-minute wait times out.
+When a managed Kubernetes or OpenShift gateway cannot start, apply fails when Helm's 10-minute wait times out.
 Read the gateway's log with the deployment's context and namespace.
-The gateway runs in the pod named after its release with `-0` appended; find the release among the namespace's StatefulSets:
+The gateway runs in the pod named after its release with `-0` appended.
+Find the release among the namespace's StatefulSets:
 
 ```sh
 deployment_context=my-cluster
@@ -120,7 +133,8 @@ kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
 ```
 
 With the `development` profile, a log that ends with `OIDC discovery request failed: error sending request for url (https://<release>-oidc.<namespace>.svc.cluster.local:8443/.well-known/openid-configuration)` shows that the gateway's request to its development issuer failed.
-Check that the issuer's pod is ready, then read the DNS search list of the namespace's pods; the gateway restarts too often to run a command in, and pods on the same node share the list:
+Check that the issuer's pod is ready, then read the DNS search list of the namespace's pods.
+The gateway restarts too often to run a command in, and pods on the same node share the list:
 
 ```sh
 kubectl --context "$deployment_context" --namespace "$deployment_namespace" get pods
@@ -130,10 +144,13 @@ kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
 
 A pod resolves a name with fewer dots than `ndots` by trying each search domain before the name itself.
 If a search domain has a wildcard DNS record, the lookup in that domain returns an address before the resolver tries the name itself, so `<service>.<namespace>.svc.cluster.local` resolves to the wildcard record's address instead of the Service's.
-On a single-node cluster from the Agent-based Installer, the `forcedns` script in MachineConfig `50-master-dnsmasq-configuration` adds the cluster domain to the node's search list, so a cluster named under a wildcard DNS service such as nip.io has this problem; the installer's `dns-wildcard-not-configured` validation flags such a domain before installation.
-Ask the platform operator to remove the domain from the nodes' search list, for example with a MachineConfig, which by default reboots each node it changes; a single-node cluster is unavailable while its node restarts.
+On a single-node cluster from the Agent-based Installer, the `forcedns` script in MachineConfig `50-master-dnsmasq-configuration` adds the cluster domain to the node's search list.
+A cluster named under a wildcard DNS service such as nip.io therefore has this problem.
+The installer's `dns-wildcard-not-configured` validation flags such a domain before installation.
+Ask the platform operator to remove the domain from the nodes' search list, for example with a MachineConfig, which by default reboots each node it changes.
+A single-node cluster is unavailable while its node restarts.
 When installing a cluster, name it under a domain without a wildcard record instead.
-If the node didn't restart, delete the gateway's pod so its StatefulSet recreates it with the new list:
+If the node did not restart, delete the gateway's pod so its StatefulSet recreates it with the new list:
 
 ```sh
 kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
@@ -142,45 +159,51 @@ kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
 
 ## Inference and Agent Readiness
 
-Use [inference verification](../agents-inference/inference.md#verify-the-result) to distinguish configuration readiness from a successful reply.
-For stopped Ollama, use [the managed Ollama procedure](../agents-inference/inference.md#run-managed-ollama); a failed inventory must not be treated as an absent model.
-For a managed model or watchdog stop, inspect [retained status and logs](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime).
-For an external Ollama digest mismatch, use [the proxy guide](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy).
+Use [inference verification](../agents-inference/inference.md#verifying-the-result) to distinguish configuration readiness from a successful reply.
+For stopped Ollama, use [the managed Ollama procedure](../agents-inference/inference.md#running-managed-ollama).
+A failed inventory must not be treated as an absent model.
+For a managed model or watchdog stop, inspect [retained status and logs](../agents-inference/models.md#diagnosing-and-recovering-a-stopped-runtime).
+For an external Ollama digest mismatch, use [the proxy guide](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy).
+Read each observation for only what it establishes:
 
-| Observation | What it establishes | Next check |
+| Observation | What It Establishes | Next Check |
 |---|---|---|
-| Model appears in the endpoint inventory | The service reports that model | Confirm API compatibility and an inference request |
-| Apply succeeds | Declared resources pass readiness checks and each agent started | Verify inference and a native agent turn through the intended interface |
-| Agent configuration changed inside the sandbox | Not reported: Fabric reports no applied configuration | Change the configuration in the deployment and apply, which replaces the sandbox |
-| Forwarded native service cannot connect | Native service, forwarding, or authentication may be incomplete | Follow [interface diagnosis](../agents-inference/interfaces.md#diagnose-failures); keep local forwarding ports consistent |
-| Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |
+| Model appears in the endpoint inventory | The service reports that model | Confirm API compatibility and an inference request. |
+| Apply succeeds | Declared resources pass readiness checks and each agent started | Follow the [native invocation procedure](../agents-inference/agents.md#running-one-agent-request) or [interface access procedure](../agents-inference/interfaces.md#reaching-an-agent-interface). Check the reply separately. |
+| Agent configuration changed inside the sandbox | Not reported: Fabric reports no applied configuration | Change the configuration in the deployment and apply, which replaces the sandbox. |
+| Forwarded native service cannot connect | Native service, forwarding, or authentication might be incomplete | Check [gateway and workspace selection](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace), then follow [interface diagnosis](../agents-inference/interfaces.md#diagnosing-failures). Keep local forwarding ports consistent. |
+| Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](../agents-inference/models.md#diagnosing-and-recovering-a-stopped-runtime) and correct capacity or startup conditions before explicit recovery. |
 
 Terminal sandbox apply errors, and plans that replace an exited sandbox, name the sandbox and report the OpenShell phase, OpenShell's reason code, and the main process exit code, or `unknown` when unavailable.
-The gateway's condition message stays private, because it can contain credentials; a reason that isn't shaped like a code also appears as `unknown`.
-`IdentityResolutionFailed` means the workload user or group could not be resolved in the pinned image; check the explicit policy's `process.run_as_user` and `process.run_as_group`.
-`ControlSupervisorStartFailed` means the control supervisor could not start; inspect the sandbox policy and attached providers.
+The gateway's condition message stays private, because it can contain credentials.
+A reason that is not shaped like a code also appears as `unknown`.
+`IdentityResolutionFailed` means the workload user or group could not be resolved in the pinned image.
+Check the explicit policy's `process.run_as_user` and `process.run_as_group`.
+`ControlSupervisorStartFailed` means the control supervisor could not start.
+Inspect the sandbox policy and attached providers.
 These explanations are fixed text, not the gateway's condition message.
 Error, completed, stopped, and deleting phases fail immediately and retain resources.
-For sandbox status conditions, the SDK excludes unrecognized reasons and raw backend condition messages because they may contain credentials.
+For sandbox status conditions, the SDK excludes unrecognized reasons and raw backend condition messages because they can contain credentials.
 Synchronous OpenShell validation rejections for workspace creation, sandbox creation, and provider or provider-profile deletion preserve a sanitized printable-ASCII detail of at most 1024 characters.
-For example, a network endpoint ambiguity can report conflicting `allowed_ips` metadata, identifying a policy/profile address-grant disagreement.
+For example, a network endpoint ambiguity can report conflicting `allowed_ips` metadata, identifying a policy or profile address-grant disagreement.
 Credential-bearing provider creation and update requests, status reads, and exec failures retain category-only diagnostics.
 This rejection reporting applies to Docker, Podman, and cluster gateways.
-Use the OpenShell inspection and log collection procedure below before cleanup.
-If startup requires a different image or policy, change it and apply; that replaces the sandbox, deleting its files ([change paths](../build-deploy/usage.md#choose-the-change-path)).
-A failed first apply can be [destroyed](../build-deploy/usage.md#destroy) when the retained state accounts for its resource identities.
+Use the following OpenShell inspection and log collection procedure before cleanup.
+If startup requires a different image or policy, change it and apply.
+That replaces the sandbox, deleting its files ([change paths](../build-deploy/usage.md#choosing-the-change-path)).
+A failed first apply can be [destroyed](../build-deploy/usage.md#destroying) when the retained state accounts for its resource identities.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
 
-### Continue After `session_recovery_required`
+### Continuing After `session_recovery_required`
 
 An agent that [keeps its state](../build-deploy/state.md#agent-files) keeps one native conversation across its invocations.
-When an invocation doesn't finish, for example because the model timed out, the adapter can't tell what that turn did.
+When an invocation does not finish, for example because the model timed out, the adapter cannot tell what that turn did.
 Every later invocation then returns `result.status: failed` with `result.error.code: session_recovery_required`, even after the model answers again.
 The runtime keeps running, and the agent's native interfaces, such as OpenClaw's Control UI, still answer.
 
 First check what the unfinished turn could have changed, such as workspace files or requests to external services.
-Then send the next request with `acknowledge_recovery`, selecting the gateway and workspace as for [invoking an agent](../agents-inference/interfaces.md#invoke-an-agent):
+Then send the next request with `acknowledge_recovery`, selecting the gateway and workspace as for [invoking an agent](../agents-inference/interfaces.md#invoking-an-agent):
 
 ```sh
 openshell sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent AGENT --runtime-id RUNTIME_ID --request - <<'JSON'
@@ -189,13 +212,14 @@ JSON
 ```
 
 Requests with `--input` work again after that one succeeds.
-NemoClaw can't send the acknowledgment itself ([current limits](../resources/limits.md#agents-and-integrations)).
+NemoClaw cannot send the acknowledgment itself ([current limits](../resources/limits.md#agents-and-integrations)).
 
-## Inspect an OpenShell Sandbox Failure
+## Inspecting an OpenShell Sandbox Failure
 
-Use the original deployment's gateway and workspace, following [interface selection](../agents-inference/interfaces.md#select-the-gateway-and-workspace).
-The temporary directories below are private to the collecting user.
-Raw status and logs may contain credentials or agent content; inspect and redact them before sharing, and remove diagnostic copies when the investigation ends.
+Use the original deployment's gateway and workspace, following [interface selection](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace).
+The following temporary directories are private to the collecting user.
+Raw status and logs can contain credentials or agent content.
+Inspect and redact them before sharing, and remove diagnostic copies when the investigation ends.
 From any directory on the client host, replace `assistant` with the declared sandbox name:
 
 ```sh
@@ -204,7 +228,8 @@ openshell sandbox get assistant -o json > "$diagnostic_dir/sandbox.json"
 ```
 
 Inspect the phase, exit code, and readiness conditions in the result.
-`ControlSupervisorExited` identifies failure of the OpenShell supervisor; it does not establish that the agent or model failed.
+`ControlSupervisorExited` identifies failure of the OpenShell supervisor.
+It does not establish that the agent or model failed.
 Read the condition message privately: it can include backend log excerpts and values excluded from NemoClaw's diagnostics.
 A successful earlier apply establishes readiness at that time, not continuous health or a successful model response.
 An unsupported Fabric health check provides no health assurance.
@@ -219,7 +244,8 @@ docker --host "$model_engine" logs --timestamps --since 1h "$OPENSHELL_WORKSPACE
 ```
 
 Use the deployment's actual engine socket and a time range covering the failure.
-For a remote engine, collect on that host; for an external gateway or another driver, ask its operator for the matching logs.
+For a remote engine, collect on that host.
+For an external gateway or another driver, ask its operator for the matching logs.
 The Docker listing includes stopped containers.
 Copy the exact sandbox or supervisor container name from it to collect that component's output:
 
@@ -228,15 +254,17 @@ sandbox_container=REPLACE_WITH_CONTAINER_NAME
 docker --host "$model_engine" logs --timestamps --since 1h "$sandbox_container" > "$engine_diagnostic_dir/component.log" 2>&1
 ```
 
-OpenShell can remove the supervisor container after failure; the gateway may retain a tail of its logs.
+OpenShell can remove the supervisor container after failure.
+The gateway can retain a tail of its logs.
 For a controlled reproduction, start `docker logs --follow` collection while the supervisor exists so its full output survives container removal.
 Keep the YAML, bundle, state directory, and sandbox files until the cause and recovery path are understood.
 NemoClaw does not reconnect OpenShell's internal transport or automatically replace the failed sandbox.
 
-## Read Native Service Logs
+## Reading Native Service Logs
 
-For a reachable sandbox, [select its gateway and workspace](../agents-inference/interfaces.md#select-the-gateway-and-workspace) on the client host.
-Logs can contain prompts, responses, and native errors that have not passed through the SDK's secret redaction; inspect them privately before sharing excerpts.
+For a reachable sandbox, [select its gateway and workspace](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace) on the client host.
+Logs can contain prompts, responses, and native errors that have not passed through the SDK's secret redaction.
+Inspect them privately before sharing excerpts.
 
 Three sources cover most failures:
 
@@ -252,10 +280,10 @@ Three sources cover most failures:
   openshell sandbox exec -n assistant --no-tty -- tail -n 100 REPLACE_WITH_ARTIFACT_PATH
   ```
 
-- **Fabric's own message** about a failed start or other runtime operation is in the state directory's `diagnostics/fabric-SANDBOX.json`, which the apply error names; see [failure messages](#identify-the-failure).
+- **Fabric's own message** about a failed start or other runtime operation is in the state directory's `diagnostics/fabric-SANDBOX.json`, which the apply error names. Refer to [failure messages](#identifying-the-failure).
 
 The selected Fabric adapter owns where its harness writes anything else.
-Use the original apply error and the [failure table](#identify-the-failure) to choose recovery.
+Use the original apply error and the [failure table](#identifying-the-failure) to choose recovery.
 Do not replay an uncertain native invocation merely to reproduce a log entry.
 
 ## Traces and Web Search
@@ -263,4 +291,5 @@ Do not replay an uncertain native invocation merely to reproduce a log entry.
 [Hermes Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) and [web search](../agents-inference/agents.md#web-search) have their own configuration and verification limits.
 Configuration readiness does not prove collector delivery, a valid Brave credential, or available quota.
 
-These pages don't cover troubleshooting a production collector; testing hosted search live is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
+These pages do not cover troubleshooting a production collector.
+Testing hosted search live is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).

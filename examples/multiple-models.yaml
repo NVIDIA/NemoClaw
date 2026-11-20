@@ -36,7 +36,7 @@ spec:
   sandboxes:
     researcher:
       image:
-        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#build-agent-images.
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#building-agent-images.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harnessRef: assistant
       agent:
@@ -44,7 +44,7 @@ spec:
         inferenceRef: smart-and-fast
     writer:
       image:
-        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#build-agent-images.
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#building-agent-images.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harnessRef: assistant
       agent:
