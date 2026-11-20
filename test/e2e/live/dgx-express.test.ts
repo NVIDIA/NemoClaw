@@ -24,6 +24,7 @@ import { type CommandExitResult, resultText } from "../fixtures/clients/command.
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertLocalDockerEnvironment,
@@ -141,18 +142,6 @@ function capturedVllmContainerId(result: CommandExitResult): string | null {
       ? (JSON.parse(result.stdout) as VllmContainerInspection[])
       : ([] as VllmContainerInspection[]);
   return candidate && /^[a-f0-9]{64}$/u.test(candidate.Id) ? candidate.Id : null;
-}
-
-async function assertVllmContainerAbsent(host: HostCliClient): Promise<void> {
-  const result = await host.command("docker", ["inspect", VLLM_CONTAINER], {
-    artifactName: "preflight-spark-express-vllm-container",
-    env: e2eEnv(),
-    timeoutMs: 30_000,
-  });
-  expect(
-    classifyDockerContainerInspection(result),
-    `Refusing to replace a pre-existing ${VLLM_CONTAINER} container.\n${resultText(result)}`,
-  ).toBe("absent");
 }
 
 async function assertSandboxAbsent(host: HostCliClient, sandboxName: string): Promise<void> {
@@ -372,7 +361,15 @@ test.for([
         ? removeExactSandbox(host, sandbox, SANDBOX_NAME, createdSandboxId)
         : Promise.resolve(),
     );
-    await assertVllmContainerAbsent(host);
+    const existingContainer = await host.command("docker", ["inspect", VLLM_CONTAINER], {
+      artifactName: "preflight-spark-express-vllm-container",
+      env: e2eEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(
+      classifyDockerContainerInspection(existingContainer),
+      `Refusing to replace a pre-existing ${VLLM_CONTAINER} container.\n${resultText(existingContainer)}`,
+    ).toBe("absent");
     await assertSandboxAbsent(host, SANDBOX_NAME);
 
     progress.phase("install the selected Spark vLLM profile");
@@ -428,12 +425,18 @@ test.for([
       ? captureOnboardFailureDiagnostics(host, SANDBOX_NAME)
       : Promise.resolve());
 
-    progress.phase("verify selected vLLM runtime configuration");
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
     expect(
       createdSandboxId,
       "onboarding did not create the expected sandbox identity",
     ).not.toBeNull();
+    assertStockManagedImageReceipt({
+      environment: installEnv,
+      expectedAgent: "openclaw",
+      sandboxName: SANDBOX_NAME,
+    });
+
+    progress.phase("verify selected vLLM runtime configuration");
     expect(inspectionResult.exitCode, resultText(inspectionResult)).toBe(0);
     const [inspection] = JSON.parse(inspectionResult.stdout) as VllmContainerInspection[];
     expect(inspection.Id).toBe(createdContainerId);
