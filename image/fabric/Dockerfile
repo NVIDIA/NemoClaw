@@ -61,6 +61,7 @@ COPY --from=sources /fabric.tar.gz /sources/fabric.tar.gz
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /src/fabric /wheels \
+    && install -m 0644 "$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html" /sources/rust-COPYRIGHT-library.html \
     && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1
 # Retain Cargo's exact locked source closure beside the original Fabric archive.
 # The relative vendor configuration also makes the native wheel use those files.
@@ -99,7 +100,7 @@ FROM base AS runtime-base
 COPY --from=harness-wheels /opt/fabric /opt/fabric
 COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.txt
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
-COPY --from=harness-wheels --chmod=0644 /sources/fabric-vendor.tar.gz /opt/nemoclaw/source/
+COPY --from=harness-wheels --chmod=0644 /sources/fabric-vendor.tar.gz /sources/rust-COPYRIGHT-library.html /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
 COPY image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
@@ -116,9 +117,34 @@ RUN test -n "$ADAPTER_ID" \
     && printf '{"%s": {"files": [], "binaries": []}}\n' "$ADAPTER_ID" > /opt/nemoclaw/adapters.json
 USER node
 
+FROM base AS codex-sources
+ARG TARGETARCH
+COPY --from=sources /codex-source.tar.gz /codex-libcap-source.tar.xz /sources/
+COPY --from=sources /codex-rust-notices.tar.xz /codex-rg-arm64-rust-notices.tar.xz /codex-rg-amd64-rust-notices.tar.xz /tmp/
+# Extract notices only; the compiler distributions stay in this build stage.
+RUN python3 - <<'PY'
+import os
+import tarfile
+from pathlib import Path
+
+rg_version = {"arm64": "1.97.0", "amd64": "nightly"}[os.environ["TARGETARCH"]]
+inputs = [
+    ("/sources/codex-source.tar.gz", "codex-6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/vendor/bubblewrap/COPYING", "codex-bubblewrap-COPYING"),
+    ("/sources/codex-libcap-source.tar.xz", "libcap-2.75/License", "codex-libcap-License"),
+    ("/tmp/codex-rust-notices.tar.xz", "rustc-1.95.0-x86_64-unknown-linux-gnu/rustc/share/doc/rust/COPYRIGHT-library.html", "codex-rust-COPYRIGHT-library.html"),
+    (f"/tmp/codex-rg-{os.environ['TARGETARCH']}-rust-notices.tar.xz", f"rustc-{rg_version}-x86_64-unknown-linux-gnu/rustc/share/doc/rust/COPYRIGHT-library.html", "codex-rg-rust-COPYRIGHT-library.html"),
+]
+for archive, member, output in inputs:
+    with tarfile.open(archive) as source:
+        Path("/sources", output).write_bytes(source.extractfile(member).read())
+PY
+
 FROM generic AS codex
 # The locked Codex wheels omit these project-specific license and notice files.
 COPY --from=sources --chmod=0644 /codex-LICENSE /codex-NOTICE /opt/nemoclaw/source/
+COPY --from=sources --chmod=0644 /codex-rg-LICENSE-MIT /codex-zsh-LICENCE /opt/nemoclaw/source/
+COPY --from=codex-sources --chmod=0644 /sources/codex-source.tar.gz /sources/codex-libcap-source.tar.xz /sources/codex-bubblewrap-COPYING /sources/codex-libcap-License /sources/codex-rust-COPYRIGHT-library.html /sources/codex-rg-rust-COPYRIGHT-library.html /opt/nemoclaw/source/
+COPY image/fabric/CODEX-SOURCES.md /opt/nemoclaw/source/codex/README.md
 
 FROM generic AS deepagents
 # These exact release notices supplement Fabric's attribution placeholders.
@@ -183,6 +209,8 @@ RUN case "$TARGETARCH" in amd64|arm64) ;; *) exit 1 ;; esac \
 FROM interactive AS hermes
 COPY --from=sources --chmod=0644 /anydoc-LICENSE /xterm-LICENSE /jetbrains-mono-OFL.txt /opt/nemoclaw/source/
 COPY image/fabric/hermes-NOTICES.md /opt/nemoclaw/source/hermes/
+COPY --from=sources --chmod=0644 /hermes-pillow-heif-source.tar.gz /hermes-libheif-source.tar.gz /hermes-libde265-source.tar.gz /hermes-x265-source.tar.gz /opt/nemoclaw/source/hermes/
+COPY image/fabric/HERMES-SOURCES.md /opt/nemoclaw/source/hermes/README.md
 COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
 COPY --from=switchyard-assets /opt/nemo-relay /opt/nemo-relay

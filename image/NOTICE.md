@@ -10,6 +10,7 @@ NemoClaw doesn't patch the Fabric runtime or its adapter implementations.
 Upstream notices remain in installed wheels and the retained source archive under `/opt/nemoclaw/source/`.
 `fabric-vendor.tar.gz` retains Fabric's locked Cargo dependency sources and their original notices beside `fabric.tar.gz`.
 The native Python wheel compiles with Cargo offline against that vendor tree.
+`rust-COPYRIGHT-library.html` retains the standard-library notices from the Rust toolchain that compiles the wheel.
 Refer to [Retained Rust Sources](SOURCES.md), retained at `/opt/nemoclaw/source/local/SOURCES.md`, for extraction and rebuild instructions.
 See [Fabric's license](fabric/FABRIC-LICENSE) and the notices beside its adapter sources.
 
@@ -30,6 +31,7 @@ Bun's image omits Bun's license, so the OpenCode image retains it at `/opt/nemoc
 The Claude image installs claude-agent-sdk, whose wheels bundle the Claude Code CLI; Claude Code is Anthropic's proprietary software under [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance), not the SDK's MIT license.
 
 The Codex image retains `codex-LICENSE` and `codex-NOTICE` from Codex 0.154.0, including its Ratatui attribution, under `/opt/nemoclaw/source/`.
+[Codex Sources and Notices](fabric/CODEX-SOURCES.md) describes its retained source, Bubblewrap license, ripgrep/Zsh notices, and matching Rust standard-library notices.
 The Deep Agents image retains `langsmith-LICENSE` from LangSmith 0.11.1 and `sqlite-vec-LICENSE-MIT` from sqlite-vec 0.1.9 there; sqlite-vec offers MIT as a license choice.
 The Hermes image retains `anydoc-LICENSE` from firecrawl-anydoc 0.2.4, including the Sideguide Technologies copyright notice, and `xterm-LICENSE` from the dashboard's xterm.js 6.0.0 there.
 It also retains `jetbrains-mono-OFL.txt` for the three JetBrains Mono terminal webfonts, matched to their upstream source revision by file hash.

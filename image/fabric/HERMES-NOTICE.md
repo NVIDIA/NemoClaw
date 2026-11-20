@@ -16,4 +16,5 @@ Its Regular, Bold, and Italic webfonts match the three shipped `fonts-terminal` 
 `/opt/nemoclaw/source/hermes/hermes-NOTICES.md` retains frontend dependency license and notice texts.
 The TUI's `entry.js` also retains its inline bundled-license comments.
 Unresolved upstream notices and font redistribution coverage are tracked in [#14719](https://github.com/NVIDIA/NemoClaw/issues/14719).
+[Hermes Native Image Library Sources](HERMES-SOURCES.md) describes the retained Pillow-HEIF, libheif, libde265, and x265 sources and rebuild instructions.
 NemoClaw installs the source and these builds unmodified.
