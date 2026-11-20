@@ -59,10 +59,7 @@ import {
   requireMcpBridgeTlsCaCert,
 } from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
-import {
-  addDistinctCredentialMcpEndpoint,
-  assertSharedHostMcpComposition,
-} from "./mcp-bridge-shared-host.ts";
+import { assertSharedHostMcpComposition } from "./mcp-bridge-shared-host.ts";
 import {
   DEEPAGENTS_MCP_DENIED_TOOL_PROBE,
   HERMES_MCP_ENV_LOAD_COMMANDS,
@@ -627,22 +624,15 @@ async function replaceBridgeCredentialConservatively(
   host: HostCliClient,
   sandbox: SandboxClient,
   fakeMcp: Awaited<ReturnType<typeof startFakeMcpHttpsServer>>,
-  adapter: McpAdapter,
-  sandboxName: string,
-  mcpUrl: string,
+  options: {
+    agent: McpAgent;
+    artifactPrefix: string;
+    sandboxName: string;
+    mcpUrl: string;
+  },
 ): Promise<void> {
-  const artifactPrefix =
-    adapter === "openclaw-config"
-      ? "openclaw"
-      : adapter === "hermes-config"
-        ? "hermes"
-        : "deepagents";
-  const agent: McpAgent =
-    adapter === "openclaw-config"
-      ? "openclaw"
-      : adapter === "hermes-config"
-        ? "hermes"
-        : "langchain-deepagents-code";
+  const { agent, artifactPrefix, sandboxName, mcpUrl } = options;
+  const adapter = loadAgent(agent).mcpCapability.adapter!;
   const providerName = `${sandboxName}-mcp-${SERVER_NAME}`;
   const bridge = { sandboxName, mcpUrl, artifactPrefix };
   const restart = await host.nemoclaw([sandboxName, "mcp", "restart", SERVER_NAME], {
@@ -826,15 +816,30 @@ test(
     expect(aliasState.policyAbsent).toBe(true);
     expect(aliasState.adapterAbsent).toBe(true);
     // Exercise both native adapters with both credentials and policy entries present.
-    const { endpoint: distinctMcp, tunnel: distinctTunnel } =
-      await addDistinctCredentialMcpEndpoint({
-        host,
-        sandbox,
-        cleanup,
-        progress,
-        sandboxName: OPENCLAW_SANDBOX_NAME,
-        serverOptions: { ...MCP_SERVER_OPTIONS, secret: ROTATED_HOST_SECRET },
-      });
+    const distinctMcp = await startFakeMcpHttpsServer({
+      ...MCP_SERVER_OPTIONS,
+      secret: ROTATED_HOST_SECRET,
+    });
+    cleanup.add("stop distinct MCP HTTPS server", () => distinctMcp.close());
+    const distinctTunnel = await startPublicMcpHttpsTunnel({
+      cleanup,
+      label: "distinct credential MCP HTTPS server",
+      progress,
+      server: distinctMcp,
+    });
+    cleanup.add("remove distinct credential bridge", () =>
+      cleanupMcpBridge(host, OPENCLAW_SANDBOX_NAME, "distinct", "openclaw-config"),
+    );
+    await addBridgeAndReadStatus(host, sandbox, {
+      sandboxName: OPENCLAW_SANDBOX_NAME,
+      mcpUrl: distinctTunnel.url,
+      expectedAdapter: "openclaw-config",
+      serverName: "distinct",
+      credentialEnvName: "DISTINCT_MCP_SECRET",
+      credential: ROTATED_HOST_SECRET,
+      artifactPrefix: "openclaw-distinct",
+      applyHostPolicyEdit: false,
+    });
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
       resultToken: MCP_RESULT,
@@ -1002,14 +1007,7 @@ test(
     expect(updateProof.lastCall).toMatchObject({
       auth: `Bearer ${HOST_SECRET}`,
     });
-    await replaceBridgeCredentialConservatively(
-      host,
-      sandbox,
-      fakeMcp,
-      "openclaw-config",
-      OPENCLAW_SANDBOX_NAME,
-      mcpUrl,
-    );
+    await replaceBridgeCredentialConservatively(host, sandbox, fakeMcp, bridge);
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
       resultToken: MCP_RESULT,
@@ -1216,14 +1214,7 @@ mcpBridgeShardTest("hermes")(
     await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await assertHermesToolCall("hermes-real-mcp-tool-call-after-rediscovery-restart");
     await assertAuthenticatedMcpRediscovery(survivingMcp, survivingDiscoveryOffset);
-    await replaceBridgeCredentialConservatively(
-      host,
-      sandbox,
-      fakeMcp,
-      "hermes-config",
-      HERMES_SANDBOX_NAME,
-      mcpUrl,
-    );
+    await replaceBridgeCredentialConservatively(host, sandbox, fakeMcp, bridge);
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
       resultToken: MCP_RESULT,
@@ -1419,14 +1410,7 @@ mcpBridgeShardTest("deepagents")(
       deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
     });
     await exactMainProof.assertSnapshotResidue("after-restart-tool-call");
-    await replaceBridgeCredentialConservatively(
-      host,
-      sandbox,
-      fakeMcp,
-      "deepagents-config",
-      sandboxName,
-      mcpUrl,
-    );
+    await replaceBridgeCredentialConservatively(host, sandbox, fakeMcp, bridge);
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
       resultToken: MCP_RESULT,

@@ -294,37 +294,3 @@ export async function assertSharedHostMcpComposition(options: {
     );
   }
 }
-
-/** Keep the existing different-host credential case beside the same-host composition case. */
-export async function addDistinctCredentialMcpEndpoint(options: {
-  host: HostCliClient;
-  sandbox: SandboxClient;
-  cleanup: CleanupRegistry;
-  progress: TestProgress;
-  sandboxName: string;
-  serverOptions: Parameters<typeof startFakeMcpHttpsServer>[0];
-}) {
-  const { host, sandbox, cleanup, progress, sandboxName, serverOptions } = options;
-  const endpoint = await startFakeMcpHttpsServer(serverOptions);
-  cleanup.add("stop distinct MCP HTTPS server", () => endpoint.close());
-  const tunnel = await startPublicMcpHttpsTunnel({
-    cleanup,
-    label: "distinct credential MCP HTTPS server",
-    progress,
-    server: endpoint,
-  });
-  cleanup.add("remove distinct credential bridge", () =>
-    cleanupMcpBridge(host, sandboxName, "distinct", "openclaw-config"),
-  );
-  await addBridgeAndReadStatus(host, sandbox, {
-    sandboxName,
-    mcpUrl: tunnel.url,
-    expectedAdapter: "openclaw-config",
-    serverName: "distinct",
-    credentialEnvName: "DISTINCT_MCP_SECRET",
-    credential: serverOptions.secret,
-    artifactPrefix: "openclaw-distinct",
-    applyHostPolicyEdit: false,
-  });
-  return { endpoint, tunnel };
-}
