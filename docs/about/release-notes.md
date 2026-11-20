@@ -97,7 +97,7 @@ Recovery:
 
 - After OpenShell rejects a sandbox create as an invalid argument, such as a network policy key with the reserved `_provider_` prefix, a corrected apply or destroy proceeds, instead of failing on an unfinished creation.
   See [recovering an interrupted operation](../build-deploy/usage.md#recovering-an-interrupted-operation) ([#14654](https://github.com/NVIDIA/NemoClaw/issues/14654)).
-- When an operation runs out of disk space, the error names where: the Docker root of the engine that pulls an image or runs a container, a model service's volume, or the deployment state directory with the space it has free.
+- When an operation runs out of disk space, the error names where: the Docker root of the engine that pulls an image or runs a container, a model service's volume, or the deployment state directory with the space it has free when the host reports it.
   It also says what the failure kept and how to retry safely, such as freeing the Docker root without removing the volumes that hold deployments' data, or restoring `errored.tfstate` before anything else when OpenTofu kept the state it couldn't save in that file.
   See [troubleshooting](../observability/troubleshooting.md#identifying-the-failure) ([#14692](https://github.com/NVIDIA/NemoClaw/issues/14692)).
 

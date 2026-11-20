@@ -128,6 +128,7 @@ The following data and cleanup limits apply:
 | Native conversation continuity across runtime replacement. | [Per-harness limits](../build-deploy/state.md#choosing-what-to-retain-for-each-harness), which depend on Fabric and the selected harness | [`cb8ef25`][v1-cb8ef25]: docs |
 | Durable data for generic application containers: their writable volume is disposable, and replacement or destroy can lose it. This differs from caller-supplied volumes mounted in an agent sandbox. | By design: [application storage](../build-deploy/container-services.md#deciding-whether-the-image-fits) | [`e7e1857`][v1-e7e1857]: docs |
 | Moving data from the earlier product to Agent Configs and back. | No NemoClaw procedure: native data belongs to the harness, and moving its storage belongs to the platform ([migration](../get-started/migration.md)) | [`cb8ef25`][v1-cb8ef25]: docs |
+| Restoring `errored.tfstate` after OpenTofu couldn't save a deployment's state, as [an out-of-space error](../observability/troubleshooting.md#identifying-the-failure) can report: NemoClaw doesn't run the restore command that OpenTofu's message gives, and no test restores the file in a deployment's state directory. | No open issue | [`1636069`][v1-1636069]: code, docs |
 | Keeping a sandbox across a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: after the gateway runs again, the sandbox refuses the supervisor that OpenShell starts for it and goes to `Error` with `StartFailed`, and the next apply replaces it, which deletes its files outside mounted volumes and its conversation history. A graceful restart, such as `docker restart`, keeps the sandbox. | [#13953](https://github.com/NVIDIA/NemoClaw/issues/13953), [NVIDIA/OpenShell#4910](https://github.com/NVIDIA/OpenShell/issues/4910) | [`291723b`][v1-291723b]: issue, plus a DGX Spark run where 9 of 9 SIGKILLed gateways lost their Hermes sandbox and 12 of 12 graceful restarts kept it |
 
 ## Security
@@ -178,3 +179,4 @@ Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#is
 [v1-ffe5406]: https://github.com/NVIDIA/NemoClaw/tree/ffe5406498c6a27c068ad52a56ddcfb1cb37b904
 [v1-e7e1857]: https://github.com/NVIDIA/NemoClaw/tree/e7e1857514f4bed9269eeaf6786bcdb2d6d0ade3
 [v1-43c9dc9]: https://github.com/NVIDIA/NemoClaw/tree/43c9dc9cea1dea3bd59057fd18d96ed799475e9c
+[v1-1636069]: https://github.com/NVIDIA/NemoClaw/tree/1636069b91f402242a35714fde1011042c3f1f70
