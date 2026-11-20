@@ -62,6 +62,15 @@ describe("stopAll with sandbox channels", () => {
     expect(logSpy.mock.calls.map((call) => call[0]).join("\n")).toContain("All services stopped");
   });
 
+  it("leaves the in-sandbox gateway running when stopSandboxGateway is false (#14321)", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    stopAllWithoutOllama({ pidDir, sandboxName: "test-sb", stopSandboxGateway: false });
+
+    expect(stopSandboxChannels).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.map((call) => call[0]).join("\n")).toContain("All services stopped");
+  });
+
   it("uses the runtime provider's channel-stop transport", () => {
     stopAllWithoutOllama({
       channelStopTransport: "openshell",
