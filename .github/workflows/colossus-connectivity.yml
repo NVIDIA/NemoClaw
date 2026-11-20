@@ -1,9 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Register the v1 SSH smoke test (PR #14244) in GitHub's Actions UI.
-# GitHub requires this workflow path on the default branch for manual dispatch.
-# The executable implementation uses the same path on v1; main remains inert.
-name: E2E / SSH connectivity registration
+# Temporary branch-only diagnostic; do not merge this over the SSH workflow.
+name: Signing / Hosted runner connectivity probe
 
 on:
   workflow_dispatch:
@@ -11,10 +9,74 @@ on:
 permissions: {}
 
 jobs:
-  registration:
-    name: Registration only (no SSH check)
-    if: ${{ false }}
+  connectivity:
+    name: Probe DNS, TLS, and HTTP without credentials
     runs-on: ubuntu-24.04
-    timeout-minutes: 1
+    timeout-minutes: 5
     steps:
-      - run: 'true'
+      - name: Probe the signing service endpoints
+        shell: python
+        run: |
+          import http.client
+          import json
+          import os
+          import socket
+          import ssl
+          from urllib.parse import urlsplit
+
+          endpoints = [
+              ("GitHub control", "https://api.github.com/"),
+              ("Vault internal", "https://prod.internal.vault.nvidia.com/v1/sys/health"),
+              ("Vault documented public hostname", "https://prod.vault.nvidia.com/v1/sys/health"),
+              ("3S production", "https://3s.nvidia.com/"),
+          ]
+          results = []
+          for label, url in endpoints:
+              parsed = urlsplit(url)
+              result = {"endpoint": label, "dns": "not tested", "tcp": "not tested",
+                        "tls": "not tested", "http": None}
+              stage = "dns"
+              raw = None
+              secured = None
+              connection = None
+              try:
+                  addresses = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
+                  result["dns"] = "resolved"
+                  stage = "tcp"
+                  # Use the first IPv4 address, matching ordinary hosted-runner egress.
+                  address = next(entry for entry in addresses if entry[0] == socket.AF_INET)
+                  raw = socket.socket(address[0], address[1], address[2])
+                  raw.settimeout(12)
+                  raw.connect(address[4])
+                  result["tcp"] = "connected"
+                  stage = "tls"
+                  secured = ssl.create_default_context().wrap_socket(raw, server_hostname=parsed.hostname)
+                  result["tls"] = "verified"
+                  stage = "http"
+                  connection = http.client.HTTPSConnection(parsed.hostname, timeout=12)
+                  connection.sock = secured
+                  connection.request("GET", parsed.path or "/", headers={"User-Agent": "NemoClaw-connectivity-probe"})
+                  response = connection.getresponse()
+                  result["http"] = response.status
+                  # Never read or log response bodies, headers, cookies, or certificates.
+              except Exception as error:
+                  result[stage] = "failed: " + type(error).__name__
+              finally:
+                  if connection is not None:
+                      connection.close()
+                  if secured is not None:
+                      secured.close()
+                  if raw is not None:
+                      raw.close()
+              results.append(result)
+              print(json.dumps(result), flush=True)
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Hosted Ubuntu connectivity without credentials\n\n")
+              summary.write("| Endpoint | DNS | TCP | TLS | HTTP |\n|---|---|---|---|---|\n")
+              for result in results:
+                  summary.write("| {endpoint} | {dns} | {tcp} | {tls} | {http} |\n".format(**result))
+              summary.write("\nAny HTTP status proves an HTTPS response, not successful authentication or signing.\n")
+              summary.write("No Vault, SSA, or Apple credentials and no GitHub OIDC token were requested.\n")
+          if results[0]["http"] is None:
+              raise SystemExit("The GitHub control request failed; service results need investigation.")
