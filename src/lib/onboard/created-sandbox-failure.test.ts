@@ -397,6 +397,13 @@ describe("unconfirmed create reporting (#14323)", () => {
     expect(tail).not.toContain("nvapi-abcdefghijklmnopqrstuvwxyz0123456789");
   });
 
+  it("removes terminal controls before redacting split credential names", () => {
+    const output =
+      "\u001b[31mpass\u001b[0mphrase=opaquePhraseValue\r\n" +
+      "\u001b]52;c;Y2xpcGJvYXJkLWNhbmFyeQ==\u0007safe diagnostic\u0008\u0000";
+    expect(formatCreateOutputTail(output)).toBe("passphrase=<REDACTED>\nsafe diagnostic");
+  });
+
   it("returns null for empty create output", () => {
     expect(formatCreateOutputTail("")).toBeNull();
     expect(formatCreateOutputTail("  \n \n")).toBeNull();

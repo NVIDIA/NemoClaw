@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { stripVTControlCharacters } from "node:util";
+
 import { redact, redactFullWithUrls } from "../security/redact";
 import type { CreateOpenShellSandboxRequest } from "../adapters/openshell/sandbox-lifecycle";
 import { cliName } from "./branding";
@@ -42,7 +44,11 @@ const CREATE_OUTPUT_TAIL_LINES = 12;
  */
 export function formatCreateOutputTail(output: string | null | undefined): string | null {
   if (!output) return null;
-  const lines = redactFullWithUrls(output)
+  // Normalize display controls before redaction so they cannot split credential names.
+  const visibleOutput = stripVTControlCharacters(output)
+    .replace(/\r\n?/gu, "\n")
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu, "");
+  const lines = redactFullWithUrls(visibleOutput)
     .split(/\r?\n/u)
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0);

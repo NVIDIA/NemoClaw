@@ -340,13 +340,18 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
 
   it("persists recovery when an ambiguous create submission has no settled identity", async () => {
     let nonce = "";
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const createOutput =
+      "discard this line\n" +
+      "old line\n".repeat(15) +
+      "passphrase=opaquePhraseValue\n\u001b]52;c;Y2xpcGJvYXJk\u0007final safe diagnostic";
     const input = createVerifiedNoGpuInput();
     const deps = createDeps();
     deps.createSandbox = vi.fn(async (request) => {
       nonce = request.labels?.[NEMOCLAW_CREATE_ATTEMPT_LABEL] ?? "";
       return {
         status: 1,
-        output: "OpenShell create handoff was interrupted.",
+        output: createOutput,
         sawProgress: false,
         ambiguous: true,
         diagnostic: "OpenShell create handoff was interrupted.",
@@ -366,6 +371,12 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       expect.stringContaining(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`),
       undefined,
       nonce,
+    );
+    const printed = errorSpy.mock.calls.flat().join("\n");
+    expect(printed).toContain("Last OpenShell create output:");
+    expect(printed).toContain("passphrase=<REDACTED>\n    final safe diagnostic");
+    expect(printed).not.toMatch(
+      /opaquePhraseValue|Y2xpcGJvYXJk|discard this line|[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u,
     );
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
     expect(deps.createSandbox).toHaveBeenCalledOnce();
