@@ -1,9 +1,9 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Release Notes
+# Development Notes
 
-These notes describe the v1 development documentation and its release boundaries.
+These notes track changes between release candidates for NemoClaw 0.1.0. For the v1 release history, refer to the [release notes](../changelog/overview.md).
 As of this documentation revision, v1 has no published release.
 The release records list draft release candidates, not a published final release.
 Issue [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) tracks the first one.
