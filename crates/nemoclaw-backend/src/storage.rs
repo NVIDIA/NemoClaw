@@ -57,6 +57,10 @@ pub enum Kept {
     UnsavedState,
 }
 
+/// Volumes that a sandbox mounts can come from the platform, without
+/// NemoClaw's label.
+const KEEP_VOLUMES: &str = "without removing volumes, because those labeled nemoclaw.nvidia.com/uid and any volume a sandbox mounts hold deployments' data";
+
 impl fmt::Display for OutOfSpace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.writer {
@@ -88,10 +92,11 @@ impl fmt::Display for OutOfSpace {
         match (&self.target, self.kept) {
             (StorageTarget::DockerRoot { engine }, _) => write!(
                 f,
-                "; free space there, keeping the volumes labeled nemoclaw.nvidia.com/uid, which hold deployments' data, then run the command again; `docker --host {engine} system df` shows what uses it"
+                "; free space there {KEEP_VOLUMES}, then run the command again; `docker --host {engine} system df` shows what uses it"
             )?,
-            (StorageTarget::Volume { .. }, _) => f.write_str(
-                "; free space in the engine's Docker root, where the local driver keeps the volume, without removing the volume, then run the command again",
+            (StorageTarget::Volume { .. }, _) => write!(
+                f,
+                "; free space in the engine's Docker root, where the local driver keeps the volume, {KEEP_VOLUMES}, then run the command again",
             )?,
             (StorageTarget::DeploymentState { .. }, Kept::ErroredState) => f.write_str(
                 "; free space there, then restore errored.tfstate as OpenTofu's message below says before any other operation, because another apply first would fork the state",

@@ -18,6 +18,7 @@ They are implementation details for identifying retained state, not a manual edi
 | `intent.json` | Desired document, ownership generations, digest, and operation progress |
 | `deployment.lock` | Excludes concurrent NemoClaw operations on this state directory |
 | `terraform.tfstate` | OpenTofu resource state and durable bindings |
+| `errored.tfstate` | State that OpenTofu couldn't save to `terraform.tfstate`, present only after that failure; keep it until it is restored |
 | `main.tf.json`, `providers.tfrc` | SDK-generated graph and provider configuration |
 | `helm-recovery.json` | Private checkpoint for a bound Helm release during destroy; keep it with the OpenTofu state until recovery or removal completes |
 | `kubernetes/` | Managed Kubernetes ownership receipt, development issuer key material, and gateway client credentials |

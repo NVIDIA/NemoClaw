@@ -440,34 +440,25 @@ impl Deployment {
                 cancel,
             )
             .await;
-        let mutations_settled = applied.is_ok();
-        if !mutations_settled {
+        if let Err(error) = applied {
             let (started, unreported) = &mut *started.lock().expect("started creations");
             // A create the provider reports as having made nothing lost no ID,
             // so it is forgotten like one that never started.
-            if let Err(Error::Execution {
+            if let Error::Execution {
                 uncreated: Some(uncreated),
                 ..
-            }) = &applied
+            } = &error
             {
                 started.retain(|address| !uncreated.contains(address));
             }
-            if !*unreported {
+            let saved = if *unreported {
+                Ok(())
+            } else {
                 record.forget_unstarted_creations(&earlier, started);
-                // When the apply ran out of space too, its error says how to
-                // recover, and the record saved before it still lists these
-                // creations as pending.
-                if let Err(error) = store.save(&record)
-                    && !matches!(
-                        (&error, &applied),
-                        (Error::OutOfSpace(_), Err(Error::OutOfSpace(_)))
-                    )
-                {
-                    return Err(error);
-                }
-            }
+                store.save(&record)
+            };
+            return Err(failed_apply_error(error, saved));
         }
-        applied?;
         record.finish_apply();
         record.mark_succeeded();
         store.save(&record)?;
@@ -522,6 +513,23 @@ impl Deployment {
         preview: bool,
     ) -> Result<OperationResult, Error> {
         self.teardown_deployment(cancel, preview).await
+    }
+}
+/// The error for an apply that failed with `applied`, given the save of its
+/// record that followed: the save's error, unless both ran out of space. Then
+/// the apply's error says how to recover, and the record saved before the
+/// apply still lists its creations as pending.
+fn failed_apply_error(applied: Error, saved: Result<(), Error>) -> Error {
+    match saved {
+        Err(saved)
+            if !matches!(
+                (&saved, &applied),
+                (Error::OutOfSpace(_), Error::OutOfSpace(_))
+            ) =>
+        {
+            saved
+        }
+        _ => applied,
     }
 }
 /// How to reach each sandbox's enabled interfaces, with the runtime IDs the

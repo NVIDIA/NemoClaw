@@ -919,7 +919,7 @@ async fn an_apply_out_of_space_names_the_storage_and_what_was_kept() {
     for expected in [
         format!("OpenTofu apply of {image} ran out of space in the Docker root of engine {ENGINE}"),
         format!("`docker --host {ENGINE} system df`"),
-        "nemoclaw.nvidia.com/uid".into(),
+        "; free space there without removing volumes, because those labeled nemoclaw.nvidia.com/uid and any volume a sandbox mounts hold deployments' data, then run the command again;".into(),
         "; resources retained\n".into(),
         "failed to register layer".into(),
     ] {
@@ -947,7 +947,7 @@ async fn an_apply_out_of_space_names_the_storage_and_what_was_kept() {
         format!(
             "OpenTofu apply of {readiness} ran out of space in volume {volume} on engine {ENGINE}"
         ),
-        "without removing the volume".into(),
+        "; free space in the engine's Docker root, where the local driver keeps the volume, without removing volumes, because those labeled nemoclaw.nvidia.com/uid and any volume a sandbox mounts hold deployments' data, then run the command again".into(),
         "the volume keeps what was written to it; resources retained\n".into(),
     ] {
         assert!(
@@ -1010,6 +1010,45 @@ async fn an_apply_out_of_space_names_the_storage_and_what_was_kept() {
     }
 }
 
+/// An init that runs out of space installing the bundle's providers, which
+/// OpenTofu reports on its standard error, names the deployment state
+/// directory that OpenTofu installs them in and keeps the state.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_init_out_of_space_names_the_state_directory() {
+    let bundle_directory = tempfile::tempdir().unwrap();
+    let bundle = fixture_bundle(bundle_directory.path());
+    fs::create_dir_all(bundle.tofu().parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("/bin/sh", bundle.tofu()).unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let store = Store::open(state.path()).unwrap();
+    let (_, graph) = spark();
+    fs::write(
+        state.path().join("init"),
+        "echo 'Error: Failed to install provider' >&2\n\
+         echo 'Error while installing kreuzwerker/docker: write .terraform/providers/terraform-provider-docker: no space left on device' >&2\n\
+         exit 1\n",
+    )
+    .unwrap();
+    let error = Deployment::new(state.path(), bundle_directory.path())
+        .initialize(&bundle, &store, &graph, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    let message = error.to_string();
+    for expected in [
+        format!(
+            "OpenTofu init ran out of space in the deployment state directory {}, which has ",
+            state.path().display()
+        ),
+        "keeping every file in it, then run the command again; state retained\nError: Failed to install provider".into(),
+    ] {
+        assert!(
+            message.contains(&expected),
+            "missing {expected:?}: {message}"
+        );
+    }
+}
+
 /// A resource that ran out of space somewhere the graph doesn't say keeps
 /// OpenTofu's error, rather than naming storage it might not have used.
 #[cfg(unix)]
@@ -1028,6 +1067,60 @@ async fn out_of_space_in_unplaced_storage_keeps_opentofus_error() {
     assert_eq!(
         error.to_string(),
         "OpenTofu apply failed: Apply incomplete\nsandbox create failed: no space left on device"
+    );
+}
+
+/// A failed apply reports the failed save of its record that followed,
+/// unless both ran out of space: the apply's error then says how to recover.
+#[test]
+fn a_failed_apply_reports_its_failed_save_unless_both_ran_out_of_space() {
+    let out_of_space = |writer: crate::Writer| {
+        Error::OutOfSpace(Box::new(crate::OutOfSpace {
+            writer,
+            target: crate::StorageTarget::DeploymentState {
+                directory: "/state".into(),
+            },
+            available: None,
+            kept: crate::Kept::State,
+            diagnostic: String::new(),
+        }))
+    };
+    let apply = crate::Writer::OpenTofu {
+        operation: "apply".into(),
+        resource: None,
+    };
+    let save = crate::Writer::NemoClaw {
+        file: "intent.json".into(),
+    };
+    let writer = |error: Error| match error {
+        Error::OutOfSpace(out_of_space) => out_of_space.writer,
+        error => panic!("expected an out-of-space error, got {error}"),
+    };
+
+    assert_eq!(
+        writer(failed_apply_error(
+            out_of_space(apply.clone()),
+            Err(out_of_space(save.clone()))
+        )),
+        apply
+    );
+    assert_eq!(
+        writer(failed_apply_error(
+            Error::State("apply failed"),
+            Err(out_of_space(save.clone()))
+        )),
+        save
+    );
+    assert!(matches!(
+        failed_apply_error(
+            out_of_space(apply.clone()),
+            Err(Error::State("cannot write and sync state file"))
+        ),
+        Error::State("cannot write and sync state file")
+    ));
+    assert_eq!(
+        writer(failed_apply_error(out_of_space(apply.clone()), Ok(()))),
+        apply
     );
 }
 
