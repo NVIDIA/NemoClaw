@@ -13,7 +13,7 @@ This file names Copyright (c) 2026 Sideguide Technologies Inc.; `versions.json` 
 The dashboard bundles xterm.js; this notice preserves the xterm.js authors, SourceLair, and Christopher Jeffrey credits.
 `/opt/nemoclaw/source/jetbrains-mono-OFL.txt` retains the JetBrains Mono copyright and SIL Open Font License 1.1 from revision `19371302b95d218af43299bce79ddbddd0bc364d`.
 Its Regular, Bold, and Italic webfonts match the three shipped `fonts-terminal` files byte for byte.
-`/opt/nemoclaw/source/hermes/hermes-NOTICES.md` retains frontend dependency license texts and available upstream declarations.
+`/opt/nemoclaw/source/hermes/hermes-NOTICES.md` retains frontend dependency license and notice texts.
 The TUI's `entry.js` also retains its inline bundled-license comments.
 Unresolved upstream notices and font redistribution coverage are tracked in [#14719](https://github.com/NVIDIA/NemoClaw/issues/14719).
 NemoClaw installs the source and these builds unmodified.
