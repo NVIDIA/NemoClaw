@@ -60,8 +60,12 @@ jobs:
                   result["http"] = response.status
                   # Classify known JSON schemas without printing bodies or headers.
                   body = response.read(65536)
+                  lower_body = body.decode("utf-8", errors="replace").lower()
+                  markers = ("access denied", "forbidden", "unauthorized", "not allowed", "ip address", "corporate", "vpn", "cloudfront", "request blocked")
+                  result["response_markers"] = [marker for marker in markers if marker in lower_body]
                   try:
                       document = json.loads(body)
+                      result["json_field_names"] = sorted(document) if isinstance(document, dict) else []
                       if isinstance(document, dict) and all(key in document for key in ("initialized", "sealed", "standby")):
                           result["response_kind"] = "Vault health JSON"
                       elif isinstance(document, dict) and isinstance(document.get("errors"), list):
