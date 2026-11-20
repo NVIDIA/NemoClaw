@@ -10,7 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   classifyMcpLifecycleLock,
+  darwinLegacyHostIdentityAliases,
   isMcpLifecycleLockOwner,
+  parseIoregPlatformUuid,
   readMcpLockHostIdentity,
   readMcpLockPidNamespaceIdentity,
   type LockObservation,
@@ -364,6 +366,140 @@ describe("MCP lifecycle lock identity properties", () => {
       ),
       { numRuns: PROPERTY_RUNS },
     );
+  });
+
+  it("reclaims a dead local owner recorded under a legacy host alias", () => {
+    const result = classifyMcpLifecycleLock(
+      observation(owner(4242, "darwin:start", { hostIdentity: "darwin:old-name.local" })),
+      SANDBOX_NAME,
+      0,
+      30_000,
+      probes({
+        localHostIdentity: "darwin:platform-uuid:abc",
+        localHostIdentityAliases: ["darwin:old-name.local"],
+        processIsAlive: () => false,
+      }),
+    );
+    expect(result).toBe("stale");
+  });
+
+  it("derives Darwin legacy aliases only from names the host currently reports", () => {
+    expect(
+      darwinLegacyHostIdentityAliases({
+        hostname: "Akhils-MacBook-Pro.local",
+        localHostName: "Akhils-MacBook-Pro",
+        hostName: " studio.example.com ",
+      }),
+    ).toEqual(["darwin:Akhils-MacBook-Pro.local", "darwin:studio.example.com"]);
+    expect(darwinLegacyHostIdentityAliases({ hostname: "", localHostName: null })).toEqual([]);
+  });
+
+  it("never synthesizes Bonjour conflict-suffix variants", () => {
+    expect(
+      darwinLegacyHostIdentityAliases({
+        hostname: "studio-2.local",
+        localHostName: "studio-2",
+      }),
+    ).toEqual(["darwin:studio-2.local"]);
+  });
+
+  it.each([
+    ["conflict-suffix variant of this host", "darwin:studio-2.local", "studio"],
+    ["base name of this conflict-suffixed host", "darwin:studio.local", "studio-2"],
+  ])("keeps a lock from a %s foreign without probing PIDs", (_label, recorded, currentName) => {
+    const result = classifyMcpLifecycleLock(
+      observation(owner(4242, "darwin:start", { hostIdentity: recorded })),
+      SANDBOX_NAME,
+      0,
+      30_000,
+      probes({
+        localHostIdentity: "darwin:platform-uuid:abc",
+        localHostIdentityAliases: darwinLegacyHostIdentityAliases({
+          hostname: `${currentName}.local`,
+          localHostName: currentName,
+        }),
+        processIsAlive: () => {
+          throw new Error("possibly foreign host reached local PID probe");
+        },
+      }),
+    );
+    expect(result).toBe("active");
+  });
+
+  it("reaches the PID checks for a lock under the LocalHostName-derived name", () => {
+    const result = classifyMcpLifecycleLock(
+      observation(owner(4242, "darwin:start", { hostIdentity: "darwin:studio.local" })),
+      SANDBOX_NAME,
+      0,
+      30_000,
+      probes({
+        localHostIdentity: "darwin:platform-uuid:abc",
+        localHostIdentityAliases: darwinLegacyHostIdentityAliases({
+          hostname: "studio.example.com",
+          localHostName: "studio",
+        }),
+        processIsAlive: () => false,
+      }),
+    );
+    expect(result).toBe("stale");
+  });
+
+  it("keeps an owner foreign when it matches no local identity or alias", () => {
+    const result = classifyMcpLifecycleLock(
+      observation(owner(4242, "darwin:start", { hostIdentity: "darwin:other-mac.local" })),
+      SANDBOX_NAME,
+      0,
+      30_000,
+      probes({
+        localHostIdentity: "darwin:platform-uuid:abc",
+        localHostIdentityAliases: ["darwin:old-name.local"],
+        processIsAlive: () => {
+          throw new Error("foreign host reached local PID probe");
+        },
+      }),
+    );
+    expect(result).toBe("active");
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "derives a hostname-independent macOS identity from IOPlatformUUID",
+    () => {
+      const hostname = vi.spyOn(os, "hostname");
+      try {
+        hostname.mockReturnValue("first-name.local");
+        const first = readMcpLockHostIdentity();
+        hostname.mockReturnValue("first-name-2.local");
+        const second = readMcpLockHostIdentity();
+        expect(first).toMatch(/^darwin:platform-uuid:[0-9a-f]{64}$/);
+        expect(second).toBe(first);
+      } finally {
+        hostname.mockRestore();
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "darwin")(
+    "falls back to the hostname identity when ioreg is unavailable",
+    () => {
+      // Off macOS there is no ioreg, so a mocked darwin host uses the hostname.
+      const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+      const hostname = vi.spyOn(os, "hostname").mockReturnValue("first-name.local");
+      try {
+        expect(readMcpLockHostIdentity()).toBe("darwin:first-name.local");
+      } finally {
+        hostname.mockRestore();
+        platform.mockRestore();
+      }
+    },
+  );
+
+  it("parses IOPlatformUUID from ioreg output", () => {
+    expect(
+      parseIoregPlatformUuid(
+        '  "IOPlatformUUID" = "b397e5ab-9d4f-5b9b-aca3-f6e37e1342be"\n  "other" = "x"',
+      ),
+    ).toBe("B397E5AB-9D4F-5B9B-ACA3-F6E37E1342BE");
+    expect(parseIoregPlatformUuid('"IOPlatformSerialNumber" = "X"')).toBeNull();
   });
 
   it("never probes or reaps an owner from a different PID namespace", () => {

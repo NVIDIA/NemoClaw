@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import { performance } from "node:perf_hooks";
@@ -39,6 +40,11 @@ export type McpLifecycleLockDisposition = "active" | "stale" | "wait";
 /** Injectable OS evidence keeps ownership classification deterministic under test. */
 export interface McpLifecycleLockIdentityProbes {
   localHostIdentity: string;
+  /**
+   * Earlier identities this same host may have recorded, such as the legacy
+   * `<platform>:<hostname>` form. Matching one proves the owner is local.
+   */
+  localHostIdentityAliases?: readonly string[];
   localPidNamespaceIdentity: string | null;
   processIsAlive(pid: number): boolean;
   readProcessIdentity(pid: number, fresh?: boolean): string | null;
@@ -159,7 +165,34 @@ export function readMcpLockProcessIdentity(pid: number, fresh = false): string |
   return identity;
 }
 
-/** Stable enough to distinguish independent hosts sharing a state directory. */
+/** The pre-stable-identity form. macOS can rename the host on its own. */
+export function readMcpLockLegacyHostIdentity(): string {
+  return `${process.platform}:${os.hostname() || "unknown-host"}`;
+}
+
+/** Parses IOPlatformUUID from `ioreg -rd1 -c IOPlatformExpertDevice` output. */
+export function parseIoregPlatformUuid(output: string): string | null {
+  const match = /"IOPlatformUUID"\s*=\s*"([0-9A-Fa-f-]{36})"/.exec(output);
+  return match ? match[1].toUpperCase() : null;
+}
+
+function readDarwinPlatformUuid(): string | null {
+  const result = spawnSync("/usr/sbin/ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], {
+    encoding: "utf8",
+    env: buildSubprocessEnv(),
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 2_000,
+  });
+  return result.status === 0 && typeof result.stdout === "string"
+    ? parseIoregPlatformUuid(result.stdout)
+    : null;
+}
+
+/**
+ * Stable enough to distinguish independent hosts sharing a state directory.
+ * The hostname is only a last resort: macOS changes it on Bonjour/DHCP name
+ * conflicts, which would make every lock left by a dead local CLI look foreign.
+ */
 export function readMcpLockHostIdentity(): string {
   if (process.platform === "linux") {
     for (const candidate of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
@@ -171,7 +204,15 @@ export function readMcpLockHostIdentity(): string {
       }
     }
   }
-  return `${process.platform}:${os.hostname() || "unknown-host"}`;
+  if (process.platform === "darwin") {
+    const platformUuid = readDarwinPlatformUuid();
+    if (platformUuid) {
+      // Hash so the raw hardware UUID is not written to lock files.
+      const digest = createHash("sha256").update(platformUuid).digest("hex");
+      return `darwin:platform-uuid:${digest}`;
+    }
+  }
+  return readMcpLockLegacyHostIdentity();
 }
 
 /** A shared state directory does not make local PID checks safe across namespaces. */
@@ -187,8 +228,59 @@ export function readMcpLockPidNamespaceIdentity(): string | null {
 const LOCAL_HOST_IDENTITY = readMcpLockHostIdentity();
 const LOCAL_PID_NAMESPACE_IDENTITY = readMcpLockPidNamespaceIdentity();
 
+/**
+ * Maps the names this Mac reports right now to the hostname-based identities a
+ * pre-stable-identity CLI wrote (`darwin:<os.hostname()>`). Only names macOS
+ * currently assigns to this host are used. Former or guessed names (such as
+ * Bonjour "-2" conflict variants) are never synthesized: another Mac sharing
+ * the state directory may own them, and the local PID table cannot prove that
+ * a foreign owner is dead.
+ */
+export function darwinLegacyHostIdentityAliases(names: {
+  hostname?: string | null;
+  localHostName?: string | null;
+  hostName?: string | null;
+}): string[] {
+  const candidates = [
+    names.hostname?.trim(),
+    names.localHostName?.trim() ? `${names.localHostName.trim()}.local` : undefined,
+    names.hostName?.trim(),
+  ];
+  return [...new Set(candidates.filter((name): name is string => Boolean(name)))].map(
+    (name) => `darwin:${name}`,
+  );
+}
+
+function readDarwinScutilName(key: "LocalHostName" | "HostName"): string | null {
+  const result = spawnSync("/usr/sbin/scutil", ["--get", key], {
+    encoding: "utf8",
+    env: buildSubprocessEnv(),
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1_000,
+  });
+  return result.status === 0 && typeof result.stdout === "string"
+    ? result.stdout.trim() || null
+    : null;
+}
+
+/** Hostname-based identities that currently name this host. Excludes the current identity. */
+function readLocalLegacyHostIdentityAliases(): string[] {
+  const legacy = readMcpLockLegacyHostIdentity();
+  const aliases =
+    process.platform === "darwin" && LOCAL_HOST_IDENTITY !== legacy
+      ? darwinLegacyHostIdentityAliases({
+          hostname: os.hostname(),
+          localHostName: readDarwinScutilName("LocalHostName"),
+          hostName: readDarwinScutilName("HostName"),
+        })
+      : [legacy];
+  return aliases.filter((alias) => alias !== LOCAL_HOST_IDENTITY);
+}
+
 const LOCAL_IDENTITY_PROBES: McpLifecycleLockIdentityProbes = {
   localHostIdentity: LOCAL_HOST_IDENTITY,
+  // Pre-stable-identity locks from this host recorded one of its current hostnames.
+  localHostIdentityAliases: readLocalLegacyHostIdentityAliases(),
   localPidNamespaceIdentity: LOCAL_PID_NAMESPACE_IDENTITY,
   processIsAlive,
   readProcessIdentity: readMcpLockProcessIdentity,
@@ -229,7 +321,13 @@ export function classifyMcpLifecycleLock(
   // wait for operator/distributed-lease resolution instead of risking overlap.
   // Legacy or incomplete records have unknown provenance. Treat them as
   // foreign instead of using this host's PID table to reap them.
-  if (!owner.hostIdentity || owner.hostIdentity !== probes.localHostIdentity) return "active";
+  if (
+    !owner.hostIdentity ||
+    (owner.hostIdentity !== probes.localHostIdentity &&
+      !(probes.localHostIdentityAliases ?? []).includes(owner.hostIdentity))
+  ) {
+    return "active";
+  }
   if (
     (probes.localPidNamespaceIdentity !== null && !owner.pidNamespaceIdentity) ||
     (owner.pidNamespaceIdentity !== null &&
