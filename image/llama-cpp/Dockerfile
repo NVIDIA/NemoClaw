@@ -11,7 +11,7 @@ COPY --from=supervisor /Cargo.lock /opt/nemoclaw/source/supervisor/Cargo.lock
 COPY LICENSE /opt/nemoclaw/source/LICENSE
 COPY image/supervisor/Dockerfile /opt/nemoclaw/source/supervisor.Dockerfile
 COPY image/llama-cpp/NOTICE.md image/llama-cpp/Dockerfile /opt/nemoclaw/source/
-COPY image/llama-cpp/llama-ui-NOTICES.md image/llama-cpp/llama-ui-inventory.json /opt/nemoclaw/source/
+COPY image/llama-cpp/llama-ui-NOTICES.md /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /llama-source.tar.gz /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /llama.cpp-LICENSE /nlohmann-json-LICENSE /cpp-httplib-LICENSE /rotate-bits-LICENSE.md /xxhash-LICENSE /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /llama-brand-LICENSE /llama-brand-BRAND-USAGE.md /llama-brand-fonts-OFL.txt /llama-ui-big-integer-LICENSE /llama-ui-nerdamer-LICENSE /opt/nemoclaw/source/

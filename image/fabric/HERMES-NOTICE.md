@@ -13,12 +13,7 @@ This file names Copyright (c) 2026 Sideguide Technologies Inc.; `versions.json` 
 The dashboard bundles xterm.js; this notice preserves the xterm.js authors, SourceLair, and Christopher Jeffrey credits.
 `/opt/nemoclaw/source/jetbrains-mono-OFL.txt` retains the JetBrains Mono copyright and SIL Open Font License 1.1 from revision `19371302b95d218af43299bce79ddbddd0bc364d`.
 Its Regular, Bold, and Italic webfonts match the three shipped `fonts-terminal` files byte for byte.
-`/opt/nemoclaw/source/hermes/hermes-NOTICES.md` retains original license/notice texts and available package declarations for the 108 packages observed in a local dashboard rebuild and the published TUI's module labels.
-`hermes-inventory.json` beside it records exact npm archive URLs, integrity values, notice hashes, and observed bundle membership.
-It identifies four packages whose inspected upstream material declares MIT without supplying a standalone license file: `@nous-research/ui`, `unicode-animations`, `react-remove-scroll-bar`, and `@alcalzone/ansi-tokenize`.
-The original declarations are retained without inventing copyright notices.
-The local rebuild is not claimed byte-identical to the published dashboard.
+`/opt/nemoclaw/source/hermes/hermes-NOTICES.md` retains frontend dependency license texts and available upstream declarations.
 The TUI's `entry.js` also retains its inline bundled-license comments.
-The shipped Collapse, Mondwest, and Rules fonts carry commercial-foundry metadata; package-level MIT metadata does not establish the font files' redistribution terms.
-The [image review](../../internal-docs/contributing/image-licenses.md) tracks their applicable coverage decision.
+Unresolved upstream notices and font redistribution coverage are tracked in [#14719](https://github.com/NVIDIA/NemoClaw/issues/14719).
 NemoClaw installs the source and these builds unmodified.

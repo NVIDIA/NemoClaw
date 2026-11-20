@@ -182,7 +182,7 @@ RUN case "$TARGETARCH" in amd64|arm64) ;; *) exit 1 ;; esac \
 
 FROM interactive AS hermes
 COPY --from=sources --chmod=0644 /anydoc-LICENSE /xterm-LICENSE /jetbrains-mono-OFL.txt /opt/nemoclaw/source/
-COPY image/fabric/hermes-NOTICES.md image/fabric/hermes-inventory.json /opt/nemoclaw/source/hermes/
+COPY image/fabric/hermes-NOTICES.md /opt/nemoclaw/source/hermes/
 COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
 COPY --from=switchyard-assets /opt/nemo-relay /opt/nemo-relay

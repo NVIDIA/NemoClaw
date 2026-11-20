@@ -4,8 +4,6 @@
 # llama.cpp UI Dependency Notices
 
 Original license and notice texts below retain their upstream copyrights and terms.
-The adjacent `llama-ui-inventory.json` records the exact source revision, npm archives, integrity values, notice hashes, and observed bundle membership.
-The inventory comes from a local rebuild, with published TUI module labels also checked for Hermes; it does not assert byte-identical release output or complete coverage of code already bundled within a dependency.
 
 ## 05811400116ed61f
 

@@ -4,8 +4,6 @@
 # Hermes Frontend Dependency Notices
 
 Original license and notice texts below retain their upstream copyrights and terms.
-The adjacent `hermes-inventory.json` records the exact source revision, npm archives, integrity values, notice hashes, and observed bundle membership.
-The inventory comes from a local rebuild, with published TUI module labels also checked for Hermes; it does not assert byte-identical release output or complete coverage of code already bundled within a dependency.
 
 The following packages publish declarations without a standalone license file in the material inspected: `@nous-research/ui@0.19.1`, `unicode-animations@1.0.3`, `react-remove-scroll-bar@2.3.8`, `@alcalzone/ansi-tokenize@0.1.3`.
 Their original package metadata and README are retained below; these do not supply a missing copyright grant or establish font redistribution permission.

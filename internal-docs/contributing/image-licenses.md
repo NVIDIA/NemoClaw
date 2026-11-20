@@ -4,7 +4,7 @@
 # Reviewing Image Licenses
 
 Publishing a v1 image redistributes every component in it, so each image's licenses must allow that before a final release ([#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
-This page records completed notice work, remaining release evidence, excluded images, and the historical review of release candidate `v0.1.0-rc10`.
+This page describes release review requirements, excluded images, and the historical review of release candidate `v0.1.0-rc10`.
 A technical audit is evidence for a release decision; it does not authorize publication.
 
 ## Images Releases Don't Publish
@@ -23,138 +23,17 @@ Existing approved base or product coverage can reduce the review to additions an
 Keep private approval and contract details in the appropriate private review record.
 CUDA and other proprietary components also need their applicable redistribution terms checked.
 
-## Completed Notice Work
+## Retained Sources and Notices
 
-- [#14594](https://github.com/NVIDIA/NemoClaw/pull/14594) retains Node.js, OpenClaw, Bun, proxy dependency, and Rust library notices, and adds the initial review procedure.
-- [#13590](https://github.com/NVIDIA/NemoClaw/pull/13590) adds per-platform software inventories (SBOMs) for release artifacts.
-- [#14694](https://github.com/NVIDIA/NemoClaw/pull/14694) excludes Claude from release publication and documents local builds.
-- The current recipes also retain the exact Codex 0.154.0 LICENSE and NOTICE, LangSmith 0.11.1 MIT notice, sqlite-vec 0.1.9 MIT notice, firecrawl-anydoc 0.2.4 MIT notice, and the Hermes dashboard's xterm.js 6.0.0 MIT notice.
-  The llama.cpp overlay retains its two vendored UI library notices, pinned brand license and redistribution permission, source credit, and Geist font notice.
-  Their source commits and checksums are pinned in `versions.json`; the image notice files describe their locations.
-
-The current Ollama base's `GO_LICENSE` contains third-party Go module notices; do not repeat the historical missing-notice finding without inspecting the candidate.
-The current Bun notice includes rebuilding instructions; retaining those instructions does not establish delivery of all required source or relinking materials.
-Fabric's retained source archive includes Rust, Python, and Node attribution documents.
-An attribution document or lockfile alone does not establish complete source delivery or an inventory of every compiled subcomponent.
-Hermes's TUI bundle retains inline attribution.
-`image/fabric/hermes-NOTICES.md` and its inventory retain original notices and declarations for 108 packages observed in a local dashboard rebuild and the inspected published TUI.
-The llama.cpp overlay retains an equivalent notice/inventory pair for 190 packages observed in a local client-bundle rebuild, plus its original pinned engine/UI source archive.
-Each inventory records archive integrity, notice hashes, and observed bundle membership; it does not claim byte-identical published output or complete coverage of nested prebundled code.
-OpenClaw already ships the TypeScript source of `@ubjs/core` and MPL headers in `@ubjs/node`'s JavaScript wrapper.
-Its CUA platform package retains `node-runtime-NOTICE.md`, which describes the modified MPL runtime and its source/build script; do not describe all UBJS source or CUA notice evidence as absent.
-
-## Retained Rust Dependency Sources
-
-Every Fabric agent now retains `fabric-vendor.tar.gz` beside the pinned `fabric.tar.gz`.
-The added archive contains the sources and notices for all external packages in Fabric's Cargo.lock and a relative Cargo source-replacement configuration.
-The native Python wheel uses that vendor tree with Cargo offline.
-The original Fabric source archive remains unmodified.
-
-The proxy retains `proxy-source.tar.gz` under `/usr/share/doc/nemoclaw-ollama-proxy/`.
-It contains the packaged proxy source, its pruned lockfile, Rust toolchain pin, vendored dependency sources and notices, and rebuild instructions.
-The image compiles and tests the extracted archive with Cargo offline and networking disabled.
-The existing supervisor archive already supplies the runtime supervisor and its vendored dependencies.
-
-Refer to [Retained Rust Sources](../../image/SOURCES.md) for the in-image paths and extraction commands.
-These archives cover the named Rust components and their locked Cargo dependency sources; standard-library/toolchain source and other native/frontend dependencies remain separate review inputs.
-The vendor trees include build and platform dependencies, so a vendored package is not proof it is linked into a Linux binary.
+[Agent image sources](../../image/NOTICE.md) and the runtime image notice files describe retained dependency notices and source archives.
+[Retained Rust Sources](../../image/SOURCES.md) and [OpenClaw Native Sources](../../image/fabric/OPENCLAW-SOURCES.md) provide extraction and rebuild instructions.
 
 ## Remaining Release Evidence
 
-[#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) tracks these requirements for the release owner and image maintainers.
-There are 14 shipping image names: ten agents (`codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `opencode`, `pi`, and `remote-agent`), `ollama-proxy`, and three runtimes (`vllm`, `ollama`, and `llama-cpp`).
-NIM is a separate local-build target, not part of this release catalog.
-
-| Scope | Evidence still needed |
-| --- | --- |
-| Every shipping image | Applicable approval coverage; exact component versions, patches, notices, and source delivery tied to the final platform manifest digest |
-| Debian and Ubuntu bases | Applicable inherited coverage or delivery of the exact required source packages and patches, with recipient instructions and retention ownership |
-| Fabric, proxy, and native harness binaries | Verify the retained Rust source archives in the final images; reconcile standard-library/toolchain source coverage and other native binaries, including Codex and Code Mode |
-| Deep Agents and Hermes | Native wheel source coverage; Fetch Use and four frontend notice records; font redistribution coverage; final-image reconciliation of the retained frontend inventory |
-| OpenClaw, Pi, and OpenCode | Final-image verification of OpenClaw's added native source delivery; other npm/native dependencies; Bun's applicable source and relinking delivery |
-| llama.cpp UI | Reconcile the retained source and 190-package client-bundle inventory against the final artifact, including any nested prebundled code |
-| Final runtime candidates | rc12 technical artifact checks are recorded below; complete the source/license reconciliation and repeat the artifact checks after notice fixes land |
-
-The native-code follow-up has identifiable inputs:
-
-- Codex's [Code Mode runtime manifest](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/code-mode-runtime/Cargo.toml) includes V8 and ICU data; the image ships `codex-code-mode-host` and a bundled `rg` in addition to `codex`.
-  The project LICENSE and NOTICE do not establish a complete attribution inventory for these binaries.
-- npm records `@ubjs/node` and its native platform package 0.31.0-3 at source commit [`dcb5c4ab`](https://github.com/jhugman/uniffi-bindgen-react-native/tree/dcb5c4ab2350d57f6d26f5fa81a99c77ed86d449).
-  CUA 0.28.2's ARM64 npm provenance identifies commit [`36987990`](https://github.com/trycua/cua/tree/36987990b292537770fe2df3a9e6dee2ef43db2f), whose [runtime transformation script](https://github.com/trycua/cua/blob/36987990b292537770fe2df3a9e6dee2ef43db2f/libs/cua-driver/scripts/build-node-runtime.mjs) implements the change described in the retained notice.
-  The OpenClaw recipe now retains the exact published UBRN source package and the CUA driver source subtree, including its Rust workspace and runtime modification script, under `/opt/nemoclaw/source/openclaw/`.
-  [OpenClaw Native Sources](../../image/fabric/OPENCLAW-SOURCES.md) records extraction/build instructions and limits.
-  Both CUA platform provenance statements identify that revision; the retained source and modification script rebuilt the runtime on macOS ARM64.
-  That host rebuild does not prove byte-identical Linux artifacts or supply all transitive dependencies.
-- Pi's installed npm tree includes Linux, macOS, and Windows native prebuilds, with their C/Objective-C source, shared headers, and platform build scripts already present.
-  Both inspected Linux images retain all six prebuilds and those source/build files; their bytes match the exact `@earendil-works/pi-tui` 1.6.0 npm archive.
-  Reuse that source delivery rather than request another archive for the same native components.
-
-### Hermes Notices and Font Coverage
-
-Four packages in the observed frontend inventory declare MIT but omit a standalone license file in the inspected material: `@nous-research/ui` 0.19.1, `unicode-animations` 1.0.3, `react-remove-scroll-bar` 2.3.8, and `@alcalzone/ansi-tokenize` 0.1.3.
-The notice bundle preserves their original package metadata and READMEs without inventing copyright holders or grants.
-Fetch Use 0.4.0 separately declares MIT but its exact source distribution has no license file and its configured source repository returns 404.
-Resolve those upstream notice records before treating metadata as complete attribution.
-
-Both inspected Hermes images ship seven commercial font styles: Collapse Regular/Bold, Mondwest Regular, Rules Compressed Regular/Medium, and Rules Expanded Regular/Bold.
-Their unhashed copies under `hermes_cli/web_dist/fonts/` match both the pinned Hermes source and the exact `@nous-research/ui` 0.19.1 npm package by SHA-256; the images also include fingerprinted asset copies.
-The font metadata identifies Blaze Type for Collapse and Rules, and Pangram Pangram for Mondwest.
-Neuebit exists in that npm source package but was not found in the inspected Hermes images.
-The three JetBrains Mono terminal webfonts are separate: they match upstream revision `19371302b95d218af43299bce79ddbddd0bc364d`, and the Hermes recipe retains that revision's copyright and SIL Open Font License 1.1 in `jetbrains-mono-OFL.txt`.
-
-The foundries publish separate [Blaze Type licensing terms](https://blazetype.eu/eula/) and [Pangram Pangram licensing terms](https://pangrampangram.com/pages/eula).
-Those terms distinguish embedding/distribution uses and license scope; a package-level MIT declaration does not establish that scope for third-party font files.
-The inspected packages and upstream font-related issues supplied no applicable redistribution agreement.
-This is an authorization-evidence gap, not a finding that Nous Research or NVIDIA has no private agreement.
-The release owner must establish coverage for the actual image distribution and recipients, or agree on an upstream-compatible alternative before publication.
-[Hermes coverage follow-up #14719](https://github.com/NVIDIA/NemoClaw/issues/14719) records the exact fonts, upstream inputs, and remaining notice decisions.
-
-### User-Built Images
-
-For a harness NVIDIA does not publish, start from a NemoClaw source revision and the Fabric revision its `versions.json` pins.
-Use the harness version supported by that Fabric adapter; copying a newer executable into a compatible-looking image does not establish adapter compatibility.
-Follow [Building NemoClaw](../../docs/build-deploy/build.md#building-agent-images) and retain the source archives, dependency locks, notices, and local provenance the recipes produce.
-Qualify the locally built image with `cargo images qualify IMAGE` before use.
-That check establishes the image contract it exercises, not license approval or inference support.
-
-Before redistributing a user-built image, review every added or replaced component and inherited base, retain required notices and exact corresponding source/patches, provide applicable relinking/build materials and recipient instructions, and identify who retains those materials.
-Record any service, commercial-asset, or proprietary runtime terms separately from open-source package metadata.
-Local building does not grant redistribution rights, including for the Claude Code CLI in the locally built `claude` image.
-
-### Remaining Shared Source Delivery
-
-For the current vLLM 0.34.0 base, FFmpeg 8.1.1 is bundled through PyNvVideoCodec 2.0.4 and OpenCV, rather than PyAV.
-Their retained notices identify LGPL terms; reconcile each actual library and build with its corresponding source.
-A scanner's unknown license entry alone does not establish a missing notice or a redistribution prohibition.
-
-For source delivery, identify the image path or release-controlled source location, exact versions and patches, any required build/relinking materials, recipient instructions, and the owner and retention period.
-Upstream links alone do not establish that the selected delivery mechanism meets the applicable requirements.
-Reuse complete source and notices already retained, including the supervisor's vendor archive and pure source packages.
-Only applicable third-party source obligations are in scope; this does not require publication of proprietary CUDA source.
-
-
-## rc12 Runtime Artifact Evidence
-
-Release candidate `v0.1.0-rc12` was staged from `1636069b91f402242a35714fde1011042c3f1f70`.
-All six runtime platform manifests were retrieved by digest; their SPDX assets match `sboms.json`, and each SPDX document describes that exact platform digest.
-Their layer prefixes match the six upstream base artifacts already inspected.
-The 13 distinct added layers, totaling 81,079,483 compressed bytes, were downloaded, SHA-256 verified, and indexed with whiteouts applied.
-
-| Runtime | AMD64 Platform Digest | ARM64 Platform Digest |
-| --- | --- | --- |
-| vLLM | `sha256:c57f93323a4ffbcc3fe4460b3b7a065c7c1bbb3a3e563f51934ba42a97907a0c` | `sha256:122e7bd54c502380b57e488bc7209ddb0052ddbb59cabdf57d96405fadf5d6c3` |
-| Ollama | `sha256:9b9c6ab3fbf5518bb751abb5514853d4121ff33dcc383f671ef121832fdda6ea` | `sha256:4e31e854a00220fad6eaf11aa54203e0fff7ca383f3da4fb2dbfb1f2860cfdb6` |
-| llama.cpp | `sha256:627d5433b61de101fb851ff722e0120a697c4ec73ca14664fa557c822ddacc98` | `sha256:f4e683cc2ae24e8cae9ecf3c4a0ade4876bcdcea4f8693f1fff8c15dc982e445` |
-
-All six retain the same `supervisor-source.tar.gz`, SHA-256 `17f009964ab6805a28992cb094f036479a396037bce72e191209be1c40c7cf4e`.
-It contains the supervisor's Rust source, build configuration, and 268 vendored crate manifests across 20,132 archive entries.
-The Rust library notice and supervisor lockfile are also retained.
-Both llama.cpp overlays retain all five pinned C++ license files.
-Credit this evidence when preparing source delivery; do not request the supervisor's vendored sources again.
-
-These checks establish the inspected contents of rc12, not complete license compliance, approval, or GPU qualification.
-rc12 predates the additional notice fixes on this page; final post-fix candidates must be checked again.
-The remaining source, native/frontend attribution, and redistribution-term requirements still apply.
+[#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) tracks final image review, source and relinking delivery, and applicable release approval coverage.
+Reconcile retained notices and sources against every final platform artifact, including native executables and frontend bundles that package metadata can miss.
+Retaining a source archive or notice does not establish complete coverage.
+[#14719](https://github.com/NVIDIA/NemoClaw/issues/14719) tracks unresolved Hermes upstream notices and font redistribution coverage.
 
 ## Reviewing a Release
 
