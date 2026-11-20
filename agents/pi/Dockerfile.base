@@ -146,14 +146,16 @@ RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,tar
             libonig_sha256="3abee130696244050500bcc7870e3b4cb82ddd87149ece3fd55010c3d4e1d18c"; \
             libjq_sha256="9a5bf964cef39ed8f0f162e20d856e31961d28a57772b5313989b42a8be7e941"; \
             jq_sha256="b973a5d304f666845e8ccefab492e3850d4bc2e7aa2a1e7450862095125f2cc0"; \
-            vim_tiny_sha256="df2d037d405f1376d1d8025d022dba81fbfed8695f68a131b788d16d3b68cf83" \
+            vim_tiny_sha256="df2d037d405f1376d1d8025d022dba81fbfed8695f68a131b788d16d3b68cf83"; \
+            vim_tiny_snapshot_file="a961e2db17d3be4b4a6d16d3c775edbdc8c1185d" \
             ;; \
         arm64) \
             libexpat_sha256="660f5f598a06aa56613a2fbf1ffbd408708175f1a6c2fac833842148f0228176"; \
             libonig_sha256="137e708575c0622d347815d19cb471a107546b16e9602805ee27afad7bba107f"; \
             libjq_sha256="eae4a828df2eb53d728f88109d9f9549e0983a90b573cf0c7fa1e4bbc7533a7e"; \
             jq_sha256="c25086443abd04d1457cbb322a0837f9ba986f82b28f44670467c8dc9be1f696"; \
-            vim_tiny_sha256="3948582a06ba027513d036c446f6dc9b7a9ed344a460ad05f232e2779f484cd1" \
+            vim_tiny_sha256="3948582a06ba027513d036c446f6dc9b7a9ed344a460ad05f232e2779f484cd1"; \
+            vim_tiny_snapshot_file="114f1cacb1fefbffe3d40ea6c10041155bd6751d" \
             ;; \
         *) echo "Unsupported architecture for Debian security packages: $arch" >&2; exit 1 ;; \
     esac \
@@ -185,7 +187,7 @@ RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,tar
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/vim-tiny.deb" \
-        "$debian_pool_url/v/vim/vim-tiny_9.2.0858-1_${arch}.deb" \
+        "https://snapshot.debian.org/file/${vim_tiny_snapshot_file}" \
     && printf '%s  %s\n' \
         "$libexpat_sha256" "$security_deb_dir/libexpat1.deb" \
         "$libonig_sha256" "$security_deb_dir/libonig5.deb" \

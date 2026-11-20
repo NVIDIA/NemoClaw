@@ -12,6 +12,7 @@ export const BASE_APT_SECURITY_HASHES: Record<
     libjq: string;
     jq: string;
     vimTiny: string;
+    vimTinySnapshotFile: string;
   }
 > = {
   amd64: {
@@ -21,6 +22,7 @@ export const BASE_APT_SECURITY_HASHES: Record<
     libjq: "9a5bf964cef39ed8f0f162e20d856e31961d28a57772b5313989b42a8be7e941",
     jq: "b973a5d304f666845e8ccefab492e3850d4bc2e7aa2a1e7450862095125f2cc0",
     vimTiny: "df2d037d405f1376d1d8025d022dba81fbfed8695f68a131b788d16d3b68cf83",
+    vimTinySnapshotFile: "a961e2db17d3be4b4a6d16d3c775edbdc8c1185d",
   },
   arm64: {
     libexpat: "660f5f598a06aa56613a2fbf1ffbd408708175f1a6c2fac833842148f0228176",
@@ -29,6 +31,7 @@ export const BASE_APT_SECURITY_HASHES: Record<
     libjq: "eae4a828df2eb53d728f88109d9f9549e0983a90b573cf0c7fa1e4bbc7533a7e",
     jq: "c25086443abd04d1457cbb322a0837f9ba986f82b28f44670467c8dc9be1f696",
     vimTiny: "3948582a06ba027513d036c446f6dc9b7a9ed344a460ad05f232e2779f484cd1",
+    vimTinySnapshotFile: "114f1cacb1fefbffe3d40ea6c10041155bd6751d",
   },
 };
 
@@ -99,7 +102,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       `    */j/jq/libjq1_1.8.2-1_${architecture}.deb) [[ "\${15##*/}" == "libjq1.deb" ]] ;;`,
       `    */j/jq/jq_1.8.2-1_${architecture}.deb) [[ "\${15##*/}" == "jq.deb" ]] ;;`,
       '    */v/vim/vim-common_9.2.0858-1_all.deb) [[ "${15##*/}" == "vim-common.deb" ]] ;;',
-      `    */v/vim/vim-tiny_9.2.0858-1_${architecture}.deb) [[ "\${15##*/}" == "vim-tiny.deb" ]] ;;`,
+      `    https://snapshot.debian.org/file/${hashes.vimTinySnapshotFile}) [[ "\${15##*/}" == "vim-tiny.deb" ]] ;;`,
       "    *) return 64 ;;",
       "  esac",
       '  printf "download %s\\n" "${16}" >> "$call_log"',
