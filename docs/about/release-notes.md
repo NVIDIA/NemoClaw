@@ -14,16 +14,22 @@ The workspace package version alone doesn't establish that a release has been pu
 The development branch provides desired-state YAML, a Rust SDK, the `onboard`/`plan`/`apply`/`export`/`destroy` CLI, and a bundled OpenTofu provider.
 Refer to [the overview](overview.md) for implemented boundaries and [the CLI reference](../references/cli.md) for commands.
 
-### Changes Since v0.1.0-rc11
+### Changes Since v0.1.0-rc12
 
-These changes reached `v1` after the `v0.1.0-rc11` tag.
-[Breaking changes](#breaking-changes-since-v010-rc11) are listed separately.
+No change has reached `v1` since the `v0.1.0-rc12` tag yet.
+
+### Changes in v0.1.0-rc12
+
+These changes reached `v1` between the `v0.1.0-rc11` and `v0.1.0-rc12` tags.
+[Breaking changes](#breaking-changes-in-v010-rc12) are listed separately.
 
 Onboarding:
 
 - At the model question for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research, `nemoclaw onboard` offers the recommended models the endpoint lists and **Type another model**, instead of the endpoint's whole catalog, which can include models that can't drive an agent.
   The review notes a typed model that the endpoint doesn't list.
   See [onboarding model catalogs](../agents-inference/inference.md#onboarding-model-catalogs).
+- When the gateway's engine holds exactly one image that installs the chosen harness, and neither your template nor an earlier answer names another, `nemoclaw onboard` uses it without asking the image question, and the review shows it.
+  To enter another image, go back from the next question.
 
 Agents:
 
@@ -33,6 +39,20 @@ Agents:
   See [agent files](../build-deploy/state.md#agent-files).
 - OpenClaw sessions with kept state no longer fail on turns longer than about a minute or after a few minutes idle ([#14630](https://github.com/NVIDIA/NemoClaw/issues/14630)).
 - A Hermes route to an `anthropic` provider reaches the provider's endpoint whatever its path ([#14538](https://github.com/NVIDIA/NemoClaw/issues/14538)).
+- `spec.sandboxes.<name>.gpus` asks OpenShell for that many GPUs for the programs an agent runs in its sandbox, so its tools can run GPU workloads apart from its inference route.
+  OpenShell picks the devices, or Docker and Podman take specific ones from `driverConfig`'s `cdi_devices`, and it refuses a request that the gateway's driver can't serve.
+  Changing the count replaces the sandbox.
+  See [GPU access for agent tools](../agents-inference/agents.md#gpu-access-for-agent-tools).
+
+Inference and models:
+
+- A `kind: llamaCpp` service serves one pinned GGUF file from Hugging Face with llama.cpp on one CUDA GPU, for an inference provider that selects it with `serviceRef`.
+  The runtime downloads only that file and checks its size and SHA-256 before serving it.
+  With `authentication: bearer`, llama-server reads a generated key from a private file.
+  See [serving a pinned GGUF with llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp).
+- A `kind: nim` service runs native NVIDIA NIM with its vLLM backend behind a private Docker network and a route filter, with the operator's NGC key mounted read-only.
+  It remains a candidate: [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) records what was qualified, and general task reliability remains unqualified.
+  See [the native NIM candidate](../agents-inference/models.md#native-nim-candidate).
 
 Releases:
 
@@ -63,6 +83,7 @@ Images:
   It adds the supervisor to llama.cpp's CUDA 13.5 server image from release b12375, whose ARM64 and AMD64 builds carry kernels for GB300 (`sm_103`) and GB10 (`sm_121a`).
   CUDA 13.5 needs NVIDIA driver 580 or newer.
   See [build a runtime image](../build-deploy/build.md#building-a-runtime-image).
+- Images keep license notices that their components require and earlier images dropped: Node.js's license in the `hermes`, `openclaw`, and `pi` images, OpenClaw's in `openclaw`, Bun's in `opencode`, and the notices of the Rust crates and standard library that the Ollama proxy and the runtime images' supervisor link.
 
 Windows clients:
 
@@ -91,7 +112,7 @@ Gateways:
   Editors offer only the selected target's fields, and an invalid field reports that target's rule.
   A managed `kubernetes` or `openshift` gateway without `expose` names no address or port: each command forwards a free local port to the gateway pod, and plan and apply report the gateway as `not published`.
   The `openshift` target takes the fields of `kubernetes`, and only it takes [`expose.route`](../build-deploy/kubernetes.md#through-an-openshift-route), which publishes the gateway at `expose.endpoint`.
-  See [adapting a document to another target](../build-deploy/usage.md#adapting-a-document-to-another-target) and the [breaking change](#breaking-changes-since-v010-rc11).
+  See [adapting a document to another target](../build-deploy/usage.md#adapting-a-document-to-another-target) and the [breaking change](#breaking-changes-in-v010-rc12).
 
 Recovery:
 
@@ -133,7 +154,6 @@ Onboarding:
 - The `nemoclaw onboard` review opens with a summary of the agent, model, API key, web search, where the deployment runs, image, network access, and output file.
   The saved YAML follows, collapsed until you press Tab.
 - At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#building-agent-images).
-  When the engine holds exactly one such image and neither your template nor an earlier answer names another, onboarding uses it without asking, and the review shows it. To enter another image, go back from the next question.
 
 Sandbox policy:
 
@@ -306,9 +326,13 @@ Examples and builds:
 Earlier CLI commands, schemas, and state formats have no compatibility guarantees.
 See [migration](../get-started/migration.md) for where each earlier task lives now, and [state](../build-deploy/state.md) for data preservation.
 
-### Breaking Changes Since v0.1.0-rc11
+### Breaking Changes Since v0.1.0-rc12
 
-These changes since the `v0.1.0-rc11` tag affect existing deployments or documents:
+No change since the `v0.1.0-rc12` tag affects existing deployments or documents yet.
+
+### Breaking Changes in v0.1.0-rc12
+
+These changes between the `v0.1.0-rc11` and `v0.1.0-rc12` tags affect existing deployments or documents:
 
 - The intent record is now version 31, so this release refuses any deployment that `v0.1.0-rc11` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release.
@@ -516,7 +540,7 @@ The agent and runtime images are built for `linux/arm64` and `linux/amd64`.
 
 | `spec.gateway.target` | Accepted | Live tests in CI |
 |---|---|---|
-| `docker` | Managed or external gateway; managed vLLM, Ollama, and container services | Docker suite, the cases on NVIDIA hosted inference, and the GPU cases |
+| `docker` | Managed or external gateway; managed vLLM, Ollama, llama.cpp, and container services, and the native NIM candidate | Docker suite, the cases on NVIDIA hosted inference, and the GPU cases |
 | `podman` | Managed rootless gateway on a local Linux engine or, from a Windows or macOS client, a Podman machine, or external gateway; model services only on a Docker host through [SSH placement](../agents-inference/remote-service.md) | None |
 | `kubernetes` | Managed or external gateway, with external inference endpoints | kind suite |
 | `openshift` | Managed or external gateway, with external inference endpoints | None; [run by hand](../../internal-docs/contributing/live-tests.md#openshift-gateway) on OpenShift Local |
@@ -528,6 +552,8 @@ The agent and runtime images are built for `linux/arm64` and `linux/amd64`.
 | External endpoint, such as NVIDIA hosted inference | OpenClaw and Hermes on NVIDIA hosted inference, on Linux AMD64; stub endpoints in the Docker and kind suites |
 | Managed vLLM | OpenClaw on the GPU runner, and NVIDIA Nemotron on NVIDIA DGX Station by manual dispatch |
 | Managed Ollama | Hermes on the GPU runner |
+| Managed llama.cpp | OpenClaw on the GPU runner, in the [`docker-openclaw-llama-cpp`](../../crates/nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml) case |
+| Native NIM, a candidate | None; [qualified by hand](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) on DGX Spark and L40S |
 | External Ollama through a managed proxy | None; contract and integration tests run it against fixtures |
 
 ### Harnesses
@@ -539,8 +565,9 @@ Onboarding offers OpenClaw and Hermes.
 
 ### GPUs
 
-Managed vLLM and Ollama check the GPU against the deployment's [hardware profile](../agents-inference/models.md#choosing-a-hardware-profile), such as `dgx-spark`, `dgx-station`, `h100`, or `rtx-pro-6000-blackwell`.
+Managed vLLM, Ollama, llama.cpp, and NIM services check the GPU against the service's [hardware profile](../agents-inference/models.md#choosing-a-hardware-profile), such as `dgx-spark`, `dgx-station`, `h100`, or `rtx-pro-6000-blackwell`, or, for vLLM, llama.cpp, and NIM, its dedicated GPU requirements.
 Accepting a profile doesn't qualify that GPU.
+A sandbox's [`gpus`](../agents-inference/agents.md#gpu-access-for-agent-tools) asks OpenShell for GPUs for the agent's tools; no live test requests them.
 
 | GPU host | Live tests |
 |---|---|
