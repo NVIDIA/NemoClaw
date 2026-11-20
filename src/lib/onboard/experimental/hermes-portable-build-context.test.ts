@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -127,6 +128,31 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(
       fs.statSync(path.join(inferredContext, "agents/hermes/qualify-switchyard-judge.py")).isFile(),
     ).toBe(true);
+    const stagedObserver = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-B",
+        "-c",
+        String.raw`
+import importlib.util, json, sys, types
+spec = importlib.util.spec_from_file_location("staged_events", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+event = types.SimpleNamespace(kind="scope", name="hermes.turn", scope_category="start",
+    uuid="a2165906-9c2c-4846-9a01-2a091eb55876", parent_uuid=None)
+print(json.dumps(module.project(event, ("capable", "efficient", "capable"))))
+`,
+        path.join(inferredContext, "agents/hermes/plugin/switchyard_events.py"),
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+    expect(stagedObserver.status, stagedObserver.stderr).toBe(0);
+    expect(JSON.parse(stagedObserver.stdout)).toMatchObject({
+      kind: "scope",
+      phase: "start",
+      hermes_turn: true,
+    });
     expect(fs.existsSync(path.join(inferredContext, "agents/hermes/Dockerfile"))).toBe(false);
     expect(plan.authority.sourceRevision).toMatch(/^[a-f0-9]{40,64}$/u);
     expect(plan.authority.contextManifestSha256).toMatch(/^[a-f0-9]{64}$/u);

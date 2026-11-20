@@ -1406,6 +1406,17 @@ def _install_googlechat_adapter(ctx):
 
 def register(ctx):
     """Register NemoClaw tools and hooks with Hermes."""
+    if os.environ.get("NEMOCLAW_HERMES_SWITCHYARD_SHA256"):
+        path = os.path.join(os.path.dirname(__file__), "switchyard_events.py")
+        try:
+            spec = importlib.util.spec_from_file_location("nemoclaw_switchyard_events", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.install(ctx)
+        except Exception:
+            logging.getLogger("gateway.nemoclaw_switchyard").warning(
+                "[switchyard-evidence] capture unavailable; routing evidence is incomplete"
+            )
     _install_nous_tool_broker_patch()
     # Hermes 0.20.6 discovers plugins on a background thread while run_agent
     # imports model_tools and waits for discovery to finish. Importing
