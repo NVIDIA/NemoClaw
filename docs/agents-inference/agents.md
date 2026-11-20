@@ -377,7 +377,7 @@ Destroy removes the owned provider and profile without revoking the upstream key
 Unchanged apply does not rotate a changed value behind an unchanged reference; follow [credential retirement](../security/security.md#credentials-and-authentication) when replacing or revoking the key.
 
 The profile admits only the search requests the harness's executables make: Brave's `GET /res/v1/web/search`, or Tavily's `POST /search` and `POST /extract`.
-Inference provider names cannot use the reserved `brave-search` or `tavily-search` registration prefixes.
+Inference provider and `api` integration names cannot use the reserved `brave-search` or `tavily-search` registration prefixes.
 Unused definitions create no resources or credentials.
 
 OpenShell supplies the credential and the network grant; the agent's own tools make the search requests.

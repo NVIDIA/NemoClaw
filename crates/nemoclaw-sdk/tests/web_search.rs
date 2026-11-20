@@ -599,3 +599,32 @@ fn search_sets_the_key_variable_the_sandbox_sees() {
         json!("not a name");
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
 }
+
+#[test]
+fn api_integrations_cannot_take_a_search_registration_name() {
+    let api = |name: &str| {
+        let mut value = input();
+        value["spec"]["sandboxes"]["assistant"]["agent"]["integrationRefs"] = json!([name]);
+        value["spec"]["sandboxes"]["assistant"]["integrations"] = json!({name: {
+            "kind": "api",
+            "endpoints": ["https://api.example.com"],
+            "credential": {"env": "EXAMPLE_KEY"}
+        }});
+        Document::parse(value.to_string().as_bytes())
+    };
+    for name in [
+        "brave-search",
+        "brave-search-x",
+        "tavily-search",
+        "tavily-search-x",
+    ] {
+        let error = api(name).unwrap_err();
+        assert!(
+            error.0.contains("reserved for web search"),
+            "{name}: {error}"
+        );
+    }
+    for name in ["brave-searcher", "search", "tavily"] {
+        api(name).unwrap_or_else(|error| panic!("{name}: {error}"));
+    }
+}

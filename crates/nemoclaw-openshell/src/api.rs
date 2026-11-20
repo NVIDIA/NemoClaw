@@ -27,30 +27,12 @@ pub struct McpPolicy {
     rules: Vec<crate::policy::PolicyAllowRule>,
 }
 
-/// An enforced REST policy for the API's host.
+/// An enforced REST policy for the API's host. OpenShell validates the rules.
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RestPolicy {
-    /// The only requests this endpoint admits.
-    rules: Vec<RestRule>,
-}
-
-/// One allowed REST request.
-#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RestRule {
-    /// Request matcher.
-    allow: RestMatcher,
-}
-
-/// A request's method and path.
-#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RestMatcher {
-    /// HTTP method, such as GET.
-    method: String,
-    /// HTTP path glob, matched against the whole request path.
-    path: String,
+    /// The only requests this endpoint admits, by method and path glob.
+    rules: Vec<crate::policy::PolicyAllowRule>,
 }
 
 /// What an API's endpoints admit: full access to each URL's path subtree, or
@@ -131,6 +113,10 @@ pub fn definition(
         .to_string(),
     )
     .map_err(|_| ObservationError::Query)?;
+    // OpenShell's gateway validates the profile's rules when it is imported;
+    // apply the same validation here so a plan fails before any change.
+    openshell_policy::validate_and_canonicalize_sandbox_policy(policy.clone())
+        .map_err(|_| ObservationError::Query)?;
     let key = if sandbox_env.is_empty() {
         credential_key(name)
     } else {
@@ -189,19 +175,11 @@ fn policy_endpoint(
         }
         Rules::Rest(rest_policy) => {
             // The rules name whole request paths, so the URL names only a host.
-            if !matches!(url.path(), "" | "/") || url.query().is_some() {
+            if !matches!(url.path(), "" | "/") {
                 return Err(ObservationError::Query);
             }
             let rest: RestPolicy =
                 serde_json::from_str(rest_policy).map_err(|_| ObservationError::Query)?;
-            if rest.rules.is_empty()
-                || rest
-                    .rules
-                    .iter()
-                    .any(|rule| rule.allow.method.is_empty() || rule.allow.path.is_empty())
-            {
-                return Err(ObservationError::Query);
-            }
             policy_endpoint["protocol"] = json!("rest");
             policy_endpoint["enforcement"] = json!("enforce");
             policy_endpoint["rules"] = json!(rest.rules);
@@ -458,18 +436,19 @@ mod tests {
     }
 
     #[test]
-    fn rest_rules_need_one_host_endpoint_and_method_and_path_selectors() {
+    fn rest_rules_take_one_host_endpoint_and_openshell_validates_them() {
         let host = ["https://api.tavily.com".to_string()];
         let rest = |rules: &str| definition("search", &host, "", "", Rules::Rest(rules), "");
         assert!(rest(REST_RULES).is_ok());
+        // OpenShell decides which rules admit traffic: it accepts a method or a
+        // path alone, and refuses rules that admit nothing.
         for rules in [
-            r#"{"rules":[]}"#,
             r#"{"rules":[{"allow":{"method":"POST"}}]}"#,
             r#"{"rules":[{"allow":{"path":"/search"}}]}"#,
-            r#"{"rules":[{"allow":{"method":"","path":"/search"}}]}"#,
-            r#"{"rules":[{"allow":{"method":"POST","path":"/search","tool":"x"}}]}"#,
-            r#"{"rules":[{"allow":{"method":"POST","path":"/search","params":{"name":"x"}}}]}"#,
         ] {
+            assert!(rest(rules).is_ok(), "{rules}");
+        }
+        for rules in [r#"{"rules":[]}"#, r#"{"rules":[{"allow":{}}]}"#, "not JSON"] {
             assert!(rest(rules).is_err(), "{rules}");
         }
         // The rules name request paths, so the endpoint names only a host.

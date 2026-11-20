@@ -221,7 +221,7 @@ For an API key sent without the Bearer prefix, set `auth_style = "header"` and `
 Query parameters, OAuth and refresh flows are not supported by this resource.
 Endpoints must use HTTP(S) without embedded credentials, queries, fragments or globs.
 By default, the profile grants full REST access to each endpoint's path subtree.
-To restrict a REST API to specific requests, declare a `rest` block with one or more `rules` blocks on `openshell_api`, each an `allow` block with a `method` and a `path` glob. The resource then takes exactly one URL in `endpoints`, naming only a scheme, host and port, and OpenShell admits only the listed requests to it:
+To restrict a REST API to specific requests, declare a `rest` block with one or more `rules` blocks on `openshell_api`, each an `allow` block that matches a `method`, a `path` glob, or both. The resource then takes exactly one URL in `endpoints`, naming only a scheme, host and port, and OpenShell admits only the matching requests to it. OpenShell validates the rules, and a plan fails on rules it would reject:
 
 ```hcl
 resource "openshell_api" "search" {
