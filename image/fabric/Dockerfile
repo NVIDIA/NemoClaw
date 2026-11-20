@@ -133,7 +133,7 @@ FROM interactive AS openclaw
 COPY --from=openclaw-upstream --chown=0:0 /app /app
 # OpenClaw's published image omits its license.
 COPY --from=sources --chmod=0644 /openclaw-LICENSE /opt/nemoclaw/source/openclaw-LICENSE
-COPY --from=openclaw-sources --chmod=0644 /sources/ /opt/nemoclaw/source/openclaw/
+COPY --from=openclaw-sources --chmod=0644 /sources/ubrn-source.tgz /sources/cua-driver-source.tar.gz /sources/README.md /opt/nemoclaw/source/openclaw/
 RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
 # catalog.py publishes this declaration: the files the adapter reads, which
 # explicit filesystem grants must allow, and the executables it runs.
