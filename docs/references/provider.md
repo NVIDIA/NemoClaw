@@ -622,6 +622,7 @@ Missing declarations remain unknown.
 An advertised setting does not prove that the selected inference model supports it.
 
 Optional `config_json` supplies the canonical public Fabric configuration, the same document a `fabric_agent`'s inputs compose.
+Optional `config_provenance_json` maps Fabric configuration paths to the paths where the user wrote them, so a rejection names the authored field.
 Optional `filesystem_read` lists the paths the sandbox policy grants for reading.
 Omitting it skips the filesystem check.
 A configuration without `harness.adapter_id` is rejected.
@@ -629,7 +630,12 @@ Optional `architecture` and `operating_system` supply the execution engine's pla
 The computed `compatibility_status` is `supported`, `unsupported`, or `unknown`, with details in `observation_json.compatibility`.
 The SDK checks image identity, source revision and platform, and that the image provides the selected adapter (the `fabric_adapter` check).
 An image without the adapter is unsupported. NemoClaw does not compare Fabric revisions: the image's own Fabric runtime reports an incompatibility when the agent starts.
-Fabric owns settings, model, extension and workflow validation, which it performs inside the sandbox when the agent is configured.
+With `config_json`, the data source also runs Fabric's own compatibility check of the configuration against the image's adapter descriptor.
+It reports each issue as an unsupported check (`fabric_configuration`).
+A workflow is checked only when the image's catalog describes its target.
+Otherwise Fabric checks it inside the sandbox when the agent starts.
+A check at plan time catches what the adapter declares it can't accept.
+It doesn't establish that the agent starts.
 Deployment postconditions name the sandbox and adapter and preserve unsupported check reasons in text and JSON errors.
 Onboarding uses the same assessment.
 Unknown error variants retain a generic rejection.

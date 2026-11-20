@@ -5,7 +5,7 @@
 # test archive, bundle, and live images; NVIDIA's GPU runners refuse pull
 # request jobs. CI / Bundle builds those on Ubuntu 22.04, whose glibc the GPU
 # runner can run. A dispatch has no such artifacts, so it builds a candidate
-# of its own there; a Station dispatch builds it in the case's job instead.
+# of its own there; a Colossus dispatch builds it in the case's job instead.
 # Linux AMD64's E2E jobs run the selected hosted cases themselves, except on a
 # fork's pull request.
 name: Live / HCL
@@ -14,7 +14,7 @@ on:
   workflow_call:
     inputs:
       target:
-        description: RTX PRO 6000 by default, or the qualified Station. Spark is not qualified yet.
+        description: RTX PRO 6000 by default, or the qualified Station. Spark requires a manual dispatch.
         type: string
         default: rtx-pro-6000
       hosted:
@@ -46,9 +46,9 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: Hardware target; Station requires a prepared Colossus runner.
+        description: Hardware target; Station and Spark require a prepared Colossus runner.
         type: choice
-        options: [rtx-pro-6000, dgx-station]
+        options: [rtx-pro-6000, dgx-station, dgx-spark]
         default: rtx-pro-6000
       hosted:
         description: Also run the cases that use NVIDIA hosted inference.
@@ -88,6 +88,7 @@ jobs:
     outputs:
       runner: ${{ steps.target.outputs.runner }}
       platform: ${{ steps.target.outputs.platform }}
+      persistent: ${{ steps.target.outputs.persistent }}
       cases: ${{ steps.cases.outputs.cases }}
       matrix: ${{ steps.cases.outputs.matrix }}
       runtimes: ${{ steps.cases.outputs.runtimes }}
@@ -123,16 +124,19 @@ jobs:
         env:
           TESTS: ${{ inputs.tests }}
         run: |
+          persistent=false
           case "$TARGET" in
             rtx-pro-6000) runner=linux-amd64-gpu-rtxpro6000-latest-1 platform=linux_amd64 ;;
             dgx-station)
               [[ -z $TESTS ]] || exit 1
               [[ $GITHUB_EVENT_NAME == workflow_dispatch || ($GITHUB_EVENT_NAME == push && $GITHUB_ACTOR == 'copy-pr-bot[bot]' && $GITHUB_REF_NAME == pull-request/*) ]] || exit 1
-              runner=colossus-gb300 platform=linux_arm64 ;;
-            dgx-spark) echo 'DGX Spark is not qualified yet.' >&2; exit 1 ;;
+              runner=colossus-gb300 platform=linux_arm64 persistent=true ;;
+            dgx-spark)
+              [[ -z $TESTS && $GITHUB_EVENT_NAME == workflow_dispatch ]] || exit 1
+              runner=colossus-gb10 platform=linux_arm64 persistent=true ;;
             *) echo "Unknown target: $TARGET" >&2; exit 1 ;;
           esac
-          printf 'runner=%s\nplatform=%s\n' "$runner" "$platform" >> "$GITHUB_OUTPUT"
+          printf 'runner=%s\nplatform=%s\npersistent=%s\n' "$runner" "$platform" "$persistent" >> "$GITHUB_OUTPUT"
       # CI / Bundle's build tool, so that this job compiles nothing.
       - if: inputs.tests != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -166,6 +170,10 @@ jobs:
           runtimes=$("$tool" images runtimes)
           if [[ $TARGET == dgx-station ]]; then
             CASES=$(jq -c '.runners.gpu = .runners["dgx-station"] | .runners.hosted = []' <<< "$CASES")
+          elif [[ $TARGET == dgx-spark ]]; then
+            # Spark remains manual-only and is absent from automatic case discovery.
+            CASES="{\"runners\":{\"gpu\":[\"$TARGET-openclaw-nemotron\"]},\"nvidia_key\":[]}"
+            runtimes="{\"$TARGET-openclaw-nemotron\":[\"vllm\"]}"
           fi
           if [[ -n $JOBS ]]; then
             CASES=$(jq -ce --arg jobs "$JOBS" '
@@ -194,13 +202,13 @@ jobs:
           if-no-files-found: error
 
   # A run without CI / Bundle's artifacts, such as a dispatch, builds a
-  # candidate here, which unpacks where those artifacts would. Two machines
-  # share the Station runner label, and Actions artifacts move at 3-8 MB/s
-  # there, so a Station case's job builds its own candidate instead.
+  # candidate here, which unpacks where those artifacts would. Colossus labels
+  # can match several machines, and Actions artifacts move at 3-8 MB/s there,
+  # so each Colossus case builds its own candidate in the hardware job.
   build:
     name: Build
     needs: cases
-    if: github.repository == 'NVIDIA/NemoClaw' && needs.cases.result == 'success' && inputs.tests == '' && inputs.target != 'dgx-station'
+    if: github.repository == 'NVIDIA/NemoClaw' && needs.cases.result == 'success' && inputs.tests == '' && needs.cases.outputs.persistent != 'true'
     # Like CI / Bundle, build against Ubuntu 22.04's glibc, which every case's runner can run.
     runs-on: ubuntu-22.04
     timeout-minutes: 45
@@ -227,11 +235,11 @@ jobs:
     name: ${{ matrix.case }}
     needs: [cases, build]
     # Runs when the cases job selected a case, from CI / Bundle's artifacts,
-    # this run's build, or, on Station, its own build.
+    # this run's build, or, on Colossus, its own build.
     if: >-
       ${{ !cancelled() && needs.cases.result == 'success' && needs.cases.outputs.matrix != '[]' &&
       (needs.build.result == 'success' ||
-      (needs.build.result == 'skipped' && (inputs.tests != '' || inputs.target == 'dgx-station'))) }}
+      (needs.build.result == 'skipped' && (inputs.tests != '' || needs.cases.outputs.persistent == 'true'))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -244,6 +252,7 @@ jobs:
     # queue. A concurrency group would let a newer run cancel a waiting job.
     env:
       TEST_PLATFORM: ${{ needs.cases.outputs.platform }}
+      PERSISTENT: ${{ needs.cases.outputs.persistent }}
       NEMOCLAW_HCL_CASE: ${{ matrix.case }}
       NEMOCLAW_TEST_BUNDLE: ${{ github.workspace }}/dist/${{ needs.cases.outputs.platform }}
     steps:
@@ -276,13 +285,18 @@ jobs:
           else
             printf 'names=openclaw\nsuffix=-openclaw\n' >> "$GITHUB_OUTPUT"
           fi
-      - name: Check the Station runner
-        if: inputs.target == 'dgx-station'
+      - name: Check the Colossus runner
+        if: needs.cases.outputs.persistent == 'true'
         run: |
+          case "$TARGET" in
+            dgx-station) gpu=GB300 ;;
+            dgx-spark) gpu=GB10 ;;
+            *) exit 1 ;;
+          esac
           test "$(uname -m)" = aarch64
           . /etc/os-release
           test "$ID:$VERSION_ID" = ubuntu:24.04
-          nvidia-smi --query-gpu=name --format=csv,noheader | grep -q GB300
+          nvidia-smi --query-gpu=name --format=csv,noheader | grep -q "$gpu"
           docker info --format '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter.v1
       # Since v0.37.0, Buildx starts a runtime image's base pull only after the
       # supervisor target finishes (https://github.com/docker/buildx/issues/4216).
@@ -307,11 +321,11 @@ jobs:
             touch "$RUNNER_TEMP/base-pull.done"
           } > "$RUNNER_TEMP/base-pull.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/base-pull.pid"
-      - if: inputs.target == 'dgx-station'
+      - if: needs.cases.outputs.persistent == 'true'
         uses: ./.github/actions/hcl-candidate
         with:
           platform: ${{ needs.cases.outputs.platform }}
-      - if: inputs.tests == '' && inputs.target != 'dgx-station'
+      - if: inputs.tests == '' && needs.cases.outputs.persistent != 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ env.CANDIDATE }}
@@ -346,8 +360,8 @@ jobs:
         run: |
           read -ra agent_names <<< "$AGENTS"
           if [[ -z $TESTS ]]; then
-            # A Station case built the candidate in this job.
-            if [[ $TARGET != dgx-station ]]; then
+            # A Colossus case built the candidate in this job.
+            if [[ $PERSISTENT != true ]]; then
               tar -xf "$RUNNER_TEMP/candidate.tar"
               docker load -i .build/agents.tar
             fi
@@ -377,19 +391,21 @@ jobs:
           NEMOCLAW_HCL_RUN="$RUNNER_TEMP/hcl"
           bindings=()
           document="crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
-          if [[ $TARGET == dgx-station ]]; then
+          if [[ $PERSISTENT == true ]]; then
             umask 077
             NEMOCLAW_HCL_RUN="$HOME/.local/state/nemoclaw-ci/hcl/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
             test ! -e "$NEMOCLAW_HCL_RUN"
             mkdir -p "$NEMOCLAW_HCL_RUN"
             document="$NEMOCLAW_HCL_RUN/case.yaml"
-            cp examples/gtc-dc/openclaw-dgx-station.yaml "$document"
-            # Case-specific inputs; the shared binding below also pins images and UID.
-            bindings+=(
-              -e 's#nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4#nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4#'
-              -e 's#ff433f5493e25d631c9f12b5d55c674229923d02#da5b2650a835292c678994a1fa3fb653250fb508#'
-              -e 's#nemotron-3-super#nemotron-3.5-super-vl#g'
-            )
+            cp "examples/gtc-dc/openclaw-$TARGET.yaml" "$document"
+            # Station's qualified model stays separate from the Spark template.
+            if [[ $TARGET == dgx-station ]]; then
+              bindings+=(
+                -e 's#nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4#nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4#'
+                -e 's#ff433f5493e25d631c9f12b5d55c674229923d02#da5b2650a835292c678994a1fa3fb653250fb508#'
+                -e 's#nemotron-3-super#nemotron-3.5-super-vl#g'
+              )
+            fi
             cp -a "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_HCL_RUN/bundle"
             cp -L .build/e2e "$NEMOCLAW_HCL_RUN/e2e"
             {
