@@ -165,34 +165,11 @@ static TOKENS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z0-9_+/=-]{32,}").expect("constant diagnostic token pattern")
 });
 
-/// The summary of the OpenTofu error that a provider reports for a create that
-/// [`ObservationError::created_nothing`] says made nothing. The SDK reads it
-/// from OpenTofu's diagnostics to clear the creation's pending record.
+/// The summary of the OpenTofu error a provider reports for a create that
+/// left nothing behind; the SDK reads it to drop the pending creation.
 pub const CREATED_NOTHING_SUMMARY: &str = "Create rejected; nothing created";
 
 impl ObservationError {
-    /// Whether a failed create is known to have left nothing behind, so that
-    /// no resource exists whose ID NemoClaw failed to save.
-    ///
-    /// Only an `InvalidArgument` rejection of `CreateSandbox` qualifies.
-    /// OpenShell 0.1.9 validates the whole request, including the sandbox
-    /// policy, before it persists anything, and once it has persisted the
-    /// sandbox it reports a failure as another code. OpenShell does not
-    /// document that order; a live test in `nemoclaw-provider` checks it
-    /// against the pinned gateway. The other rejection codes can follow a
-    /// persisted sandbox, so they keep the pending record.
-    #[must_use]
-    pub fn created_nothing(&self) -> bool {
-        matches!(
-            self,
-            Self::Rejected {
-                operation: "CreateSandbox",
-                code: "InvalidArgument",
-                ..
-            }
-        )
-    }
-
     /// Bound backend diagnostics and remove credentials before they enter public errors.
     pub fn sanitized_detail(detail: &str) -> Box<str> {
         let printable: String = detail

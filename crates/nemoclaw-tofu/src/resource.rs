@@ -323,12 +323,17 @@ impl ResourceAdapter {
     ) -> Option<State> {
         let (state, error) = mutation.into_parts();
         if let Some(error) = error {
-            // The SDK reads this summary to clear the creation's pending
-            // record; a create that left a binding behind keeps it.
-            let summary = if state.is_none() && error.created_nothing() {
-                CREATED_NOTHING_SUMMARY
-            } else {
-                "Apply incomplete"
+            // OpenShell validates a sandbox create before it stores anything,
+            // and reports a failure after that with another code, so this
+            // rejection lost no sandbox ID. The live gateway isolation test
+            // checks that order against the pinned OpenShell.
+            let summary = match &error {
+                ObservationError::Rejected {
+                    operation: "CreateSandbox",
+                    code: "InvalidArgument",
+                    ..
+                } if state.is_none() => CREATED_NOTHING_SUMMARY,
+                _ => "Apply incomplete",
             };
             diags.root_error(
                 summary,

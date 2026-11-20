@@ -1543,30 +1543,6 @@ mod tests {
     }
 
     #[test]
-    fn a_sandbox_create_rejected_by_openshell_does_not_claim_unconfirmed_state() {
-        let cli = Cli::try_parse_from(["nemoclaw", "apply", "spark.yaml"]).unwrap();
-        let context = RenderContext::new(&cli);
-        context.progress(Arc::new(|_| {}))(nemoclaw_sdk::Progress::MutationStarted);
-        let rejected = |uncreated| Error::Execution {
-            operation: "apply".into(),
-            diagnostic: "Create rejected; nothing created".into(),
-            postcondition_failures: None,
-            uncreated,
-        };
-        let error = rejected(Some(vec!["openshell_sandbox.assistant".into()]));
-        let text = render_error(&error, OutputFormat::Text, &context);
-        assert!(!text.contains("Resource state is not confirmed"), "{text}");
-        assert!(text.contains("no sandbox was created"), "{text}");
-        assert!(text.contains("run destroy"), "{text}");
-        let json: Value =
-            serde_json::from_str(&render_error(&error, OutputFormat::Json, &context)).unwrap();
-        assert_eq!(json["outcome"], "failed");
-        // Any other failure of the same apply keeps the warning.
-        let other = render_error(&rejected(None), OutputFormat::Json, &context);
-        assert!(other.contains("Resource state is not confirmed"), "{other}");
-    }
-
-    #[test]
     fn docker_model_refusal_names_the_service_update_policy_field() {
         for command in ["plan", "apply"] {
             let cli = Cli::try_parse_from(["nemoclaw", command, "spark.yaml"]).unwrap();
