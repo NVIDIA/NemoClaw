@@ -3,7 +3,7 @@
 
 # Current Limits
 
-v1 is in development and has no release.
+v1 is in development; the inspected release records contain draft release candidates but no published final release.
 This page lists what it does not do or has not tested, with the open GitHub issue that tracks each where one exists.
 Other pages state a limit where it affects a procedure and link the same issue.
 
@@ -29,7 +29,7 @@ The following installation and release limits apply:
 
 | Limit | Issue | Last Verified |
 |---|---|---|
-| No published release: the [release archives](../get-started/install.md) are on draft releases, which only maintainers see. Others [build the bundle from source](../build-deploy/build.md#building-a-native-bundle). | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`291723b`][v1-291723b]: issue, and only draft releases exist |
+| No published final release: the [release archives](../get-started/install.md) are on draft releases, which only maintainers see. Others [build the bundle from source](../build-deploy/build.md#building-a-native-bundle). | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`291723b`][v1-291723b]: issue, and only draft releases exist |
 | The release executables are neither signed nor notarized for macOS or Windows. | [#14621](https://github.com/NVIDIA/NemoClaw/issues/14621) | [`291723b`][v1-291723b]: code, issue |
 | The SDK and provider packages are not published. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | No support policy or enterprise deployment qualification. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue |
