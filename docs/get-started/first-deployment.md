@@ -163,6 +163,8 @@ A plan previews changes without invoking inference. Apply can create a workspace
 
 3. Resolve deferred work before treating the plan as complete. Even `complete: true` does not verify service readiness or an agent reply.
 
+   Before the first apply, the plan can defer "Selected image Fabric capabilities are unverified". If that is the only deferred item, continue: apply checks the image's adapter when it starts the agent, and a plan after a successful apply reports `complete: true`.
+
 4. Apply the same YAML and state directory only after reviewing the plan.
 
    ```sh
