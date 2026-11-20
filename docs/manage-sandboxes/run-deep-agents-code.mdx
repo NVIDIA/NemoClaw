@@ -116,14 +116,14 @@ Callers must reject empty, malformed, additional, or unsupported-version stdout.
 ## Recover an Occupied Thread
 
 If `dcode` reports that a thread is still open in another Deep Code session, close that session and try again.
-If a browser refresh made the other session inaccessible, restart the sandbox to release the thread:
+If a browser refresh made the other session inaccessible, restart the sandbox to release the thread.
+Restarting the sandbox ends its active sessions:
 
 ```bash
 nemo-deepagents <sandbox-name> stop
 nemo-deepagents <sandbox-name> start
 ```
 
-Stopping the sandbox ends its active sessions.
 The restart preserves workspace files, credentials, and the registry entry.
 
 ## Call a Read-Only MCP Tool
