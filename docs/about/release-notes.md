@@ -32,6 +32,7 @@ Agents:
 - OpenClaw keeps its native home in `/sandbox/artifacts`, as Hermes does.
   See [agent files](../build-deploy/state.md#agent-files).
 - OpenClaw sessions with kept state no longer fail on turns longer than about a minute or after a few minutes idle ([#14630](https://github.com/NVIDIA/NemoClaw/issues/14630)).
+- A Hermes route to an `anthropic` provider reaches the provider's endpoint whatever its path ([#14538](https://github.com/NVIDIA/NemoClaw/issues/14538)).
 
 Releases:
 
@@ -119,7 +120,6 @@ Agents and interfaces:
 - A Hermes agent whose route uses an `anthropic` inference provider starts.
   Before, apply failed with `start_failed` because the Hermes image lacked the Anthropic SDK.
   Hermes sends the requests to the provider's endpoint only when its path ends in `/anthropic` or `/anthropic/v1` or its host is Anthropic's, Claude's, or Azure's.
-  See [pointing Hermes at an Anthropic endpoint](../agents-inference/inference.md#pointing-hermes-at-an-anthropic-endpoint).
 
 Onboarding:
 
@@ -307,6 +307,7 @@ These changes since the `v0.1.0-rc11` tag affect existing deployments or documen
 - The intent record is now version 31, so this release refuses any deployment that `v0.1.0-rc11` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release.
   See [compatibility](../references/compatibility.md#deployment-state).
+- OpenClaw's `harness.settings.plugins.entries` is now `plugins.bundled.entries`, for plugins that ship with OpenClaw, and `plugins.external.entries`, for plugins you provide; Fabric's OpenClaw adapter no longer accepts `plugins.entries`.
 - `spec.gateway.target` replaces `spec.gateway.runtime` and the gateway's flat settings.
   The parser rejects the old fields, and plan refuses a changed target on an existing deployment.
   A managed Docker or Podman gateway takes an integer `port`, 17681 by default, instead of `endpoint`, with `engine`, `networkCIDR`, and `imagePullPolicy` beside it.

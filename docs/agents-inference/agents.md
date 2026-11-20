@@ -80,7 +80,7 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Running One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory.
@@ -281,7 +281,7 @@ Fabric's error names the entry and its path.
 
 Use `directories` or `paths`, not both.
 Each adapter defines what a `paths` entry means: OpenClaw requires each one to hold `SKILL.md`, and Hermes passes it to its `skills.external_dirs` unchecked.
-For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters) say which fields they support and what a path must hold.
+For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters) say which fields they support and what a path must hold.
 The `bundled` field selects which of the harness's own skills load.
 Leave it out to keep the harness's default.
 
@@ -396,7 +396,7 @@ Each harness finds the skills in a `folder` entry by its own rules:
 `duplicates` doesn't change which copy loads when a skill shares a name with the harness's own skill.
 Fabric doesn't expand `~` or `${VAR}` in a path.
 Use absolute sandbox paths.
-The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
+The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
 
 ## Web Search
 

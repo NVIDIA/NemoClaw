@@ -136,7 +136,7 @@ See [Reaching an Agent Interface](#reaching-an-agent-interface).
 The agent's Fabric runtime serves OpenClaw's Control UI and Hermes's API server and dashboard inside its sandbox, on loopback ports that you choose.
 Fabric's adapters start them, generate their tokens, and stop them with the runtime.
 NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
-The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/openclaw/openclaw-dashboard.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/hermes/hermes.mdx#select-execution-paths) document each interface's behavior.
+The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/docs/integrations/harness/openclaw/openclaw-dashboard.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/docs/integrations/harness/hermes/hermes.mdx#select-execution-paths) document each interface's behavior.
 
 ### Enabling an Interface
 
@@ -282,7 +282,7 @@ Hermes's browser chat opens its own pseudo-terminal, so it needs `/dev/pts`, as 
 
 Hermes's `terminal` interface attaches Hermes's terminal UI to the backend that serves browser chat, which the agent's runtime starts.
 Fabric marks this interface experimental: its `terminal` setting, the attachment files, and the attach helper might change between Fabric releases without compatibility.
-See [Fabric's Hermes terminal guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/hermes/hermes-tui.mdx).
+See [Fabric's Hermes terminal guide](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/docs/integrations/harness/hermes/hermes-tui.mdx).
 Fabric tracks what it takes for the interface to stop being experimental in [NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656).
 Give it the dashboard's port, so that both use one backend process:
 
