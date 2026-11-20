@@ -1017,7 +1017,7 @@
           "description": "Immutable image reference, pinned by SHA-256 digest. Required on every runtime; build one as described in the agent image build instructions.",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
           "type": "string",
-          "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images"
+          "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"
         }
       },
       "required": [
@@ -3190,7 +3190,7 @@
         "image": {
           "$ref": "#/$defs/Image",
           "description": "Immutable agent image that contains the selected Fabric adapter and, on Kubernetes, is compatible with the gateway's runtime user and group IDs. Required: no default image is published.",
-          "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images"
+          "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"
         },
         "inferenceProviders": {
           "additionalProperties": {

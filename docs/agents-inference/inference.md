@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Configure Inference APIs, Limits, and Authentication
+# Configuring Inference APIs, Limits, and Authentication
 
 Choose who operates the inference service, then select the API and model used by the agent.
 A sandbox can attach up to 32 providers, NVIDIA OpenShell's limit per sandbox: each inference provider its routes select counts one, as do its web search and each `api` integration.
@@ -20,7 +20,7 @@ The attached provider authorizes its configured API path.
 The YAML `routes` field names model configuration.
 It creates no OpenShell route resource.
 
-## Give an Agent Multiple Model Choices
+## Giving an Agent Multiple Model Choices
 
 Declare model choices for an adapter that advertises native model selection.
 The SDK preserves the choices.
@@ -54,10 +54,10 @@ Each managed `service` serves one pinned model.
 Routes must use its declared served model.
 An Ollama proxy also selects one externally managed model.
 Additional models can use external providers alongside that managed provider.
-Changing model configuration replaces the agent's sandbox, deleting its files and conversations, as [the change path](../build-deploy/usage.md#choose-the-change-path) describes.
+Changing model configuration replaces the agent's sandbox, deleting its files and conversations, as [the change path](../build-deploy/usage.md#choosing-the-change-path) describes.
 For Pi, see [model selection and updates](agents.md#pi-model-selection).
 
-## Combine Local and Hosted Providers
+## Combining Local and Hosted Providers
 
 The [multiple-provider example](../../examples/multiple-providers.yaml) gives a researcher a hosted smart model and a local fast model.
 The writer selects only the local model.
@@ -69,7 +69,7 @@ Selected definitions must have distinct provider names within their [definition 
 Different sandboxes can reuse local provider names.
 
 Replace the example endpoints, model IDs, deployment UID, and image for your environment.
-The local server and hosted API must already exist and satisfy the [external endpoint prerequisites](#prepare-an-external-endpoint).
+The local server and hosted API must already exist and satisfy the [external endpoint prerequisites](#preparing-an-external-endpoint).
 Set `HOSTED_API_KEY` on the applying host.
 Requests to a real hosted API might incur charges.
 Use the [deployment workflow](../build-deploy/usage.md) with fresh state, then verify each configured model through its native agent interface.
@@ -98,7 +98,7 @@ Managed vLLM resource identities include the service name.
 The current tests establish configuration, compilation, API attachment, and drift behavior against fixtures.
 Live multi-provider qualification remains separate.
 
-## Choose a Service Mode
+## Choosing a Service Mode
 
 Choose an external endpoint when its operator owns availability, or a managed service when NemoClaw must install the runtime.
 The following paths have different prerequisites and retention behavior:
@@ -106,21 +106,21 @@ The following paths have different prerequisites and retention behavior:
 | Situation | Configuration and owning guide | Example to adapt |
 |---|---|---|
 | You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../../examples/inference-tuning.yaml), [Hermes authentication](../../examples/hermes-auth.yaml) |
-| NemoClaw should run Ollama on a declared NVIDIA GPU | Declare a service with `kind: ollama`, hardware requirements, a pinned runtime image, a model name and digest, memory, and serving settings | [Managed Ollama](#run-managed-ollama) |
-| Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
-| You run a model server in a Kubernetes or OpenShift gateway's cluster | External `endpoint` naming its Service, `http://<service>.<namespace>.svc.cluster.local:<port>/v1`, and an optional credential reference; follow [in-cluster model servers](../build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) | [In-cluster vLLM](../../examples/kubernetes/in-cluster-vllm.yaml), [in-cluster Ollama](../../examples/kubernetes/in-cluster-ollama.yaml) |
+| NemoClaw should run Ollama on a declared NVIDIA GPU | Declare a service with `kind: ollama`, hardware requirements, a pinned runtime image, a model name and digest, memory, and serving settings | [Managed Ollama](#running-managed-ollama) |
+| Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#using-external-ollama-through-a-managed-proxy) |
+| You run a model server in a Kubernetes or OpenShift gateway's cluster | External `endpoint` naming its Service, `http://<service>.<namespace>.svc.cluster.local:<port>/v1`, and an optional credential reference; follow [in-cluster model servers](../build-deploy/kubernetes.md#using-a-model-server-in-the-cluster) | [In-cluster vLLM](../../examples/kubernetes/in-cluster-vllm.yaml), [in-cluster Ollama](../../examples/kubernetes/in-cluster-ollama.yaml) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../../examples/spark/vllm.yaml) |
 | The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../../examples/spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Use an immutable image that packages the recipe's reviewed tools, and declare an [inline recipe](recipes.md) | [Recipe declaration](recipes.md#declaration) |
 
 Service ownership doesn't depend on the harness.
-The service must support the [request API](#choose-the-request-api) selected by that harness.
+The service must support the [request API](#choosing-the-request-api) selected by that harness.
 The [harness matrix](../references/fabric-harnesses.md) distinguishes accepted configurations from live qualification.
 Examples use placeholder image digests, plus deployment identities and environment-specific endpoints.
 Build or select your own matching images and replace those values before use.
 An accepted example is a configuration contract, not evidence that the combination completes live inference.
 
-## Set Container Limits and Update Policy
+## Setting Container Limits and Update Policy
 
 Managed `kind: vllm` and `kind: ollama` services use `container` for CPU and system-memory limits and GPU selection on Docker.
 Set these fields under the service, alongside its model and serving settings:
@@ -147,7 +147,7 @@ An index also works, but it can change when the host boots, and YAML needs it qu
 Run `nvidia-smi` on the host whose Docker engine runs the service: with [SSH placement](remote-service.md), that's the remote host, not the machine where you run `nemoclaw`.
 Without `gpuDevices`, the container gets every GPU, and the model runtime stops unless the host has exactly one.
 For a vLLM service without a recipe, the number of entries is also the default tensor parallel size when no parallel size is set.
-See [the parallel layout](models.md#set-the-parallel-layout).
+See [the parallel layout](models.md#setting-the-parallel-layout).
 Native managed inference on Podman remains unsupported.
 A Podman gateway can consume a service on an explicitly selected remote Docker engine through [SSH placement](remote-service.md).
 These shared fields don't change [platform qualification limits](../resources/limits.md#platforms-models-and-placement).
@@ -162,9 +162,9 @@ Changing only this policy doesn't restart the workload.
 Initial creation, unchanged apply, and recovery of missing or stopped Docker containers remain allowed after ownership checks.
 Retained model data and credentials remain bound to the deployment.
 This policy applies to managed vLLM and Ollama, not the Ollama proxy or gateway.
-See [change constraints](../build-deploy/usage.md#choose-the-change-path).
+See [change constraints](../build-deploy/usage.md#choosing-the-change-path).
 
-## Choose the Request API
+## Choosing the Request API
 
 Set `api` on the selected provider, whether inline or referenced, to the request API your endpoint accepts.
 OpenShell authorizes native endpoint access and substitutes the provider credential.
@@ -189,22 +189,7 @@ The provider's key under `inferenceProviders` is the local name routes reference
 It doesn't select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
 
-### Point Hermes at an Anthropic Endpoint
-
-Hermes sends an `anthropic` provider's requests to its `endpoint` only when [Hermes's rule](https://github.com/NousResearch/hermes-agent/blob/b200f5bc60e31588ba2cb60e288029c4a54ba5fa/hermes_cli/runtime_provider.py#L395-L403) recognizes the endpoint as Anthropic's:
-
-- Its path ends in `/anthropic` or `/anthropic/v1`, such as `https://gateway.example/anthropic/v1`, where Anthropic-compatible gateways serve the protocol.
-- Its host is `api.anthropic.com` or ends in `.anthropic.com`, `.claude.com`, or `.azure.com`.
-
-For any other endpoint, such as `https://gateway.example/v1`, Hermes's processes that read its configuration file, such as its API server, send the requests to `https://api.anthropic.com` instead.
-OpenShell refuses those connections, because the provider grants only its own endpoint, and the agent doesn't answer.
-NemoClaw doesn't check the endpoint, so plan and apply succeed.
-
-Use an endpoint whose path ends in `/anthropic` or `/anthropic/v1`, or an `openai` provider when the endpoint also serves OpenAI's API.
-The `docker-openclaw-hermes-interfaces` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios) gets OpenClaw and Hermes replies through an `anthropic` provider at an `/anthropic/v1` endpoint.
-Fabric's Hermes adapter would need to configure Hermes to use the endpoint whatever its path ([current limits](../resources/limits.md#inference)).
-
-### Prepare an External Endpoint
+### Preparing an External Endpoint
 
 Before writing its provider declaration, obtain the base URL, API, exact model ID, required credential, and model limits from the endpoint operator.
 Confirm that the selected image's Fabric descriptor accepts that API.
@@ -216,15 +201,15 @@ OpenShell decides which inference destinations a sandbox can reach.
 
 The endpoint must be reachable from the sandbox's OpenShell proxy, not just from your client terminal.
 A loopback URL refers to the network namespace making the request.
-For a local external Ollama daemon, use the [managed proxy](#use-external-ollama-through-a-managed-proxy) contract instead of assuming that the gateway can reach the client's loopback interface.
+For a local external Ollama daemon, use the [managed proxy](#using-external-ollama-through-a-managed-proxy) contract instead of assuming that the gateway can reach the client's loopback interface.
 
 Use the route's `overrides.model` for the upstream model ID.
 Native agents send the configured model ID to the native endpoint using an OpenShell placeholder credential.
 They don't need the real upstream key in their YAML or sandbox environment.
-Confirm a native agent reply after apply using [verification levels](#verify-the-result).
+Confirm a native agent reply after apply using [verification levels](#verifying-the-result).
 NemoClaw has no guides for named hosted providers.
 
-### Trust a Custom Certificate Authority
+### Trusting a Custom Certificate Authority
 
 An endpoint whose certificate comes from an internal certificate authority, such as an organization's LiteLLM proxy, needs that CA trusted in two places:
 
@@ -240,26 +225,26 @@ An endpoint whose certificate comes from an internal certificate authority, such
 
 If the machine running NemoClaw doesn't trust the certificate, onboarding reports that the server's certificate isn't trusted rather than that the endpoint is unreachable.
 
-## Use an Image Built From This Revision
+## Using an Image Built From This Revision
 
 Explicit API selection, tuning, and authentication require an agent image built from this revision.
-[Build it](../build-deploy/build.md#build-agent-images) and use its immutable digest in `sandboxes.<name>.image.ref`.
+[Build it](../build-deploy/build.md#building-agent-images) and use its immutable digest in `sandboxes.<name>.image.ref`.
 The [tuning example](../../examples/inference-tuning.yaml) and [Hermes authentication example](../../examples/hermes-auth.yaml) contain zero-digest placeholders.
 Replace them before deployment.
 Set their gateway and inference endpoints and model IDs for your services, and assign a fresh deployment UID.
-Changing the model, native settings, or image replaces the agent's sandbox, deleting its files and conversations, as described in [the change path](../build-deploy/usage.md#choose-the-change-path).
+Changing the model, native settings, or image replaces the agent's sandbox, deleting its files and conversations, as described in [the change path](../build-deploy/usage.md#choosing-the-change-path).
 
-## Run Managed Ollama
+## Running Managed Ollama
 
 Declare `kind: ollama` under `spec.services` to run Ollama through the same package-independent installer contract as vLLM.
 The [GPU example](../../examples/managed-ollama-gpu.yaml) selects NVIDIA DGX Spark and a pinned public Qwen3 model.
 Before applying, choose a fresh deployment UID and state directory, a current agent image, and a hardware profile matching the inference host.
-The inference host needs Linux, Docker with NVIDIA container GPU access, an NVIDIA GPU for the container (the host's only GPU, or the one that [`container.gpuDevices`](#set-container-limits-and-update-policy) selects), and enough host memory, GPU memory, and disk for the declared budget.
-Use the [hardware profile reference](models.md#choose-a-hardware-profile) for other GPU families and explicit CPU architecture.
+The inference host needs Linux, Docker with NVIDIA container GPU access, an NVIDIA GPU for the container (the host's only GPU, or the one that [`container.gpuDevices`](#setting-container-limits-and-update-policy) selects), and enough host memory, GPU memory, and disk for the declared budget.
+Use the [hardware profile reference](models.md#choosing-a-hardware-profile) for other GPU families and explicit CPU architecture.
 Local placement uses the managed gateway's Docker engine.
 [SSH placement](remote-service.md) uses the same `placement` and `publication` fields as vLLM.
 
-Build the supervisor image from this checkout using the [runtime build prerequisites](../build-deploy/build.md#build-a-runtime-image).
+Build the supervisor image from this checkout using the [runtime build prerequisites](../build-deploy/build.md#building-a-runtime-image).
 From the repository root, on a Linux ARM64 or AMD64 build host matching the model host:
 
 ```sh
@@ -368,11 +353,11 @@ Fixtures cover configuration, registry download, startup protocol, memory checks
 The `docker-openclaw-hermes-ollama` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios) gets a Hermes reply through a managed Ollama model on CI's Linux AMD64 NVIDIA GPU runner.
 No test covers tool use through this adapter or other GPUs and hosts ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-## Authenticate a Managed vLLM Service
+## Authenticating a Managed vLLM Service
 
 Set `authentication: bearer` under `spec.services.<name>` to generate a private key for a managed vLLM service.
 Omission preserves the existing unauthenticated serving behavior.
-Build the [runtime image](../build-deploy/build.md#build-a-runtime-image) from this revision and use its immutable digest.
+Build the [runtime image](../build-deploy/build.md#building-a-runtime-image) from this revision and use its immutable digest.
 Authenticated services require both `org.nemoclaw.inference.authentication=bearer-v1` and `org.nemoclaw.inference.routes=openai-v2`.
 Image validation rejects other images before creating the runtime, including `openai-v1` images from earlier revisions, whose middleware passed every `/v1` path.
 Don't supply `inferenceProviders.<name>.credential` for a managed service.
@@ -416,11 +401,11 @@ Recreation using the retained credential volume reuses the key.
 A missing key after initialization or invalid key metadata stops startup and retains storage for inspection.
 Retire model data and credentials separately.
 Removing the model volume doesn't erase the credential.
-To retire both with the deployment, see [Remove Retained Resources](../build-deploy/usage.md#remove-retained-resources).
+To retire both with the deployment, see [Removing Retained Resources](../build-deploy/usage.md#removing-retained-resources).
 Changing an existing service to enable authentication follows the normal runtime replacement rules.
 YAML doesn't reconfigure a running server in place.
 
-### Supply the Key on Other Platforms
+### Supplying the Key on Other Platforms
 
 The generated key lives in a Docker volume, so NemoClaw generates keys only for services it places on Docker.
 On another platform, such as Kubernetes or Podman, supply the key yourself and keep it in the platform's secret store.
@@ -442,7 +427,7 @@ env:
 
 Register the server with OpenShell using the same key: give `openshell_inference` a `server` object whose `credential_env` names a variable holding the key where OpenTofu runs.
 In YAML, set the provider's `credential` to that variable.
-[Use a Model Server in the Cluster](../build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) shows a Kubernetes example.
+[Using a Model Server in the Cluster](../build-deploy/kubernetes.md#using-a-model-server-in-the-cluster) shows a Kubernetes example.
 
 Readiness on those platforms is the platform's job, using the server's own checks:
 
@@ -454,7 +439,7 @@ Readiness on those platforms is the platform's job, using the server's own check
 When memory protection stops the server, the runtime exits.
 Choose a restart policy that doesn't start the model again under the same memory pressure, such as Kubernetes' `restartPolicy: Never` for a pod that should stay down.
 
-## Use External Ollama Through a Managed Proxy
+## Using External Ollama Through a Managed Proxy
 
 Run the proxy on the same Linux Docker host as the existing Ollama daemon and installed model.
 With a managed Docker gateway, the proxy inherits `gateway.engine`.
@@ -465,7 +450,7 @@ The proxy exposes `openai-completions`.
 Its service contract doesn't restrict the harness identifier.
 The selected adapter must accept that protocol and model configuration.
 
-Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](../build-deploy/build.md#build-agent-images).
+Use a Docker image store that records a repository digest for locally built images, as described in the [image build prerequisites](../build-deploy/build.md#building-agent-images).
 Build the proxy image from the repository root, explicitly selecting the native host platform (`linux/arm64` below, or `linux/amd64`):
 
 ```sh
@@ -521,9 +506,9 @@ The key is never regenerated beside initialized storage.
 Destroy removes the proxy and OpenShell registration and retains the credential volume.
 The external daemon and model remain untouched.
 Reapplying the original configuration reuses that retained key.
-When retiring the deployment, remove the retained credential volume with [Remove Retained Resources](../build-deploy/usage.md#remove-retained-resources).
+When retiring the deployment, remove the retained credential volume with [Removing Retained Resources](../build-deploy/usage.md#removing-retained-resources).
 
-## Tune OpenClaw's Primary Route
+## Tuning OpenClaw's Primary Route
 
 Set the public model output limit with `maxTokens`.
 The [tuning example](../../examples/inference-tuning.yaml) uses:
@@ -551,13 +536,13 @@ Configure that service's limits separately.
 The SDK doesn't infer native support from an adapter name or from accepting the YAML structure.
 
 The managed Ollama examples for OpenClaw set the service's `serving.contextTokens` to `32768`.
-The [managed Hermes example](../../examples/managed-hermes.yaml) sets `65536`, because [Hermes needs at least `64000`](#size-the-context-for-hermes).
+The [managed Hermes example](../../examples/managed-hermes.yaml) sets `65536`, because [Hermes needs at least `64000`](#sizing-the-context-for-hermes).
 An operator-reported OpenClaw prompt used 19,947 tokens in one setup, before allowing space for a reply.
 Size the model, KV cache, and GPU memory for the selected context.
 The OpenClaw adapter owns how it uses the context window.
 NemoClaw doesn't assess an OpenClaw route's context budget.
 
-## Size the Context for Hermes
+## Sizing the Context for Hermes
 
 The pinned Hermes Agent requires a model context window of at least 64,000 tokens.
 It reads the window from the model server.
@@ -574,7 +559,7 @@ NemoClaw doesn't check the window for Hermes.
 Hermes checks the window the model server reports when the agent starts, and its error names the server setting to raise, which for a managed service is `serving.contextTokens`.
 Hermes doesn't reject a managed Ollama window below its minimum, so a Hermes route through managed Ollama gets no error for a small `serving.contextTokens` ([current limits](../resources/limits.md#inference)).
 
-## Authenticate Hermes Through the Provider
+## Authenticating Hermes Through the Provider
 
 Declare an external HTTPS provider with a credential reference, then select it from the route and enable Hermes authentication:
 
@@ -608,7 +593,7 @@ Hermes sends requests to the selected provider endpoint using an endpoint-bound 
 The real upstream key isn't added to its launch environment or exported YAML.
 Authentication derives its provider from the primary route, including when that provider is inline.
 The selected provider must carry a credential.
-That provider can also use a generated credential from a [managed vLLM service](#authenticate-a-managed-vllm-service) or [Ollama proxy](#use-external-ollama-through-a-managed-proxy).
+That provider can also use a generated credential from a [managed vLLM service](#authenticating-a-managed-vllm-service) or [Ollama proxy](#using-external-ollama-through-a-managed-proxy).
 Interactive Hermes login and separate authentication providers are unsupported.
 
 The gateway retains the provider credential until the owned provider is removed or updated.
@@ -624,21 +609,21 @@ flowchart LR
     B --> D[Upstream endpoint: real provider key]
 ```
 
-## Share a Gateway Across Deployments
+## Sharing a Gateway Across Deployments
 
 Each deployment UID derives a distinct OpenShell workspace containing its provider profile, provider registration, and sandbox.
 Separate YAML files with fresh UIDs and separate state directories can use the same external gateway with separate provider attachments.
-Use the gateway operator's authorization for each workspace and [select the matching workspace](interfaces.md#select-the-gateway-and-workspace) for native access.
+Use the gateway operator's authorization for each workspace and [select the matching workspace](interfaces.md#selecting-the-gateway-and-workspace) for native access.
 Giving two documents the same UID doesn't create independent deployments.
 
 Use checked `nemoclaw export` to inspect provider, sandbox, and native agent configuration against retained intent.
 Observed provider or public-configuration mismatches can produce drift.
 They aren't a NemoClaw reconnect or model-switch procedure.
 Native file changes require an owner observation contract and aren't detected by comparing remembered public configuration.
-Follow [the change path](../build-deploy/usage.md#choose-the-change-path) to update desired state and verify a reply afterward.
+Follow [the change path](../build-deploy/usage.md#choosing-the-change-path) to update desired state and verify a reply afterward.
 The [compiler](../../crates/nemoclaw-sdk/src/compile.rs) and [resource mutation](../../crates/openshell-provider/src/mutation.rs) define workspace ownership.
 
-## Understand Timeout Budgets
+## Understanding Timeout Budgets
 
 Choose the budget for the phase that failed.
 Extending an agent turn doesn't extend model loading or readiness.
@@ -656,9 +641,9 @@ These are phase limits, not a promised total duration for apply.
 Other bounded observations can fail earlier, and request or transport failures aren't automatically retried as mutations.
 The old onboarding timeout environment variables aren't configuration inputs for these SDK paths.
 Use the [field reference](../reference/configuration.md), [bound execution](../../crates/openshell-provider/src/transport.rs), [agent configuration](../../crates/fabric-provider/src/configuration.rs), [agent start](../../crates/fabric-provider/src/bridge.rs), [deployment readiness](../../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
-For a stopped managed service, inspect its [retained status](models.md#diagnose-and-recover-a-stopped-runtime) before choosing recovery.
+For a stopped managed service, inspect its [retained status](models.md#diagnosing-and-recovering-a-stopped-runtime) before choosing recovery.
 
-## Verify the Result
+## Verifying the Result
 
 Apply checks resource ownership, agent configuration, and readiness without requesting model or agent responses.
 Managed services retain startup, model-inventory, capacity, and memory-supervision checks.
@@ -675,13 +660,14 @@ An unchanged exported document can be reapplied without restarting the sandbox.
 | A reply through your chosen native interface | That interface, agent, route, and model completed the tested turn | Support for untested providers, models, tools, or long conversations |
 
 An empty `changes` list on apply doesn't skip configuration or readiness checks.
-After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](../../internal-docs/contributing/live-tests.md).
+After apply, follow the [native request procedure](agents.md#running-one-headless-openclaw-request) for the pinned OpenClaw exercise, or choose the [interface access procedure](interfaces.md#reaching-an-agent-interface) for another enabled interface.
+An [owned live smoke test](../../internal-docs/contributing/live-tests.md) is a separate qualification path.
 Those checks can incur inference charges and can affect agent history.
 Failure doesn't undo a successful deployment.
 Use the selected adapter's public input and output contract for an explicit invocation.
 The CLI has no separate verification command.
 Changing a model can expose API, context, or tool-format incompatibility even when the endpoint is reachable.
-Use [change constraints](../build-deploy/usage.md#choose-the-change-path) before changing the API or agent launch settings.
+Use [change constraints](../build-deploy/usage.md#choosing-the-change-path) before changing the API or agent launch settings.
 
 The lifecycle fixture exercises apply, CLI export, unchanged reapply, drift rejection, and destroy.
 The [offline harness fixture](../../internal-docs/contributing/integration-tests.md#inference-api-fixtures) checks actual request paths with local protocol servers.
@@ -715,10 +701,10 @@ Use an explicit request to qualify inference.
 
 ## Additional Inference Workflows
 
-The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
+The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#using-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
-For managed GGUF serving, see [llama.cpp](models.md#serve-a-pinned-gguf-with-llamacpp).
+For managed GGUF serving, see [llama.cpp](models.md#serving-a-pinned-gguf-with-llamacpp).
 For managed NVIDIA NIM, see the [candidate configuration, requirements, and limits](models.md#native-nim-candidate).
 Source-specific qualification results are recorded in [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006).
 NemoClaw has no Model Router and no provider for Gemini's native API.

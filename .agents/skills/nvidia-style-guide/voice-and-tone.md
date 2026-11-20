@@ -77,6 +77,17 @@ Use the active voice whenever possible, stressing who or what is performing an a
 
 Avoid using the passive voice unless the subject is unknown or when the action—rather than the doer—needs emphasis. The passive voice is also acceptable in programmer documentation.
 
+*(Technical Blog guide)* Passive voice reduces clarity and directness in writing.
+
+- ✅ **Correct:** Reduce use of 'to be' to avoid passive voice.
+- ✅ **Correct:** We used OpenACC to accelerate…
+- ❌ **Incorrect:** Passive voice can be avoided by reducing the use of 'to be'.
+- ❌ **Incorrect:** …*was accelerated* using OpenACC.
+
+However, passive voice can be useful at times. Don't go out of your way to avoid it if doing so doesn't simplify or clarify your writing. [This UNC guide covers it well](https://writingcenter.unc.edu/handouts/passive-voice/).
+
+For a case where active voice changes a sentence's meaning, refer to [Write in Active Voice (When Possible)](technical-documentation.md#write-in-active-voice-when-possible).
+
 ## Inclusivity
 
 Writing should be inclusive of a broad readership. Avoid using expressions that could potentially alienate readers from different backgrounds, languages, cultures, beliefs, and lifestyles. Avoid using gender-specific pronouns when possible.

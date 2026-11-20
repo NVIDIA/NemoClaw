@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Locate and Preserve Deployment State
+# Locating and Preserving Deployment State
 
 Keep the desired-state YAML, its matching bundle, and the entire deployment state directory for recovery.
 The CLI defaults to `.nemoclaw` in the working directory.
@@ -29,7 +29,7 @@ The local lock doesn't exclude other clients of the same gateway.
 State records carry a format version.
 The SDK rejects unsupported versions without rewriting the directory or adopting their resources.
 
-### Upgrade Intent Format 29 to 30
+### Upgrading Intent Format 29 to 30
 
 This bundle reads intent formats 29 and 30 and writes format 30.
 The shared inference-memory refactor preserves format 29's serialized fields, so valid records can be upgraded without recreating resources or changing ownership generations.
@@ -74,10 +74,10 @@ Inspect the selected harness configuration before collecting files.
 | Remote agent | Conversation history is held by the live Fabric adapter and discarded when it stops; server-side data remains under the remote service's control and isn't backed up by collecting sandbox files |
 
 NemoClaw sets the workspace and artifact locations in the agent's Fabric configuration.
-The [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python) define the rest.
+The [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/python) define the rest.
 When the image's adapter accepts Fabric's `runtime.keep_state`, NemoClaw sets it, so Fabric gives every runtime of the agent the same state folder instead of one per runtime.
 Among the bundled images, Hermes's and OpenClaw's adapters do.
-With `/sandbox/artifacts` on a [mounted volume](#keep-agent-files-on-mounted-volumes), that state survives sandbox replacement.
+With `/sandbox/artifacts` on a [mounted volume](#keeping-agent-files-on-mounted-volumes), that state survives sandbox replacement.
 Only one runtime can use the folder at a time.
 To discard the state, delete the folder or the volume.
 The table covers the harness targets in the [image build matrix](../../docker-bake.hcl).
@@ -109,7 +109,7 @@ See [credential ownership](../security/security.md#credentials-and-authenticatio
 The mounted-volume guidance below describes file retention and the pinned adapters' conversation limits.
 It doesn't qualify conversation restore or compatibility across harness versions.
 
-## Keep Agent Files on Mounted Volumes
+## Keeping Agent Files on Mounted Volumes
 
 Ask the platform operator to provision storage before applying the deployment.
 Backing up, restoring, and moving that storage is the platform's job.
@@ -147,7 +147,7 @@ See [external resource admission](https://github.com/NVIDIA/OpenShell/blob/ce58c
 The bundled images use UID and GID `10001:10001`.
 Check the identity for a custom image or OpenShift namespace.
 The gateway must allow driver configuration, and the sandbox's filesystem policy must allow writes to both target paths.
-For a managed gateway, set `allow_driver_config: true` in the compute driver's table of [`spec.gateway.config`](usage.md#configure-a-managed-gateway), as above.
+For a managed gateway, set `allow_driver_config: true` in the compute driver's table of [`spec.gateway.config`](usage.md#configuring-a-managed-gateway), as above.
 Podman and Kubernetes gateways use `openshell.drivers.podman` and `openshell.drivers.kubernetes`.
 Changing it later replaces a Docker or Podman gateway's container, keeping its data, and upgrades a Kubernetes gateway's chart release.
 OpenShell's admission settings use the same format, such as a replacement label map in an `openshell.drivers.docker.resource_admission.required_labels` table.
@@ -158,7 +158,7 @@ OpenShell protects its workspace root and control paths.
 For driver-specific settings and admission labels, follow the pinned OpenShell [Docker](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-docker/README.md), [Podman](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-podman/README.md), or [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-kubernetes/README.md) instructions.
 Kubernetes uses PVCs rather than Docker named volumes.
 
-### Choose What to Retain for Each Harness
+### Choosing What to Retain for Each Harness
 
 All image-build targets use `/sandbox/workspace` for working files.
 Mount that directory for each target below.
@@ -167,29 +167,29 @@ Paths describe the pinned Fabric adapters linked above, not a common history imp
 
 | Harness | Additional mount and retained files | Conversation after runtime replacement |
 |---|---|---|
-| [OpenClaw](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/adapter.py) | `/sandbox/artifacts` retains the native home under `.fabric/state/nvidia.fabric.openclaw/<agent name>`, with OpenClaw's conversations, installed skills, and caches; workspace memory files such as `MEMORY.md` stay in the workspace | A new runtime starts a new conversation; earlier conversations stay in the native home, but NemoClaw doesn't resume them |
-| [Hermes](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python/hermes/src/nemo_fabric_adapters/hermes/adapter.py) | `/sandbox/artifacts` retains the native home under `.fabric/state/nvidia.fabric.hermes/<agent name>`, with the session database, memory, and skills, plus Relay traces when enabled | A new runtime starts a new session in the same database; the API server still finds earlier sessions, but the agent doesn't resume them |
-| [Claude Code](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python/claude/src/nemo_fabric_adapters/claude/adapter.py) | `/sandbox/artifacts` retains generated MCP configuration and skill plugins under `.fabric/claude`; this isn't an inventory of the native client's home | The adapter starts a new native client; no saved-conversation reattachment procedure is provided |
-| [Codex](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python/codex/README.md#authentication) | `/sandbox/artifacts` retains `.fabric/codex`, including `custom-provider-home` for non-OpenAI providers; cached native login uses `CODEX_HOME` (default `/sandbox/.codex`), which needs its own mount if retained | The adapter starts a new thread; OpenAI API-key login instead uses a temporary home outside artifacts and removes it on stop, even if `CODEX_HOME` was supplied |
-| [LangChain Deep Agents](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python/deepagents/src/nemo_fabric_adapters/deepagents/adapter.py) | `/sandbox/artifacts` retains the SQLite checkpoints under `.fabric/deepagents/runtimes` | Each runtime creates a new LangGraph thread ID; the saved SQLite file alone doesn't resume the old thread |
-| [Pi](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/typescript/pi/src/pi-sdk.ts) | Workspace files; the adapter uses an in-memory session manager | No conversation file to retain; stopping the runtime loses its conversation |
-| [OpenCode](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/typescript/opencode/README.md) | Workspace files, and each invocation's reported diff under `opencode/` in the artifact directory | No conversation file to retain; stopping the runtime removes its session |
-| [mini-SWE-agent](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python/mini-swe-agent/src/nemo_fabric_adapters/mini_swe_agent/adapter.py) | Workspace files; the adapter keeps the conversation in the live runtime | No conversation file to retain; stopping the runtime loses its conversation |
-| [OO Agents (`nooa`)](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python/nooa/src/nemo_fabric_adapters/nooa/adapter.py) | Workspace files; additional storage depends on the selected native target | The adapter defines no common persistent conversation path or restore procedure |
-| [BenchAgent (`nooa-bench`)](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python/nooa/src/nemo_fabric_adapters/nooa/bench_adapter.py) | Workspace files; additional storage depends on the selected native target | The adapter defines no common persistent conversation path or restore procedure |
-| [Remote agent](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python/remote-agent/src/nemo_fabric_adapters/remote_agent/adapter.py) | Workspace files and any requested local artifacts; remote service data stays with that service | Local adapter history is in memory; a local volume doesn't back up the remote service |
+| [OpenClaw](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/adapter.py) | `/sandbox/artifacts` retains the native home under `.fabric/state/nvidia.fabric.openclaw/<agent name>`, with OpenClaw's conversations, installed skills, and caches; workspace memory files such as `MEMORY.md` stay in the workspace | A new runtime starts a new conversation; earlier conversations stay in the native home, but NemoClaw doesn't resume them |
+| [Hermes](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/python/hermes/src/nemo_fabric_adapters/hermes/adapter.py) | `/sandbox/artifacts` retains the native home under `.fabric/state/nvidia.fabric.hermes/<agent name>`, with the session database, memory, and skills, plus Relay traces when enabled | A new runtime starts a new session in the same database; the API server still finds earlier sessions, but the agent doesn't resume them |
+| [Claude Code](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/python/claude/src/nemo_fabric_adapters/claude/adapter.py) | `/sandbox/artifacts` retains generated MCP configuration and skill plugins under `.fabric/claude`; this isn't an inventory of the native client's home | The adapter starts a new native client; no saved-conversation reattachment procedure is provided |
+| [Codex](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/python/codex/README.md#authentication) | `/sandbox/artifacts` retains `.fabric/codex`, including `custom-provider-home` for non-OpenAI providers; cached native login uses `CODEX_HOME` (default `/sandbox/.codex`), which needs its own mount if retained | The adapter starts a new thread; OpenAI API-key login instead uses a temporary home outside artifacts and removes it on stop, even if `CODEX_HOME` was supplied |
+| [LangChain Deep Agents](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/python/deepagents/src/nemo_fabric_adapters/deepagents/adapter.py) | `/sandbox/artifacts` retains the SQLite checkpoints under `.fabric/deepagents/runtimes` | Each runtime creates a new LangGraph thread ID; the saved SQLite file alone doesn't resume the old thread |
+| [Pi](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/typescript/pi/src/pi-sdk.ts) | Workspace files; the adapter uses an in-memory session manager | No conversation file to retain; stopping the runtime loses its conversation |
+| [OpenCode](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/typescript/opencode/README.md) | Workspace files, and each invocation's reported diff under `opencode/` in the artifact directory | No conversation file to retain; stopping the runtime removes its session |
+| [mini-SWE-agent](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/python/mini-swe-agent/src/nemo_fabric_adapters/mini_swe_agent/adapter.py) | Workspace files; the adapter keeps the conversation in the live runtime | No conversation file to retain; stopping the runtime loses its conversation |
+| [OO Agents (`nooa`)](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/python/nooa/src/nemo_fabric_adapters/nooa/adapter.py) | Workspace files; additional storage depends on the selected native target | The adapter defines no common persistent conversation path or restore procedure |
+| [BenchAgent (`nooa-bench`)](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/python/nooa/src/nemo_fabric_adapters/nooa/bench_adapter.py) | Workspace files; additional storage depends on the selected native target | The adapter defines no common persistent conversation path or restore procedure |
+| [Remote agent](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/adapters/python/remote-agent/src/nemo_fabric_adapters/remote_agent/adapter.py) | Workspace files and any requested local artifacts; remote service data stays with that service | Local adapter history is in memory; a local volume doesn't back up the remote service |
 
 Mounting the whole home or a temporary directory doesn't establish conversation resume.
 Homes can contain login tokens and generated authentication configuration, while adapter cleanup can still delete files on a mounted temporary directory.
 Native conversation reattachment needs support from Fabric and the selected harness.
 
-### Verify Retention Before Relying on It
+### Verifying Retention Before Relying on It
 
 From the deployment's working directory, plan and apply the edited YAML with its original state directory using [the update procedure](usage.md#updates-and-recovery).
 Adding or changing `driverConfig` replaces the sandbox, so first preserve any files needed from its existing writable layer through authenticated native access.
 A new mount doesn't move those files into the volume.
 
-Select the authenticated gateway and workspace using [native access](../agents-inference/interfaces.md#select-the-gateway-and-workspace).
+Select the authenticated gateway and workspace using [native access](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace).
 From the same client terminal, replace `assistant` with the sandbox name and create two non-sensitive markers:
 
 ```sh
@@ -233,7 +233,7 @@ Export produces checked desired-state YAML with credential references.
 It doesn't copy agent files, histories, native settings, or model weights.
 Use [the export workflow](usage.md) for configuration and [native agent access](../agents-inference/agents.md) to identify agent-owned state.
 
-Use [mounted volumes](#keep-agent-files-on-mounted-volumes) to retain agent files.
+Use [mounted volumes](#keeping-agent-files-on-mounted-volumes) to retain agent files.
 The platform owns backups, restore, and transfer of those volumes.
 The current CLI has no snapshot or lost-state adoption command.
 
@@ -242,16 +242,16 @@ The current CLI has no snapshot or lost-state adoption command.
 **Destroy deletes the sandbox's writable layer and its in-memory conversation history.**
 Files on caller-supplied mounted volumes remain under the platform's control.
 Preserve or retire them separately.
-The [destroy guide](usage.md#destroy) owns the workload removal, retained-storage, and recovery procedure.
+The [destroy guide](usage.md#destroying) owns the workload removal, retained-storage, and recovery procedure.
 Destroy also deletes the OpenShell workspace.
 Reapplying the same configuration recreates it.
 
 Credentials can also remain in retained runtime storage.
-See [managed vLLM authentication](../agents-inference/inference.md#authenticate-a-managed-vllm-service), [Ollama proxy credentials](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy), and [security](../security/security.md) before retiring storage.
+See [managed vLLM authentication](../agents-inference/inference.md#authenticating-a-managed-vllm-service), [Ollama proxy credentials](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy), and [security](../security/security.md) before retiring storage.
 
-To retire a deployment, follow [Remove Retained Resources](usage.md#remove-retained-resources).
+To retire a deployment, follow [Removing Retained Resources](usage.md#removing-retained-resources).
 
-### Understand the Retained Resources
+### Understanding the Retained Resources
 
 Destroy removes workloads but leaves some bound data and infrastructure for explicit operator cleanup.
 
@@ -271,7 +271,7 @@ Destroy removes workloads but leaves some bound data and infrastructure for expl
 | Local deployment state, bundle, and container images | Remain; removing the CLI bundle is separate from destroying its deployment |
 
 The retained network keeps its `spec.gateway.networkCIDR` subnet on that engine.
-A new deployment on the same host needs a different `networkCIDR`, or [remove the retained resources](usage.md#remove-retained-resources) first.
+A new deployment on the same host needs a different `networkCIDR`, or [remove the retained resources](usage.md#removing-retained-resources) first.
 Redeploying the same deployment, with the same `metadata.uid` and state directory, reuses the network.
 
 The [teardown implementation](../../crates/nemoclaw-sdk/src/deployment/runtime/teardown.rs) selects retained bindings.
@@ -279,7 +279,7 @@ Destroy's JSON `retained` list identifies tracked resource addresses.
 It isn't an inventory of every host file or externally owned resource.
 Record those addresses and keep the state directory if you need to account for retained storage later.
 
-### Find Retained Docker Objects
+### Finding Retained Docker Objects
 
 On Docker engines, each retained resource consists of Docker objects labeled `nemoclaw.nvidia.com/uid` with the deployment's UID.
 Their names start with the deployment's workspace, `WS` below: `nc-` followed by the first 16 hexadecimal digits of the SHA-256 digest of `metadata.uid`.
@@ -293,7 +293,7 @@ Their names start with the deployment's workspace, `WS` below: `nc-` followed by
 
 On Podman, the same objects exist with the same names and label, in the Podman engine the deployment selects.
 
-### Find Retained Kubernetes Objects
+### Finding Retained Kubernetes Objects
 
 On a managed Kubernetes or OpenShift gateway, destroy keeps these objects, all in the namespace that `gateway.kubernetes.namespace` names:
 
@@ -312,7 +312,7 @@ The state directory keeps the ownership receipt, which records the namespace's U
 ## Recovery and Transfer
 
 Use [operation recovery](usage.md#updates-and-recovery) with the original configuration and retained state.
-For a failed or interrupted native Helm release removal, use [Helm removal recovery](usage.md#recover-an-interrupted-helm-removal).
+For a failed or interrupted native Helm release removal, use [Helm removal recovery](usage.md#recovering-an-interrupted-helm-removal).
 Preserve the checkpoint and current state together.
 For a move from an earlier product version, use [migration](../get-started/migration.md).
 The platform owns transfer of mounted native data.

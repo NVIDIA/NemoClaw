@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Use Desired State
+# Using Desired State
 
 Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
 For a first deployment, follow [get started](../get-started/first-deployment.md).
@@ -29,8 +29,8 @@ It checks configuration and readiness without invoking inference.
 nemoclaw apply --state-dir .local/deployment deployment.yaml
 ```
 
-Verify model and agent responses separately using [inference verification](../agents-inference/inference.md#verify-the-result).
-On failure, retain YAML and state and use [recovery](#recover-an-interrupted-operation).
+Verify model and agent responses separately using [inference verification](../agents-inference/inference.md#verifying-the-result).
+On failure, retain YAML and state and use [recovery](#recovering-an-interrupted-operation).
 
 After apply succeeds, export the observed configuration:
 
@@ -38,7 +38,7 @@ After apply succeeds, export the observed configuration:
 nemoclaw export --state-dir .local/deployment --output exported-new.yaml
 ```
 
-Check the exit status before using the export, then follow [unchanged reapply](#verify-an-unchanged-reapply).
+Check the exit status before using the export, then follow [unchanged reapply](#verifying-an-unchanged-reapply).
 Export isn't a backup of agent files or conversations.
 
 Without `--state-dir`, state defaults to `.nemoclaw` in the working directory.
@@ -48,7 +48,7 @@ Plan, apply, and destroy print text by default.
 Scripts should select `-o json`.
 See [CLI options and output](../references/cli.md) for bundle selection, formats, and exit codes.
 
-## Configure Sandboxes and Inference
+## Configuring Sandboxes and Inference
 
 A document contains sandboxes keyed by name, each with one harness and one agent: up to 256 with a Kubernetes or OpenShift gateway, and up to 32 with Docker or Podman, which run every sandbox on one host.
 See [sandbox count and cluster size](kubernetes.md#sandbox-count-and-cluster-size) for the reasons.
@@ -59,9 +59,9 @@ Each Deep Agents instance selects one.
 Declare managed services under `spec.services` and select their connections with `inferenceProviders.<name>.serviceRef`.
 Every declared service is installed and checked, even without an inference consumer.
 Services run on the gateway's Docker engine by default, or on another host through [SSH placement](../agents-inference/remote-service.md).
-See [service constraints](../agents-inference/inference.md#combine-local-and-hosted-providers) for multiple Ollama and vLLM services and [models](../agents-inference/models.md) for hardware contracts and optional [recipes](../agents-inference/recipes.md).
+See [service constraints](../agents-inference/inference.md#combining-local-and-hosted-providers) for multiple Ollama and vLLM services and [models](../agents-inference/models.md) for hardware contracts and optional [recipes](../agents-inference/recipes.md).
 
-## Use a Managed Podman Gateway
+## Using a Managed Podman Gateway
 
 Use a local rootless Linux Podman engine through its Unix API socket.
 Rootful operation, remote Podman engines, and other operating systems are untested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
@@ -87,7 +87,7 @@ Podman's changing compatibility `/info.ID` isn't a durable identity.
 Gateway bindings use the retained owned network UUID, volume creation identity, container ID, and persisted signing keys.
 A missing or replaced bound network is a conflict, not permission to recreate it.
 Destroy retains that network and gateway storage.
-To remove them, follow [Remove Retained Resources](#remove-retained-resources) for Podman.
+To remove them, follow [Removing Retained Resources](#removing-retained-resources) for Podman.
 
 ## Agent Runtimes During Apply
 
@@ -99,30 +99,30 @@ Apply stops that runtime in Fabric and starts another in the same sandbox, which
 Fabric reports a confirmed process exit as `failed/agent_exited`, which lets plan replace the runtime.
 If the health connection fails without confirming an exit, the result remains `unknown` and counts as running.
 
-Use an [agent image built from this revision](build.md#build-agent-images).
-Image changes require the [separate-deployment path](#choose-the-change-path).
+Use an [agent image built from this revision](build.md#building-agent-images).
+Image changes require the [separate-deployment path](#choosing-the-change-path).
 Keep existing deployments' original bundles and state.
 
 A failed start, transport failure, or malformed response fails apply and retains resources.
 The CLI exits with status 1 and reports the failure in the selected [output format](../references/cli.md#output-and-failure).
 Keep state, diagnose the failure, and reapply after recovery.
-See [recovering an interrupted operation](#recover-an-interrupted-operation).
+See [recovering an interrupted operation](#recovering-an-interrupted-operation).
 
 ## Configuration and Credentials
 
 Choose the configuration owner for each setting and keep credential values out of shared YAML.
 The procedures below distinguish gateway settings, application inputs, and credential references.
 
-### Run an Application Container
+### Running an Application Container
 
 Declare a `kind: container` service with an immutable image on a managed local Docker gateway.
 The [application container example](../../examples/application-container.yaml) runs an application beside one agent and passes it the workspace, sandbox, agent, and gateway address as literal environment values.
 NemoClaw doesn't interpret them.
-Follow [Configure a Container Service](container-services.md) for inputs, readiness, credential exposure, disposable data, and the distinction between application readiness and successful inference.
+Follow [Configuring a Container Service](container-services.md) for inputs, readiness, credential exposure, disposable data, and the distinction between application readiness and successful inference.
 VoiceClaw still needs separate qualification.
 The typed `ollama` and `vllm` kinds use the same assembly base but retain their own policies.
 
-### Configure a Managed Gateway
+### Configuring a Managed Gateway
 
 `spec.gateway.config` passes OpenShell gateway settings to a managed gateway in the format of the OpenShell Helm chart's `gatewayConfig` value.
 Each key names a table of OpenShell's [gateway configuration](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields.
@@ -154,7 +154,7 @@ Plans and state show it.
 An external gateway takes no `config`.
 Its operator configures it.
 
-### Let APF Author Sandbox Policy
+### Letting APF Author Sandbox Policy
 
 NVIDIA Agent Policy Fabric (APF) is an OpenShell interceptor that issues signed sandbox policies and serves provider profiles.
 When APF does both on a gateway, set `spec.gateway.policyAuthority.apf`:
@@ -196,7 +196,7 @@ Limits:
 - You give APF the gateway's signing key yourself, and with `registration: external` also install APF's CA in the gateway.
 - APF's bundle refresher updates running sandboxes only in OpenShell's `default` workspace, and NemoClaw creates its own workspace, so the refresher doesn't bring a new bundle's policy to a running NemoClaw sandbox.
 
-### Supply Credential References
+### Supplying Credential References
 
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.
 Use the [field reference](../reference/configuration.md) for names, defaults, and validation rules.
@@ -206,7 +206,7 @@ Images require immutable SHA-256 references.
 Container `environment` values are literal settings retained in configuration and state, not the credential references described below.
 Validation can't identify a secret pasted into a literal value.
 Gateway and inference ownership are independent of the harness, but inference must support the harness's request API.
-See [managed models](../agents-inference/models.md), [Ollama](../agents-inference/inference.md#run-managed-ollama), or [external Ollama with a managed proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy) for service configuration.
+See [managed models](../agents-inference/models.md), [Ollama](../agents-inference/inference.md#running-managed-ollama), or [external Ollama with a managed proxy](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy) for service configuration.
 
 Use `credential: {env: INFERENCE_API_KEY}` for an inference provider or gateway.
 The caller supplies the referenced environment value.
@@ -261,7 +261,7 @@ Docker-managed gateways use the same `IfNotPresent` and `Never` modes as service
 Podman gateways retain their existing image policy: omission means `IfNotPresent`, and `Always` contacts the registry before creation or restart, including its credential initializer.
 The SDK pins the gateway image, so documents and exports don't name it.
 A Docker or Podman deployment keeps the gateway image pin of the bundle that created it.
-See the [change path](#choose-the-change-path).
+See the [change path](#choosing-the-change-path).
 Service acquisition doesn't promise a registry request on every restart or complete layer progress.
 Export preserves the declared setting.
 Downloaded service images remain on the selected engine after destroy, although their disposable provider resource bindings are removed.
@@ -274,7 +274,7 @@ This setting doesn't control model downloads or sandbox images acquired by OpenS
 The pinned OpenShell API has no per-sandbox pull-policy field.
 External gateways and sandboxes reject this YAML field.
 
-### Pull From Private Registries
+### Pulling From Private Registries
 
 Each image authenticates through whatever pulls it, and the configuration names registries, never credentials:
 
@@ -377,9 +377,9 @@ Sandbox-local definitions are visible only to their enclosing sandbox.
 Sandboxes can select distinct Brave credential references.
 Shared references reuse one registration.
 Removing or replacing a sandbox deletes its writable layer and in-memory conversation, and the plan shows it.
-Keep files that must survive on [mounted agent-data volumes](state.md#keep-agent-files-on-mounted-volumes).
+Keep files that must survive on [mounted agent-data volumes](state.md#keeping-agent-files-on-mounted-volumes).
 
-### Choose the Change Path
+### Choosing the Change Path
 
 Check whether the desired edit updates a running resource, replaces it, or requires a separate deployment before applying.
 
@@ -389,8 +389,8 @@ Check whether the desired edit updates a running resource, replaces it, or requi
 | External inference endpoint, provider implementation, or authenticated or anonymous mode | Changes a selected provider's profile and registration; a change to a sandbox's launch specification replaces the sandbox |
 | Harness adapter, sandbox image, driver configuration, agent identity, or provider attachments | Replaces the sandbox, deleting its files and conversations |
 | Service exposures | Updates the sandbox's endpoints in place; the sandbox keeps its files and conversations |
-| Sandbox network policy | Replaces the sandbox, deleting its files and conversations (except on mounted volumes); see [policy changes](../security/sandbox-network.md#verify-and-change-the-configuration) |
-| Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy), and [model constraints](../agents-inference/models.md) |
+| Sandbox network policy | Replaces the sandbox, deleting its files and conversations (except on mounted volumes); see [policy changes](../security/sandbox-network.md#verifying-and-changing-the-configuration) |
+| Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](../agents-inference/inference.md#setting-container-limits-and-update-policy), and [model constraints](../agents-inference/models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation can replace the proxy container while retaining its independently bound credential storage |
 | Deployment UID, established gateway endpoint, or bound credential or gateway engine | Can't retarget the existing state; create a separate deployment |
 | A bundle with a different gateway image pin than the bundle that created a Docker or Podman deployment | Plan, apply, export, and destroy refuse, because deployment state binds the gateway to its original image pin. Keep operating the deployment with its original bundle, or create a separate deployment |
@@ -401,9 +401,9 @@ Check whether the desired edit updates a running resource, replaces it, or requi
 
 Apply starts a stopped runtime again in its sandbox.
 See [agent runtimes during apply](#agent-runtimes-during-apply).
-A runtime that Fabric reports running but that doesn't answer recovers only in a new sandbox: changing the agent's configuration replaces it, or see [replacement after an unusable runtime](#replace-workloads-after-an-unusable-runtime).
+A runtime that Fabric reports running but that doesn't answer recovers only in a new sandbox: changing the agent's configuration replaces it, or see [replacement after an unusable runtime](#replacing-workloads-after-an-unusable-runtime).
 
-For OpenClaw model and native-setting updates, use an [agent image built from this revision](build.md#build-agent-images).
+For OpenClaw model and native-setting updates, use an [agent image built from this revision](build.md#building-agent-images).
 Rebuilding the CLI bundle alone doesn't update the adapter in an existing sandbox image.
 Changing that image replaces the sandbox.
 How the adapter applies native configuration is Fabric's.
@@ -415,7 +415,7 @@ Apply can recreate a missing registration after confirmed absence.
 Disposable Docker compute uses provider reconciliation within the declared deployment graph.
 A model change doesn't migrate conversations or guarantee that the new model supports the old model's tools, context, or reasoning settings.
 
-### Verify an Unchanged Reapply
+### Verifying an Unchanged Reapply
 
 From the directory containing your deployment YAML, with the matching bundle and credential references available:
 
@@ -439,14 +439,14 @@ With `-o json`, this is `complete: true`, an empty `changes` list, and no `defer
 Deferred work means the plan is incomplete, even if the current changes list is empty.
 Unavailable or unverified model catalogs and service readiness scheduled for apply appear separately under `unverified`.
 They don't make the resource plan incomplete.
-Review those advisories and the [typed observations](../references/sdk.md#read-plan-discovery-and-resource-inventory).
+Review those advisories and the [typed observations](../references/sdk.md#reading-plan-discovery-and-resource-inventory).
 A complete plan doesn't establish service health or working inference.
 Unchanged apply still performs configuration and readiness checks.
 It can fail if a required service is unavailable.
 It doesn't send generation requests.
 Keep the original YAML until verification succeeds.
 
-### Recover an Interrupted Operation
+### Recovering an Interrupted Operation
 
 Changing an established gateway endpoint is rejected.
 Two deployments on one engine need different endpoint ports and non-overlapping subnets.
@@ -466,10 +466,10 @@ A failed start might have left a runtime running, so the next apply creates the 
 When Fabric rejected the configuration, correct the settings before reapplying.
 An invocation failure can also leave a runtime unusable.
 Unless Fabric's check reports it stopped, an unchanged apply leaves it alone.
-To recover from that, or from a sandbox that exited, see [workload replacement](#replace-workloads-after-an-unusable-runtime).
-A sandbox in `Error` can still block apply, but its saved identity permits [teardown](#destroy) without a successful reapply.
+To recover from that, or from a sandbox that exited, see [workload replacement](#replacing-workloads-after-an-unusable-runtime).
+A sandbox in `Error` can still block apply, but its saved identity permits [teardown](#destroying) without a successful reapply.
 Changing a rejected sandbox policy or image doesn't authorize replacement.
-Follow the [change constraints](#choose-the-change-path).
+Follow the [change constraints](#choosing-the-change-path).
 
 If the error still reports an unfinished creation, preserve that resource's original configuration while correcting unrelated settings.
 Reapply successfully before removing or changing that unresolved resource or requesting teardown.
@@ -478,8 +478,9 @@ Older unfinished records without per-resource recovery evidence still require th
 If managed gateway or inference runtime apply fails, revised intent or teardown can proceed using recorded bindings and the existing ownership checks.
 The same applies when an OpenShell-graph apply only observes resources, updates or deletes established bindings, or changes disposable compute.
 Runtime recovery doesn't clear pending OpenShell creations.
-An OpenShell create rejection without a saved resource identity still leaves the pending-creation guard in place.
-Automatic cleanup after a definitive rejection isn't implemented.
+When OpenShell rejects a new sandbox's create as an invalid argument, it has stored nothing, so the apply drops that sandbox's pending creation: correct the configuration and apply again, or run destroy.
+This applies only when every error in that apply was such a rejection.
+Any other create failure, including a lost reply, keeps the pending-creation guard in place.
 Preserve that record and its original bundle rather than deleting state or attempting adoption from another state directory.
 Export remains unavailable during pending creation recovery or unfinished teardown.
 If an apply planned no non-disposable OpenShell creations, a later export can verify its established bindings without another successful apply.
@@ -515,7 +516,7 @@ Export preserves retained intent and validates required resource bindings withou
 Destroy uses native provider compute and cache state and separately verified credential and gateway storage.
 It doesn't inspect model inventories.
 
-### Recover After a Host Reboot
+### Recovering After a Host Reboot
 
 After the host restarts, the engine starts a managed Docker gateway again, because its restart policy is `unless-stopped`, but not a managed vLLM or Ollama container, whose restart policy is `no`.
 See the [provider reference](../references/provider.md#docker-gateway-launch).
@@ -529,15 +530,15 @@ nemoclaw apply --state-dir .local/deployment deployment.yaml
 The plan shows each stopped model container replaced.
 The default `updatePolicy: Preserve` permits this because the container no longer runs.
 Apply creates the new container on the retained model-cache volume and waits for the service's readiness.
-As after a [gateway restart](#configure-a-managed-gateway), the same apply starts each agent's runtime again in its sandbox.
+As after a [gateway restart](#configuring-a-managed-gateway), the same apply starts each agent's runtime again in its sandbox.
 If a model container had stopped before the reboot, find out why before applying.
-See [Diagnose and Recover a Stopped Runtime](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime).
+See [Diagnosing and Recovering a Stopped Runtime](../agents-inference/models.md#diagnosing-and-recovering-a-stopped-runtime).
 
-### Replace Workloads After an Unusable Runtime
+### Replacing Workloads After an Unusable Runtime
 
 When OpenShell reports that a sandbox exited, `nemoclaw plan` replaces that sandbox and says why, such as `sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1`.
 Read why it exited with `openshell logs SANDBOX --source sandbox` before applying.
-See [native logs](../observability/troubleshooting.md#read-native-service-logs).
+See [native logs](../observability/troubleshooting.md#reading-native-service-logs).
 **The replacement deletes that sandbox's files and conversation history.**
 
 Use the rest of this path when an agent runtime is unusable after an invocation failure while its sandbox still runs, as after a gateway restart, and you choose to replace it.
@@ -546,7 +547,7 @@ Its supported replacement path is whole-deployment destroy followed by reapplyin
 
 **Destroy deletes every bound sandbox's writable layer and in-memory conversation, including those of other agents in this deployment.**
 Files on caller-supplied mounted volumes remain under the platform's control.
-See [agent-data retention](state.md#keep-agent-files-on-mounted-volumes).
+See [agent-data retention](state.md#keeping-agent-files-on-mounted-volumes).
 Preserve any native data you need before choosing removal.
 Configuration export doesn't back it up.
 Managed model and credential storage remain tracked.
@@ -582,10 +583,10 @@ nemoclaw apply --state-dir .local/deployment deployment.yaml
 This procedure follows the implemented CLI lifecycle.
 Recovery from arbitrary malformed inputs remains unqualified.
 Recreation starts the runtime but doesn't check that it answers.
-Check the recreated runtime with one [request](../agents-inference/agents.md#run-one-agent-request) before relying on it.
+Check the recreated runtime with one [request](../agents-inference/agents.md#running-one-agent-request) before relying on it.
 Don't replay an invocation whose effects are unknown merely to test recovery.
 
-### Recover From an Unfinished Helm Install
+### Recovering From an Unfinished Helm Install
 
 This procedure applies to managed Kubernetes and OpenShift deployments.
 
@@ -603,7 +604,7 @@ If the release is this deployment's, remove it with Helm and rerun the operation
 helm uninstall RELEASE --namespace NAMESPACE
 ```
 
-### Recover an Interrupted Helm Removal
+### Recovering an Interrupted Helm Removal
 
 This procedure applies to managed Kubernetes and OpenShift deployments.
 
@@ -636,7 +637,7 @@ Recovery doesn't infer ownership or adopt an existing release.
 Don't edit OpenTofu state, import the release, delete the checkpoint, or replace the current state with an older copy.
 After destroy succeeds, the namespace, encryption key, and persistent volumes remain subject to the existing [retention rules](state.md#deletion-and-retention).
 
-## Destroy
+## Destroying
 
 Destroy removes all bound sandboxes, provider registrations and profiles, the OpenShell workspace, and managed process containers.
 **Sandbox writable layers and in-memory conversations are deleted.**
@@ -669,7 +670,7 @@ See [retention details](state.md#deletion-and-retention) for surviving resources
 The local lock excludes other NemoClaw operations on the same state directory, not other gateway clients.
 OpenShell deletes by name without an ID or version condition, so this client can't eliminate a concurrent replacement between the final identity check and delete.
 
-### Remove Retained Resources
+### Removing Retained Resources
 
 NemoClaw has no purge command: you remove what destroy retains with each platform's own commands, below.
 Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` must print `No resource changes planned.`, then the entries to remove under `Retained resources:`.
@@ -694,7 +695,7 @@ docker --host "$deployment_engine" volume ls --filter "$owner_label" --format '{
 docker --host "$deployment_engine" network ls --filter "$owner_label" --format '{{.Name}}'
 ```
 
-Continue only if each listed name matches a `Retained resources:` entry in the [retained Docker objects](state.md#find-retained-docker-objects) table and no listed container is running.
+Continue only if each listed name matches a `Retained resources:` entry in the [retained Docker objects](state.md#finding-retained-docker-objects) table and no listed container is running.
 Then remove them:
 
 ```sh
@@ -719,13 +720,13 @@ The [live Docker suite](../../internal-docs/contributing/testing.md) removes its
 
 #### On Podman
 
-A managed Podman gateway keeps the same objects, with the same names and label, as on Docker ([retained Docker objects](state.md#find-retained-docker-objects)).
+A managed Podman gateway keeps the same objects, with the same names and label, as on Docker ([retained Docker objects](state.md#finding-retained-docker-objects)).
 Follow the Docker steps with `podman --url "$deployment_engine"` in place of `docker --host "$deployment_engine"`, where `deployment_engine` is the gateway's `spec.gateway.engine`, such as `unix:///run/user/1000/podman/podman.sock`.
 It has been run against a managed rootless Podman 5.8.8 gateway.
 
 #### On Kubernetes or OpenShift
 
-Destroy keeps the deployment's namespace, the gateway's key Secret, and its persistent volume claims ([retained Kubernetes objects](state.md#find-retained-kubernetes-objects)).
+Destroy keeps the deployment's namespace, the gateway's key Secret, and its persistent volume claims ([retained Kubernetes objects](state.md#finding-retained-kubernetes-objects)).
 It deletes each sandbox's workspace claim, but under the `Retain` reclaim policy the claim's volume stays `Released` with the workspace files on it.
 Deleting the namespace removes the objects in it.
 Volumes are cluster-wide, so you check them separately.

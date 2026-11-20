@@ -4,7 +4,8 @@
 # Release Notes
 
 These notes describe the v1 development documentation and its release boundaries.
-v1 has no release yet.
+As of this documentation revision, v1 has no published release.
+The release records list draft release candidates, not a published final release.
 Issue [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) tracks the first one.
 The workspace package version alone doesn't establish that a release has been published.
 
@@ -31,6 +32,7 @@ Agents:
 - OpenClaw keeps its native home in `/sandbox/artifacts`, as Hermes does.
   See [agent files](../build-deploy/state.md#agent-files).
 - OpenClaw sessions with kept state no longer fail on turns longer than about a minute or after a few minutes idle ([#14630](https://github.com/NVIDIA/NemoClaw/issues/14630)).
+- A Hermes route to an `anthropic` provider reaches the provider's endpoint whatever its path ([#14538](https://github.com/NVIDIA/NemoClaw/issues/14538)).
 
 Releases:
 
@@ -38,7 +40,7 @@ Releases:
   Before, they said `0.1.0` and `0.1.0-dev.<hash>`.
   A bundle built from any other checkout, including one with uncommitted changes, still reports `0.1.0-dev.<hash>`, where the hash names its source files.
 - A final release attests the build provenance of each CLI archive and of `SHA256SUMS`.
-  Verify them with `gh attestation verify FILE --owner NVIDIA`, as [Install the CLI](../get-started/install.md#install-on-linux-or-macos) shows.
+  Verify them with `gh attestation verify FILE --owner NVIDIA`, as [Installing the CLI](../get-started/install.md#installing-on-linux-or-macos) shows.
   Release candidates have no attestations.
 - A final release's macOS and Windows executables must be signed.
   Only a release-scoped exception, which the release notes state with its reason, lets one publish unsigned.
@@ -47,7 +49,7 @@ Releases:
 
 Installation:
 
-- [Install the CLI](../get-started/install.md) covers installing, upgrading, and uninstalling a release's CLI from its `nemoclaw-TAG-PLATFORM.tar.gz` archive, checked against `SHA256SUMS`.
+- [Installing the CLI](../get-started/install.md) covers installing, upgrading, and uninstalling a release's CLI from its `nemoclaw-TAG-PLATFORM.tar.gz` archive, checked against `SHA256SUMS`.
 - The [support matrix](#support-matrix) lists the platforms, gateway runtimes, model services, harnesses, and GPUs, and what CI runs on each.
 - Each operation installs the providers of the bundle that runs it, replacing `.terraform/providers` and `.terraform.lock.hcl` in the state directory.
   Before, with a bundle whose providers had the same versions but other bytes, such as a signed build of the same commit, a deployment kept running the previous bundle's providers while that bundle existed.
@@ -58,7 +60,7 @@ Images:
 - Releases stage a llama.cpp runtime image, `llama-cpp`, beside the vLLM and Ollama images.
   It adds the supervisor to llama.cpp's CUDA 13.5 server image from release b12375, whose ARM64 and AMD64 builds carry kernels for GB300 (`sm_103`) and GB10 (`sm_121a`).
   CUDA 13.5 needs NVIDIA driver 580 or newer.
-  See [build a runtime image](../build-deploy/build.md#build-a-runtime-image).
+  See [build a runtime image](../build-deploy/build.md#building-a-runtime-image).
 
 Windows clients:
 
@@ -81,7 +83,12 @@ Gateways:
 
 - [Current limits](../resources/limits.md#data-and-cleanup) list a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: it leaves its sandboxes in `Error`, and the next apply replaces them ([#13953](https://github.com/NVIDIA/NemoClaw/issues/13953)).
 - While a managed Docker gateway's container is stopped, plan, apply, and destroy fail with an error that names the container and the `docker start` command that starts it, instead of `observation transport failed`.
-  See [troubleshooting](../observability/troubleshooting.md#identify-the-failure) ([#14626](https://github.com/NVIDIA/NemoClaw/issues/14626)).
+  See [troubleshooting](../observability/troubleshooting.md#identifying-the-failure) ([#14626](https://github.com/NVIDIA/NemoClaw/issues/14626)).
+
+Recovery:
+
+- After OpenShell rejects a sandbox create as an invalid argument, such as a network policy key with the reserved `_provider_` prefix, a corrected apply or destroy proceeds, instead of failing on an unfinished creation.
+  See [recovering an interrupted operation](../build-deploy/usage.md#recovering-an-interrupted-operation) ([#14654](https://github.com/NVIDIA/NemoClaw/issues/14654)).
 
 ### Changes in v0.1.0-rc11
 
@@ -93,9 +100,9 @@ Agents and interfaces:
 - The agent holds NVIDIA NeMo Fabric's `instructions`, `tools`, `skills`, `mcp`, and `workflow` sections, and the harness holds `runtime`, `environment`, `discovery`, `telemetry`, and `relay`.
   NemoClaw passes each to Fabric unchanged.
   Sandboxes that share a harness definition through `harnessRef` can give each agent its own instructions, tools, and skills.
-  See [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness).
+  See [configure the agent and the harness](../agents-inference/agents.md#configuring-the-agent-and-the-harness).
 - `spec.policies` holds named sandbox policies that a network selects with `policyRef`, and `spec.grants` holds named grants that a network adds to the isolated preset with `grantRefs`.
-  See [reuse policies and grants](../security/sandbox-network.md#reuse-policies-and-grants).
+  See [reuse policies and grants](../security/sandbox-network.md#reusing-policies-and-grants).
 - A `kind: api` integration, and `openshell_api` in HCL, sends one key to every URL in its `endpoints`, so one registration covers an API spread across hosts.
   `sandboxEnv` (`sandbox_env` in HCL) names the variable the sandbox sees the key in, such as `NVIDIA_API_KEY`.
   Without it, the name stays `NEMOCLAW_API_<NAME>_KEY`.
@@ -108,24 +115,23 @@ Agents and interfaces:
   Before, every later apply failed with `state_in_use` for an agent that keeps state until someone ran `fabric-agent-ctl stop`, and without kept state, the next start failed because OpenClaw's Gateway still held its ports, after which Fabric refused every start until the sandbox was replaced.
 - Agent errors keep the codes Fabric uses when it refuses to start or stop a runtime, instead of reporting `fabric_configuration_failed`.
   `start_uncertain` says to replace the sandbox and apply again, `state_in_use` means another runtime still holds the agent's kept state, and `runtime_busy` means the agent was handling a request, so its runtime is unchanged.
-  See [identifying the failure](../observability/troubleshooting.md#identify-the-failure).
+  See [identifying the failure](../observability/troubleshooting.md#identifying-the-failure).
 - A Hermes agent whose route uses an `anthropic` inference provider starts.
   Before, apply failed with `start_failed` because the Hermes image lacked the Anthropic SDK.
   Hermes sends the requests to the provider's endpoint only when its path ends in `/anthropic` or `/anthropic/v1` or its host is Anthropic's, Claude's, or Azure's.
-  See [pointing Hermes at an Anthropic endpoint](../agents-inference/inference.md#point-hermes-at-an-anthropic-endpoint).
 
 Onboarding:
 
 - The `nemoclaw onboard` review opens with a summary of the agent, model, API key, web search, where the deployment runs, image, network access, and output file.
   The saved YAML follows, collapsed until you press Tab.
-- At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#build-agent-images).
+- At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#building-agent-images).
   When the engine holds exactly one such image and neither your template nor an earlier answer names another, onboarding uses it without asking, and the review shows it. To enter another image, go back from the next question.
 
 Sandbox policy:
 
 - `spec.gateway.policyAuthority.apf` lets NVIDIA Agent Policy Fabric (APF) author each sandbox's policy and serve the inference, web search, and API profiles, and `registration: managed` has NemoClaw register APF with a managed Docker gateway.
   A sandbox on such a gateway can't set `network.policy`, `network.policyRef`, `network.grants`, or `network.grantRefs`.
-  See [let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+  See [let APF author sandbox policy](../build-deploy/usage.md#letting-apf-author-sandbox-policy).
 
 Inference and models:
 
@@ -157,20 +163,20 @@ Examples and builds:
   Rebuild it to use it.
   Like 0.32.0, it uses CUDA 13.0, so GPU hosts and Kubernetes GPU nodes need NVIDIA driver 580 or newer.
   With `authentication: bearer`, the supervisor answers vLLM's new `/v1/decisions` endpoint, and the `/checkpoint/prepare`, `/checkpoint/restore`, and `/checkpoint/status` routes that `--enable-sleep-mode` adds without the key, with 404, as it does every request outside its route allowlist.
-  See [authenticating a managed vLLM service](../agents-inference/inference.md#authenticate-a-managed-vllm-service).
+  See [authenticating a managed vLLM service](../agents-inference/inference.md#authenticating-a-managed-vllm-service).
 
 OpenShell 0.1.8:
 
 - On Kubernetes, deleting a sandbox no longer waits out its pod's 30-second termination grace period, so destroy and sandbox replacement finish sooner.
 - The OpenShell CLI renews a token it got through client credentials while `OPENSHELL_OIDC_CLIENT_SECRET` is set.
-  See [reaching the gateway from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli).
+  See [reaching the gateway from the OpenShell CLI](../build-deploy/kubernetes.md#reaching-the-gateway-from-the-openshell-cli).
 - The gateway no longer keeps memory for deleted sandboxes.
 
 OpenShell 0.1.9:
 
 - On a managed Kubernetes gateway, the CA in `caConfigMap` verifies only the OIDC issuer's discovery and signing keys, alongside the gateway's own trusted CAs.
   Before, OpenShell's chart set it as the gateway's process-wide `SSL_CERT_FILE`.
-  See [authenticating through an existing OIDC issuer](../build-deploy/kubernetes.md#authenticate-through-an-existing-oidc-issuer).
+  See [authenticating through an existing OIDC issuer](../build-deploy/kubernetes.md#authenticating-through-an-existing-oidc-issuer).
 - Stopping a sandbox no longer ends in `SIGKILL`: its supervisor finishes shutting down within 8 seconds, and Docker waits 10.
 - A long-running sandbox no longer exits when its supervisor loses its connection a second time.
 - On Kubernetes, a sandbox that times out because its pod can't be scheduled reports the scheduler's reason.
@@ -188,13 +194,13 @@ Agents and interfaces:
 
 - `harness.settings.interfaces` turns on OpenClaw's dashboard and Hermes's API server and dashboard.
   Plan checks each against the image's adapter, and apply prints how to reach it, including OpenClaw's terminal UI command.
-  See [agent interfaces](../agents-inference/interfaces.md#reach-an-agent-interface).
+  See [agent interfaces](../agents-inference/interfaces.md#reaching-an-agent-interface).
 - A sandbox's `serviceExposures` publishes one of its ports at a URL the gateway serves.
   Apply prints each URL and returns it as `serviceUrls` in JSON.
   Changing the exposures updates the running sandbox's endpoints in place.
-  See [service exposure](../agents-inference/interfaces.md#expose-a-service-through-the-gateway).
+  See [service exposure](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway).
 - Plan and apply list each agent's runtime ID and `fabric-agent-ctl invoke` command under **Agents**, and as `agents` in JSON results.
-  See [invoking an agent](../agents-inference/interfaces.md#invoke-an-agent).
+  See [invoking an agent](../agents-inference/interfaces.md#invoking-an-agent).
 - Hermes keeps its native state in `/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/<agent name>`, which every runtime of the agent uses, so its interface tokens moved there.
   OpenClaw's native state stays in a temporary directory that its runtime removes at stop.
   See [agent files](../build-deploy/state.md#agent-files).
@@ -207,7 +213,7 @@ Agents and interfaces:
 - A failed agent start reports Fabric's cause.
 - OpenClaw stops where the sandbox denies process-group signals.
 - An explicit sandbox policy accepts `network_middlewares`.
-  See [network middleware](../security/sandbox-network.md#attach-network-middleware).
+  See [network middleware](../security/sandbox-network.md#attaching-network-middleware).
 - A network grant's `binaries`, in a document's `grants` or an HCL `managed` block, are kept as written instead of being replaced with the harness's executables.
   OpenShell matches a process by its executable's real path, so name the executable itself rather than a symlink to it, such as `/usr/local/bin/python3.14` rather than `/usr/local/bin/python3`.
   See OpenShell's [binary matching](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/policies/network-rules.mdx#binary-matching).
@@ -216,14 +222,14 @@ Inference and models:
 
 - `container.gpuDevices` selects the GPU for a Docker-managed vLLM or Ollama service, by UUID or index.
   It takes one entry.
-  See [container limits](../agents-inference/inference.md#set-container-limits-and-update-policy).
+  See [container limits](../agents-inference/inference.md#setting-container-limits-and-update-policy).
 - `serving.tensorParallelSize` and `serving.pipelineParallelSize` set vLLM's parallel layout.
-  See [the parallel layout](../agents-inference/models.md#set-the-parallel-layout).
+  See [the parallel layout](../agents-inference/models.md#setting-the-parallel-layout).
   Until `container.gpuDevices` takes more than one GPU, vLLM refuses a layout larger than one GPU.
   See [current limits](../resources/limits.md#platforms-models-and-placement).
 - A service's GPU memory budget applies to each GPU it uses, and capacity errors name the GPU.
 - On dedicated-memory GPUs, `memory.hostReserveGiB` can be as low as 6 GiB, and a vLLM recipe's GPU budget is checked against the GPU's memory.
-  See [hardware profiles](../agents-inference/models.md#choose-a-hardware-profile).
+  See [hardware profiles](../agents-inference/models.md#choosing-a-hardware-profile).
 - In hand-written HCL, the vLLM and Ollama capacity data sources take `gpu_devices`, and `vllm_runtime` and `ollama_runtime` take `gpu_count`, which must be 1 for now, and report it in `requirements`.
   See [service capacity](../references/provider.md#service-capacity).
 - When vLLM exits during startup, the apply error includes the last 4 KiB of its output, with the service key redacted.
@@ -242,24 +248,24 @@ Gateways and Kubernetes:
   A client certificate and key must appear together.
 - `gateway.kubernetes.kubeconfig` and `context` can be omitted together.
   Without them, NemoClaw uses the service account of the pod it runs in.
-  See [running NemoClaw in a pod](../build-deploy/kubernetes.md#run-nemoclaw-in-a-pod).
+  See [running NemoClaw in a pod](../build-deploy/kubernetes.md#running-nemoclaw-in-a-pod).
 - `gateway.kubernetes.namespace` can name an existing namespace: NemoClaw binds it by UID and never labels, changes, or deletes it, and refuses a namespace that another deployment created or that's being deleted.
 - NemoClaw no longer reads cluster-wide objects: it doesn't check for a default StorageClass, the Agent Sandbox CRD, or `kube-system`.
   Without a default StorageClass, the gateway install times out in Helm's wait.
 - A managed OpenShift gateway lets OpenShift assign its UID and `fsGroup`.
 - `gateway.kubernetes.expose` publishes a managed Kubernetes or OpenShift gateway at `gateway.endpoint` through the OpenShell chart's own `NodePort` Service, for clients such as the OpenShell CLI.
   NemoClaw's own commands keep their port forward.
-  See [publishing the gateway](../build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster).
+  See [publishing the gateway](../build-deploy/kubernetes.md#publishing-the-gateway-outside-the-cluster).
 - A managed Kubernetes or OpenShift gateway's Helm install is atomic.
   A release left by an unfinished install fails apply with the `helm uninstall` command to run.
-  See [recovering an unfinished Helm install](../build-deploy/usage.md#recover-from-an-unfinished-helm-install).
+  See [recovering an unfinished Helm install](../build-deploy/usage.md#recovering-from-an-unfinished-helm-install).
 - Plan fails when a managed Docker or Podman gateway's subnet or port is already in use.
 
 Plan, apply, and diagnostics:
 
 - The first interrupt lets the resource operations in progress finish.
   A second stops at once.
-  See [recovering an interrupted operation](../build-deploy/usage.md#recover-an-interrupted-operation).
+  See [recovering an interrupted operation](../build-deploy/usage.md#recovering-an-interrupted-operation).
 - Refusals name the object or setting: an ownership conflict, retained gateway storage from another state directory, a missing kubeconfig context, an image metadata bundle for another digest, and gateway TLS failures.
 - The sandbox deletion warning ends with "except on mounted volumes".
 - Adding a sandbox whose name sorts first leaves the other sandboxes unchanged.
@@ -300,6 +306,7 @@ These changes since the `v0.1.0-rc11` tag affect existing deployments or documen
 - The intent record is now version 26, so this release refuses any deployment that `v0.1.0-rc11` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release.
   See [compatibility](../references/compatibility.md#deployment-state).
+- OpenClaw's `harness.settings.plugins.entries` is now `plugins.bundled.entries`, for plugins that ship with OpenClaw, and `plugins.external.entries`, for plugins you provide; Fabric's OpenClaw adapter no longer accepts `plugins.entries`.
 
 ### Breaking Changes in v0.1.0-rc11
 
@@ -344,7 +351,7 @@ These changes between the `v0.1.0-rc10` and `v0.1.0-rc11` tags affect existing d
   Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
 - Every sandbox must set `image.ref` to an agent image pinned by digest, on Docker and Podman as on Kubernetes.
   The SDK no longer supplies a default agent image, and the parser rejects an omitted `image`, `image: {}`, and an empty `ref`.
-  See [build agent images](../build-deploy/build.md#build-agent-images).
+  See [build agent images](../build-deploy/build.md#building-agent-images).
   In the Rust SDK, `config::DEFAULT_AGENT_IMAGE` is removed.
 - With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`.
   On `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
@@ -378,7 +385,7 @@ These changes between the `v0.1.0-rc9` and `v0.1.0-rc10` tags affect existing de
   In the Rust SDK, these fields are `BTreeMap`s, and `InferenceProvider` has no `name`.
 - A vLLM recipe whose `compatibility.gpu` belongs to no hardware profile's GPU family no longer parses.
 - Plan rejects `maxTokens`, `temperature`, and `topP` when the image's adapter doesn't accept them.
-  See [OpenClaw route tuning](../agents-inference/inference.md#tune-openclaws-primary-route).
+  See [OpenClaw route tuning](../agents-inference/inference.md#tuning-openclaws-primary-route).
 - Hermes's `max_tokens` setting no longer defaults to 512, so Hermes uses its own response-token limit.
 - `skills.paths` works as in `v0.1.0-rc9`: OpenClaw requires each path to hold `SKILL.md`, and Hermes passes each path to its `skills.external_dirs` unchecked.
   Earlier v1 development builds also read an OpenClaw or Hermes path as a folder of skills and refused duplicate names.
@@ -397,7 +404,7 @@ These changes between the `v0.1.0-rc9` and `v0.1.0-rc10` tags affect existing de
 
 These changes before the `v0.1.0-rc9` tag affect existing deployments:
 
-- Docker-managed vLLM and Ollama services default to [`updatePolicy: Preserve`](../agents-inference/inference.md#set-container-limits-and-update-policy), which refuses an image, model, serving, or container-limit change that would replace a running container.
+- Docker-managed vLLM and Ollama services default to [`updatePolicy: Preserve`](../agents-inference/inference.md#setting-container-limits-and-update-policy), which refuses an image, model, serving, or container-limit change that would replace a running container.
   Set `spec.services.<name>.updatePolicy: Recreate` to permit the replacement and its downtime.
 - `spec.gateway.image` is removed: the SDK pins the managed gateway image, and defaulted and exported documents no longer name it.
   - Remove the field from documents.
@@ -415,7 +422,7 @@ They aren't a support statement: v1 has [no support policy yet](../resources/lim
 ### Client Platforms
 
 Each release attaches the CLI for these platforms.
-[Install the CLI](../get-started/install.md) lists each archive's requirements, and [current limits](../resources/limits.md#installation-and-releases) what the executables lack.
+[Installing the CLI](../get-started/install.md) lists each archive's requirements, and [current limits](../resources/limits.md#installation-and-releases) what the executables lack.
 [CI / Bundle](../../.github/workflows/rust.yml) runs the unit, contract, and integration tests on each one.
 
 | Platform | Archive | Deploys | Live tests in CI |
@@ -457,7 +464,7 @@ Onboarding offers OpenClaw and Hermes.
 
 ### GPUs
 
-Managed vLLM and Ollama check the GPU against the deployment's [hardware profile](../agents-inference/models.md#choose-a-hardware-profile), such as `dgx-spark`, `dgx-station`, `h100`, or `rtx-pro-6000-blackwell`.
+Managed vLLM and Ollama check the GPU against the deployment's [hardware profile](../agents-inference/models.md#choosing-a-hardware-profile), such as `dgx-spark`, `dgx-station`, `h100`, or `rtx-pro-6000-blackwell`.
 Accepting a profile doesn't qualify that GPU.
 
 | GPU host | Live tests |
@@ -476,5 +483,5 @@ Refer to [current limits](../resources/limits.md) for what v1 doesn't do yet or 
 ## Previous Releases
 
 The combined staging site's **Latest (main)** version retains the imported main guides and changelog.
-Use [earlier documentation](../get-started/migration.md#find-earlier-documentation) to select that version.
+Use [earlier documentation](../get-started/migration.md#finding-earlier-documentation) to select that version.
 Its release entries aren't v1 release notes.
