@@ -73,12 +73,12 @@ The Purpose column names the product question that each field answers.
 | Field | Type | Values | Source | Purpose |
 |---|---|---|---|---|
 | `nvidiaSource` | String | `nemoclaw` | Constant | Which product sent the record? |
-| `installId` | String | Random UUID (v4) | Install ID file, created on first run | How many unique installs are there? |
+| `installId` | String | Lowercase random UUID (v4), or `unknown` | Install ID file; refer to [Install ID File](#install-id-file) | How many unique installs are there? |
 | `firstRun` | Boolean | `true` or `false` | `true` only when this run created the install ID file | How many new installs are there? |
 | `testLabel` | String | Empty, or `qa-<run>:<case>:attempt-<n>` | `NEMOCLAW_TELEMETRY_TEST_LABEL` | Is the record from a QA run rather than other use? |
 | `buildKind` | String | `release`, `dev`, or `other` | Bundle version stamp; a build from a commit that is not exactly a release tag, or that has local changes, is stamped and sent as `dev` | Is the record from a release or a source build? |
-| `version` | String | For example, `1.0.0-412` | Bundle version stamp (`NEMOCLAW_BUNDLE_VERSION` at build time) | Which versions are in use? |
-| `previousVersion` | String | A version, or `none` | Install ID file: the version of the last run that sent a record if it differs from `version`, otherwise `none` | Which upgrade paths do users take? |
+| `version` | String | For example, `1.0.0-412`; up to 128 characters | Bundle version stamp (`NEMOCLAW_BUNDLE_VERSION` at build time) | Which versions are in use? |
+| `previousVersion` | String | A version, or `none`; up to 128 characters | Install ID file: the version of the last run that sent a record if it differs from `version`, otherwise `none` | Which upgrade paths do users take? |
 | `operation` | String | `onboard`, `apply`, `destroy`, or `other` | The command | Which commands run, and how often? |
 | `outcome` | String | `succeeded`, `failed`, `cancelled`, or `other` | The command result | Do commands succeed? |
 | `effect` | String | `initial`, `update`, `none`, `teardown`, `authored`, or `other` | `OperationResult.changes`; `authored` for `onboard` | Does a run create, update, or tear down a deployment? |
@@ -86,11 +86,11 @@ The Purpose column names the product question that each field answers.
 | `durationMs` | Integer | Milliseconds, 0 or more | Progress events | How long do commands take? |
 | `os` | String | `linux`, `macos`, `windows`, or `other` | `std::env::consts::OS` | Which operating systems must be supported and tested? |
 | `arch` | String | `x86_64`, `arm64`, or `other` | `std::env::consts::ARCH`; `aarch64` is sent as `arm64` | Which chip architectures must be supported and tested? |
-| `hostContext` | String | `native`, `wsl`, or `other` | Kernel release string | Does NemoClaw run natively or under WSL? |
+| `hostContext` | String | `native`, `wsl`, `other`, or `unknown` | Kernel release string; `unknown` when it cannot be read | Does NemoClaw run natively or under WSL? |
 | `deploymentSource` | String | `brev`, `omnistation`, `colossus`, `none`, or `other` | Image marker; refer to [Deployment Source Marker](#deployment-source-marker) | Which NVIDIA platform image does NemoClaw run on? |
-| `cloud` | String | `gcp`, `azure`, `aws`, `other`, or `unknown` | DMI vendor string | Which cloud does NemoClaw run on? |
+| `cloud` | String | `gcp`, `azure`, `aws`, `none`, `other`, or `unknown` | DMI vendor string; refer to [Field Rules](#field-rules) | Which cloud does NemoClaw run on? |
 | `hardware` | String | `dgx-spark`, `dgx-station`, `rtx-spark`, `jetson`, `mac`, `nvidia-gpu`, `other`, or `unknown` | DMI product name and devicetree | Which machines run NemoClaw? |
-| `harnesses` | List of strings | Fabric catalog harness IDs, else `other` | Configuration | Which agent harnesses are used? |
+| `harnesses` | List of strings | Fabric catalog harness IDs, else `other`; each up to 64 characters | Configuration | Which agent harnesses are used? |
 | `models` | List of strings | Model names as written; refer to [Field Rules](#field-rules) | Configuration, default route of each sandbox | Which model families are used? |
 | `inferenceHosts` | List of strings | `local`, `build.nvidia.com`, `inference.nvidia.com`, `openai`, `anthropic`, or `other` | Configuration endpoint host, matched on the machine | Is inference local or hosted, and from which provider? |
 | `computeDriver` | String | `docker`, `podman`, `kubernetes`, `openshift`, `other`, or `unknown` | Configuration | Which runtime runs the sandboxes? |
@@ -109,6 +109,8 @@ The Purpose column names the product question that each field answers.
   `<n>` is 1 to 999.
   For example, `qa-1120a:onboard-hermes:attempt-2` is valid, and a label that holds a path is not.
 - For `harnesses`, the sender sends an ID in the bundled Fabric catalog as written and sends any other ID as `other`.
+  An ID is up to 64 characters.
+- Harness IDs, model names, and versions have no format rule beyond their length.
 - For `inferenceHosts`, the sender matches the endpoint host on the machine and sends the matched word, never the address.
   An unmatched host is `other`.
 - For `effect`, the sender reads the OpenTofu actions in `OperationResult.changes` (`create`, `update`, `delete`, `read`, or `no-op`).
@@ -136,6 +138,7 @@ The Purpose column names the product question that each field answers.
 
   A command that succeeds sends `none`.
   `onboard` always sends `none`, because it sends a record only after it writes the configuration.
+- For `cloud`, `none` means the machine is not in a cloud, `other` means a cloud that is not on the list, and `unknown` means the vendor string cannot be read.
 - `deploymentSource` and `cloud` are independent.
   For example, a Brev machine on GCP sends `brev` and `gcp`.
 - For `destroy`, the configuration fields come from the saved document `<state-dir>/intent.json`.
@@ -170,14 +173,13 @@ Host detection, which [#14681](https://github.com/NVIDIA/NemoClaw/issues/14681) 
   The only free text in the record is the model names, the test label, the version, and the previous version.
 - A value the sender cannot read is sent as `unknown`.
   No field has a separate status field.
-  These are the exceptions: `os`, `arch`, and `hostContext` send `other`, `deploymentSource` sends `none`, and an unread configuration sends the values in [Field Rules](#field-rules).
-- Lists are sorted and hold no duplicates.
+  These are the exceptions: `os` and `arch` are fixed at build time and send `other` for an unlisted value, `deploymentSource` sends `none`, and an unread configuration sends the values in [Field Rules](#field-rules).
+- For `harnesses`, `models`, and `inferenceHosts`, the sender first replaces each value as the field rules say (with `other` or `unknown`), then removes duplicates, then sorts the list.
+  The collector does not enforce unique list items, so the sender must.
   If the collector does not index lists, the sender sends each list as one value: its only value, or `mixed` when the list has more than one value.
   An empty list stays empty.
   The TEST probe, [#14029](https://github.com/NVIDIA/NemoClaw/issues/14029), decides whether this fallback ships.
   If it ships, `mixed` joins the values of each list field.
-- The record does not include location.
-  The collector derives a coarse location from the IP address of the request.
 - Changes are additive only.
   A 5.x minor version can add fields.
   It never renames a field, removes a field, or changes a field's meaning.
@@ -216,6 +218,10 @@ The file holds these values:
 
 Deleting the file creates a new install ID on the next run.
 
+If the file is missing or invalid and the directory is writable, the sender writes a fresh lowercase UUID (v4) and sends `firstRun: true`.
+If the file cannot be written, the sender sends `installId: unknown` and `firstRun: false`.
+Unique-install counts leave out `unknown`.
+
 ## OpenShell Telemetry
 
 The OpenShell gateway that NemoClaw manages has its own telemetry, separate from this record.
@@ -226,5 +232,4 @@ Passing it to the gateway first requires an accepted change to the [scope](scope
 
 NemoClaw Classic sends schema 4.x under the same client ID.
 This record is schema 5.0.
-If the collector cannot accept schema 4.x and 5.0 at the same time, the record uses the next 4.x schema version.
-Its fields stay the same, and only `eventSchemaVer` and `eventSysVer` change.
+The two schemas run side by side under that client ID.
