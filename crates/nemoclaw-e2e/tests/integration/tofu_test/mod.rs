@@ -320,7 +320,7 @@ fn prepare(
         .spec
         .gateway
         .as_managed()
-        .is_some_and(|managed| !managed.engine.is_empty());
+        .is_some_and(|managed| !managed.engine().is_empty());
     fixtures.redirect(&mut document);
     let generations: compile::Generations =
         GENERATIONS.map(|kind| (kind.into(), "a".repeat(32))).into();

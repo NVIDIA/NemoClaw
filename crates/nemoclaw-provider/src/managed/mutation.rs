@@ -22,7 +22,7 @@ use serde_json::json;
 const MISSING_IMAGE: &str = "image is absent from the selected engine and imagePullPolicy is Never; load the pinned image there or allow pulling";
 
 fn image_pull_policy(spec: &Spec) -> crate::config::ImagePullPolicy {
-    spec.gateway.image_pull_policy.unwrap_or_default()
+    spec.gateway.image_pull_policy().unwrap_or_default()
 }
 impl Engine {
     pub async fn ensure_gateway(&self, spec: &Spec, id: &str) -> Result<RuntimeObservation, Error> {
@@ -243,7 +243,7 @@ impl Engine {
                     && (desired.contains(&subnet.network()) || subnet.contains(&desired.network()))
                 {
                     return Err(Error::Conflict(
-                        "managed gateway subnet overlaps an existing Docker network; set spec.gateway.networkCIDR to a free private /24",
+                        "managed gateway subnet overlaps an existing Docker network; set the gateway target's networkCIDR to a free private /24",
                     ));
                 }
             }

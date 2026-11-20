@@ -301,9 +301,6 @@ pub(super) async fn run_live_kind(
     result
 }
 
-/// The endpoint of a case whose gateway the SDK reaches through a
-/// port-forward.
-const FORWARDED_ENDPOINT: &str = "https://127.0.0.1:17701";
 /// The endpoint's scheme and host in a case whose NodePort Service publishes
 /// the gateway. The case's node port stays.
 const PUBLISHED_ENDPOINT: &str = "https://192.0.2.1:";
@@ -326,10 +323,10 @@ fn node_address(container: &str) -> Result<std::net::Ipv4Addr> {
 }
 
 /// The kind case bound to one run: its UID, which is also its token audience,
-/// gateway endpoint, namespace (which also names the stub model's and the
-/// issuer's), kubeconfig context, agent image in the run's registry, and
-/// harness. The endpoint is a free loopback port, or the node's address when
-/// a NodePort Service publishes the gateway.
+/// namespace (which also names the stub model's and the issuer's), kubeconfig
+/// context, agent image in the run's registry, and harness. A case whose
+/// NodePort Service publishes the gateway names the node's address; another
+/// names no endpoint, since each command forwards its own free port.
 fn kind_case(
     template: &str,
     uid: &str,
@@ -340,23 +337,18 @@ fn kind_case(
     harness: &str,
 ) -> Result<String> {
     let zero = format!("nc-registry:5000/agent@sha256:{}", "0".repeat(64));
-    let endpoint = if template.contains(PUBLISHED_ENDPOINT) {
-        (PUBLISHED_ENDPOINT, format!("https://{node}:"))
-    } else {
-        let port = live::free_port()?;
-        (FORWARDED_ENDPOINT, format!("https://127.0.0.1:{port}"))
-    };
-    Ok(live::bind_case(
-        template,
-        &[
-            ("3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36", uid),
-            (endpoint.0, &endpoint.1),
-            ("nc-hcl-kind", namespace),
-            ("kind-nemoclaw", context),
-            (&zero, image),
-            ("nvidia.fabric.openclaw", harness),
-        ],
-    )?)
+    let published = format!("https://{node}:");
+    let mut bindings = vec![("3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36", uid)];
+    if template.contains(PUBLISHED_ENDPOINT) {
+        bindings.push((PUBLISHED_ENDPOINT, &published));
+    }
+    bindings.extend([
+        ("nc-hcl-kind", namespace),
+        ("kind-nemoclaw", context),
+        (zero.as_str(), image),
+        ("nvidia.fabric.openclaw", harness),
+    ]);
+    Ok(live::bind_case(template, &bindings)?)
 }
 
 /// The registry credentials a pull of pushed images uses, as for
@@ -485,10 +477,10 @@ mod tests {
             "h",
         )
         .unwrap();
-        assert!(bound.contains("    endpoint: https://127.0.0.1:"));
+        // An unpublished gateway names no endpoint or port.
+        assert!(!bound.contains("127.0.0.1") && !bound.contains("172.18.0.9"));
         assert!(bound.contains("http://model.nc-n-model.svc.cluster.local:8000/v1"));
         assert!(!bound.contains("nc-hcl-kind") && !bound.contains("@sha256:0000"));
-        assert!(!bound.contains(FORWARDED_ENDPOINT) && !bound.contains("172.18.0.9"));
 
         let template = include_str!("../../../nemoclaw-e2e/cases/kind-kubernetes-oidc.yaml");
         let bound = kind_case(
@@ -502,8 +494,8 @@ mod tests {
         )
         .unwrap();
         // A published gateway's endpoint names the node, at the case's port.
-        assert!(bound.contains("    endpoint: https://172.18.0.9:30080\n"));
-        assert!(bound.contains("      namespace: nc-n\n"));
+        assert!(bound.contains("          endpoint: https://172.18.0.9:30080\n"));
+        assert!(bound.contains("        namespace: nc-n\n"));
         assert!(bound.contains("http://model.nc-n-model.svc.cluster.local:8000/v1"));
         assert!(bound.contains("https://issuer-oidc.nc-n-issuer.svc.cluster.local:8443"));
         assert!(bound.contains("        audience: u-1\n"));

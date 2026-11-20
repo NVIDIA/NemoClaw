@@ -18,11 +18,10 @@ use std::{
 /// The format of the intent record this release reads and writes: its version
 /// and the SHA-256 fingerprint of its JSON Schema, which a unit test checks.
 /// When the format changes, raise the version with the fingerprint, so that a
-/// release refuses unknown formats instead of misreading them. Explicitly
-/// compatible transitions are validated in Store::load before the next save.
+/// release refuses state another release wrote instead of misreading it.
 pub(crate) const RECORD_FORMAT: (u32, &str) = (
-    30,
-    "01add29347858d3cec6899e67520ba110a95a8df13dc1b24aeb0079e4837a211",
+    31,
+    "1e7df45b441b1365f0475e7bff07ee04c71e62fc00e71f20a07fa2eba0a1ed08",
 );
 pub(crate) const RECORD_VERSION: u32 = RECORD_FORMAT.0;
 
@@ -460,20 +459,13 @@ impl Store {
         // Check the version before the rest: another release's record can
         // hold what this release can't read.
         let version = record["version"].as_u64().ok_or_else(corrupt)?;
-        // Format 30 extracted the same memory fields into a shared schema type.
-        // Accept only this known transition; later format changes must decide
-        // compatibility explicitly. Loading never rewrites retained state.
-        let compatible_previous = version == 29 && RECORD_VERSION == 30;
-        if version != u64::from(RECORD_VERSION) && !compatible_previous {
+        if version != u64::from(RECORD_VERSION) {
             return Err(Error::StateFromOtherRelease {
                 recorded: version,
                 supported: RECORD_VERSION,
             });
         }
-        let mut record: Record = serde_json::from_value(record).map_err(|_| corrupt())?;
-        if compatible_previous {
-            record.version = RECORD_VERSION;
-        }
+        let record: Record = serde_json::from_value(record).map_err(|_| corrupt())?;
         record.validate()?;
         Ok(Some(record))
     }

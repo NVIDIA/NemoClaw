@@ -605,7 +605,12 @@ pub(crate) fn gateway_connection(
     generations: &Generations,
 ) -> Result<Value, ConfigError> {
     let gateway = &document.spec.gateway;
-    let mut provider = json!({"endpoint":gateway.endpoint()});
+    // A managed cluster gateway without `expose` has no endpoint: providers
+    // reach it through its specification's port forward.
+    let mut provider = json!({});
+    if let Some(endpoint) = gateway.endpoint() {
+        provider["endpoint"] = json!(endpoint);
+    }
     let invalid = || ConfigError::new("invalid managed Kubernetes gateway");
     if let Some(spec) =
         crate::kubernetes::gateway_spec(document, generations).map_err(|_| invalid())?
@@ -654,7 +659,7 @@ fn graph_base(
     version: &str,
 ) -> Result<Value, ConfigError> {
     let connection = gateway_connection(document, generations)?;
-    let drivers = [document.spec.gateway.runtime().provider.openshell_driver()];
+    let drivers = [document.spec.gateway.compute_driver().openshell_driver()];
     let mut graph = json!({
         "terraform":{"required_providers":{
             "openshell":{"source":OPENSHELL_PROVIDER_ADDRESS,"version":format!("= {version}")},
@@ -676,11 +681,10 @@ fn graph_base(
 /// sandbox name. A Kubernetes sandbox, or one with a metadata bundle, reads
 /// verified metadata instead and pulls nothing.
 pub(crate) fn sandbox_image_pulls(document: &Document) -> BTreeMap<String, Target> {
-    let engine = match &document.spec.gateway {
-        _ if document.spec.gateway.runtime().provider.is_kubernetes() => return BTreeMap::new(),
-        crate::config::Gateway::Managed(gateway) => gateway.engine.clone(),
-        crate::config::Gateway::External(gateway) => gateway.engine.clone(),
-    };
+    if document.spec.gateway.compute_driver().is_kubernetes() {
+        return BTreeMap::new();
+    }
+    let engine = document.spec.gateway.engine().to_owned();
     document
         .sandboxes()
         .filter(|sandbox| sandbox.image.metadata.is_none() && !engine.is_empty())

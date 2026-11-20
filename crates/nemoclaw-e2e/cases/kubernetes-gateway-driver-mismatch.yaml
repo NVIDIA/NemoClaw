@@ -12,8 +12,8 @@ metadata:
 spec:
   gateway:
     management: external
-    runtime:
-      provider: kubernetes
+    target:
+      kubernetes: {}
     endpoint: https://openshell.example.com
   inferenceProviders:
     inference:

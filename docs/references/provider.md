@@ -106,7 +106,8 @@ Each object names the gateway that holds it with `gateway`, the `ref` of `data.o
 That data source takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, and the `tls_ca_env` variable naming the CA file that verifies the gateway.
 For mutual TLS, it also takes the `tls_certificate_env` and `tls_key_env` variables, set together, naming a client certificate and key.
 Its `ref` carries those names, never their values.
-For a managed Kubernetes gateway, it takes `kubernetes`, the gateway's specification, instead of the credential and TLS variables.
+For a managed Kubernetes or OpenShift gateway, it takes `kubernetes`, the gateway's specification as JSON, instead of `endpoint` and the credential and TLS variables.
+The specification's `settings` hold the gateway's `target`, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
 Each provider that reaches such a gateway opens its own port forward on a free loopback port and keeps it open while OpenTofu runs.
 The forward uses the kubeconfig the specification names, or the service account of the pod it runs in when the specification names none, and the development credentials in the SDK's state directory.
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
@@ -647,8 +648,9 @@ The runtime consumes the same canonical public configuration through Fabric.
 Refer to [discovered harness configuration](sdk.md#configuring-a-discovered-fabric-harness).
 
 Generated graphs observe each sandbox image independently of resource creation or image acquisition.
-Managed gateways use their configured engine.
-External gateways require `spec.gateway.engine` for image inspection and do not run managed-gateway prerequisite checks.
+Managed Docker and Podman gateways use their configured engine.
+External gateways require the `engine` of their `docker` or `podman` target for image inspection and do not run managed-gateway prerequisite checks.
+Kubernetes and OpenShift sandboxes use `image.metadata` instead.
 With `config_json`, image discovery also returns `runtime_json`, the selected adapter and advertised runtime layout, and `binaries_json`, its resolved executable list.
 The sandbox consumes `runtime_json`.
 Its `policy` block retains authored policy and managed endpoint inputs, resolved against that layout before creation.
@@ -1018,7 +1020,6 @@ The three NemoClaw resources take the same cluster target and identity:
 
 - `name`: `nc-`, 16 lowercase hexadecimal characters, and `-gateway`.
 - `compute_driver`: `kubernetes` or `openshift`.
-- `endpoint`: the gateway's `https://127.0.0.1:PORT` loopback endpoint.
 - Optional `kubeconfig_env`: the environment variable whose value is the kubeconfig file path. Omit it to use the service account of the pod that runs OpenTofu. The provider then finds the API server through `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`.
 - Optional `context`: the exact kubeconfig context, set exactly when `kubeconfig_env` is.
 - `namespace`: the namespace for the gateway.

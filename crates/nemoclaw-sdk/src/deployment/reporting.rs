@@ -232,7 +232,7 @@ impl DiscoveryReport {
             self.targets.insert(
                 "gateway".into(),
                 DiscoveryTarget {
-                    endpoint: Some(document.spec.gateway.endpoint().into()),
+                    endpoint: document.spec.gateway.endpoint(),
                     credential_env: document
                         .spec
                         .gateway

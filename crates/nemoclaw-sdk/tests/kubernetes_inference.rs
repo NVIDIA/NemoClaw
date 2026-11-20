@@ -15,18 +15,16 @@ const SERVICE: &str = "http://qwen.models.svc.cluster.local:8000/v1";
 /// metadata bundle; `managed` selects a managed Kubernetes gateway.
 fn document(driver: &str, managed: bool, endpoint: &str) -> Value {
     let mut input = crate::support::fixture("local.yaml");
-    input["spec"]["gateway"]["runtime"] = json!({"provider": driver});
+    input["spec"]["gateway"]["target"] = json!({driver: {}});
     if managed {
         input["spec"]["gateway"] = json!({
             "management": "managed",
-            "runtime": {"provider": driver},
-            "endpoint": "https://127.0.0.1:17671",
-            "kubernetes": {
+            "target": {driver: {
                 "kubeconfig": {"env": "TEST_KUBECONFIG"},
                 "context": "test-cluster",
                 "namespace": "test-agents",
                 "authentication": {"profile": "development"}
-            }
+            }}
         });
     }
     if matches!(driver, "kubernetes" | "openshift") {

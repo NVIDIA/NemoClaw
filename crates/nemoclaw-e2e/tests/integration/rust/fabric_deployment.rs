@@ -18,7 +18,7 @@ async fn destroy_matches_preview_and_reapply_creates_a_new_sandbox_and_runtime()
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     document.spec.sandboxes.get_mut("assistant").unwrap().driver_config = Some(
         serde_json::json!({"docker": {"mounts": [
             {"type": "volume", "source": "caller-workspace", "target": "/sandbox/workspace", "read_only": false},
@@ -144,7 +144,7 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
@@ -198,7 +198,7 @@ async fn a_rejected_start_is_reported_safely_and_a_corrected_document_replaces_t
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();

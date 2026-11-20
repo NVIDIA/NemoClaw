@@ -31,7 +31,7 @@ For an existing authenticated gateway profile supplied by its operator, follow t
    export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME
    ```
 
-The profile's endpoint must match `spec.gateway.endpoint` in the deployment YAML.
+The profile's endpoint must be the address that plan prints as the **OpenShell gateway**, or, for a managed Kubernetes or OpenShift gateway that isn't published, your port forward's.
 Its stored authentication must grant access to the deployment workspace.
 The endpoint override takes precedence over the profile, which is why this example clears it.
 NemoClaw's YAML credential and TLS environment references don't configure the OpenShell CLI's stored profile or credentials.
@@ -51,7 +51,7 @@ For an existing plaintext loopback gateway instead, follow these steps:
    export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
    ```
 
-   Replace the example port with the one in your YAML.
+   Replace the example port with the one plan prints for the **OpenShell gateway**.
 Use this variant only when that gateway is already listening on the client host's loopback interface.
 Don't replace an authenticated remote endpoint with plaintext or disable TLS verification to make access work.
 
@@ -76,6 +76,7 @@ Use the **OpenShell gateway** and **OpenShell workspace** selectors from the pla
    The workspace derives from `metadata.uid`.
 
 JSON results expose the same values as `connection.gatewayEndpoint` and `connection.workspace`.
+A managed Kubernetes or OpenShift gateway without `expose` has no address: the text reports it as `not published`, and JSON omits `gatewayEndpoint`.
 These selectors describe the configured target, including when a plan is incomplete.
 They don't establish access or create an authenticated OpenShell CLI profile.
 The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-cli/src/main.rs).

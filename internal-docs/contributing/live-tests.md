@@ -22,9 +22,10 @@ cargo ci live-kind
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 It then runs two [HCL E2E scenarios](#hcl-e2e-scenarios), one after the other, each in new namespaces.
 
-The `kind-kubernetes-development` scenario deploys one agent with the defaults: the `kubernetes` runtime profile and the `development` authentication profile, whose tokens the SDK issues.
+The `kind-kubernetes-development` scenario deploys one agent with the `kubernetes` target and the `development` authentication profile, whose tokens the SDK issues.
 Its CLI runs with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
 The agent must answer from its recorded runtime with the stub's reply.
+Its document names no gateway port, since each command forwards its own free port, and a plan of the applied deployment must report no changes.
 Its sandbox has an explicit policy, as the [GTC DC Kubernetes example](../../examples/kubernetes/hosted-nvidia.yaml) has, with one entry that gives `python3` the stub's `/health`; the managed inference grant gives the image's executables only the stub's `/v1/**` paths.
 The `tests/e2e/hcl/command` module then runs `python3` twice in the sandbox: a request to the stub's `/health` must get the stub's 404, where OpenShell's proxy would answer 403 without the entry, and a connection to the API server's Service at `10.96.0.1`, the first address of kind's Service network, must fail with `EACCES`, OpenShell's refusal, because no entry names it.
 The address is literal, so DNS can't cause the refusal.
@@ -54,8 +55,8 @@ The chart's NodePort Service [publishes](../../docs/build-deploy/kubernetes.md#p
 NemoClaw's operations still reach the gateway through the SDK's port-forward; the probe instead dials the node's address with the gateway's client certificate and the token, as another client would, and checks that the gateway's certificate names it.
 Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage.
 The test runner then uninstalls both releases, which deletes their namespaces; it does not wait for Kubernetes to finish deleting them.
-`cargo ci live-kind` binds each case in `cases/` to the cluster's context, a fresh UID, gateway port, and namespace, and the image in the registry.
-A case whose NodePort Service publishes the gateway, as `kind-kubernetes-oidc`'s does, gets the node's address in its endpoint instead of a fresh port.
+`cargo ci live-kind` binds each case in `cases/` to the cluster's context, a fresh UID and namespace, and the image in the registry.
+A case whose NodePort Service publishes the gateway, as `kind-kubernetes-oidc`'s does, gets the node's address in its `expose.endpoint`; a case without `expose` names no endpoint.
 Its node port stays as the case sets it, in the range's lower band, which Kubernetes leaves for Services that name their port.
 It passes the kubeconfig as `TF_VAR_kubeconfig` and the registry's fixture login as `TF_VAR_pull_credentials`.
 The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell runs each sandbox as the range's first UID.
@@ -70,7 +71,7 @@ The `chart` [contract module](integration-tests.md#openshell-provider-contract) 
 ## OpenShift Gateway
 
 No CI job has an OpenShift cluster, and kind can't stand in for one: a managed `openshift` gateway gets its `fsGroup` only from OpenShift.
-The `openshift-oidc` scenario deploys the agents of `kind-kubernetes-oidc` with the `openshift` runtime profile, and runs by hand, for example on OpenShift Local.
+The `openshift-oidc` scenario deploys the agents of `kind-kubernetes-oidc` with the `openshift` target, and runs by hand, for example on OpenShift Local.
 OpenShift writes the namespace's UID range, so its test file supplies none, and `restricted-v2` admits the gateway as the range's first UID and group.
 The gateway can read its signing key only with that group, so the apply and the replies show that OpenShift assigned it.
 The chart's pass-through Route publishes the gateway at its endpoint; apply goes through the port-forward, and the probe dials the endpoint's host through the cluster's router, so each reply also shows that the Route reaches the gateway and that its certificate names the host.
@@ -126,9 +127,9 @@ Run blocks call these modules:
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
 | `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, and OpenClaw's and Hermes's terminal UIs through `openshell sandbox exec --tty`, on a stub model that requires the run's key, with replies that name the skills each harness offers from its mounted volumes, Hermes's dashboard opening a skill as its volume holds it, and Hermes's browser chat answering a prompt through `/api/pty`; no token from a token file in the deployment's state or apply's output; OpenClaw, and a second Hermes agent's API server, answering through an `anthropic` provider, which sends the key in `x-api-key`; in OpenClaw's sandbox and the first Hermes sandbox, a writable workspace, skill volumes that are writable or read-only as mounted, and no model key in the environment; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused. Then one change to the `claw` and `hermes` agents' instructions replaces both their sandboxes: each agent answers from its new runtime, `hermes-messages` keeps its binding, and each new sandbox keeps the caller's volumes and, for Hermes, its kept native home with the terminal UI's prompt ([Agent Interfaces](#agent-interfaces)). |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, a workspace file on a named volume that survives the destroy and redeploy, and sandbox requests that an external middleware allows, denies, fails on (blocked by the fail-closed binding), or, for an excluded destination, never sees. |
-| `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage, and its sandbox's explicit policy lets `python3` reach the stub's `/health` and refuses an undeclared in-cluster address. |
+| `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the `kubernetes` target and the development authentication profile [on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage, and its sandbox's explicit policy lets `python3` reach the stub's `/health` and refuses an undeclared in-cluster address. |
 | `kind-kubernetes-oidc` | `cargo ci live-kind` | Two agents [on kind](#kubernetes-gateway-without-the-helm-cli) in a namespace with OpenShift's UID range, from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens and that the chart's NodePort Service publishes at the node's address; apply goes through the port-forward, and each agent answers the stub's reply through the published address. |
-| `openshift-oidc` | By hand on OpenShift | The same two agents with the `openshift` runtime profile [on OpenShift](#openshift-gateway), whose `restricted-v2` constraint assigns the gateway its UID and `fsGroup`, behind the chart's pass-through Route; each answers with the stub's reply through the Route's host. |
+| `openshift-oidc` | By hand on OpenShift | The same two agents with the `openshift` target [on OpenShift](#openshift-gateway), whose `restricted-v2` constraint assigns the gateway its UID and `fsGroup`, behind the chart's pass-through Route; each answers with the stub's reply through the Route's host. |
 
 Every scenario checks the same successful path:
 

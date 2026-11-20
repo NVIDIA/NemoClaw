@@ -227,16 +227,16 @@ fn container(target: &Target) -> Result<Value, Error> {
     let spec = spec(target)?;
     if target.kind == crate::managed::GATEWAY_KIND {
         let launch = spec.container("/NEMOCLAW_GATEWAY_DATA")?;
-        let endpoint = url::Url::parse(&spec.gateway.endpoint)
-            .map_err(|_| Error::State("invalid gateway endpoint"))?;
-        let port = endpoint
-            .port()
-            .ok_or(Error::State("missing gateway port"))?;
+        let port = spec
+            .gateway
+            .local()
+            .ok_or(Error::State("gateway requires a local engine"))?
+            .port;
         // The engine socket is a host-path bind rather than a mount: Docker
         // Desktop rewrites a socket mount's source unless it is the first
         // mount, and the provider orders mounts by its own set hash.
         return Ok(
-            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":endpoint.host_str().ok_or(Error::State("missing gateway host"))?,"protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"}],"volumes":[{"host_path":crate::config::engine_socket(&spec.gateway.engine).ok_or(Error::State("gateway requires a local engine"))?,"container_path":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"unless-stopped","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
+            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":"127.0.0.1","protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"}],"volumes":[{"host_path":crate::config::engine_socket(spec.gateway.engine()).ok_or(Error::State("gateway requires a local engine"))?,"container_path":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"unless-stopped","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
         );
     }
     let process = spec
@@ -532,7 +532,7 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                 .ok_or(Error::State("invalid gateway address"))?
                 .1
                 .to_owned();
-            let mut settings = json!({"name": gateway.name, "endpoint": gateway.gateway.endpoint});
+            let mut settings = json!({"name": gateway.name, "endpoint": gateway.endpoint()});
             if let Some(config) = &gateway.gateway.config {
                 settings["config"] = json!(
                     serde_json::to_string(config)
@@ -850,8 +850,8 @@ mod tests {
                 .collect(),
         )
         .unwrap();
-        let endpoint = document.spec.gateway.endpoint();
-        let gateway_port = url::Url::parse(endpoint).unwrap().port().unwrap();
+        let endpoint = document.spec.gateway.endpoint().unwrap();
+        let gateway_port = url::Url::parse(&endpoint).unwrap().port().unwrap();
         let launch = "data.openshell_docker_gateway_runtime.managed_gateway_runtime";
         for attribute in ["entrypoint", "command", "env"] {
             assert_eq!(gateway[attribute], format!("${{{launch}.{attribute}}}"));
@@ -924,7 +924,15 @@ mod tests {
             "gateway bridge remains durable"
         );
         let mut changed = document.clone();
-        *changed.spec.gateway.endpoint_mut() = "http://127.0.0.1:17682".into();
+        changed
+            .spec
+            .gateway
+            .as_managed_mut()
+            .unwrap()
+            .target
+            .local_mut()
+            .unwrap()
+            .port = 17682;
         let updated = crate::compile::compile_runtime(&changed, &generations, "0.1.0").unwrap();
         assert_eq!(
             updated["resource"]["openshell_gateway_storage"],
@@ -940,13 +948,10 @@ mod tests {
             Document::parse(include_bytes!("../tests/fixtures/config/local.yaml").as_slice())
                 .unwrap();
         document.spec.gateway = source.spec.gateway;
-        document
-            .spec
-            .gateway
-            .as_managed_mut()
-            .unwrap()
-            .image_pull_policy = Some(ImagePullPolicy::Always);
-        document.spec.gateway.runtime_mut().provider = ComputeDriver::Podman;
+        let gateway = document.spec.gateway.as_managed_mut().unwrap();
+        let mut local = gateway.local().unwrap().clone();
+        local.image_pull_policy = Some(ImagePullPolicy::Always);
+        gateway.target = crate::config::ManagedTarget::Podman(local);
         let generations = crate::state::Record::new(document.clone())
             .unwrap()
             .generations;

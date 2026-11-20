@@ -11,11 +11,10 @@ pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
             .unwrap();
     let mut value = serde_json::to_value(original).unwrap();
     value["spec"]["gateway"] = json!({
-        "management":"managed", "runtime":{"provider":"kubernetes"}, "endpoint":"https://127.0.0.1:17671",
-        "kubernetes": {
+        "management":"managed", "target": {"kubernetes": {
             "kubeconfig":{"env":"TEST_KUBECONFIG"}, "context":"test-cluster", "namespace":"test-agents",
             "authentication":{"profile":"development"}
-        }
+        }}
     });
     value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
         json!({"env":"TEST_IMAGE_METADATA"});
@@ -29,7 +28,7 @@ pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
 fn pod_document() -> Document {
     let (document, _) = kubernetes_context();
     let mut value = serde_json::to_value(&document).unwrap();
-    let kubernetes = value["spec"]["gateway"]["kubernetes"]
+    let kubernetes = value["spec"]["gateway"]["target"]["kubernetes"]
         .as_object_mut()
         .unwrap();
     kubernetes.remove("kubeconfig");
@@ -230,7 +229,7 @@ fn a_kubernetes_targets_listed_variables_reach_its_providers() {
     }
     let (document, _) = kubernetes_context();
     let mut value = serde_json::to_value(&document).unwrap();
-    value["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE"]);
+    value["spec"]["gateway"]["target"]["kubernetes"]["environment"] = json!(["AWS_PROFILE"]);
     let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     let temporary = tempfile::tempdir().unwrap();
     let deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
@@ -240,7 +239,8 @@ fn a_kubernetes_targets_listed_variables_reach_its_providers() {
         .unwrap();
     assert_eq!(environment["AWS_PROFILE"], "cluster-admin");
 
-    value["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE", "AWS_REGION"]);
+    value["spec"]["gateway"]["target"]["kubernetes"]["environment"] =
+        json!(["AWS_PROFILE", "AWS_REGION"]);
     let unset = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     assert!(
         deployment
@@ -802,7 +802,7 @@ async fn a_stopped_podman_gateway_container_is_named_with_how_to_start_it() {
     let document =
         Document::parse(include_bytes!("../../../../examples/managed-podman.yaml").as_slice())
             .unwrap();
-    let engine = &document.spec.gateway.as_managed().unwrap().engine;
+    let engine = document.spec.gateway.as_managed().unwrap().engine();
     let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
     let cancel = CancellationToken::new();
     let plan_with_gateway = |running: &str| {
@@ -1428,11 +1428,12 @@ async fn changing_a_gateway_exposure_preserves_saved_state() {
     // OpenShift accepts either exposure.
     let exposed = |endpoint: &str, expose: Option<serde_json::Value>| {
         let mut value = serde_json::to_value(&document).unwrap();
-        value["spec"]["gateway"]["runtime"]["provider"] = json!("openshift");
-        value["spec"]["gateway"]["endpoint"] = json!(endpoint);
-        if let Some(expose) = expose {
-            value["spec"]["gateway"]["kubernetes"]["expose"] = expose;
+        let mut target = value["spec"]["gateway"]["target"]["kubernetes"].take();
+        if let Some(mut expose) = expose {
+            expose["endpoint"] = json!(endpoint);
+            target["expose"] = expose;
         }
+        value["spec"]["gateway"]["target"] = json!({"openshift": target});
         Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
     };
     let service = || Some(json!({"service": {"type": "NodePort"}}));
@@ -1496,8 +1497,15 @@ async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state(
     let external =
         Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
     let mut managed = external.clone();
+    let port = url::Url::parse(&external.spec.gateway.endpoint().unwrap())
+        .unwrap()
+        .port()
+        .unwrap();
     managed.spec.gateway = Gateway::Managed(crate::config::ManagedGateway {
-        endpoint: external.spec.gateway.endpoint().into(),
+        target: crate::config::ManagedTarget::Docker(crate::config::LocalTarget {
+            port,
+            ..Default::default()
+        }),
         ..Default::default()
     });
     managed.defaults();
@@ -1519,6 +1527,129 @@ async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state(
                 error,
                 Error::Conflict("state is bound to a different deployment UID or gateway")
             ));
+            assert_eq!(fs::read(&intent).unwrap(), before);
+        }
+    }
+}
+
+/// The target selects the engine or cluster that holds every resource the
+/// state binds, so plan and apply refuse another target, in both directions,
+/// before they read or change anything.
+#[tokio::test]
+async fn changing_the_gateway_target_preserves_saved_state() {
+    let bundle_directory = guard_bundle();
+    let external =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    let mut local = external.clone();
+    local.spec.gateway = Gateway::Managed(Default::default());
+    local.defaults();
+    local.validate().unwrap();
+    let mut podman = local.clone();
+    let gateway = podman.spec.gateway.as_managed_mut().unwrap();
+    let mut settings = gateway.local().unwrap().clone();
+    settings.engine = "unix:///run/user/1000/podman/podman.sock".into();
+    gateway.target = crate::config::ManagedTarget::Podman(settings);
+    podman.validate().unwrap();
+    let (kubernetes, _) = kubernetes_context();
+    let mut openshift = kubernetes.clone();
+    let gateway = openshift.spec.gateway.as_managed_mut().unwrap();
+    gateway.target =
+        crate::config::ManagedTarget::OpenShift(Box::new(gateway.cluster().unwrap().clone()));
+    openshift.validate().unwrap();
+    let mut external_cluster = external.clone();
+    let Gateway::External(gateway) = &mut external_cluster.spec.gateway else {
+        panic!("expected an external gateway");
+    };
+    gateway.target =
+        crate::config::ExternalTarget::Kubernetes(crate::config::ExternalCluster::default());
+    for sandbox in external_cluster.spec.sandboxes.values_mut() {
+        sandbox.image.metadata = Some(crate::config::FileRef {
+            env: "TEST_IMAGE_METADATA".into(),
+        });
+    }
+    external_cluster.validate().unwrap();
+    for (original, changed) in [
+        (&local, &podman),
+        (&podman, &local),
+        (&kubernetes, &openshift),
+        (&openshift, &kubernetes),
+        (&external, &external_cluster),
+    ] {
+        let state_directory = tempfile::tempdir().unwrap();
+        let store = Store::open(state_directory.path()).unwrap();
+        store.save(&Record::new(original.clone()).unwrap()).unwrap();
+        drop(store);
+        let intent = state_directory.path().join("intent.json");
+        let before = fs::read(&intent).unwrap();
+        let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
+        for apply in [false, true] {
+            let error = deployment
+                .run(changed, &CancellationToken::new(), apply)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, Error::Conflict(message) if message.contains("different gateway target")),
+                "{error:?}"
+            );
+            assert_eq!(fs::read(&intent).unwrap(), before);
+        }
+    }
+}
+
+/// The endpoint is the address clients dial, so plan and apply refuse a
+/// changed port, `expose.endpoint`, or external endpoint, and name the
+/// endpoint, before they read or change anything.
+#[tokio::test]
+async fn changing_the_gateway_endpoint_preserves_saved_state() {
+    let bundle_directory = guard_bundle();
+    let external =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    let mut moved = external.clone();
+    let Gateway::External(gateway) = &mut moved.spec.gateway else {
+        panic!("expected an external gateway");
+    };
+    gateway.endpoint = "http://127.0.0.1:17672".into();
+    moved.validate().unwrap();
+    let mut local = external.clone();
+    local.spec.gateway = Gateway::Managed(Default::default());
+    local.defaults();
+    local.validate().unwrap();
+    let mut ported = local.clone();
+    let gateway = ported.spec.gateway.as_managed_mut().unwrap();
+    gateway.target.local_mut().unwrap().port += 1;
+    ported.validate().unwrap();
+    let (kubernetes, _) = kubernetes_context();
+    let exposed = |endpoint: &str| {
+        let mut value = serde_json::to_value(&kubernetes).unwrap();
+        value["spec"]["gateway"]["target"]["kubernetes"]["expose"] =
+            json!({"endpoint": endpoint, "service": {"type": "NodePort"}});
+        Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+    };
+    let (published, republished) = (
+        exposed("https://127.0.0.1:30851"),
+        exposed("https://127.0.0.1:30852"),
+    );
+    for (original, changed) in [
+        (&external, &moved),
+        (&local, &ported),
+        (&published, &republished),
+    ] {
+        let state_directory = tempfile::tempdir().unwrap();
+        let store = Store::open(state_directory.path()).unwrap();
+        store.save(&Record::new(original.clone()).unwrap()).unwrap();
+        drop(store);
+        let intent = state_directory.path().join("intent.json");
+        let before = fs::read(&intent).unwrap();
+        let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
+        for apply in [false, true] {
+            let error = deployment
+                .run(changed, &CancellationToken::new(), apply)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, Error::Conflict(message) if message.starts_with("state is bound to a different gateway endpoint:")),
+                "{error:?}"
+            );
             assert_eq!(fs::read(&intent).unwrap(), before);
         }
     }
@@ -1868,7 +1999,7 @@ fn an_existing_issuers_token_reaches_gateway_only_runs() {
     }
     let (document, _) = kubernetes_context();
     let mut value = serde_json::to_value(&document).unwrap();
-    value["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
+    value["spec"]["gateway"]["target"]["kubernetes"]["authentication"] = json!({
         "profile": "oidc",
         "token": {"env": "OIDC_TOKEN"}
     });

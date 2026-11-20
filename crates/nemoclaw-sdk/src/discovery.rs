@@ -73,7 +73,7 @@ pub struct AgentImagesRequest {
 pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigError> {
     let mut queries = vec![DiscoveryQuery::Gateway(GatewayRequest {
         gateway: document.spec.gateway.clone(),
-        compute_drivers: vec![document.spec.gateway.runtime().provider],
+        compute_drivers: vec![document.spec.gateway.compute_driver()],
     })];
     queries.extend(
         crate::inference_discovery::endpoint_requests(document)
@@ -83,7 +83,7 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
     );
     let mut engines = crate::services::discovery_engines(document)?;
     if let Some(gateway) = document.spec.gateway.as_local_managed() {
-        engines.insert(gateway.engine.clone());
+        engines.insert(gateway.engine().to_owned());
     }
     queries.extend(
         engines
@@ -92,19 +92,14 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
     );
     // A cluster has no engine to read images from; their metadata bundles
     // answer instead.
-    let kubernetes = document.spec.gateway.runtime().provider.is_kubernetes();
-    let engine = match &document.spec.gateway {
-        _ if kubernetes => "",
-        Gateway::Managed(gateway) => &gateway.engine,
-        Gateway::External(gateway) => &gateway.engine,
-    };
+    let engine = document.spec.gateway.engine();
     let platform = document
         .spec
         .gateway
         .as_local_managed()
         .map(|_| DiscoveryRequest {
             engine: engine.into(),
-            compute_driver: document.spec.gateway.runtime().provider,
+            compute_driver: document.spec.gateway.compute_driver(),
         });
     queries.extend(platform.clone().map(DiscoveryQuery::Engine));
     for sandbox in document.sandboxes() {
