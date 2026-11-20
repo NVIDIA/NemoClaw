@@ -113,8 +113,9 @@ ENV AWS_EC2_METADATA_DISABLED=true
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Trixie has not published fixes for the reviewed libevent, libexpat, jq, or Vim
-# advisories. Install fixed Expat from the 20260811T082421Z Debian Snapshot
-# archive and fixed libevent, jq, and Vim from the official Debian pool.
+# advisories. Install fixed Expat and vim-tiny from the 20260811T082421Z
+# Debian Snapshot archive. Install fixed libevent, jq, and vim-common from
+# the official Debian pool.
 # Exact versions and architecture-specific hashes bind the reviewed bytes
 # until Trixie carries the fixes.
 # The checksum and runtime probes put the validating command last in each pipe.
