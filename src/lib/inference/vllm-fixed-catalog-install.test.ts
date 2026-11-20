@@ -593,6 +593,34 @@ describe("fixed catalog vLLM installs", () => {
     },
   );
 
+  it.each([
+    "--trust-remote-code",
+    "--trust_remote_code",
+    "--trust-remote-code=true",
+    "--trust_remote_code=true",
+  ])("rejects the remote-code override %s before Docker work", async (argument) => {
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([argument]);
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const readinessReports = vllmInstallTestReadinessAtMemory(profile, 63_082_733_568);
+    await withActualSelectionGuard(readinessReports);
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readinessReports,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(spies.errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("must not enable remote model code"),
+    );
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+  });
+
   it("resumes a checkpointed model under an explicitly selected serving preset", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const modelIntent = "muse-glimmer-30b";

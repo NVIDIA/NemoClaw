@@ -776,6 +776,22 @@ describe("parseVllmExtraServeArgs", () => {
     ).toEqual(["--max-num-seqs", "2"]);
   });
 
+  it.each([
+    "--trust-remote-code",
+    "--trust_remote_code",
+    "--trust-remote-code=true",
+    "--trust_remote_code=false",
+    "--trust_remote-code",
+    "--trust-remote_code=true",
+  ])("rejects remote-code trust through %s", (argument) => {
+    const environment = { [VLLM_EXTRA_ARGS_ENV]: JSON.stringify([argument]) };
+    expect(() => parseVllmExtraServeArgs(environment)).toThrow("must not enable remote model code");
+    expect(() =>
+      buildVllmServeCommand({ ...VLLM_MODELS[0]!, trustRemoteCode: false }, environment),
+    ).toThrow("must not enable remote model code");
+    expect(preflightVllmModelEnv(environment)).toMatchObject({ ok: false });
+  });
+
   it("rejects malformed managed-vLLM extra args before docker work starts", () => {
     expect(() =>
       parseVllmExtraServeArgs({

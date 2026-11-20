@@ -238,7 +238,7 @@ describe("Spark workflow authorization and evidence", () => {
     [
       3,
       "run",
-      "node --no-warnings tools/e2e/dgx-station-dispatch-client.mts",
+      "node --no-warnings tools/e2e/jetson-dispatch-client.mts",
       "fixed controller client",
     ],
     [4, "if", "success()", "failure and cancellation"],

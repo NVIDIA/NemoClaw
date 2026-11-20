@@ -6,8 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dgxSparkDispatchRequestFromEnvironment } from "../../../tools/e2e/dgx-spark-dispatch-client.mts";
-import { dgxStationDispatchRequestFromEnvironment } from "../../../tools/e2e/dgx-station-dispatch-client.mts";
+import { dgxDispatchOptionsFromEnvironment } from "../../../tools/e2e/dgx-dispatch-client.mts";
 import {
   createGitHubOidcTokenProvider,
   dispatcherBaseUrl,
@@ -50,6 +49,77 @@ afterEach(() => {
     fs.rmSync(directory, { recursive: true, force: true });
 });
 
+describe("DGX dispatch configuration", () => {
+  it.each([
+    ["dgx-station-express", "DGX_STATION_DISPATCH", 3, "station", 54],
+    ["spark-vllm-extra-arguments", "DGX_SPARK_DISPATCH", 4, "spark", 90],
+  ] as const)(
+    "runs %s with its own controller settings and artifacts",
+    async (target, prefix, schemaVersion, platform, minutes) => {
+      const directory = artifactDirectory();
+      const { audience, ...options } = dgxDispatchOptionsFromEnvironment({
+        E2E_TARGET_ID: target,
+        [`${prefix}_CANDIDATE_SHA`]: request.candidateSha,
+        [`${prefix}_MANAGED_IMAGE_REVISION`]: request.managedImageRevision,
+        [`${prefix}_URL`]: `https://${platform}.example.test`,
+        GITHUB_RUN_ID: request.workflowRunId,
+        GITHUB_RUN_ATTEMPT: String(request.workflowRunAttempt),
+        E2E_ARTIFACT_DIR: directory,
+      });
+      const expectedRequest = { ...request, schemaVersion, target };
+      expect(options).toEqual({
+        request: expectedRequest,
+        baseUrl: new URL(`https://${platform}.example.test`),
+        artifactDirectory: directory,
+        waitMs: minutes * 60_000,
+        receiptName: `dgx-${platform}-dispatch.json`,
+        archiveName: `dgx-${platform}-e2e-artifacts.tar.gz`,
+      });
+      const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ value: "fixture-token" }));
+      const provider = createGitHubOidcTokenProvider({ audience, fetchImpl });
+      await provider({
+        ACTIONS_ID_TOKEN_REQUEST_URL: "https://example.test/token",
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: "request-token",
+      });
+      expect(new URL(String(fetchImpl.mock.calls[0]?.[0])).searchParams.get("audience")).toBe(
+        `nemoclaw-dgx-${platform}-dispatch`,
+      );
+      const status = {
+        ...vectors.completedStatus,
+        schemaVersion,
+        request: expectedRequest,
+        jobId: dispatchJobId(options.request),
+        device: {
+          ...vectors.completedStatus.device,
+          model:
+            platform === "spark"
+              ? "NVIDIA DGX Spark GB10 fixture"
+              : vectors.completedStatus.device.model,
+        },
+      };
+      const transport = vi.fn(async (value: Parameters<typeof dispatcherRequest>[0]) =>
+        value.path.endsWith("/artifact") ? { ...vectors.artifact, status } : { job: status },
+      );
+      await runDispatchClient({ ...options, requestImpl: transport });
+      expect(fs.readFileSync(path.join(directory, `dgx-${platform}-e2e-artifacts.tar.gz`))).toEqual(
+        Buffer.from(vectors.artifact.artifactArchiveBase64, "base64"),
+      );
+      expect(
+        JSON.parse(fs.readFileSync(path.join(directory, `dgx-${platform}-dispatch.json`), "utf8")),
+      ).toMatchObject({ status: { request: expectedRequest, conclusion: "success" } });
+    },
+  );
+
+  it.each([undefined, "", "jetson-nvmap-gpu", "__proto__"])(
+    "rejects the unsupported DGX target %s",
+    (target) => {
+      expect(() => dgxDispatchOptionsFromEnvironment({ E2E_TARGET_ID: target })).toThrow(
+        "E2E_TARGET_ID must select",
+      );
+    },
+  );
+});
+
 describe("Station dispatch contract and controller", () => {
   it("matches the pinned backend v3 compatibility bytes", () => {
     expect(createHash("sha256").update(vectorBytes).digest("hex")).toBe(
@@ -84,17 +154,21 @@ describe("Station dispatch contract and controller", () => {
 
   it("constructs Station requests without reading the Jetson candidate settings", () => {
     expect(
-      dgxStationDispatchRequestFromEnvironment({
+      dgxDispatchOptionsFromEnvironment({
+        E2E_TARGET_ID: "dgx-station-express",
+        DGX_STATION_DISPATCH_URL: "https://station.example.test",
         DGX_STATION_DISPATCH_CANDIDATE_SHA: request.candidateSha,
         DGX_STATION_DISPATCH_MANAGED_IMAGE_REVISION: request.managedImageRevision,
         JETSON_DISPATCH_CANDIDATE_SHA: "c".repeat(40),
         JETSON_DISPATCH_MANAGED_IMAGE_REVISION: "d".repeat(40),
         GITHUB_RUN_ID: request.workflowRunId,
         GITHUB_RUN_ATTEMPT: String(request.workflowRunAttempt),
-      }),
+      }).request,
     ).toEqual(request);
     expect(() =>
-      dgxStationDispatchRequestFromEnvironment({
+      dgxDispatchOptionsFromEnvironment({
+        E2E_TARGET_ID: "dgx-station-express",
+        DGX_STATION_DISPATCH_URL: "https://station.example.test",
         JETSON_DISPATCH_CANDIDATE_SHA: request.candidateSha,
       }),
     ).toThrow();
@@ -293,15 +367,19 @@ describe("Spark candidate-bound dispatch evidence", () => {
 
   it("requires Spark settings and cannot read Station settings as a fallback", () => {
     expect(
-      dgxSparkDispatchRequestFromEnvironment({
+      dgxDispatchOptionsFromEnvironment({
+        E2E_TARGET_ID: "spark-vllm-extra-arguments",
+        DGX_SPARK_DISPATCH_URL: "https://spark.example.test",
         DGX_SPARK_DISPATCH_CANDIDATE_SHA: request.candidateSha,
         DGX_SPARK_DISPATCH_MANAGED_IMAGE_REVISION: request.managedImageRevision,
         GITHUB_RUN_ID: request.workflowRunId,
         GITHUB_RUN_ATTEMPT: String(request.workflowRunAttempt),
-      }),
+      }).request,
     ).toEqual(sparkRequest);
     expect(() =>
-      dgxSparkDispatchRequestFromEnvironment({
+      dgxDispatchOptionsFromEnvironment({
+        E2E_TARGET_ID: "spark-vllm-extra-arguments",
+        DGX_SPARK_DISPATCH_URL: "https://spark.example.test",
         DGX_STATION_DISPATCH_CANDIDATE_SHA: request.candidateSha,
         DGX_STATION_DISPATCH_MANAGED_IMAGE_REVISION: request.managedImageRevision,
       }),

@@ -2478,8 +2478,9 @@ The second case requires the physical host to report at least 60 GB and less tha
 The canonical runner requires an explicit selector matching `E2E_TARGET_ID`; it rejects missing, unknown, or mismatched selections before starting Vitest.
 The Spark case requires a qualified NVIDIA DGX Spark with Docker, NVIDIA Container Toolkit, OpenShell prerequisites, enough storage for the pinned image and model, and no unrelated `nemoclaw-vllm` container.
 The target accepts only a local Docker socket and the default Docker context, rejects remote selectors, and treats Docker inspection errors as preflight failures instead of absent resources.
-The target sources `scripts/install.sh` from the candidate checkout, calls the Express option-selection functions with option 2, and invokes the candidate CLI directly for onboarding.
-It does not run the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
+`spark-express-vllm` sources `scripts/install.sh` from the candidate checkout, selects Express option 2, and invokes the candidate CLI for onboarding.
+`spark-vllm-extra-arguments` directly runs non-interactive candidate onboarding with `NEMOCLAW_PROVIDER=install-vllm` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--max-num-seqs","2"]'`.
+Neither case runs the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
 Separate installer tests own those earlier boundaries.
 The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` container.
 It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
@@ -2495,9 +2496,8 @@ Run the target from a clean candidate checkout on the Spark host:
 E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
 ```
 
-A passing Spark target establishes that option 2 selects the fixed vLLM preset and recipe.
-The extra-arguments case invokes the candidate CLI with `NEMOCLAW_PROVIDER=install-vllm` and `["--max-num-seqs","2"]`.
-It compares the real container command with the bounded recipe and appended sequence override.
+A passing `spark-express-vllm` target establishes that option 2 selects the fixed vLLM preset and recipe.
+The extra-arguments case compares the real container command with the bounded recipe and appended sequence override.
 Fast installer tests own the selected-profile output, 32,768-token context and argument-order assertions.
 Each case keeps the existing 65-minute test deadline and identity-bound cleanup.
 The Spark controller must land independently on trusted `main`, and its receiver must pass deployment acceptance before hosted qualification.

@@ -140,7 +140,7 @@ function validateDgxDispatchBoundary(workflow: unknown, target: string): string[
   );
   requireEqual(
     dispatch.run,
-    `node --no-warnings tools/e2e/dgx-${platform.toLowerCase()}-dispatch-client.mts`,
+    "node --no-warnings tools/e2e/dgx-dispatch-client.mts",
     `${platform} dispatch must invoke only the fixed controller client`,
   );
   const upload = step(`Upload ${platform} Express artifacts`);

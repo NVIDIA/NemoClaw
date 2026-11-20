@@ -6774,7 +6774,7 @@ jobs:
           DGX_STATION_DISPATCH_CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
           DGX_STATION_DISPATCH_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
           DGX_STATION_DISPATCH_URL: ${{ vars.DGX_STATION_DISPATCH_URL }}
-        run: node --no-warnings tools/e2e/dgx-station-dispatch-client.mts
+        run: node --no-warnings tools/e2e/dgx-dispatch-client.mts
 
       - name: Upload Station Express artifacts
         if: always()
@@ -6825,7 +6825,7 @@ jobs:
           DGX_SPARK_DISPATCH_CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
           DGX_SPARK_DISPATCH_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
           DGX_SPARK_DISPATCH_URL: ${{ vars.DGX_SPARK_DISPATCH_URL }}
-        run: node --no-warnings tools/e2e/dgx-spark-dispatch-client.mts
+        run: node --no-warnings tools/e2e/dgx-dispatch-client.mts
 
       - name: Upload Spark Express artifacts
         if: always()
