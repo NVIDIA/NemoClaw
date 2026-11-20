@@ -26,6 +26,7 @@ Refer to [How Inference Routing Works](../about-inference-routing) for the quali
 </AgentOnly>
 <AgentOnly variant="hermes">
 New Hermes sandboxes use the recorded endpoint through a sandbox-attached OpenShell provider for direct hosted compatible endpoints outside the Personal policy tier and qualified host-local endpoints.
+A no-authentication loopback endpoint stays the recorded endpoint, but Hermes uses the token-protected proxy endpoint instead.
 Bedrock selections use a host-local adapter endpoint instead.
 Fresh Personal-tier hosted selections and retained custom routes without an attachment use `inference.local`.
 Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.

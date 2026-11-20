@@ -22,6 +22,9 @@ import {
 } from "./managed-image/contract";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { gatewayReachableCompatibleEndpointUrl } from "./inference-providers/compatible-endpoint-gateway-route";
+import { OLLAMA_PROXY_PORT } from "../core/ollama-proxy-port";
+import { VLLM_PORT } from "../core/vllm-port";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../inference/ollama/contract";
 
 const requireDist = createRequire(import.meta.url);
 const onboardSession = requireDist("../state/onboard-session.js");
@@ -1100,6 +1103,33 @@ describe("Hermes native attachment registration", () => {
       );
     },
   );
+  describe("no-authentication custom endpoint", () => {
+    const proxyEndpoint = `http://host.openshell.internal:${String(OLLAMA_PROXY_PORT)}/v1`;
+    const makeProxyInput = (credentialEnv: string | null) => {
+      const input = makeInput("hermes", "demo", proxyEndpoint);
+      input.inferenceSelection = {
+        ...input.inferenceSelection,
+        endpointUrl: `http://localhost:${String(VLLM_PORT)}/v1`,
+        credentialEnv,
+      };
+      return input;
+    };
+    it("registers the Hermes proxy attachment for the loopback selection", () => {
+      const input = makeProxyInput(OLLAMA_LOCAL_CREDENTIAL_ENV);
+      const registered = buildCreatedSandboxRegistryEntry(input);
+      expect(registered.endpointUrl).toBe(input.inferenceSelection.endpointUrl);
+      expect(registered.credentialEnv).toBe(OLLAMA_LOCAL_CREDENTIAL_ENV);
+      expect(registered.nativeLocalProviderAttachment).toEqual(input.nativeLocalProviderAttachment);
+    });
+    it.each([null, "COMPATIBLE_API_KEY"])(
+      "rejects the proxy attachment when the selection records %s as its credential",
+      (credentialEnv) => {
+        expect(() => buildCreatedSandboxRegistryEntry(makeProxyInput(credentialEnv))).toThrow(
+          "does not match the selected Hermes sandbox",
+        );
+      },
+    );
+  });
   it("accepts the existing qualifier's canonical trailing slash while preserving the selection", () => {
     const input = makeInput("hermes");
     input.inferenceSelection = {

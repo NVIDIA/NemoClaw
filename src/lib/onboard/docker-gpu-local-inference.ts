@@ -8,17 +8,16 @@ import { getLocalProviderLabel } from "../inference/local";
 import {
   NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
   NATIVE_LOCAL_CREDENTIAL_ENV,
-  qualifiedNativeLocalEndpointUrl,
 } from "../inference/native-local/agent-config";
 import {
   normalizeNativeLocalProviderAttachment,
   type NativeLocalProviderAttachment,
 } from "../inference/native-local/attachment";
 import {
-  gatewayReachableCompatibleEndpointUrl,
   usesNativeLocalInferenceForAgent,
   isPersistedPiSharedLocalInferenceRoute,
 } from "../inference/native-local/eligibility";
+import { nativeLocalAttachmentMatchesSelectedRoute } from "./inference-providers/compatible-endpoint-gateway-route";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
@@ -212,11 +211,6 @@ export function resolveGpuSandboxInferenceRoute(
     return { kind: "shared", gatewayName };
   }
   const attachment = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
-  const selectedEndpoint = gatewayReachableCompatibleEndpointUrl(
-    provider ?? "",
-    selection.endpointUrl,
-  );
-  const selected = selectedEndpoint && qualifiedNativeLocalEndpointUrl(selectedEndpoint);
   if (
     !attachment ||
     attachment.sandboxName !== sandboxName ||
@@ -224,7 +218,13 @@ export function resolveGpuSandboxInferenceRoute(
     attachment.provider !== provider ||
     (attachment.agent ?? "langchain-deepagents-code") !== agentName ||
     attachment.credentialEnv !== NATIVE_LOCAL_CREDENTIAL_ENV ||
-    selected !== attachment.endpointUrl
+    !nativeLocalAttachmentMatchesSelectedRoute(
+      provider ?? "",
+      selection.endpointUrl,
+      attachment.endpointUrl,
+      undefined,
+      selection.credentialEnv,
+    )
   ) {
     throw new Error("GPU inference native local provider attachment is missing or invalid.");
   }

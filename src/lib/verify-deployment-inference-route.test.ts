@@ -4,7 +4,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { hostLocalInferenceReceipt } from "../../test/helpers/host-local-inference-receipt";
 import { serializeHostLocalInferenceReceipt } from "./onboard/runtime-provider/host-local-inference";
+import { OLLAMA_PROXY_PORT } from "./core/ollama-proxy-port";
+import { VLLM_PORT } from "./core/vllm-port";
 import { buildChain } from "./dashboard/contract.js";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./inference/ollama/contract";
 import {
   nativeLocalIdentity,
   NATIVE_LOCAL_CREDENTIAL_ENV,
@@ -314,6 +317,78 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     );
     expect(deployment.verification.inferenceRouteWorking).toBe(true);
     expect(routeProbe).toHaveBeenCalledOnce();
+  });
+
+  describe("Hermes no-authentication custom endpoint", () => {
+    const flow = {
+      provider: "compatible-endpoint",
+      model: "test-model",
+      endpointUrl: `http://localhost:${String(VLLM_PORT)}/v1`,
+      preferredInferenceApi: "openai-completions",
+    };
+    const proxyBinding = {
+      provider: "compatible-endpoint" as const,
+      agent: "hermes" as const,
+      endpointUrl: `http://host.openshell.internal:${String(OLLAMA_PROXY_PORT)}/v1`,
+      credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+      authMode: "authenticated" as const,
+      gatewayName: "my-gateway",
+      sandboxName: "my-sandbox",
+    };
+    const proxyAttachment = {
+      ...proxyBinding,
+      ...nativeLocalIdentity(proxyBinding),
+      schemaVersion: 1 as const,
+      providerId: "provider-1",
+    };
+
+    it("accepts the proxy attachment in both probes", async () => {
+      const context = onboardInferenceVerificationContext(
+        "my-sandbox",
+        "my-gateway",
+        "hermes",
+        flow,
+        {
+          provider: flow.provider,
+          credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+          nativeLocalProviderAttachment: proxyAttachment,
+        },
+      );
+      const routeProbe = vi.fn(async () => ({ ok: true }) as const);
+      const deployment = await verifyDeployment(
+        "my-sandbox",
+        buildChain(),
+        makeDeps({ probeInferenceInvocation: routeProbe }),
+        { ...NO_RETRY, inferenceRouteContext: context.route },
+      );
+      expect(deployment.verification.inferenceRouteWorking).toBe(true);
+      expect(routeProbe).toHaveBeenCalledOnce();
+
+      const invocationProbe = vi.fn(async () => ({ ok: true }) as const);
+      expect(await probeOnboardInferenceInvocation(context.invocation, invocationProbe)).toEqual({
+        ok: true,
+      });
+      expect(invocationProbe).toHaveBeenCalledOnce();
+    });
+
+    it("rejects the proxy attachment for a selection that records another credential", async () => {
+      const context = onboardInferenceVerificationContext(
+        "my-sandbox",
+        "my-gateway",
+        "hermes",
+        flow,
+        {
+          provider: flow.provider,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          nativeLocalProviderAttachment: proxyAttachment,
+        },
+      );
+      const invocationProbe = vi.fn(async () => ({ ok: true }) as const);
+      expect(
+        await probeOnboardInferenceInvocation(context.invocation, invocationProbe),
+      ).toMatchObject({ ok: false });
+      expect(invocationProbe).not.toHaveBeenCalled();
+    });
   });
 
   it("uses the native NVIDIA invocation instead of probing inference.local", async () => {

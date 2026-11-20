@@ -9,8 +9,8 @@ import {
   type GatewayRouteDiscoveryConstraints,
   isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
-import { gatewayReachableCompatibleEndpointUrl } from "../../../inference/native-local/eligibility";
 import { listNativeLocalProviderAuthorities } from "../../../state/registry/native-local-provider-authority";
+import { nativeLocalAttachmentMatchesSelectedRoute } from "../../inference-providers/compatible-endpoint-gateway-route";
 
 export interface ProviderInferenceRouteContainmentDeps {
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
@@ -107,6 +107,7 @@ export type NativeLocalResumeSelection = Readonly<{
   provider: string;
   endpointUrl: string | null;
   agent: string | null | undefined;
+  credentialEnv?: string | null;
 }>;
 
 /**
@@ -118,11 +119,6 @@ export function hasNativeLocalProviderAuthority(
   gatewayName: string,
   selection: NativeLocalResumeSelection,
 ): boolean {
-  // Same host-reachable endpoint mapping that onboarding uses for the attachment binding.
-  const endpointUrl = gatewayReachableCompatibleEndpointUrl(
-    selection.provider,
-    selection.endpointUrl,
-  );
   const agent =
     selection.agent === "openclaw" || selection.agent === "pi" || selection.agent === "hermes"
       ? selection.agent
@@ -130,7 +126,13 @@ export function hasNativeLocalProviderAuthority(
   return listNativeLocalProviderAuthorities(sandboxName, gatewayName).some(
     (receipt) =>
       receipt.provider === selection.provider &&
-      receipt.endpointUrl === endpointUrl &&
+      nativeLocalAttachmentMatchesSelectedRoute(
+        selection.provider,
+        selection.endpointUrl,
+        receipt.endpointUrl,
+        undefined,
+        selection.credentialEnv,
+      ) &&
       (receipt.agent ?? null) === agent,
   );
 }

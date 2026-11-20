@@ -3,7 +3,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { patchHermesInferenceConfig } from "../../actions/inference-set";
+import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
+import { VLLM_PORT } from "../../core/vllm-port";
 import { applyHermesManagedRoute } from "../../hermes-managed-route";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import { gatewayReachableCompatibleEndpointUrl } from "../inference-providers/compatible-endpoint-gateway-route";
 import { hostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
@@ -152,7 +155,61 @@ function bridgeFixture() {
   return { ...f, hostReceipt: receipt };
 }
 
+function proxyFixture() {
+  const proxyUrl = `http://host.openshell.internal:${String(OLLAMA_PROXY_PORT)}/v1`;
+  const f = fixture("compatible-endpoint", proxyUrl);
+  f.entry.endpointUrl = `http://localhost:${String(VLLM_PORT)}/v1`;
+  f.entry.credentialEnv = OLLAMA_LOCAL_CREDENTIAL_ENV;
+  return { ...f, proxyUrl };
+}
+
 describe("external Hermes initial native-local route", () => {
+  it("projects the token-protected proxy route of a no-authentication loopback endpoint", async () => {
+    const f = proxyFixture();
+    const registered = structuredClone(f.entry);
+    await f.run();
+    expect(f.deps.readCredentialHandle).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "gateway-a",
+      f.receipt,
+    );
+    expect(f.config.model).toMatchObject({ base_url: f.proxyUrl, api_key: issued("v7") });
+    expect(f.config.providers["compatible-endpoint"]).toMatchObject({
+      api: f.proxyUrl,
+      api_key: issued("v7"),
+    });
+    expect(f.config.custom_providers).toEqual([
+      expect.objectContaining({ base_url: f.proxyUrl, api_key: issued("v7") }),
+    ]);
+    expect(f.entry).toEqual(registered);
+    expect(f.events).toEqual(["lock", "credential", "read", "write", "restart", "unlock"]);
+  });
+
+  it.each([
+    {
+      name: "absent",
+      credentialEnv: undefined,
+      endpoint: `http://localhost:${String(VLLM_PORT)}/v1`,
+    },
+    {
+      name: "another",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      endpoint: `http://localhost:${String(VLLM_PORT)}/v1`,
+    },
+  ])(
+    "refuses the proxy attachment when the recorded credential is $name",
+    async ({ credentialEnv, endpoint }) => {
+      const f = proxyFixture();
+      f.entry.credentialEnv = credentialEnv;
+      f.entry.endpointUrl = endpoint;
+      await expect(f.run()).rejects.toThrow("does not match");
+      expect(f.events).toEqual([]);
+      expect(f.deps.readCredentialHandle).not.toHaveBeenCalled();
+      expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+      expect(f.deps.restartGateway).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["localhost", "127.0.0.1", "[::1]"])(
     "projects a compatible %s endpoint using the producer's gateway mapping",
     async (host) => {

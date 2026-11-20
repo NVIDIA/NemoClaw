@@ -6,6 +6,9 @@ import { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT } from "../../core/ollama-
 import { VLLM_PORT } from "../../core/vllm-port";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
+import { qualifiedNativeLocalEndpointUrl } from "../../inference/native-local/agent-config";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
+import { nativeLocalAttachmentMatchesSelectedEndpoint } from "../../state/registry/host-local-inference";
 import { COMPATIBLE_ENDPOINT_GATEWAY_PORTS } from "../../inference/native-local/eligibility";
 import { isLoopbackHostname } from "../../private-networks";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
@@ -102,6 +105,55 @@ export function isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl(
     OLLAMA_PROXY_PORT !== DEFAULT_OLLAMA_PROXY_PORT &&
     loopbackNoAuthCompatibleEndpointPort(provider, endpointUrl) === DEFAULT_OLLAMA_PROXY_PORT &&
     !isProtectedLocalInferencePort(DEFAULT_OLLAMA_PROXY_PORT, { allowLegacyProxyDefault: true })
+  );
+}
+
+/**
+ * Return the token-protected proxy route a recorded no-auth loopback selection is attached to.
+ * Provider setup fronts that endpoint with the proxy, so the sandbox-facing URL names the proxy
+ * port instead of the backend port the user entered. The source must pass the same eligibility
+ * policy that authorized the proxy, and the selection must record the proxy credential.
+ */
+export function noAuthProxyAttachmentEndpointUrl(
+  provider: string,
+  selectedEndpointUrl: string | null | undefined,
+  credentialEnv: string | null | undefined,
+): string | null {
+  if (
+    credentialEnv !== OLLAMA_LOCAL_CREDENTIAL_ENV ||
+    !selectedEndpointUrl ||
+    !(
+      isLoopbackNoAuthCompatibleEndpointUrl(provider, selectedEndpointUrl) ||
+      isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl(provider, selectedEndpointUrl)
+    )
+  )
+    return null;
+  const { pathname } = new URL(selectedEndpointUrl);
+  return qualifiedNativeLocalEndpointUrl(
+    `http://host.openshell.internal:${String(OLLAMA_PROXY_PORT)}${pathname}`,
+  );
+}
+
+/**
+ * Match a normalized native attachment to its recorded selection, including the proxy route of a
+ * no-authentication loopback endpoint. Pass the selection's recorded credential.
+ */
+export function nativeLocalAttachmentMatchesSelectedRoute(
+  provider: string,
+  selectedEndpointUrl: string | null | undefined,
+  attachmentEndpointUrl: string,
+  serializedReceipt: string | null | undefined,
+  credentialEnv: string | null | undefined,
+): boolean {
+  return (
+    nativeLocalAttachmentMatchesSelectedEndpoint(
+      provider,
+      selectedEndpointUrl,
+      attachmentEndpointUrl,
+      serializedReceipt,
+    ) ||
+    attachmentEndpointUrl ===
+      noAuthProxyAttachmentEndpointUrl(provider, selectedEndpointUrl, credentialEnv)
   );
 }
 

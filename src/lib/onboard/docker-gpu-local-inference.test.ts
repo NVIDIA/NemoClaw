@@ -6,6 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { nativeLocalIdentity, type NativeLocalBinding } from "../inference/native-local/contract";
+import { OLLAMA_PROXY_PORT } from "../core/ollama-proxy-port";
+import { VLLM_PORT } from "../core/vllm-port";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../inference/ollama/contract";
+import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -14,6 +18,7 @@ import {
   enforceDockerGpuPatchPreserveNetwork,
   getSandboxRuntimeInferenceEndpoint,
   printDockerGpuSandboxInferenceVerificationFailure,
+  resolveGpuSandboxInferenceRoute,
   shouldSkipGpuBridgeProbe,
   shouldUseDockerGpuPatchHostNetwork,
   verifyDockerGpuSandboxLocalInference,
@@ -378,6 +383,86 @@ describe("getSandboxRuntimeInferenceEndpoint", () => {
       "https://inference.local/v1/models",
     );
     expect(getSandboxRuntimeInferenceEndpoint("build", { kind: "shared" })).toBeNull();
+  });
+});
+
+describe("resolveGpuSandboxInferenceRoute no-authentication custom endpoint", () => {
+  const proxyEndpoint = `http://host.openshell.internal:${String(OLLAMA_PROXY_PORT)}/v1`;
+
+  function hermesReservation(
+    credentialEnv: string | null,
+    attachmentEndpoint = proxyEndpoint,
+  ): QualifiedSandboxInferenceRouteReservation {
+    const binding: NativeLocalBinding = {
+      provider: "compatible-endpoint",
+      agent: "hermes",
+      endpointUrl: attachmentEndpoint,
+      gatewayName: "gpu-gateway",
+      sandboxName: "alpha",
+      authMode: "authenticated",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    };
+    return {
+      authority: {
+        sandboxName: "alpha",
+        gatewayName: "gpu-gateway",
+        sessionId: "session",
+        selection: {
+          provider: "compatible-endpoint",
+          model: "m",
+          endpointUrl: `http://localhost:${String(VLLM_PORT)}/v1`,
+          credentialEnv,
+          preferredInferenceApi: null,
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+      },
+      entry: {
+        name: "alpha",
+        agent: "hermes",
+        provider: "compatible-endpoint",
+        nativeLocalProviderAttachment: {
+          ...binding,
+          ...nativeLocalIdentity(binding),
+          schemaVersion: 1,
+          providerId: "native-provider",
+        },
+      },
+    } as QualifiedSandboxInferenceRouteReservation;
+  }
+
+  function resolve(reservation: QualifiedSandboxInferenceRouteReservation) {
+    return resolveGpuSandboxInferenceRoute(
+      "alpha",
+      "gpu-gateway",
+      "hermes",
+      "compatible-endpoint",
+      reservation,
+    );
+  }
+
+  it("resolves the proxy attachment for a selection that records the proxy credential", () => {
+    const route = resolve(hermesReservation(OLLAMA_LOCAL_CREDENTIAL_ENV));
+    expect(route).toMatchObject({
+      kind: "native-local",
+      gatewayName: "gpu-gateway",
+      attachment: { endpointUrl: proxyEndpoint },
+    });
+  });
+
+  it.each([
+    ["no recorded credential", null, proxyEndpoint],
+    ["another credential", "COMPATIBLE_API_KEY", proxyEndpoint],
+    [
+      "an attachment on another port",
+      OLLAMA_LOCAL_CREDENTIAL_ENV,
+      "http://host.openshell.internal:9999/v1",
+    ],
+  ])("refuses the proxy route with %s", (_name, credentialEnv, attachmentEndpoint) => {
+    expect(() => resolve(hermesReservation(credentialEnv, attachmentEndpoint))).toThrow(
+      "GPU inference native local provider attachment is missing or invalid.",
+    );
   });
 });
 
