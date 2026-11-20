@@ -819,6 +819,18 @@ MIT License
 Copyright (c) 2019 Paul Henschel
 ```
 
+### @alcalzone/ansi-tokenize@0.1.3
+
+- Original notice: https://raw.githubusercontent.com/AlCalzone/ansi-tokenize/900f19ac5e16ab31633b10d5b46ab58b7af6273b/LICENSE
+
+Upstream added this missing notice after the installed version; that version declares MIT, and its npm `gitHead` is an ancestor of the notice commit.
+
+```text
+MIT License
+
+Copyright (c) 2020-2025 AlCalzone
+```
+
 ### Permission and Disclaimer
 
 ```text
