@@ -6,6 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   buildExportConfig: vi.fn(),
   renderCanonicalNemoClawConfig: vi.fn(),
+  exportOmissions: vi.fn(),
+}));
+vi.mock("../../domain/config/export-omissions", () => ({
+  exportOmissions: mocks.exportOmissions,
 }));
 
 vi.mock("../../config/canonical", () => ({
@@ -27,8 +31,13 @@ const teamDocumentName = parseNemoClawConfigDocumentName("team");
 const documentUid = parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174000");
 
 function dependencies(): ConfigExportDependencies {
-  const observation = { sandboxName: "alpha" } as never;
-  const config = { kind: "NemoClawConfig" } as never;
+  // The source port differs from the config endpoint so the header's source is observable.
+  const observation = { sandboxName: "alpha", gateway: { port: 18080 } } as never;
+  const config = {
+    kind: "NemoClawConfig",
+    spec: { gateway: { endpoint: "http://127.0.0.1:19090" } },
+  } as never;
+  mocks.exportOmissions.mockReset().mockReturnValue([]);
   mocks.buildExportConfig.mockReset().mockReturnValue(config);
   mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
     yaml: "kind: NemoClawConfig\n",
@@ -44,6 +53,17 @@ function dependencies(): ConfigExportDependencies {
 }
 
 describe("runConfigExport", () => {
+  it("reports the gateway endpoint written in the exported config", async () => {
+    const deps = dependencies();
+    await runConfigExport(
+      { sandboxName: "alpha", documentName: alphaDocumentName, target: { kind: "stdout" } },
+      deps,
+    );
+    expect(deps.writeStdout).toHaveBeenCalledWith(
+      expect.stringContaining('# gateway endpoint="http://127.0.0.1:19090" port=19090: '),
+    );
+  });
+
   it("writes canonical YAML for a stdout target", async () => {
     const deps = dependencies();
     await expect(
@@ -51,8 +71,10 @@ describe("runConfigExport", () => {
         { sandboxName: "alpha", documentName: alphaDocumentName, target: { kind: "stdout" } },
         deps,
       ),
-    ).resolves.toEqual({ ok: true, completion: { kind: "stdout" } });
-    expect(deps.writeStdout).toHaveBeenCalledWith("kind: NemoClawConfig\n");
+    ).resolves.toEqual({ ok: true, omissions: [], completion: { kind: "stdout" } });
+    expect(deps.writeStdout).toHaveBeenCalledWith(
+      expect.stringMatching(/^# nemoclaw-export-report: 1\n[\s\S]*kind: NemoClawConfig\n$/),
+    );
     expect(deps.publish).not.toHaveBeenCalled();
   });
 
@@ -69,6 +91,7 @@ describe("runConfigExport", () => {
       ),
     ).resolves.toEqual({
       ok: true,
+      omissions: [],
       completion: {
         kind: "file",
         result: {
@@ -76,7 +99,7 @@ describe("runConfigExport", () => {
           status: "succeeded",
           sourceSandbox: "alpha",
           outputPath: "/tmp/alpha.yaml",
-          documentDigest: "sha256:" + "a".repeat(64),
+          documentDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
           specDigest: "sha256:" + "b".repeat(64),
         },
       },
@@ -85,7 +108,11 @@ describe("runConfigExport", () => {
       documentName: "team",
       documentUid: "123e4567-e89b-42d3-a456-426614174000",
     });
-    expect(deps.publish).toHaveBeenCalledWith("/tmp/alpha.yaml", "kind: NemoClawConfig\n", true);
+    expect(deps.publish).toHaveBeenCalledWith(
+      "/tmp/alpha.yaml",
+      expect.stringMatching(/^# nemoclaw-export-report: 1\n[\s\S]*kind: NemoClawConfig\n$/),
+      true,
+    );
   });
 
   it.each([

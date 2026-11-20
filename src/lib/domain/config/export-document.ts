@@ -7,11 +7,34 @@ import type {
   V1Alpha1Export,
   V1Alpha1ExportAgent,
   V1Alpha1ExportSandbox,
+  V1Alpha1FabricHarnessKind,
 } from "../../config/v1alpha1-export";
 import type { VerifiedExportSource } from "./export-evidence";
 
-const OLLAMA_SERVICE_NAME = "ollama-auth";
-const VLLM_SERVICE_NAME = "vllm";
+/**
+ * v1 requires a digest-pinned agent `image.ref` and service `image`. None of v0's agent images
+ * (OpenClaw, Hermes, Deep Agents) ships Fabric or its adapter, v0 has no v1 vLLM or Ollama service
+ * image, and v1 publishes none yet. The export writes this parseable stand-in, and the export report
+ * names each place it appears.
+ */
+export const V1_IMAGE_REF_PLACEHOLDER = `REPLACE-ME@sha256:${"0".repeat(64)}`;
+/**
+ * OpenShell names the network policy it composes from an attached provider with this prefix
+ * (`PROVIDER_RULE_NAME_PREFIX` in openshell-policy), rejects it in a submitted policy, and builds
+ * it again for each provider the destination attaches. `openshell policy get --base` drops the
+ * same keys. The SDK has no base-policy read, so the export drops them from the effective policy.
+ */
+export const OPENSHELL_PROVIDER_RULE_PREFIX = "_provider_";
+
+export function isOpenShellProviderRule(name: string): boolean {
+  return name.startsWith(OPENSHELL_PROVIDER_RULE_PREFIX);
+}
+
+/** Explicit-policy sections that describe the source image rather than its network access. */
+export const IMAGE_POLICY_SECTIONS = ["filesystem_policy", "process", "landlock"] as const;
+
+export const OLLAMA_SERVICE_NAME = "ollama-auth";
+export const VLLM_SERVICE_NAME = "vllm";
 
 function targetBridgeAddress(documentUid: NemoClawConfigDocumentUid): string {
   const subnet = createHash("sha256").update(documentUid).digest()[0]!;
@@ -40,11 +63,9 @@ function bareSha256Digest(digest: string): string {
 
 function inferenceProvider(
   source: VerifiedExportSource,
-  name: string,
-): V1Alpha1Export["spec"]["inferenceProviders"][number] {
+): V1Alpha1Export["spec"]["inferenceProviders"][string] {
   if ("serving" in source.inference) {
     return {
-      name,
       provider: "openai",
       api: "openai-completions",
       serviceRef:
@@ -54,7 +75,6 @@ function inferenceProvider(
   const driver: "anthropic" | "openai" =
     source.inference.api === "anthropic-messages" ? "anthropic" : "openai";
   const provider = {
-    name,
     provider: driver,
     api: source.inference.api,
     endpoint: source.inference.endpoint,
@@ -74,7 +94,7 @@ function ollamaService(
   const { daemon, proxy, model } = source.inference.serving;
   return {
     kind: "ollamaProxy",
-    image: null,
+    image: V1_IMAGE_REF_PLACEHOLDER,
     endpoint: `http://${bridgeAddress}:${proxy.hostPort}/v1`,
     upstream: {
       endpoint: `http://127.0.0.1:${daemon.hostPort}/v1`,
@@ -100,7 +120,7 @@ function vllmService(
       minDriverMajor: 580,
     },
     container: { ipc: "host", sharedMemoryGiB: 32 },
-    image: null,
+    image: V1_IMAGE_REF_PLACEHOLDER,
     model: { repository: model.id, revision: model.revision },
     serving: {
       modelName: model.servedName,
@@ -129,131 +149,97 @@ function exportServices(
   return { [VLLM_SERVICE_NAME]: vllmService(source) };
 }
 
-function agentSettings(source: VerifiedExportSource) {
+const FABRIC_HARNESS_KIND: Readonly<
+  Record<VerifiedExportSource["agent"], V1Alpha1FabricHarnessKind>
+> = {
+  openclaw: "nvidia.fabric.openclaw",
+  hermes: "nvidia.fabric.hermes",
+  "langchain-deepagents-code": "nvidia.fabric.langchain.deepagents",
+};
+
+function exportHarness(source: VerifiedExportSource): V1Alpha1ExportSandbox["harness"] {
   return {
-    ...(source.agent === "openclaw"
-      ? {
-          ...(source.interfaces ? { interfaces: source.interfaces } : {}),
-          ...(source.observability ? { observability: source.observability } : {}),
-        }
-      : {
-          ...(source.interfaces ? { interfaces: source.interfaces } : {}),
-        }),
-    ...(source.execution ? { execution: source.execution } : {}),
+    kind: FABRIC_HARNESS_KIND[source.agent],
+    ...(source.execution?.timeoutSeconds === undefined
+      ? {}
+      : { runtime: { timeout_seconds: source.execution.timeoutSeconds } }),
   };
 }
 
-function exportAgent(
-  source: VerifiedExportSource,
-  providerName: string,
-  agent: Readonly<{
-    name: string;
-    primary: boolean;
-    tools?: Readonly<{ allow: readonly "read"[] }>;
-  }>,
-): V1Alpha1ExportAgent {
-  const tools = agent.primary ? source.tools : agent.tools;
+/** v1 route overrides accept only `maxTokens` of v0's tuning keys. */
+function routeOverrides(source: VerifiedExportSource) {
+  const maxTokens =
+    "overrides" in source.inference
+      ? (source.inference.overrides as { maxTokens?: number } | undefined)?.maxTokens
+      : undefined;
   return {
-    name: agent.name,
-    ...(tools === undefined ? {} : { tools }),
-    ...(source.webSearch?.agentRefs.some((reference) => reference === agent.name)
-      ? { integrationRefs: [`${source.webSearch.provider}-search` as const] }
-      : {}),
-    ...(agent.primary && source.auth !== undefined ? { auth: { method: source.auth.method } } : {}),
+    model: source.inference.model,
+    ...(maxTokens === undefined ? {} : { maxTokens }),
+  };
+}
+
+function exportAgent(source: VerifiedExportSource, providerName: string): V1Alpha1ExportAgent {
+  // v0's tool `disclosure` is an adapter-native control with no v1 home, so it is not exported.
+  return {
+    name: "primary",
+    ...(source.webSearch === undefined
+      ? {}
+      : { integrationRefs: [`${source.webSearch.provider}-search` as const] }),
+    ...(source.auth !== undefined ? { auth: { method: source.auth.method } } : {}),
     inference: {
-      routes: [
-        {
-          name: "primary",
-          providerRef: providerName,
-          overrides: {
-            model: source.inference.model,
-            ...("overrides" in source.inference ? source.inference.overrides : {}),
-          },
-        },
-      ],
+      routes: [{ name: "primary", providerRef: providerName, overrides: routeOverrides(source) }],
     },
   };
 }
 
-function targetProcess(policy: Record<string, unknown>): void {
-  const process = policy.process as Record<string, unknown> | undefined;
-  if (process?.run_as_user === "sandbox") process.run_as_user = "1000";
-  if (process?.run_as_group === "sandbox") process.run_as_group = "1000";
+function targetEndpoint(endpoint: Record<string, unknown>): void {
+  delete endpoint.provider_credentialed;
+  // v1 names a raw TLS tunnel `skip`; OpenShell called the same behavior `passthrough`.
+  if (endpoint.tls === "passthrough") endpoint.tls = "skip";
+  // Omitting `tls` is v1's automatic TLS detection and termination, which `terminate` named.
+  if (endpoint.tls === "terminate") delete endpoint.tls;
 }
 
-function agentFilesystemRoots(agent: VerifiedExportSource["agent"]): string[] {
-  if (agent === "openclaw") return ["/app"];
-  if (agent === "hermes") return ["/opt/hermes"];
-  return [];
-}
-
-function targetFilesystem(
-  policy: Record<string, unknown>,
-  agent: VerifiedExportSource["agent"],
-): void {
-  const filesystem = policy.filesystem_policy as Record<string, unknown> | undefined;
-  if (!filesystem) return;
-  const readOnly = Array.isArray(filesystem.read_only) ? [...filesystem.read_only] : [];
-  const readWrite = Array.isArray(filesystem.read_write) ? filesystem.read_write : [];
-  const roots = ["/opt/fabric", "/opt/nemoclaw", ...agentFilesystemRoots(agent)];
-  for (const root of roots) {
-    if (!readOnly.includes(root) && !readWrite.includes(root)) readOnly.push(root);
-  }
-  filesystem.read_only = readOnly;
-}
-
-function targetPolicy(source: VerifiedExportSource): Record<string, unknown> {
-  const policy = structuredClone(source.policy) as Record<string, unknown>;
-  const networks = policy.network_policies as
+/**
+ * Project an OpenShell sandbox policy to the explicit v1 policy the export writes. Live checks
+ * reuse it so their expected policy cannot drift from the export. The input is not changed.
+ */
+export function exportedExplicitPolicy(sourcePolicy: unknown): Record<string, unknown> {
+  const policy = structuredClone(sourcePolicy) as Record<string, unknown>;
+  const composed = policy.network_policies as
     | Record<string, { endpoints?: Record<string, unknown>[] }>
     | undefined;
-  for (const network of Object.values(networks ?? {})) {
-    for (const endpoint of network.endpoints ?? []) delete endpoint.provider_credentialed;
-  }
-  const landlock = policy.landlock as Record<string, unknown> | undefined;
-  // The pinned v1 consumer names fail-closed Landlock enforcement hard_requirement.
-  if (landlock?.compatibility === "strict") landlock.compatibility = "hard_requirement";
-  targetProcess(policy);
-  targetFilesystem(policy, source.agent);
+  const networks =
+    composed &&
+    Object.fromEntries(Object.entries(composed).filter(([name]) => !isOpenShellProviderRule(name)));
+  if (networks) policy.network_policies = networks;
+  for (const network of Object.values(networks ?? {})) network.endpoints?.forEach(targetEndpoint);
+  // These sections describe the V0 image (its run_as identity and writable paths). The v1 image
+  // differs, so they have no exact equivalent; the export report lists each one.
+  for (const section of IMAGE_POLICY_SECTIONS) delete policy[section];
   return policy;
 }
 
 function exportSandbox(source: VerifiedExportSource, providerName: string): V1Alpha1ExportSandbox {
-  const sandboxBase = {
-    name: source.sandboxName,
-    runtime: {
-      provider: "docker" as const,
-    },
-    network: {
-      policy: { explicit: targetPolicy(source) },
-      ...(source.proxy === undefined ? {} : { proxy: source.proxy }),
-    },
-    ...(source.webSearch === undefined
-      ? {}
-      : {
-          integrations: {
-            [`${source.webSearch.provider}-search`]: {
-              kind: "webSearch" as const,
-              provider: source.webSearch.provider,
-              credential: source.webSearch.credential,
-            },
-          },
-        }),
+  return {
+    network: { policy: { explicit: exportedExplicitPolicy(source.policy) } },
+    image: { ref: V1_IMAGE_REF_PLACEHOLDER },
+    harness: exportHarness(source),
+    agent: exportAgent(source, providerName),
   };
-  const sandbox: V1Alpha1ExportSandbox =
-    source.agent === "langchain-deepagents-code"
-      ? {
-          ...sandboxBase,
-          image: { ref: source.runtime.imageRef },
-          harness: { kind: "deepagents", ...agentSettings(source) },
-          agent: exportAgent(source, providerName, { name: "primary", primary: true }),
-        }
-      : {
-          ...sandboxBase,
-          harness: { kind: source.agent, ...agentSettings(source) },
-          agent: exportAgent(source, providerName, { name: "primary", primary: true }),
-        };
-  return sandbox;
+}
+
+function exportIntegrations(
+  source: VerifiedExportSource,
+): V1Alpha1Export["spec"]["integrations"] | undefined {
+  if (source.webSearch === undefined) return undefined;
+  return {
+    [`${source.webSearch.provider}-search`]: {
+      kind: "webSearch",
+      provider: source.webSearch.provider,
+      credential: source.webSearch.credential,
+    },
+  } as V1Alpha1Export["spec"]["integrations"];
 }
 
 export interface ExportConfigBuildIdentity {
@@ -269,6 +255,7 @@ export function buildExportConfig(
   const providerName = exportedProviderName(source.inference);
   const services = exportServices(source, targetBridgeAddress(identity.documentUid));
   const sandbox = exportSandbox(source, providerName);
+  const integrations = exportIntegrations(source);
   const candidate = {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",
@@ -276,11 +263,13 @@ export function buildExportConfig(
     spec: {
       gateway: {
         management: "managed",
+        runtime: { provider: "docker" },
         endpoint: `http://127.0.0.1:${source.gateway.port}`,
       },
       ...(services ? { services } : {}),
-      inferenceProviders: [inferenceProvider(source, providerName)],
-      sandboxes: [sandbox],
+      inferenceProviders: { [providerName]: inferenceProvider(source) },
+      ...(integrations ? { integrations } : {}),
+      sandboxes: { [source.sandboxName]: sandbox },
     },
   } satisfies V1Alpha1Export;
   return candidate;

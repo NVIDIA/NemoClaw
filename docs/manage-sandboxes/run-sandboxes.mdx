@@ -186,7 +186,8 @@ If command-line inspection is unavailable, Windows can still verify and stop a r
 $$nemoclaw tunnel start
 ```
 
-`$$nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
+`$$nemoclaw tunnel stop` stops the tunnel but leaves the in-sandbox gateway running for the selected or default sandbox.
+The OpenClaw gateway is the sandbox's main process, so stopping it would end the sandbox.
 An explicitly set `NEMOCLAW_GATEWAY_PORT` selects the host tunnel state.
 Otherwise, tunnel commands use the selected or default sandbox's owning gateway, falling back to the process-default gateway when no sandbox resolves.
 If the sandbox name belongs to more than one gateway registry, tunnel-state selection fails closed.

@@ -3,10 +3,8 @@
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
-import {
-  expectedPinnedV1HermesNativeSettings,
-  type PinnedV1ConsumerEvidence,
-} from "../../support/v1-config-consumer.ts";
+import type { V1ParseSummary } from "../../support/v1-parse-consumer.ts";
+import { V1_IMAGE_REF_PLACEHOLDER } from "../../../src/lib/domain/config/export-document.ts";
 import type { ConfigExportDocument } from "../fixtures/phases/config-export-validation.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import type { NemoClawInstanceManifest } from "../registry/types.ts";
@@ -22,21 +20,16 @@ export const POLICY = {
     },
   },
 };
-export const EXPECTED_NATIVE_SETTINGS = {
-  model: { contextWindow: 131_072, maxTokens: 8192, reasoning: false },
-  reasoningEffort: "default",
-  execution: { timeoutSeconds: 600, heartbeatEvery: "2m" },
-  dashboard: { enabled: true, port: 18_789, bind: "loopback" },
-  toolDisclosure: "progressive",
-} as const;
-
-export const PINNED_CONSUMER_EVIDENCE = {
-  revision: "42a26d90f1f6207cc35b5053556db67c86ce759f" as const,
-  compiledSandboxes: 1,
-  contextWindows: [131_072],
-  openclawNativeSettings: { sandbox: EXPECTED_NATIVE_SETTINGS },
-  openclawNativeSettingsVerified: 1,
-  hermesNativeSettingsVerified: 0,
+export const PINNED_CONSUMER_EVIDENCE: V1ParseSummary = {
+  revision: "d1d0c87e535f9c757f47dde6ee157e9859dd91fd",
+  sandboxes: {
+    sandbox: {
+      harnessKind: "nvidia.fabric.openclaw",
+      imageRef: V1_IMAGE_REF_PLACEHOLDER,
+      integrationRefs: [],
+    },
+  },
+  integrations: {},
 };
 
 export function manifest(
@@ -66,7 +59,6 @@ export function manifest(
 export function document(
   overrides: {
     model?: string;
-    observability?: boolean;
     credentialReference?: string;
     gatewayEndpoint?: string;
     agent?: "openclaw" | "hermes";
@@ -82,47 +74,35 @@ export function document(
       uid: "123e4567-e89b-42d3-a456-426614174000",
     },
     spec: {
-      gateway: { management: "managed", endpoint: gatewayEndpoint },
-      inferenceProviders: [
-        {
-          name: "hosted-compatible-endpoint",
+      gateway: {
+        management: "managed",
+        runtime: { provider: "docker" },
+        endpoint: gatewayEndpoint,
+      },
+      inferenceProviders: {
+        "hosted-compatible-endpoint": {
           provider: "openai",
           api: "openai-completions",
           endpoint: "https://inference.example/v1",
           credential: { env: overrides.credentialReference ?? "NVIDIA_INFERENCE_API_KEY" },
         },
-      ],
-      sandboxes: [
-        {
-          name: "sandbox",
-          runtime: { provider: "docker" },
+      },
+      ...(overrides.searchProvider
+        ? {
+            integrations: {
+              [`${overrides.searchProvider}-search`]: {
+                kind: "webSearch",
+                provider: overrides.searchProvider,
+                credential: { env: `${overrides.searchProvider.toUpperCase()}_API_KEY` },
+              },
+            },
+          }
+        : {}),
+      sandboxes: {
+        sandbox: {
+          image: { ref: V1_IMAGE_REF_PLACEHOLDER },
           network: { policy: { explicit: POLICY } },
-          harness: {
-            kind: overrides.agent ?? "openclaw",
-            ...(overrides.observability
-              ? {
-                  observability: {
-                    otlp: {
-                      enabled: true,
-                      endpoint: "http://host.openshell.internal:4318",
-                      serviceName: "openclaw",
-                      sampleRate: 1,
-                    },
-                  },
-                }
-              : {}),
-          },
-          ...(overrides.searchProvider
-            ? {
-                integrations: {
-                  [`${overrides.searchProvider}-search`]: {
-                    kind: "webSearch",
-                    provider: overrides.searchProvider,
-                    credential: { env: `${overrides.searchProvider.toUpperCase()}_API_KEY` },
-                  },
-                },
-              }
-            : {}),
+          harness: { kind: `nvidia.fabric.${overrides.agent ?? "openclaw"}` },
           agent: {
             name: "primary",
             ...(overrides.agent === "hermes" ? { auth: { method: "api-key" } } : {}),
@@ -140,7 +120,7 @@ export function document(
             },
           },
         },
-      ],
+      },
     },
   } as unknown as ConfigExportDocument;
 }
@@ -176,23 +156,28 @@ export function sourceProfile(agent: "openclaw" | "hermes", provider?: "brave" |
   return encodeManagedStartupProfile(profile);
 }
 
-type SearchEvidence = NonNullable<PinnedV1ConsumerEvidence["webSearch"]>[string];
-
 export function searchConsumerEvidence(
   agent: "openclaw" | "hermes",
-  search: Omit<SearchEvidence, "agentRefs"> & { agentRefs: readonly string[] },
-): PinnedV1ConsumerEvidence {
-  const native =
-    agent === "openclaw"
-      ? PINNED_CONSUMER_EVIDENCE
-      : {
-          revision: PINNED_CONSUMER_EVIDENCE.revision,
-          compiledSandboxes: 1,
-          openclawNativeSettingsVerified: 0,
-          hermesNativeSettingsVerified: 1,
-          hermesNativeSettings: { sandbox: expectedPinnedV1HermesNativeSettings({}) },
-        };
-  return { ...native, webSearch: { sandbox: { ...search, agentRefs: [...search.agentRefs] } } };
+  search: {
+    provider: "brave" | "tavily";
+    credentialReference: string;
+    integrationRefs?: readonly string[];
+  },
+): V1ParseSummary {
+  const integration = `${search.provider}-search`;
+  return {
+    ...PINNED_CONSUMER_EVIDENCE,
+    sandboxes: {
+      sandbox: {
+        harnessKind: `nvidia.fabric.${agent}`,
+        imageRef: V1_IMAGE_REF_PLACEHOLDER,
+        integrationRefs: [...(search.integrationRefs ?? [integration])],
+      },
+    },
+    integrations: {
+      [integration]: { provider: search.provider, credentialReference: search.credentialReference },
+    },
+  };
 }
 
 export const SECRET = "fixture-secret-value";
