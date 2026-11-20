@@ -334,6 +334,106 @@ describe("managed llama.cpp profile onboarding", () => {
     });
   });
 
+  describe("pinned provider failures in interactive mode (#13022)", () => {
+    const selection = managedSelectionFixture(
+      "llama-cpp.pinned.v1",
+      "Pinned model",
+      "pinned-model",
+    );
+    const stopped = new Error("pinned managed llama.cpp failure stopped onboarding");
+
+    function pinnedHarness(
+      overrides: Partial<SetupNimFlowDeps> = {},
+      requestedProvider: string | null = "install-llama-cpp",
+    ) {
+      const exitProcess = vi.fn<SetupNimFlowDeps["exitProcess"]>(() => {
+        throw stopped;
+      });
+      const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>(() => {
+        throw new Error("unexpected non-interactive abort");
+      });
+      const error = vi
+        .fn<SetupNimFlowDeps["error"]>()
+        .mockImplementationOnce(() => undefined)
+        .mockImplementationOnce(() => undefined)
+        .mockImplementationOnce(() => undefined)
+        .mockImplementation(() => {
+          throw new Error("onboarding kept retrying the pinned provider");
+        });
+      const installManagedLlamaCpp = vi
+        .fn<NonNullable<SetupNimFlowDeps["installManagedLlamaCpp"]>>()
+        .mockResolvedValue({
+          ok: false as const,
+          reason:
+            "Managed llama.cpp port 8081 is unavailable: lsof reports python3 (PID 4242) listening on port 8081",
+        });
+      const setupNim = createSetupNim(
+        makeDeps({
+          isNonInteractive: () => false,
+          getNonInteractiveProvider: () => requestedProvider,
+          selectFromNumberedMenu: () => {
+            throw new Error("unexpected provider menu");
+          },
+          discoverManagedLlamaCppSelections: () => ({
+            choices: [{ priority: 500, selection }],
+            resolution: { kind: "selected" as const, selection },
+          }),
+          installManagedLlamaCpp,
+          error,
+          exitProcess,
+          abortNonInteractive,
+          ...overrides,
+        }),
+      );
+      return { setupNim, installManagedLlamaCpp, exitProcess, abortNonInteractive, error };
+    }
+
+    it("exits after one failed install instead of retrying the occupied port", async () => {
+      const harness = pinnedHarness();
+
+      await expect(harness.setupNim({ platform: "spark" } as never, "spark-agent")).rejects.toBe(
+        stopped,
+      );
+
+      expect({
+        installCalls: harness.installManagedLlamaCpp.mock.calls.length,
+        exitCalls: harness.exitProcess.mock.calls,
+        abortCalls: harness.abortNonInteractive.mock.calls.length,
+        errorCalls: harness.error.mock.calls,
+      }).toEqual({
+        installCalls: 1,
+        exitCalls: [[1]],
+        abortCalls: 0,
+        errorCalls: [[expect.stringContaining("port 8081 is unavailable")]],
+      });
+    });
+
+    it("exits when the pinned provider has no sandbox name", async () => {
+      const harness = pinnedHarness();
+
+      await expect(harness.setupNim({ platform: "spark" } as never, null)).rejects.toBe(stopped);
+
+      expect(harness.installManagedLlamaCpp).not.toHaveBeenCalled();
+      expect(harness.exitProcess.mock.calls).toEqual([[1]]);
+    });
+
+    it("exits when the pinned selection is rejected", async () => {
+      const harness = pinnedHarness({
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [{ priority: 500, selection }],
+          resolution: { kind: "rejected" as const, reason: "no matching recipe" },
+        }),
+      });
+
+      await expect(harness.setupNim({ platform: "spark" } as never, "spark-agent")).rejects.toBe(
+        stopped,
+      );
+
+      expect(harness.installManagedLlamaCpp).not.toHaveBeenCalled();
+      expect(harness.exitProcess.mock.calls).toEqual([[1]]);
+    });
+  });
+
   it("resumes the exact managed llama.cpp recipe recorded for the sandbox", async () => {
     const recommended = managedSelectionFixture(
       "llama-cpp.recommended.v1",
