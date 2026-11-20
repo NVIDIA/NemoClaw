@@ -75,7 +75,7 @@ Every parameter is present in every record.
 | `os` | Word | `linux` / `macos` / `windows` / `other` | `std::env::consts::OS` | Support and test matrix |
 | `arch` | Word | `x86_64` / `arm64` / `other` | `std::env::consts::ARCH`; `aarch64` is sent as `arm64` | Support and test matrix |
 | `hostContext` | Word | `native` / `wsl` / `other` | Kernel release string | Support and test matrix |
-| `deploymentSource` | Word | `brev` / `omnistation` / `colossus` / `none` / `other` | Image marker | Where NemoClaw runs |
+| `deploymentSource` | Word | `brev` / `omnistation` / `colossus` / `none` / `other` | Image marker; see [Deployment Source Marker](#deployment-source-marker) | Where NemoClaw runs |
 | `cloud` | Word | `gcp` / `azure` / `aws` / `other` / `unknown` | DMI vendor string | Where NemoClaw runs |
 | `hardware` | Word | `dgx-spark` / `dgx-station` / `rtx-spark` / `jetson` / `mac` / `nvidia-gpu` / `other` / `unknown` | DMI product name and devicetree | Which machines run NemoClaw |
 | `harnesses` | List of words | Fabric catalog harness IDs, else `other` | Configuration | Agent harness share |
@@ -105,6 +105,21 @@ Every parameter is present in every record.
   - `mcpConfigured`: `false`
 
   Configuration charts must leave out records where `computeDriver` is `unknown`.
+
+## Deployment Source Marker
+
+`deploymentSource` reads a marker that the machine image sets.
+NemoClaw does not detect the platform itself; it only reads the marker.
+
+| Value | Meaning |
+|---|---|
+| `brev`, `omnistation`, `colossus` | The marker holds that value |
+| `none` | No marker is present, or the marker cannot be read or is malformed |
+| `other` | The marker holds a well-formed value that is not on the list |
+
+A host without a valid marker is never counted as Brev.
+The image owners must set the marker; for Brev, that is the owners of `brevdev/nemoclaw-image`.
+The marker's name and location are fixed when host detection is built (#14681).
 
 ## Record Rules
 
