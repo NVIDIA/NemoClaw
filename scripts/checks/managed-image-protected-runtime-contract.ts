@@ -18,7 +18,13 @@ import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-ima
 import type { ManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { gatewayIdForStateDir } from "../../src/lib/onboard/gateway/process-environment.ts";
 
-const MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS = ["0.0.116", "0.1.3", "0.1.5", "0.1.7"] as const;
+const MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS = [
+  "0.0.116",
+  "0.1.3",
+  "0.1.5",
+  "0.1.7",
+  "0.1.9",
+] as const;
 export type ManagedImageHarnessOpenShellVersion =
   (typeof MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS)[number];
 
@@ -65,7 +71,8 @@ export function isManagedImageHarnessWorkload(
     record?.Image === expected.imageContentId &&
     (expected.runtimeVersion === "0.1.3" ||
     expected.runtimeVersion === "0.1.5" ||
-    expected.runtimeVersion === "0.1.7"
+    expected.runtimeVersion === "0.1.7" ||
+    expected.runtimeVersion === "0.1.9"
       ? labels["openshell.ai/isolation-role"] === "sandbox" &&
         labels["openshell.ai/sandbox-namespace"] === gatewayIdForStateDir(expected.stateDir) &&
         record.HostConfig?.NetworkMode === "none"
@@ -569,7 +576,10 @@ export function managedImageHarnessContainerListArgs(
     "label=openshell.ai/managed-by=openshell",
     "--filter",
     `label=openshell.ai/sandbox-name=${sandbox}`,
-    ...(runtimeVersion === "0.1.3" || runtimeVersion === "0.1.5" || runtimeVersion === "0.1.7"
+    ...(runtimeVersion === "0.1.3" ||
+    runtimeVersion === "0.1.5" ||
+    runtimeVersion === "0.1.7" ||
+    runtimeVersion === "0.1.9"
       ? ["--filter", "label=openshell.ai/isolation-role=sandbox"]
       : []),
   ];
@@ -578,7 +588,10 @@ export function managedImageHarnessContainerListArgs(
 export function managedImageSandboxListLimitFlag(
   runtimeVersion: ManagedImageHarnessOpenShellVersion,
 ): string {
-  return runtimeVersion === "0.1.3" || runtimeVersion === "0.1.5" || runtimeVersion === "0.1.7"
+  return runtimeVersion === "0.1.3" ||
+    runtimeVersion === "0.1.5" ||
+    runtimeVersion === "0.1.7" ||
+    runtimeVersion === "0.1.9"
     ? "--page-size"
     : "--limit";
 }
