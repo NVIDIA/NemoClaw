@@ -28,7 +28,7 @@ CUDA and other proprietary components also need their applicable redistribution 
 - [#14594](https://github.com/NVIDIA/NemoClaw/pull/14594) retains Node.js, OpenClaw, Bun, proxy dependency, and Rust library notices, and adds the initial review procedure.
 - [#13590](https://github.com/NVIDIA/NemoClaw/pull/13590) adds per-platform software inventories (SBOMs) for release artifacts.
 - [#14694](https://github.com/NVIDIA/NemoClaw/pull/14694) excludes Claude from release publication and documents local builds.
-- The current recipes also retain the exact Codex 0.154.0 LICENSE and NOTICE, LangSmith 0.11.1 MIT notice, sqlite-vec 0.1.9 MIT notice, and firecrawl-anydoc 0.2.4 MIT notice.
+- The current recipes also retain the exact Codex 0.154.0 LICENSE and NOTICE, LangSmith 0.11.1 MIT notice, sqlite-vec 0.1.9 MIT notice, firecrawl-anydoc 0.2.4 MIT notice, and the Hermes dashboard's xterm.js 6.0.0 MIT notice.
   The llama.cpp overlay retains its two vendored UI library notices, pinned brand license and redistribution permission, source credit, and Geist font notice.
   Their source commits and checksums are pinned in `versions.json`; the image notice files describe their locations.
 
@@ -36,6 +36,9 @@ The current Ollama base's `GO_LICENSE` contains third-party Go module notices; d
 The current Bun notice includes rebuilding instructions; retaining those instructions does not establish delivery of all required source or relinking materials.
 Fabric's retained source archive includes Rust, Python, and Node attribution documents.
 An attribution document or lockfile alone does not establish complete source delivery or an inventory of every compiled subcomponent.
+Hermes's TUI bundle retains some inline attribution; its dashboard's notice coverage must be reconciled separately.
+OpenClaw already ships the TypeScript source of `@ubjs/core` and MPL headers in `@ubjs/node`'s JavaScript wrapper.
+Its CUA platform package retains `node-runtime-NOTICE.md`, which describes the modified MPL runtime and its source/build script; do not describe all UBJS source or CUA notice evidence as absent.
 
 ## Remaining Release Evidence
 
@@ -51,7 +54,17 @@ NIM is a separate local-build target, not part of this release catalog.
 | Deep Agents and Hermes | Native wheel source coverage; Fetch Use 0.4.0's exact notice; original source and notices for Hermes's prebuilt dashboard and TUI |
 | OpenClaw, Pi, and OpenCode | Shipped npm/native dependency mapping, including OpenClaw's MPL components and Bun's applicable source and relinking delivery |
 | llama.cpp UI | Complete shipped JavaScript dependency/source/notice mapping beyond the named vendored libraries and brand assets already retained |
-| Final runtime candidates | Inspect `vllm`, `ollama`, and `llama-cpp` on both AMD64 and ARM64, including CUDA/runtime terms; upstream base inspection or old SBOMs do not clear changed final overlays |
+| Final runtime candidates | rc12 technical artifact checks are recorded below; complete the source/license reconciliation and repeat the artifact checks after notice fixes land |
+
+The native-code follow-up has identifiable inputs:
+
+- Codex's [Code Mode runtime manifest](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/code-mode-runtime/Cargo.toml) includes V8 and ICU data; the image ships `codex-code-mode-host` and a bundled `rg` in addition to `codex`.
+  The project LICENSE and NOTICE do not establish a complete attribution inventory for these binaries.
+- npm records `@ubjs/node` and its native platform package 0.31.0-3 at source commit [`dcb5c4ab`](https://github.com/jhugman/uniffi-bindgen-react-native/tree/dcb5c4ab2350d57f6d26f5fa81a99c77ed86d449).
+  CUA 0.28.2's ARM64 npm provenance identifies commit [`36987990`](https://github.com/trycua/cua/tree/36987990b292537770fe2df3a9e6dee2ef43db2f), whose [runtime transformation script](https://github.com/trycua/cua/blob/36987990b292537770fe2df3a9e6dee2ef43db2f/libs/cua-driver/scripts/build-node-runtime.mjs) implements the change described in the retained notice.
+  Reconcile each shipped platform binary and deliver the corresponding source under the selected release mechanism.
+- Pi's installed npm tree includes Linux, macOS, and Windows native prebuilds.
+  Account for all redistributed files, even when the Linux image does not execute them.
 
 For the current vLLM 0.34.0 base, FFmpeg 8.1.1 is bundled through PyNvVideoCodec 2.0.4 and OpenCV, rather than PyAV.
 Their retained notices identify LGPL terms; reconcile each actual library and build with its corresponding source.
@@ -64,6 +77,29 @@ Only applicable third-party source obligations are in scope; this does not requi
 
 For harnesses NVIDIA does not ship, document compatible pinned builds and inherited notice, source, and service terms.
 Local building does not itself grant permission to redistribute the result.
+
+## rc12 Runtime Artifact Evidence
+
+Release candidate `v0.1.0-rc12` was staged from `1636069b91f402242a35714fde1011042c3f1f70`.
+All six runtime platform manifests were retrieved by digest; their SPDX assets match `sboms.json`, and each SPDX document describes that exact platform digest.
+Their layer prefixes match the six upstream base artifacts already inspected.
+The 13 distinct added layers, totaling 81,079,483 compressed bytes, were downloaded, SHA-256 verified, and indexed with whiteouts applied.
+
+| Runtime | AMD64 Platform Digest | ARM64 Platform Digest |
+| --- | --- | --- |
+| vLLM | `sha256:c57f93323a4ffbcc3fe4460b3b7a065c7c1bbb3a3e563f51934ba42a97907a0c` | `sha256:122e7bd54c502380b57e488bc7209ddb0052ddbb59cabdf57d96405fadf5d6c3` |
+| Ollama | `sha256:9b9c6ab3fbf5518bb751abb5514853d4121ff33dcc383f671ef121832fdda6ea` | `sha256:4e31e854a00220fad6eaf11aa54203e0fff7ca383f3da4fb2dbfb1f2860cfdb6` |
+| llama.cpp | `sha256:627d5433b61de101fb851ff722e0120a697c4ec73ca14664fa557c822ddacc98` | `sha256:f4e683cc2ae24e8cae9ecf3c4a0ade4876bcdcea4f8693f1fff8c15dc982e445` |
+
+All six retain the same `supervisor-source.tar.gz`, SHA-256 `17f009964ab6805a28992cb094f036479a396037bce72e191209be1c40c7cf4e`.
+It contains the supervisor's Rust source, build configuration, and 268 vendored crate manifests across 20,132 archive entries.
+The Rust library notice and supervisor lockfile are also retained.
+Both llama.cpp overlays retain all five pinned C++ license files.
+Credit this evidence when preparing source delivery; do not request the supervisor's vendored sources again.
+
+These checks establish the inspected contents of rc12, not complete license compliance, approval, or GPU qualification.
+rc12 predates the additional notice fixes on this page; final post-fix candidates must be checked again.
+The remaining source, native/frontend attribution, and redistribution-term requirements still apply.
 
 ## Reviewing a Release
 

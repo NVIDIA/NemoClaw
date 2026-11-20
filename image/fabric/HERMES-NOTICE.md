@@ -9,4 +9,7 @@ Its built dashboard (`hermes_cli/web_dist`) and TUI bundle (`hermes_cli/tui_dist
 Its upstream license and notices remain in `/opt/hermes` and the retained source archive.
 `/opt/nemoclaw/source/anydoc-LICENSE` retains the unmodified MIT notice of firecrawl-anydoc 0.2.4 from commit `42bf1c5ecdde9eb0d96d6bd75a9e6698cf93b14c`, matching that release's source distribution.
 This file names Copyright (c) 2026 Sideguide Technologies Inc.; `versions.json` pins its URL and SHA-256.
+`/opt/nemoclaw/source/xterm-LICENSE` retains the unmodified xterm.js 6.0.0 MIT notice from commit `f447274f430fd22513f6adbf9862d19524471c04`, matching its npm package.
+The dashboard bundles xterm.js; this notice preserves the xterm.js authors, SourceLair, and Christopher Jeffrey credits.
+The TUI's `entry.js` retains some inline bundled-license comments; these do not establish complete dependency notice coverage for either frontend.
 NemoClaw installs the source and these builds unmodified.
