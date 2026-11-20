@@ -286,14 +286,15 @@ it("removes terminal controls from a dispatcher error before printing it", () =>
 });
 
 describe("Spark candidate-bound dispatch evidence", () => {
-  const sparkVectors = JSON.parse(
-    fs.readFileSync(
-      path.join(process.cwd(), "tools/e2e/contracts/v4/dgx-spark-dispatch.json"),
-      "utf8",
-    ),
+  const sparkVectorBytes = fs.readFileSync(
+    path.join(process.cwd(), "tools/e2e/contracts/v4/dgx-spark-dispatch.json"),
   );
+  const sparkVectors = JSON.parse(sparkVectorBytes.toString("utf8"));
 
-  it("accepts the Spark backend compatibility vector and rejects its malformed requests", () => {
+  it("matches the pinned Spark v4 compatibility bytes", () => {
+    expect(createHash("sha256").update(sparkVectorBytes).digest("hex")).toBe(
+      "e371cb66f64546780bdaa4365b856803efb710681c172c2ef8584ccfb9317453",
+    );
     expect(parseDgxSparkDispatchRequest(sparkVectors.request)).toEqual(sparkVectors.request);
     expect(parseDispatchStatus(sparkVectors.completedStatus)).toEqual(sparkVectors.completedStatus);
     expect(
