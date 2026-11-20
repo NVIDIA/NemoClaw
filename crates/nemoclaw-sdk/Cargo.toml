@@ -40,7 +40,7 @@ nemoclaw-fabric = { path = "../nemoclaw-fabric", default-features = false }
 # Only the endpoint policy and retained identity types, without the engine client.
 nemoclaw-docker = { path = "../nemoclaw-docker", default-features = false }
 nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
-nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "56a4207b3c7edacd6e0cceea0af7815d2df274ca" }
+nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "c6d1093df8db41d0dc922c27b9166fa48f1db21b" }
 futures-util.workspace = true
 jsonschema.workspace = true
 reqwest.workspace = true

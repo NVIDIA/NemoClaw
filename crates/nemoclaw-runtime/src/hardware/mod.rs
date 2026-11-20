@@ -7,8 +7,10 @@
 use crate::Error;
 use std::{collections::BTreeMap, io::Read};
 mod diagnostic;
+mod single_gpu;
 pub use diagnostic::HardwareDiagnostic;
 pub use diagnostic::{GpuLabel, architecture, at_least, on_gpu};
+pub use single_gpu::SingleGpuMemory;
 pub const GIB: u64 = 1 << 30;
 /// Host measurements. The single-GPU fields describe the observed GPU only
 /// when `gpus` holds exactly one; otherwise they keep their defaults.

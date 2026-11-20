@@ -49,6 +49,30 @@ pub(super) fn postcondition_failures(output: &[u8]) -> Option<Vec<String>> {
     (!failed.is_empty() && pending.is_empty()).then(|| failed.into_iter().collect())
 }
 
+/// The addresses of creates that a provider rejected without creating
+/// anything, when those rejections were the apply's only errors.
+pub(super) fn uncreated_resources(output: &[u8]) -> Option<Vec<String>> {
+    use nemoclaw_backend::CREATED_NOTHING_SUMMARY;
+    use serde_json::Value;
+
+    let mut uncreated = Vec::new();
+    for line in output
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        let event: Value = serde_json::from_slice(line).ok()?;
+        let diagnostic = &event["diagnostic"];
+        if event["type"] != "diagnostic" || diagnostic["severity"] == "warning" {
+            continue;
+        }
+        if diagnostic["summary"] != CREATED_NOTHING_SUMMARY {
+            return None;
+        }
+        uncreated.push(diagnostic["address"].as_str()?.to_owned());
+    }
+    (!uncreated.is_empty()).then_some(uncreated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

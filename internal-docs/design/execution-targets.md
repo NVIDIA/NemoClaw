@@ -38,7 +38,7 @@ SSH carries engine operations; the sandbox-local proxy sends inference traffic d
 The gateway supplies policy and provider attachments, but inference requests do not pass through its API server.
 A request from the CLI host cannot prove sandbox reachability.
 Local bridge publication is not a general cross-host address; SSH services declare a private routable publication URL.
-See [SSH service setup](../../docs/agents-inference/remote-service.md) and [explicit inference verification](../../docs/agents-inference/inference.md#verify-the-result).
+See [SSH service setup](../../docs/agents-inference/remote-service.md) and [explicit inference verification](../../docs/agents-inference/inference.md#verifying-the-result).
 
 ## Why Capacity Must Follow the Engine
 

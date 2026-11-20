@@ -14,3 +14,5 @@ COPY image/llama-cpp/NOTICE.md image/llama-cpp/Dockerfile /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /llama.cpp-LICENSE /nlohmann-json-LICENSE /cpp-httplib-LICENSE /rotate-bits-LICENSE.md /xxhash-LICENSE /opt/nemoclaw/source/
 ENTRYPOINT ["/usr/local/bin/nemoclaw-runtime"]
 CMD []
+LABEL org.nemoclaw.inference.authentication="bearer-v1" \
+      org.nemoclaw.backend="llama-cpp"

@@ -14,7 +14,7 @@ pub(crate) const OUTPUT_LIMIT: usize = crate::EXITED_OUTPUT_LIMIT;
 pub(crate) struct Output {
     kept: Arc<Mutex<Kept>>,
     closed: tokio::sync::oneshot::Receiver<()>,
-    credential: Option<String>,
+    credentials: Vec<String>,
 }
 #[derive(Default)]
 struct Kept {
@@ -31,7 +31,22 @@ impl Kept {
     }
 }
 impl Output {
-    pub(crate) fn start(reader: std::io::PipeReader, credential: Option<String>) -> Self {
+    pub(crate) fn start(
+        reader: std::io::PipeReader,
+        credentials: impl IntoIterator<Item = String>,
+    ) -> Self {
+        Self::filtered(reader, credentials, |bytes, _| bytes.to_vec())
+    }
+
+    pub(crate) fn filtered(
+        reader: std::io::PipeReader,
+        credentials: impl IntoIterator<Item = String>,
+        mut filter: impl FnMut(&[u8], bool) -> Vec<u8> + Send + 'static,
+    ) -> Self {
+        let credentials: Vec<_> = credentials
+            .into_iter()
+            .filter(|key| !key.is_empty())
+            .collect();
         let kept = Arc::new(Mutex::new(Kept::default()));
         let (closed_tx, closed) = tokio::sync::oneshot::channel();
         let shared = kept.clone();
@@ -42,17 +57,19 @@ impl Output {
             let mut reader = reader;
             let mut buffer = [0; 8192];
             loop {
-                match reader.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(read) => {
-                        let _ = std::io::stderr().write_all(&buffer[..read]);
-                        shared
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner)
-                            .push(&buffer[..read]);
-                    }
-                    Err(error) if error.kind() == ErrorKind::Interrupted => {}
-                    Err(_) => break,
+                let read = match reader.read(&mut buffer) {
+                    Ok(read) => read,
+                    Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                    Err(_) => 0,
+                };
+                let bytes = filter(&buffer[..read], read == 0);
+                let _ = std::io::stderr().write_all(&bytes);
+                shared
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(&bytes);
+                if read == 0 {
+                    break;
                 }
             }
             let _ = closed_tx.send(());
@@ -60,7 +77,7 @@ impl Output {
         Self {
             kept,
             closed,
-            credential,
+            credentials,
         }
     }
     /// Add the end of the backend's output to the error for its exit. Call it
@@ -88,8 +105,8 @@ impl Output {
         let mut text = String::from_utf8_lossy(&bytes[start..])
             .trim_end()
             .to_owned();
-        // The backend receives the key in its environment; keep it out of errors.
-        if let Some(key) = &self.credential {
+        // The backend receives credentials in its environment; keep them out of errors.
+        for key in &self.credentials {
             text = text.replace(key.as_str(), "[redacted]");
         }
         Err(Error::Exited((!text.is_empty()).then_some(text)))

@@ -15,7 +15,7 @@ use nemoclaw_sdk::{
 };
 use openshell_sdk::{
     DeleteOptions, EdgeAuthInterceptor, ExecOptions, OpenShellClient, SandboxPhase, SandboxRef,
-    SandboxSpec,
+    SandboxSpec, raw::proto,
 };
 use std::{fs, path::PathBuf, time::Duration};
 use tonic::transport::Channel;
@@ -203,6 +203,31 @@ async fn pinned_docker_gateways_reach_ready_without_interfering_with_other_sandb
     let mut running = Vec::new();
     for spec in &specs {
         let client = start(&api, &engine, spec).await;
+        // NemoClaw drops a pending creation when OpenShell rejects it as an
+        // invalid argument, which is safe only while OpenShell stores nothing
+        // before that rejection: the create below then reuses the name.
+        let mut policy = proto::SandboxPolicy::default();
+        policy.network_policies.insert(
+            "_provider_reserved".into(),
+            proto::NetworkPolicyRule {
+                name: "_provider_reserved".into(),
+                ..Default::default()
+            },
+        );
+        let rejected = client
+            .raw_grpc()
+            .create_sandbox(proto::CreateSandboxRequest {
+                workspace_scope: Some(proto::workspace_selector("default")),
+                name: "isolation-check".into(),
+                spec: Some(proto::SandboxSpec {
+                    policy: Some(policy),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .await
+            .expect_err("OpenShell accepted a reserved policy key");
+        assert_eq!(rejected.code(), tonic::Code::InvalidArgument, "{rejected}");
         let sandbox = client
             .create_sandbox(SandboxSpec {
                 name: Some("isolation-check".into()),

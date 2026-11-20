@@ -1,65 +1,91 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Access Agent Interfaces
+# Accessing Agent Interfaces
 
-The OpenShell gateway manages sandbox access.
-Agents run inside their sandboxes; you reach them through OpenShell commands, not published host ports.
+The NVIDIA OpenShell gateway manages sandbox access.
+Agents run inside their sandboxes.
+You reach them through OpenShell commands, not published host ports.
 
-## Select the Gateway and Workspace
+## Selecting the Gateway and Workspace
 
-Use an OpenShell CLI matching the deployment implementation revision on the client host. For the [source-pinned tutorial](../get-started/first-deployment.md), use the OpenShell version its [prerequisites](../get-started/prerequisites.md#before-the-first-deployment) name.
-These selectors choose an existing OpenShell gateway and deployment; they do not create services or provision credentials.
+Use an OpenShell CLI matching the deployment implementation revision on the client host.
+For the [source-pinned tutorial](../get-started/first-deployment.md), use the OpenShell version its [prerequisites](../get-started/prerequisites.md#before-the-first-deployment) name.
+These selectors choose an existing OpenShell gateway and deployment.
+They don't create services or provision credentials.
 Run them in every terminal used for forwarding or sandbox commands, from any directory.
 
-For a managed Kubernetes or OpenShift gateway, first create its profile as [Reach the Gateway from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli) shows, then select it as below.
+For a managed Kubernetes or OpenShift gateway, first create its profile as [Reaching the Gateway From the OpenShell CLI](../build-deploy/kubernetes.md#reaching-the-gateway-from-the-openshell-cli) shows, then select it as below.
 
-For an existing authenticated gateway profile supplied by its operator:
+For an existing authenticated gateway profile supplied by its operator, follow these steps:
 
-```sh
-unset OPENSHELL_GATEWAY_ENDPOINT
-export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME
-```
+1. Clear any endpoint override.
+
+   ```sh
+   unset OPENSHELL_GATEWAY_ENDPOINT
+   ```
+
+2. Select the operator-provided profile.
+
+   ```sh
+   export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME
+   ```
 
 The profile's endpoint must match `spec.gateway.endpoint` in the deployment YAML.
 Its stored authentication must grant access to the deployment workspace.
 The endpoint override takes precedence over the profile, which is why this example clears it.
-NemoClaw's YAML credential and TLS environment references do not configure the OpenShell CLI's stored profile or credentials.
+NemoClaw's YAML credential and TLS environment references don't configure the OpenShell CLI's stored profile or credentials.
 To create a profile for an authenticated gateway, including its issuer or mTLS client certificates, follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx).
 
-For an existing plaintext loopback gateway instead, select its actual endpoint directly:
+For an existing plaintext loopback gateway instead, follow these steps:
 
-```sh
-unset OPENSHELL_GATEWAY
-export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
-```
+1. Clear the profile selector.
 
-Replace the example port with the one in your YAML.
+   ```sh
+   unset OPENSHELL_GATEWAY
+   ```
+
+2. Select the gateway's actual endpoint.
+
+   ```sh
+   export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
+   ```
+
+   Replace the example port with the one in your YAML.
 Use this variant only when that gateway is already listening on the client host's loopback interface.
-Do not replace an authenticated remote endpoint with plaintext or disable TLS verification to make access work.
+Don't replace an authenticated remote endpoint with plaintext or disable TLS verification to make access work.
 
-Copy the **OpenShell gateway** and **OpenShell workspace** selectors from the plan or apply result.
-To print them again without changing runtime resources, run from the directory containing the applied YAML, with the same state directory and credential environment:
+Use the **OpenShell gateway** and **OpenShell workspace** selectors from the plan or apply result. If you need them again, follow these steps:
 
-```sh
-nemoclaw plan deployment.yaml --state-dir .nemoclaw --non-interactive
-```
+1. Run plan from the directory containing the applied YAML, with the same state directory and credential environment.
 
-The workspace derives from `metadata.uid`; copy the reported value into each client terminal:
+   ```sh
+   nemoclaw plan deployment.yaml --state-dir .nemoclaw --non-interactive
+   ```
 
-```sh
-export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
-```
+   Plan does not change runtime resources.
+
+2. Confirm that the reported gateway matches the selected endpoint or profile.
+
+3. Select the reported workspace in each client terminal.
+
+   ```sh
+   export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
+   ```
+
+   The workspace derives from `metadata.uid`.
 
 JSON results expose the same values as `connection.gatewayEndpoint` and `connection.workspace`.
-These selectors describe the configured target, including when a plan is incomplete; they do not establish access or create an authenticated OpenShell CLI profile.
+These selectors describe the configured target, including when a plan is incomplete.
+They don't establish access or create an authenticated OpenShell CLI profile.
 The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-cli/src/main.rs).
-The forward or sandbox command below verifies access to the selected workspace; setting an environment variable alone does not.
+The forward or sandbox command below verifies access to the selected workspace.
+Setting an environment variable alone doesn't.
 On an authentication or missing-sandbox error, check the endpoint, workspace, sandbox name, and operator-provided credentials before changing deployment state.
 
-## Invoke an Agent
+## Invoking an Agent
 
-After [selecting the gateway and workspace](#select-the-gateway-and-workspace), send requests through `openshell sandbox exec`.
+After [selecting the gateway and workspace](#selecting-the-gateway-and-workspace), send requests through `openshell sandbox exec`.
 Plan and apply print a command for each agent with a recorded runtime ID, as in this illustrative output:
 
 ```text
@@ -73,34 +99,45 @@ Agents:
   FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents-inference/agents.md.
 ```
 
-JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`. If an apply result also lists interfaces, the CLI prints the gateway and workspace selection once under **Agents**, not again under **Agent interfaces**.
+JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`.
+If an apply result also lists interfaces, the CLI prints the gateway and workspace selection once under **Agents**, not again under **Agent interfaces**.
 A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
 A plan omits that section when no agent has a recorded runtime, such as before the first apply.
 Otherwise, an agent without a recorded runtime is listed with `no runtime recorded` and has no `runtimeId`.
-[Run one request](agents.md#run-one-agent-request) shows the command and its input.
-The selected Fabric adapter owns how the harness handles the request.
+[Run one request](agents.md#running-one-agent-request) shows the command and its input.
+The selected NVIDIA NeMo Fabric adapter owns how the harness handles the request.
 
-## Forward a Native Service
+## Forwarding a Native Service
 
-An adapter that serves a native listener inside the sandbox can be reached by forwarding it from a private terminal on the client host:
+An adapter can serve a native listener inside its sandbox.
+Reach it from a private terminal on the client host:
 
-```sh
-openshell forward service REPLACE_WITH_SANDBOX --target-port REPLACE_WITH_PORT --local 127.0.0.1:REPLACE_WITH_PORT
-```
+1. [Select the gateway and workspace](#selecting-the-gateway-and-workspace) in that terminal.
 
-The foreground command forwards through the authenticated OpenShell connection to the sandbox's loopback service.
-Keep forwarding bound to loopback, follow the adapter's authentication requirements, and stop forwarding with Ctrl-C.
-Stopping a client forward does not stop the sandbox or its Fabric runtime.
+2. Forward the sandbox's loopback service, bound to client loopback.
 
-Apply prints this command for each interface that an agent's configuration enables; see [Reach an Agent Interface](#reach-an-agent-interface).
+   ```sh
+   openshell forward service REPLACE_WITH_SANDBOX --target-port REPLACE_WITH_PORT --local 127.0.0.1:REPLACE_WITH_PORT
+   ```
 
-## Reach an Agent Interface
+   The command stays in the foreground and forwards through the authenticated OpenShell connection.
 
-OpenClaw's Control UI and Hermes's API server and dashboard are served by the agent's Fabric runtime inside its sandbox, on loopback ports that you choose.
-Fabric's adapters start them, generate their tokens, and stop them with the runtime; NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
-The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/56a4207b3c7edacd6e0cceea0af7815d2df274ca/docs/integrations/harness/openclaw/openclaw-dashboard.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/56a4207b3c7edacd6e0cceea0af7815d2df274ca/docs/integrations/harness/hermes/hermes.mdx#select-execution-paths) document each interface's behavior.
+3. Follow the selected adapter's authentication requirements before using the service.
 
-### Enable an Interface
+4. Stop forwarding with Ctrl+C when finished.
+   This doesn't stop the sandbox or its Fabric runtime.
+
+Apply prints this command for each interface that an agent's configuration enables.
+See [Reaching an Agent Interface](#reaching-an-agent-interface).
+
+## Reaching an Agent Interface
+
+The agent's Fabric runtime serves OpenClaw's Control UI and Hermes's API server and dashboard inside its sandbox, on loopback ports that you choose.
+Fabric's adapters start them, generate their tokens, and stop them with the runtime.
+NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
+The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/docs/integrations/harness/openclaw/openclaw-dashboard.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/docs/integrations/harness/hermes/hermes.mdx#select-execution-paths) document each interface's behavior.
+
+### Enabling an Interface
 
 Declare each interface under the agent's `harness.settings.interfaces` with an exact `port`:
 
@@ -131,18 +168,21 @@ sandboxes:
 | Hermes | `dashboard`, with browser chat | `port` (required), `enabled` | No | None |
 | Hermes | `terminal`, the terminal UI; experimental in Fabric | `port` (required, the dashboard's port when both are on), `enabled` | No | The `Terminal` command signs in |
 
-An interface is on while it is present, unless it sets `enabled: false`.
+An interface is on while it's present, unless it sets `enabled: false`.
 OpenClaw reserves the ports from `port` through `port + 110`, and its `port` can't be combined with `port_range`.
 Hermes's `startup_timeout_seconds` setting, 60 by default and at most 75, bounds how long its interfaces have to start.
 
 Planning checks each interface against its schema in the image's adapter descriptor.
 It rejects an interface name or field that the adapter doesn't declare, for example `sandbox/claw: adapter/nvidia.fabric.openclaw compatibility rejected; harness_interfaces: harness.settings.interfaces.api: the image's adapter does not support this interface setting`, and a missing required field, a wrong type, or an out-of-range value, for example `harness_interfaces: harness.settings.interfaces.api.port: is required by the image's adapter`.
-Fabric checks the rest when it starts the agent: settings outside the interfaces, combinations such as OpenClaw's `port` with `port_range`, and a port that is already in use. The agent fails to start if an enabled interface can't start.
+Fabric checks the rest when it starts the agent: settings outside the interfaces, combinations such as OpenClaw's `port` with `port_range`, and a port that's already in use.
+The agent fails to start if an enabled interface can't start.
 Changing an agent's settings, including its interfaces, replaces its sandbox, deleting its files and conversations.
 
-### Forward, Read the Token, and Sign In
+### Forwarding, Reading the Token, and Signing In
 
-After apply, NemoClaw lists each enabled interface with the commands to reach it, and never prints a token. The following illustrative excerpt shows interface selection commands in isolation; in an apply result that also reports a recorded agent runtime, the **Agents** block supplies those commands instead:
+After apply, NemoClaw lists each enabled interface with the commands to reach it, and never prints a token.
+The following illustrative excerpt shows interface selection commands in isolation.
+In an apply result that also reports a recorded agent runtime, the **Agents** block supplies those commands instead:
 
 ```text
 Agent interfaces:
@@ -158,29 +198,45 @@ Agent interfaces:
 ```
 
 JSON results carry the same facts under `interfaces`.
-The gateway selection follows [Select the Gateway and Workspace](#select-the-gateway-and-workspace); for a gateway that needs an OpenShell profile, the output asks for your profile's name.
+The gateway selection follows [Selecting the Gateway and Workspace](#selecting-the-gateway-and-workspace).
+For a gateway that needs an OpenShell profile, the output asks for your profile's name.
 
-1. Run the forward in its own terminal and keep it running.
-2. Read the token with the `Token` command, in another terminal with the same selection.
+1. [Select the gateway and workspace](#selecting-the-gateway-and-workspace) in the terminal that will run the forward.
+2. Run the `Forward` command in that terminal and keep it running. Bind it to loopback; stopping the forward does not stop the runtime.
+3. Select the same gateway and workspace in a separate private terminal.
+4. If the interface requires a token, read it with the `Token` command in that terminal. Do not paste a token into shell history or shared logs.
    The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
-   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes or OpenClaw, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
-   The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user; stopping the runtime removes it.
-   After the runtime restarts, apply prints the new path; read the token again.
-3. Sign in:
-   - OpenClaw: open `http://127.0.0.1:PORT/#token=TOKEN` in a browser. The Control UI removes the token from the address bar. OpenClaw accepts any loopback origin with the token, so a forward to another local port also works.
-   - Hermes's API server: send `Authorization: Bearer TOKEN` with each request, for example to `http://127.0.0.1:PORT/v1/models`.
-   - Hermes's dashboard: open `http://127.0.0.1:PORT/`. It has no sign-in.
+   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes or OpenClaw, it's at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
+   The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user.
+   Stopping the runtime removes it.
+   After the runtime restarts, apply prints a new path.
+   Repeat this step to read the new token.
+5. Sign in using the method for the selected interface:
 
-Keep tokens out of YAML, shell history, and shared logs; NemoClaw stores none in its state.
+   - OpenClaw: Open `http://127.0.0.1:PORT/#token=TOKEN` in a browser.
+     The Control UI removes the token from the address bar.
+     OpenClaw accepts any loopback origin with the token, so a forward to another local port also works.
+   - Hermes's API server: Send `Authorization: Bearer TOKEN` with each request, for example to `http://127.0.0.1:PORT/v1/models`.
+   - Hermes's dashboard: Open `http://127.0.0.1:PORT/`.
+     It has no sign-in.
+     Anyone who can reach its forward can use it.
+
+6. Send a short request through the signed-in interface to verify the model replies.
+   A successful forward or sign-in alone doesn't establish inference.
+
+NemoClaw stores no interface tokens in its state.
 Hermes's API server and browser chat call the model the agent's configuration names, with its key.
 
 ### Who Can Use an Interface
 
-The interface's location and authentication determine which actors can reach it.
+The interface's location and authentication determine which actors can reach it:
 
-- **The agent's own tools.** Tools that the agent runs in its sandbox run as the same user as its runtime, so they can read and change the token files and reach the interfaces' ports. The agent can sign in to its own interfaces and use their configuration, cron, and plugin features, which can change what it does outside the guardrails of its harness, though not OpenShell's policy.
-- **Hermes's dashboard.** Anyone who can reach its forward can use it, including its browser chat, which runs the agent without approvals. Its gateway actions, such as restarting the gateway, start Hermes processes that replace the one Fabric started and can keep running after the runtime stops.
-- **Forwards and exposed URLs.** Prefer `openshell forward service`: the gateway authorizes each forwarded connection for your identity and workspace. A [service exposure](#expose-a-service-through-the-gateway) skips that authorization, so the interface's own sign-in is all that protects it, and Hermes's dashboard has none.
+- **The agent's own tools.** Tools that the agent runs in its sandbox run as the same user as its runtime, so they can read and change the token files and reach the interfaces' ports.
+  The agent can sign in to its own interfaces and use their configuration, cron, and plugin features, which can change what it does outside the guardrails of its harness, though not OpenShell's policy.
+- **Hermes's dashboard.** Anyone who can reach its forward can use it, including its browser chat, which runs the agent without approvals.
+  Its gateway actions, such as restarting the gateway, start Hermes processes that replace the one Fabric started and can keep running after the runtime stops.
+- **Forwards and exposed URLs.** Prefer `openshell forward service`: the gateway authorizes each forwarded connection for your identity and workspace.
+  A [service exposure](#exposing-a-service-through-the-gateway) skips that authorization, so the interface's own sign-in is all that protects it, and Hermes's dashboard has none.
 
 Configuration changed through an interface isn't kept: the adapter regenerates the harness's configuration at each start.
 Conversations in an interface aren't promised to share history with requests sent through `fabric-agent-ctl invoke`.
@@ -189,25 +245,43 @@ Conversations in an interface aren't promised to share history with requests sen
 
 OpenClaw's terminal UI, `openclaw tui`, is a client of the Gateway that serves the Control UI, so it needs the `dashboard` interface and signs in with its token.
 Apply prints the command that opens it on the dashboard's `Terminal` line, and JSON results carry the command it runs in the sandbox as `terminal`.
-Run it from a terminal on the client host with the gateway and workspace selected; it needs no forward.
-To keep the token out of your shell history, read it into a variable with the `Token` command:
+Run it from a terminal on the client host with the gateway and workspace selected.
+It needs no forward.
+Keep the token out of shell history:
 
-```sh
-TOKEN=$(openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token)
-openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
-unset TOKEN
-```
+1. Read the token into a variable with the `Token` command.
 
-Press Ctrl-D to quit. Opening it again reconnects to the same session and shows its history.
-The token changes each time the runtime starts, so read it again after a restart.
+   ```sh
+   TOKEN=$(openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token)
+   ```
+
+2. Open the terminal UI.
+
+   ```sh
+   openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
+   ```
+
+3. Press Ctrl+D to quit when finished.
+   Opening the terminal UI again reconnects to the same session and shows its history.
+
+4. Clear the client terminal's token variable after the terminal UI exits.
+
+   ```sh
+   unset TOKEN
+   ```
+
+The token changes each time the runtime starts.
+Repeat the token-reading step after a restart.
 The agent's own tools can read the token, as [Who Can Use an Interface](#who-can-use-an-interface) describes.
 
-OpenShell opens the pseudo-terminal of `openshell sandbox exec --tty` and hands it to the command, so the terminal UI works without `/dev/pts` in the sandbox's filesystem policy. Hermes's browser chat opens its own pseudo-terminal, so it needs `/dev/pts`, as [Hermes's Browser Chat](#hermess-browser-chat) describes.
+OpenShell opens the pseudo-terminal of `openshell sandbox exec --tty` and hands it to the command, so the terminal UI works without `/dev/pts` in the sandbox's filesystem policy.
+Hermes's browser chat opens its own pseudo-terminal, so it needs `/dev/pts`, as [Hermes's Browser Chat](#hermess-browser-chat) describes.
 
 ### Hermes's Terminal UI
 
 Hermes's `terminal` interface attaches Hermes's terminal UI to the backend that serves browser chat, which the agent's runtime starts.
-Fabric marks this interface experimental: its `terminal` setting, the attachment files, and the attach helper may change between Fabric releases without compatibility; see [Fabric's Hermes terminal guide](https://github.com/NVIDIA/NeMo-Fabric/blob/56a4207b3c7edacd6e0cceea0af7815d2df274ca/docs/integrations/harness/hermes/hermes-tui.mdx).
+Fabric marks this interface experimental: its `terminal` setting, the attachment files, and the attach helper might change between Fabric releases without compatibility.
+See [Fabric's Hermes terminal guide](https://github.com/NVIDIA/NeMo-Fabric/blob/c6d1093df8db41d0dc922c27b9166fa48f1db21b/docs/integrations/harness/hermes/hermes-tui.mdx).
 Fabric tracks what it takes for the interface to stop being experimental in [NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656).
 Give it the dashboard's port, so that both use one backend process:
 
@@ -233,13 +307,18 @@ Apply prints the command that opens the terminal UI on the interface's `Terminal
     Terminal: openshell sandbox exec -n hermes --tty -- /opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/AGENT/interfaces/tui.json
 ```
 
-Run it from a terminal on the client host with the gateway and workspace selected; it needs no forward and no token.
-Fabric's attach helper reads the backend's port and token from the runtime's `tui.json` and `tui.token` in the agent's [kept state](../build-deploy/state.md#agent-files), which only the sandbox's user can read, and starts the terminal UI on that backend; it fails if the backend doesn't accept the token, and never starts a backend of its own.
+Run it from a terminal on the client host with the gateway and workspace selected.
+It needs no forward and no token.
+Fabric's attach helper reads the backend's port and token from the runtime's `tui.json` and `tui.token` in the agent's [kept state](../build-deploy/state.md#agent-files), which only the sandbox's user can read, and starts the terminal UI on that backend.
+It fails if the backend doesn't accept the token, and never starts a backend of its own.
 Anyone who can run commands in the sandbox, including the agent's own tools, can open it.
 
-Each terminal UI starts a new conversation in the agent's Hermes home, with the agent's configuration, skills, and model; it doesn't continue the conversations of `fabric-agent-ctl invoke` or browser chat.
-Press Ctrl-D to quit; quitting leaves the runtime and the backend running.
-Stopping the runtime stops the backend and removes the attachment files, so open the terminal UI again after the runtime restarts; what an open terminal UI does when its runtime stops isn't settled yet ([NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656)).
+Each terminal UI starts a new conversation in the agent's Hermes home, with the agent's configuration, skills, and model.
+It doesn't continue the conversations of `fabric-agent-ctl invoke` or browser chat.
+Press Ctrl+D to quit.
+Quitting leaves the runtime and the backend running.
+Stopping the runtime stops the backend and removes the attachment files, so open the terminal UI again after the runtime restarts.
+What an open terminal UI does when its runtime stops isn't settled yet ([NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656)).
 
 ### Hermes's Browser Chat
 
@@ -250,17 +329,18 @@ Other agent images' default policies grant neither.
 With those devices writable, every process in the Hermes sandbox, including the agent's own tools, can open pseudo-terminals.
 The image's catalog label lists the defaults under `runtime.policy.filesystem_policy`.
 
-An [explicit policy](../security/sandbox-network.md#choose-a-policy) replaces the image's defaults.
-For browser chat, its `filesystem_policy.read_write` must list `/dev/pts`; `/dev/ptmx` alone isn't enough, and without `/dev/pts` the chat fails with `out of pty devices`.
+An [explicit policy](../security/sandbox-network.md#choosing-a-policy) replaces the image's defaults.
+For browser chat, its `filesystem_policy.read_write` must list `/dev/pts`.
+`/dev/ptmx` alone isn't enough, and without `/dev/pts` the chat fails with `out of pty devices`.
 The API server and the rest of the dashboard work either way.
 
 ### Interface Failures
 
 Only the agent's runtime check decides whether NemoClaw finds the agent running.
-OpenClaw's Control UI is served by its Gateway, which is the runtime itself, so its failure is the runtime's.
+OpenClaw's Gateway is the runtime itself and serves the Control UI, so a Control UI failure is a runtime failure.
 A Hermes interface process that exits leaves the agent running: plan reports no change, neither Fabric nor NemoClaw restarts the process or reports its failure, and the interface returns when the runtime next starts.
 
-## Expose a Service Through the Gateway
+## Exposing a Service Through the Gateway
 
 To make a sandbox's loopback listener reachable at a URL that OpenShell's gateway serves, declare it under the sandbox's `serviceExposures`, keyed by service name:
 
@@ -275,7 +355,8 @@ sandboxes:
 
 Each entry maps to an OpenShell service exposure: its key is the service name, and it takes `targetPort` and an optional `authorizationMode` (`STRIP` or `BEARER_PASSTHROUGH`).
 OpenShell applies `STRIP` when the mode is omitted, and the empty key `""` is the unnamed endpoint.
-OpenShell checks the names when it creates the sandbox or exposes a service; see its [service exposure rules](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/overview.mdx#expose-long-running-services).
+OpenShell checks the names when it creates the sandbox or exposes a service.
+See its [service exposure rules](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/overview.mdx#expose-long-running-services).
 A sandbox takes at most 32 exposures.
 Adding, changing, or removing an exposure updates the running sandbox's endpoints in place, as `openshell service expose` and `openshell service delete` do, so the sandbox keeps its files and conversations.
 Apply also restores a declared endpoint that was changed or deleted on the gateway, and leaves endpoints under other names alone.
@@ -284,15 +365,16 @@ In HCL, use `openshell_sandbox`'s [`service` blocks](../references/provider.md#o
 Requests to the URL skip OpenShell's gateway authentication: they use no OIDC or CLI login, and only the gateway listener's TLS, including any required client certificate, applies.
 The service must listen on loopback and authenticate its own clients.
 `BEARER_PASSTHROUGH` delivers the caller's bearer token to the service, so use it only for a service trusted with that credential.
-A successful apply lists the URL the gateway reports for each exposure under **Service URLs**, as `sandbox/service: URL`; the unnamed endpoint is listed as `sandbox: URL`.
+A successful apply lists the URL the gateway reports for each exposure under **Service URLs**, as `sandbox/service: URL`.
+The unnamed endpoint is listed as `sandbox: URL`.
 JSON results key them by sandbox and service name under `serviceUrls`, with `""` for the unnamed endpoint.
 An unchanged apply lists them again.
 
-## Diagnose Failures
+## Diagnosing Failures
 
 Check gateway authorization, the UID-derived workspace, sandbox name, and native service state independently.
-Inspect the [native logs](../observability/troubleshooting.md#read-native-service-logs) through the retained sandbox binding.
-A working forward does not establish that the native service has valid authentication or a working model connection.
+Inspect the [native logs](../observability/troubleshooting.md#reading-native-service-logs) through the retained sandbox binding.
+A working forward doesn't establish that the native service has valid authentication or a working model connection.
 
 NemoClaw compares the retained public Fabric configuration with the runtime host's configuration and preserves resource identities on failure.
 Fabric owns configuration validation and native diagnostics.
@@ -300,5 +382,7 @@ Configuration failures name the sandbox and report a fixed stage, code, and runt
 Fabric's own message is left out of the output, because it can repeat what the harness printed, including secrets NemoClaw can't recognize to redact.
 NemoClaw keeps it in `diagnostics/fabric-SANDBOX.json` in the deployment's state directory, and the error names that file: `Fabric's message is in PATH`.
 On Linux and macOS, only the state directory's owner can read the file.
-Inspect it privately before sharing excerpts; a later failure in the same sandbox replaces it.
-Correct the reported conflict before reapplying; do not delete retained state to hide drift.
+Inspect it privately before sharing excerpts.
+A later failure in the same sandbox replaces it.
+Correct the reported conflict before reapplying.
+Don't delete retained state to hide drift.
