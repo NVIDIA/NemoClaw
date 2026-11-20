@@ -183,8 +183,8 @@ impl Service {
     ) -> Result<&crate::config::ManagedGateway, ConfigError> {
         let gateway = document.spec.gateway.managed()?;
         require(
-            gateway.runtime.provider == crate::config::ComputeDriver::Docker
-                && crate::config::engine_socket(&gateway.engine).is_some(),
+            gateway.compute_driver() == crate::config::ComputeDriver::Docker
+                && crate::config::engine_socket(gateway.engine()).is_some(),
             "container requires a managed local Docker gateway",
         )?;
         Ok(gateway)
@@ -205,9 +205,9 @@ impl Installer for Service {
         let gateway = Self::gateway(document)?;
         let resources = self.container.resources()?;
         let process = Process {
-            engine: gateway.engine.clone(),
+            engine: gateway.engine().to_owned(),
             image: self.image.clone(),
-            network_cidr: gateway.network_cidr.clone(),
+            network_cidr: gateway.network_cidr().to_owned(),
             image_owned: Some(ImageLaunch {
                 user: self.user.clone(),
                 environment: self.environment.clone(),

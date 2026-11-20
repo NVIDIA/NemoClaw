@@ -79,7 +79,6 @@ resource openshell_kubernetes_auth (version 0)
   authentication_profile: string, required
   compute_driver: string, required
   context: string, optional, computed
-  endpoint: string, required
   environment: list(string), optional
   generation: string, optional, computed
   id: string, computed
@@ -95,7 +94,6 @@ resource openshell_kubernetes_gateway (version 0)
   authentication_profile: string, required
   compute_driver: string, required
   context: string, optional, computed
-  endpoint: string, required
   environment: list(string), optional
   generation: string, optional, computed
   id: string, computed
@@ -110,7 +108,6 @@ resource openshell_kubernetes_storage (version 0)
   authentication_profile: string, required
   compute_driver: string, required
   context: string, optional, computed
-  endpoint: string, required
   environment: list(string), optional
   generation: string, optional, computed
   id: string, computed
@@ -446,7 +443,7 @@ data openshell_gateway (version 0)
   compute_driver_count: number, computed
   compute_drivers: set(string), computed
   credential_env: string, optional
-  endpoint: string, required
+  endpoint: string, optional
   gateway_version: string, computed
   incompatibility: string, computed
   kubernetes: string, optional

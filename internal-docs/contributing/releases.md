@@ -132,7 +132,7 @@ Use [image assessment](image-assessment.md) to evaluate the saved SPDX inventori
 Local assessment does not authorize publication.
 
 Deploy with the CLI archive for your platform and the digests the draft lists.
-Docker deployments pull private images through `spec.registries`; Kubernetes deployments use `imagePullSecrets`.
+Docker deployments pull private images through `spec.registries`; Kubernetes deployments use pull Secrets named in `image_pull_secrets` in the `openshell.drivers.kubernetes` table of `spec.gateway.config`.
 
 ## Publishing
 

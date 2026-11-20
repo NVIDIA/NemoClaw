@@ -14,8 +14,8 @@ spec:
   # Supply the existing OpenShift cluster's OpenShell gateway.
   gateway:
     management: external
-    runtime:
-      provider: openshift
+    target:
+      openshift: {}
     endpoint: https://openshell.example.com
     credential: {env: GATEWAY_TOKEN}
     tls:

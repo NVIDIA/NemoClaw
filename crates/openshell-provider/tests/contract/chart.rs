@@ -5,7 +5,7 @@
 //! `hcl/chart/tests` holds the expectations.
 
 use nemoclaw_sdk::{
-    config::ComputeDriver,
+    config::ManagedTarget,
     kubernetes::{GATEWAY_KIND, Spec, auth::Development, gateway, issuer},
 };
 use nemoclaw_test_fixtures::{Bundle, tofu::TofuWorkspace};
@@ -18,12 +18,10 @@ fn spec() -> Spec {
         "owner": "11111111-1111-4111-8111-111111111111",
         "generation": "0123456789abcdef0123456789abcdef",
         "settings": {
-            "runtime": {"provider": "kubernetes"},
-            "endpoint": "https://127.0.0.1:17671",
-            "kubernetes": {
+            "target": {"kubernetes": {
                 "kubeconfig": {"env": "TEST_KUBECONFIG"}, "context": "selected", "namespace": "agents",
                 "authentication": {"profile": "development"}
-            }
+            }}
         }
     }))
     .unwrap()
@@ -71,28 +69,36 @@ fn render(test: &str) {
     let kubernetes = spec();
     write("kubernetes.json", &values(&kubernetes));
     let mut pull_secrets = spec();
-    pull_secrets
-        .settings
-        .kubernetes
-        .as_mut()
-        .unwrap()
-        .image_pull_secrets = vec!["registry-team".into(), "registry.backup".into()];
+    pull_secrets.settings.config = Some(
+        serde_json::from_value(json!({"openshell.drivers.kubernetes": {
+            "image_pull_secrets": ["registry-team", "registry.backup"]
+        }}))
+        .unwrap(),
+    );
     write("pull-secrets.json", &values(&pull_secrets));
+    let openshift_target = |spec: &mut Spec| {
+        let cluster = spec.settings.cluster().unwrap().clone();
+        spec.settings.target = ManagedTarget::OpenShift(Box::new(cluster));
+    };
     let mut openshift = spec();
-    openshift.settings.runtime.provider = ComputeDriver::OpenShift;
+    openshift_target(&mut openshift);
     write("openshift.json", &values(&openshift));
     let mut exposed = spec();
-    exposed.settings.endpoint = "https://gateway.agents.example.com:30851".into();
-    exposed.settings.kubernetes.as_mut().unwrap().expose =
-        Some(serde_json::from_value(json!({"service": {"type": "NodePort"}})).unwrap());
+    exposed.settings.target.cluster_mut().unwrap().expose = Some(
+        serde_json::from_value(json!({
+            "endpoint": "https://gateway.agents.example.com:30851",
+            "service": {"type": "NodePort"}
+        }))
+        .unwrap(),
+    );
     write("exposed.json", &values(&exposed));
     let mut routed = spec();
-    routed.settings.runtime.provider = ComputeDriver::OpenShift;
-    routed.settings.endpoint = "https://gateway.apps.example.com:443".into();
-    routed.settings.kubernetes.as_mut().unwrap().expose = Some(
-        serde_json::from_value(json!({"route": {
-            "annotations": {"haproxy.router.openshift.io/timeout": "1h"}
-        }}))
+    openshift_target(&mut routed);
+    routed.settings.target.cluster_mut().unwrap().expose = Some(
+        serde_json::from_value(json!({
+            "endpoint": "https://gateway.apps.example.com:443",
+            "route": {"annotations": {"haproxy.router.openshift.io/timeout": "1h"}}
+        }))
         .unwrap(),
     );
     write("routed.json", &values(&routed));
@@ -125,7 +131,7 @@ fn kubernetes_values_render_in_the_pinned_chart() {
 
 #[test]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; pulls the pinned chart"]
-fn pull_secret_names_reach_pods_and_the_sandbox_driver() {
+fn pull_secret_names_reach_only_the_sandbox_driver() {
     render("tests/pull-secrets.tftest.hcl");
 }
 

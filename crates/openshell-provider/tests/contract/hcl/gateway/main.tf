@@ -47,7 +47,6 @@ locals {
   cluster = {
     name                   = "nc-0123456789abcdef-gateway"
     compute_driver         = "openshift"
-    endpoint               = "https://127.0.0.1:17671"
     kubeconfig_env         = "TEST_CLUSTER_KUBECONFIG"
     context                = "selected"
     namespace              = var.namespace
@@ -58,7 +57,6 @@ locals {
 resource "openshell_kubernetes_storage" "platform" {
   name                   = local.cluster.name
   compute_driver         = local.cluster.compute_driver
-  endpoint               = local.cluster.endpoint
   kubeconfig_env         = local.cluster.kubeconfig_env
   context                = local.cluster.context
   namespace              = local.cluster.namespace
@@ -68,7 +66,6 @@ resource "openshell_kubernetes_storage" "platform" {
 resource "openshell_kubernetes_auth" "platform" {
   name                   = local.cluster.name
   compute_driver         = local.cluster.compute_driver
-  endpoint               = local.cluster.endpoint
   kubeconfig_env         = local.cluster.kubeconfig_env
   context                = local.cluster.context
   namespace              = local.cluster.namespace
@@ -80,7 +77,6 @@ resource "openshell_kubernetes_auth" "platform" {
 resource "openshell_kubernetes_gateway" "platform" {
   name                   = local.cluster.name
   compute_driver         = local.cluster.compute_driver
-  endpoint               = local.cluster.endpoint
   kubeconfig_env         = local.cluster.kubeconfig_env
   context                = local.cluster.context
   namespace              = local.cluster.namespace

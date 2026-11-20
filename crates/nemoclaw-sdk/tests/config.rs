@@ -50,7 +50,7 @@ fn unsafe_yaml_and_secret_values_are_rejected_without_echoing_input() {
             "model: qwen3.5:0.8b",
             "model: '${file(\"secret-do-not-print\")}'",
         ),
-        ("provider: docker", "provider: unsupported"),
+        ("docker: {}", "unsupported: {}"),
         ("kind: nvidia.fabric.openclaw", "kind: ' '"),
     ];
     for (from, to) in changes {
@@ -103,7 +103,15 @@ fn managed_gateway_network_is_written_without_leading_zeros() {
     let mut document =
         Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     // Docker rejects the leading zero when it creates the network.
-    document.spec.gateway.as_managed_mut().unwrap().network_cidr = "172.030.110.0/24".into();
+    document
+        .spec
+        .gateway
+        .as_managed_mut()
+        .unwrap()
+        .target
+        .local_mut()
+        .unwrap()
+        .network_cidr = "172.030.110.0/24".into();
     assert!(document.validate().is_err());
 }
 
@@ -153,20 +161,21 @@ fn inference_endpoints_leave_destination_checks_to_openshell() {
 fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
     let original = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let mut defaulted = original.clone();
-    defaulted.spec.gateway.endpoint_mut().clear();
-    defaulted
+    let local = defaulted
         .spec
         .gateway
         .as_managed_mut()
         .unwrap()
-        .engine
-        .clear();
+        .target
+        .local_mut()
+        .unwrap();
+    local.port = 0;
+    local.engine.clear();
     let ServiceDefinition::Vllm(service) = defaulted.spec.services.get_mut("qwen").unwrap() else {
         panic!("expected vLLM service");
     };
     service.serving = Default::default();
     service.memory = Default::default();
-    *defaulted.spec.gateway.runtime_mut() = Default::default();
     defaulted
         .spec
         .sandboxes

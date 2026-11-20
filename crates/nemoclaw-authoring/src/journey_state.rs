@@ -6,7 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
+use nemoclaw_sdk::config::{
+    Document, ExternalTarget, InferenceApi, InferenceProviderKind, ManagedTarget,
+};
 use nemoclaw_sdk::discovery::{
     AgentImagesRequest, DiscoveryObservations, DiscoveryRequest, ObservationStatus,
 };
@@ -25,14 +27,14 @@ use crate::{
     },
     sdk_schema::{
         finite_choices, sdk_discriminator, sdk_exclusive_required_fields, sdk_field_possible,
-        sdk_field_schema, sdk_field_schema_for, sdk_selected_branch,
+        sdk_field_schema, sdk_field_schema_for, sdk_selected_branch, sdk_variant_choice,
     },
     settings::SettingQuestion,
 };
 
 const ROUTE_SELECTION: &str = "route:selection";
-const RUNTIME_PROVIDER: &str = "/spec/gateway/runtime/provider";
-const GATEWAY_ENGINE_PATH: &str = "/spec/gateway/engine";
+/// Where the gateway runs: a keyed union answered by its key, such as `docker`.
+const GATEWAY_TARGET: &str = "/spec/gateway/target";
 
 /// Why an applicable decision is still open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,7 +72,7 @@ enum SdkFieldRole {
     Plain,
     ProviderApi,
     ProviderEndpoint,
-    RuntimeProvider,
+    GatewayTarget,
     GatewayManagement,
     GatewayEngine,
 }
@@ -94,11 +96,11 @@ impl QuestionTarget {
         // A field of a deployment provider, keyed by the provider's name.
         let provider_field =
             segments.len() == 5 && segments[1] == "spec" && segments[2] == "inferenceProviders";
-        let role = if path == RUNTIME_PROVIDER {
-            SdkFieldRole::RuntimeProvider
+        let role = if path == GATEWAY_TARGET {
+            SdkFieldRole::GatewayTarget
         } else if path == "/spec/gateway/management" {
             SdkFieldRole::GatewayManagement
-        } else if path == GATEWAY_ENGINE_PATH {
+        } else if is_gateway_engine(&path) {
             SdkFieldRole::GatewayEngine
         } else if provider_field && segments[4] == "api" {
             SdkFieldRole::ProviderApi
@@ -334,7 +336,8 @@ impl JourneyState {
             .strip_prefix("/spec/sandboxes/")?
             .strip_suffix("/image/ref")?;
         let values = &self.authored.values;
-        let engine = values.pointer(GATEWAY_ENGINE_PATH)?.as_str()?;
+        let (_, engine) = gateway_engine(values)?;
+        let engine = values.pointer(&engine)?.as_str()?;
         let adapter_id = harness_kind(values)?;
         (!engine.is_empty() && !adapter_id.is_empty()).then(|| AgentImagesRequest {
             engine: engine.to_owned(),
@@ -429,6 +432,6 @@ use authored_values::AuthoredValues;
 use decision_record::DecisionRecord;
 use journey_position::JourneyPosition;
 use paths::{
-    agent_path, escape_pointer, harness_kind, harness_path, native_value, routes_path,
-    scalar_question, settings_path,
+    agent_path, escape_pointer, gateway_engine, gateway_target, harness_kind, harness_path,
+    is_gateway_engine, native_value, routes_path, scalar_question, settings_path,
 };

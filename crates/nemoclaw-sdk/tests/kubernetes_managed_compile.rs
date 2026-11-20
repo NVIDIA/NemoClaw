@@ -12,23 +12,28 @@ fn document() -> Document {
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
     let mut value = serde_json::to_value(original).unwrap();
     value["spec"]["gateway"] = json!({
-        "management": "managed", "endpoint": "https://127.0.0.1:17671",
-        "kubernetes": {
+        "management": "managed",
+        "target": {"kubernetes": {
             "kubeconfig": {"env":"TEST_KUBECONFIG"}, "context":"test-cluster", "namespace":"test-agents",
             "authentication":{"profile":"development"}
-        }
+        }}
     });
-    value["spec"]["gateway"]["runtime"] = json!({"provider": "kubernetes"});
     value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
         json!({"env":"TEST_IMAGE_METADATA"});
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+}
+
+/// The input with the same cluster settings under another target key.
+fn retarget(value: &mut serde_json::Value, key: &str) {
+    let target = value["spec"]["gateway"]["target"]["kubernetes"].take();
+    value["spec"]["gateway"]["target"] = json!({ key: target });
 }
 
 /// The same target without a kubeconfig and context: clients use the
 /// service account of the pod that runs NemoClaw.
 fn pod_document() -> Document {
     let mut value = serde_json::to_value(document()).unwrap();
-    let kubernetes = value["spec"]["gateway"]["kubernetes"]
+    let kubernetes = value["spec"]["gateway"]["target"]["kubernetes"]
         .as_object_mut()
         .unwrap();
     kubernetes.remove("kubeconfig");
@@ -40,9 +45,47 @@ fn pod_document() -> Document {
 /// address clients dial.
 fn exposed_document() -> Document {
     let mut value = serde_json::to_value(document()).unwrap();
-    value["spec"]["gateway"]["endpoint"] = json!("https://gateway.agents.example.com:30851");
-    value["spec"]["gateway"]["kubernetes"]["expose"] = json!({"service": {"type": "NodePort"}});
+    value["spec"]["gateway"]["target"]["kubernetes"]["expose"] = json!({
+        "endpoint": "https://gateway.agents.example.com:30851",
+        "service": {"type": "NodePort"}
+    });
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+}
+
+/// Without expose, the document names no port: every command forwards its
+/// own free local port to the gateway pod. Nothing compiled from the document
+/// names an endpoint, so plans of an applied deployment compare equal however
+/// the forwards differ.
+#[test]
+fn an_unexposed_gateway_compiles_the_same_without_an_endpoint() {
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "kubernetes_gateway",
+        "kubernetes_storage",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let document = document();
+    assert_eq!(document.spec.gateway.endpoint(), None);
+    let platform = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let agents = compile(&document, &generations, "0.1.0").unwrap();
+    assert_eq!(
+        compile_runtime(&document, &generations, "0.1.0").unwrap(),
+        platform
+    );
+    assert_eq!(compile(&document, &generations, "0.1.0").unwrap(), agents);
+    for phase in ["current", "apply"] {
+        let read = &agents["data"]["openshell_gateway"][phase];
+        assert!(read.get("endpoint").is_none(), "{read}");
+        let spec: nemoclaw_sdk::kubernetes::Spec =
+            serde_json::from_str(read["kubernetes"].as_str().unwrap()).unwrap();
+        assert_eq!(spec.settings.endpoint(), None);
+    }
+    for graph in [&platform, &agents] {
+        assert!(!graph.to_string().contains("127.0.0.1"), "{graph}");
+    }
 }
 
 /// Without a kubeconfig, the Helm provider's client falls back to the pod's
@@ -69,19 +112,23 @@ fn a_target_without_kubeconfig_gives_helm_no_kubeconfig() {
     );
 }
 
+/// Sandbox pods' pull Secrets are OpenShell's driver setting, which reaches
+/// the chart's gatewayConfig beside NemoClaw's own driver settings. The
+/// gateway and certgen pods pull OpenShell's public images, so the chart's
+/// own pull Secrets stay unset.
 #[test]
-fn managed_cluster_pulls_reference_existing_secrets_for_gateway_and_sandbox_images() {
+fn sandbox_pull_secrets_pass_through_openshells_driver_setting() {
     let generations = ["kubernetes_gateway", "kubernetes_storage"]
         .map(|kind| (kind.into(), "a".repeat(32)))
         .into();
-    for provider in ["kubernetes", "openshift"] {
+    for key in ["kubernetes", "openshift"] {
         let mut input = serde_json::to_value(document()).unwrap();
-        input["spec"]["gateway"]["runtime"]["provider"] = json!(provider);
+        retarget(&mut input, key);
         let baseline = Document::parse(input.to_string().as_bytes()).unwrap();
-        input["spec"]["gateway"]["kubernetes"]["imagePullSecrets"] =
-            json!(["registry-team", "registry.backup"]);
-        let document = Document::parse(input.to_string().as_bytes())
-            .expect("managed clusters accept existing image pull Secret names");
+        input["spec"]["gateway"]["config"] = json!({"openshell.drivers.kubernetes": {
+            "image_pull_secrets": ["registry-team", "registry.backup"]
+        }});
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
         assert_eq!(serde_json::to_value(&document).unwrap(), input);
         assert_eq!(
             runtime_targets(&document, &generations).unwrap(),
@@ -99,13 +146,14 @@ fn managed_cluster_pulls_reference_existing_secrets_for_gateway_and_sandbox_imag
                 .unwrap(),
         )
         .unwrap();
+        assert!(values.get("imagePullSecrets").is_none(), "{values}");
         assert_eq!(
-            values["imagePullSecrets"],
-            json!([{"name": "registry-team"}, {"name": "registry.backup"}])
-        );
-        assert_eq!(
-            values["gatewayConfig"]["openshell.drivers.kubernetes"]["image_pull_secrets"],
-            json!(["registry-team", "registry.backup"])
+            values["gatewayConfig"]["openshell.drivers.kubernetes"],
+            json!({
+                "workspace_mode": "shared",
+                "workspace_default_storage_size": "2Gi",
+                "image_pull_secrets": ["registry-team", "registry.backup"]
+            })
         );
     }
 }
@@ -215,7 +263,7 @@ fn openshift_chart_values_leave_the_gateway_uid_to_openshift() {
     assert!(kubernetes.get("podSecurityContext").is_none());
 
     let mut value = serde_json::to_value(document()).unwrap();
-    value["spec"]["gateway"]["runtime"]["provider"] = json!("openshift");
+    retarget(&mut value, "openshift");
     let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     let [mut openshift] = <[_; 1]>::try_from(chart_values(&document)).unwrap();
     let values = openshift.as_object_mut().unwrap();
@@ -296,7 +344,9 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
         assert_eq!(resource["context"], "test-cluster", "{kind}");
         assert_eq!(resource["namespace"], "test-agents", "{kind}");
         assert_eq!(resource["compute_driver"], "kubernetes", "{kind}");
-        assert_eq!(resource["endpoint"], "https://127.0.0.1:17671", "{kind}");
+        // Each command forwards a free local port, so no resource names an
+        // endpoint.
+        assert!(resource.get("endpoint").is_none(), "{kind}");
         assert_eq!(resource["authentication_profile"], "development", "{kind}");
         assert_eq!(resource["generation"], "a".repeat(32), "{kind}");
         assert!(resource.get("environment").is_none(), "{kind}");
@@ -374,8 +424,8 @@ fn managed_kubernetes_discovery_never_uses_a_local_container_engine() {
 fn kubernetes_attributes_reproduce_each_resource_specification() {
     use nemoclaw_sdk::kubernetes::{AUTH_KIND, GATEWAY_KIND, STORAGE_KIND, Spec};
     let mut value = serde_json::to_value(document()).unwrap();
-    value["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE"]);
-    value["spec"]["gateway"]["runtime"]["provider"] = json!("openshift");
+    value["spec"]["gateway"]["target"]["kubernetes"]["environment"] = json!(["AWS_PROFILE"]);
+    retarget(&mut value, "openshift");
     let generations = [
         "workspace",
         "provider",
@@ -401,12 +451,14 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
             let spec = Spec::from_row(&target.kind, &target.values).unwrap();
             assert_eq!(spec.row().unwrap(), target.values);
             assert_eq!(spec.kind, target.kind);
-            assert_eq!(spec.settings.endpoint, gateway.endpoint);
-            // Exposure configures the Helm release; these attributes carry
-            // only its endpoint.
-            let mut authored = gateway.kubernetes.clone().unwrap();
+            assert_eq!(spec.settings.compute_driver(), gateway.compute_driver());
+            // Exposure configures the Helm release, so these attributes
+            // carry none of it, not even its endpoint.
+            let mut authored = gateway.cluster().unwrap().clone();
             authored.expose = None;
-            assert_eq!(spec.settings.kubernetes.as_ref(), Some(&authored));
+            assert_eq!(spec.settings.cluster(), Some(&authored));
+            assert_eq!(spec.settings.endpoint(), None);
+            assert!(!target.values.contains_key("endpoint"));
             assert!(matches!(
                 target.kind.as_str(),
                 STORAGE_KIND | AUTH_KIND | GATEWAY_KIND
@@ -415,7 +467,6 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
                 ("compute_driver", "docker"),
                 ("namespace", "Not A Namespace"),
                 ("kubeconfig_env", "lowercase"),
-                ("endpoint", "http://127.0.0.1:17671"),
                 ("authentication_profile", "production"),
                 ("environment_json", "[\"KUBECONFIG\"]"),
             ] {
@@ -468,7 +519,7 @@ fn every_compiled_kubernetes_attribute_passes_the_providers_check() {
 
 fn oidc_document() -> Document {
     let mut value = serde_json::to_value(document()).unwrap();
-    value["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
+    value["spec"]["gateway"]["target"]["kubernetes"]["authentication"] = json!({
         "profile": "oidc",
         "caConfigMap": "issuer-ca",
         "token": {"env": "OPENSHELL_TOKEN"}
@@ -524,7 +575,7 @@ fn an_existing_oidc_issuer_replaces_the_development_issuer() {
 
     // Without a CA ConfigMap, the chart mounts none.
     let mut value = serde_json::to_value(oidc_document()).unwrap();
-    value["spec"]["gateway"]["kubernetes"]["authentication"]
+    value["spec"]["gateway"]["target"]["kubernetes"]["authentication"]
         .as_object_mut()
         .unwrap()
         .remove("caConfigMap");
@@ -605,10 +656,6 @@ fn chart_keys_nemoclaw_owns_are_rejected() {
         (
             json!({"openshell.gateway.oidc": {"issuer": "https://issuer.example"}}),
             "openshell.gateway.oidc",
-        ),
-        (
-            json!({"openshell.drivers.kubernetes": {"image_pull_secrets": ["other"]}}),
-            "openshell.drivers.kubernetes.image_pull_secrets",
         ),
     ] {
         let error = chart_values(Some(config)).unwrap_err();

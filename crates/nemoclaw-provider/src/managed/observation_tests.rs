@@ -21,7 +21,7 @@ fn reference() -> (Spec, Value, Value, Value) {
     let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
     let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":fixture["config"],"HostConfig":fixture["hostConfig"],"State":{"Running":true,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Source":"/var/lib/docker/volumes/fixture/_data","Destination":"/data","RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
-    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":{OWNER_LABEL:spec.owner},"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":{OWNER_LABEL:spec.owner},"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr(),"Gateway":spec.gateway.bridge().unwrap()}]}});
     (spec, container, volume, network)
 }
 
@@ -305,7 +305,7 @@ async fn gateway_observation_preserves_identity_and_fails_closed_on_drift_or_par
         Some((code, serde_json::to_vec(&value).unwrap()))
     })
     .await;
-    let engine = fixture.engine_for(&spec.gateway.engine);
+    let engine = fixture.engine_for(spec.gateway.engine());
     let observed = engine.observe_gateway(&spec, "").await.unwrap().unwrap();
     assert!(
         observed
@@ -440,7 +440,7 @@ async fn gateway_processes_require_layout_two_before_engine_access() {
         Some((503, br#"{"message":"unavailable"}"#.to_vec()))
     })
     .await;
-    let engine = fixture.engine_for(&spec.gateway.engine);
+    let engine = fixture.engine_for(spec.gateway.engine());
     for layout in [0, 1] {
         spec.layout = layout;
         assert!(spec.container("/owned-data").is_err());

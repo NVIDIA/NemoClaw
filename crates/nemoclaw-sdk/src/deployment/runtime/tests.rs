@@ -419,7 +419,9 @@ fn gateway_targets() -> (Spec, Vec<Target>) {
     .unwrap();
     let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     spec.compute_driver = crate::config::ComputeDriver::Podman;
-    spec.gateway.network_cidr = "172.30.161.0/24".into();
+    let mut local = spec.gateway.local().unwrap().clone();
+    local.network_cidr = "172.30.161.0/24".into();
+    spec.gateway.target = crate::config::ManagedTarget::Podman(local);
     let mut targets = Vec::new();
     for (kind, address, layout) in [
         (GATEWAY_STORAGE_KIND, GATEWAY_STORAGE, 0),

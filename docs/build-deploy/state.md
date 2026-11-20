@@ -27,26 +27,7 @@ Keep the whole directory after failure.
 Deleting state doesn't establish that its runtime resources are absent.
 The local lock doesn't exclude other clients of the same gateway.
 State records carry a format version.
-The SDK rejects unsupported versions without rewriting the directory or adopting their resources.
-
-### Upgrading Intent Format 29 to 30
-
-This bundle reads intent formats 29 and 30 and writes format 30.
-The shared inference-memory refactor preserves format 29's serialized fields, so valid records can be upgraded without recreating resources or changing ownership generations.
-This exception doesn't accept older formats or skip document, digest, generation, or pending-creation validation.
-
-1. Keep the previous CLI bundle and back up the entire deployment state directory before using the new bundle.
-2. Run `nemoclaw --state-dir <directory> plan <config.yaml>` with the matching desired configuration to inspect the deployment.
-   Loading intent alone doesn't rewrite it.
-   The command might refresh other deployment files.
-3. Continue with the normal apply or recovery procedure.
-   The next successful intent save writes format 30 and preserves resource identities and unfinished-creation guards.
-
-The format 29 CLI can't read a record after it's saved as format 30.
-Continue managing that deployment with the new bundle.
-Don't edit the version or restore an old intent file over newer operation state to force a downgrade.
-This upgrade handles NemoClaw intent only.
-It doesn't migrate native conversations, model caches, or resources between hosts.
+The SDK rejects a different version without rewriting the directory or adopting its resources.
 
 ## Agent Files
 
@@ -270,7 +251,7 @@ Destroy removes workloads but leaves some bound data and infrastructure for expl
 | Managed Kubernetes gateway | Release and development issuer removed; namespace, credential key Secret, and the gateway's persistent volumes retained |
 | Local deployment state, bundle, and container images | Remain; removing the CLI bundle is separate from destroying its deployment |
 
-The retained network keeps its `spec.gateway.networkCIDR` subnet on that engine.
+The retained network keeps the `networkCIDR` subnet of the gateway's `docker` or `podman` target on that engine.
 A new deployment on the same host needs a different `networkCIDR`, or [remove the retained resources](usage.md#removing-retained-resources) first.
 Redeploying the same deployment, with the same `metadata.uid` and state directory, reuses the network.
 
@@ -295,7 +276,7 @@ On Podman, the same objects exist with the same names and label, in the Podman e
 
 ### Finding Retained Kubernetes Objects
 
-On a managed Kubernetes or OpenShift gateway, destroy keeps these objects, all in the namespace that `gateway.kubernetes.namespace` names:
+On a managed Kubernetes or OpenShift gateway, destroy keeps these objects, all in the namespace that the gateway's `kubernetes` or `openshift` target names:
 
 | Object | Holds |
 |---|---|

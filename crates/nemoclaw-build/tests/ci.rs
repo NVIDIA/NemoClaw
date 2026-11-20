@@ -225,11 +225,11 @@ fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
     );
     assert_eq!(value["metadata"]["uid"], first.as_str());
     assert_eq!(value["spec"]["gateway"]["management"], "managed");
+    assert_eq!(value["spec"]["gateway"]["target"]["docker"]["port"], 17950);
     assert_eq!(
-        value["spec"]["gateway"]["endpoint"],
-        "http://127.0.0.1:17950"
+        value["spec"]["gateway"]["target"]["docker"]["networkCIDR"],
+        chosen.as_str()
     );
-    assert_eq!(value["spec"]["gateway"]["networkCIDR"], chosen.as_str());
     assert_eq!(
         value["spec"]["sandboxes"]["assistant"]["image"]["ref"],
         "nc-live@sha256:abc"
@@ -259,7 +259,7 @@ fn gateway_documents_parse_as_current_configuration() {
     });
     let parsed = nemoclaw_sdk::config::Document::parse(document.as_bytes()).unwrap();
     assert_eq!(
-        parsed.spec.gateway.runtime().provider,
+        parsed.spec.gateway.compute_driver(),
         nemoclaw_sdk::config::ComputeDriver::Docker
     );
 }

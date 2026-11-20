@@ -475,11 +475,11 @@ fn default_journey_asks_route_choices_and_leaves_adapter_settings_at_their_defau
         [
             "/spec/sandboxes/assistant/harness/kind",
             "/metadata/name",
-            "/spec/gateway/runtime/provider",
+            "/spec/gateway/target",
             "inference:preset",
             "/spec/sandboxes/assistant/image/ref",
             "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
-            "/spec/gateway/engine",
+            "/spec/gateway/target/docker/engine",
         ]
     );
 }
@@ -527,13 +527,11 @@ async fn the_only_engine_that_answered_is_recorded_without_asking_for_its_socket
     use nemoclaw_sdk::discovery::ObservationStatus;
     let mut wizard = wizard_with_one_docker_engine(ObservationStatus::Available).await;
     let asked = questions_until_review(&mut wizard);
-    assert!(
-        !asked.iter().any(|id| id == "/spec/gateway/engine"),
-        "{asked:?}"
-    );
+    let engine = "/spec/gateway/target/docker/engine";
+    assert!(!asked.iter().any(|id| id == engine), "{asked:?}");
     let saved: Value = serde_saphyr::from_str(&wizard.saved_yaml().unwrap()).unwrap();
     assert_eq!(
-        saved.pointer("/spec/gateway/engine"),
+        saved.pointer(engine),
         Some(&serde_json::json!("unix:///home/me/.colima/docker.sock"))
     );
     wizard.accepted = false;
@@ -730,14 +728,14 @@ fn the_runtime_menu_names_each_runtime_and_offers_no_omit() {
         if wizard
             .question()
             .unwrap()
-            .is_some_and(|question| question.id() == "/spec/gateway/runtime/provider")
+            .is_some_and(|question| question.id() == "/spec/gateway/target")
         {
             break;
         }
         wizard.advance();
     }
     let question = wizard.question().unwrap().unwrap();
-    assert_eq!(question.id(), "/spec/gateway/runtime/provider");
+    assert_eq!(question.id(), "/spec/gateway/target");
     let screen = screen(&wizard, 140, 40);
     for label in ["Docker", "Podman", "Kubernetes", "OpenShift"] {
         assert!(screen.contains(label), "{label}: {screen}");
@@ -763,9 +761,11 @@ fn default_journey_saves_the_reviewed_deployment_without_unasked_sdk_defaults() 
     questions_until_review(&mut wizard);
     let yaml = wizard.saved_yaml().unwrap();
     let saved: Value = serde_saphyr::from_str(&yaml).unwrap();
-    let gateway = saved["spec"]["gateway"].as_object().unwrap();
-    assert!(!gateway.contains_key("endpoint"), "{yaml}");
-    assert!(!gateway.contains_key("networkCIDR"), "{yaml}");
+    let docker = saved["spec"]["gateway"]["target"]["docker"]
+        .as_object()
+        .unwrap();
+    assert!(!docker.contains_key("port"), "{yaml}");
+    assert!(!docker.contains_key("networkCIDR"), "{yaml}");
     assert!(
         saved
             .pointer("/spec/sandboxes/assistant/harness/settings")
@@ -854,7 +854,7 @@ fn a_template_value_is_saved_even_when_it_matches_the_sdk_default() {
         "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
-    values["spec"]["gateway"]["endpoint"] = "http://127.0.0.1:17681".into();
+    values["spec"]["gateway"]["target"]["docker"]["port"] = 17681.into();
     std::fs::write(&template, values.to_string()).unwrap();
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Template(&template), &capabilities).unwrap();
@@ -862,8 +862,8 @@ fn a_template_value_is_saved_even_when_it_matches_the_sdk_default() {
     questions_until_review(&mut wizard);
     let saved: Value = serde_saphyr::from_str(&wizard.saved_yaml().unwrap()).unwrap();
     assert_eq!(
-        saved.pointer("/spec/gateway/endpoint"),
-        Some(&Value::from("http://127.0.0.1:17681"))
+        saved.pointer("/spec/gateway/target/docker/port"),
+        Some(&Value::from(17681))
     );
 }
 
@@ -976,7 +976,8 @@ fn template_values_kept_by_omission_are_listed_at_review() {
     .unwrap();
     values["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
         serde_json::json!({"startup_timeout_seconds": 45});
-    values["spec"]["gateway"]["networkCIDR"] = serde_json::json!("172.30.77.0/24");
+    values["spec"]["gateway"]["target"]["docker"]["networkCIDR"] =
+        serde_json::json!("172.30.77.0/24");
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("template.yaml");
     std::fs::write(&path, values.to_string()).unwrap();
@@ -985,8 +986,10 @@ fn template_values_kept_by_omission_are_listed_at_review() {
     let mut wizard = JourneyWizard::new(capabilities, state);
     let asked = questions_until_review(&mut wizard);
     assert!(
-        !asked.iter().any(|id| id.ends_with("/startup_timeout_seconds")
-            || id == "/spec/gateway/networkCIDR"),
+        !asked
+            .iter()
+            .any(|id| id.ends_with("/startup_timeout_seconds")
+                || id == "/spec/gateway/target/docker/networkCIDR"),
         "{asked:?}"
     );
     let document = wizard.document().unwrap();
@@ -1005,7 +1008,7 @@ fn template_values_kept_by_omission_are_listed_at_review() {
     assert_eq!(
         section,
         [
-            "Gateway: network CIDR: 172.30.77.0/24",
+            "Docker: network CIDR: 172.30.77.0/24",
             "Startup timeout seconds: 45",
         ]
     );
@@ -1362,7 +1365,7 @@ fn tui_preserves_podman_as_an_authored_target_choice() {
         if wizard
             .question()
             .unwrap()
-            .is_some_and(|question| question.id() == "/spec/gateway/runtime/provider")
+            .is_some_and(|question| question.id() == "/spec/gateway/target")
         {
             break;
         }
@@ -1379,7 +1382,7 @@ fn tui_preserves_podman_as_an_authored_target_choice() {
     assert!(wizard.error.is_none());
     assert_eq!(
         wizard.state().values().pointer(question.id()),
-        Some(&serde_json::json!("podman"))
+        Some(&serde_json::json!({"podman": {}}))
     );
 }
 
@@ -1427,7 +1430,7 @@ async fn enter_accepts_the_runtime_this_machine_can_run_and_targets_its_engine()
         if wizard
             .question()
             .unwrap()
-            .is_some_and(|question| question.id() == "/spec/gateway/runtime/provider")
+            .is_some_and(|question| question.id() == "/spec/gateway/target")
         {
             break;
         }
@@ -1436,15 +1439,8 @@ async fn enter_accepts_the_runtime_this_machine_can_run_and_targets_its_engine()
     wizard.advance();
     assert!(wizard.error.is_none(), "{:?}", wizard.error);
     assert_eq!(
-        wizard
-            .state()
-            .values()
-            .pointer("/spec/gateway/runtime/provider"),
-        Some(&serde_json::json!("podman"))
-    );
-    assert_eq!(
-        wizard.state().values().pointer("/spec/gateway/engine"),
-        Some(&serde_json::json!(podman))
+        wizard.state().values().pointer("/spec/gateway/target"),
+        Some(&serde_json::json!({"podman": {"engine": podman}}))
     );
 }
 
@@ -1797,7 +1793,8 @@ fn an_engine_the_journey_still_asks_about_keeps_the_image_question_open() {
     // the image.
     let wizard = template_at_the_image_question(
         |values| {
-            values["spec"]["gateway"]["engine"] = serde_json::json!("unix:///other/engine.sock");
+            values["spec"]["gateway"]["target"]["docker"]["engine"] =
+                serde_json::json!("unix:///other/engine.sock");
             with_image(None)(values);
         },
         &[OPENCLAW_IMAGE],
@@ -1808,14 +1805,15 @@ fn an_engine_the_journey_still_asks_about_keeps_the_image_question_open() {
 #[test]
 fn going_back_to_a_question_the_image_read_depends_on_leaves_the_image_unanswered() {
     // The template names the engine, so the images stay read at the earlier
-    // questions, where the harness or runtime chosen next may not match them.
+    // questions, where the harness or target chosen next may not match them.
     for earlier in [
         "/spec/sandboxes/assistant/harness/kind",
-        "/spec/gateway/runtime/provider",
+        "/spec/gateway/target",
     ] {
         let mut wizard = template_at_the_image_question(
             |values| {
-                values["spec"]["gateway"]["engine"] = serde_json::json!(DOCKER_ENGINE);
+                values["spec"]["gateway"]["target"]["docker"]["engine"] =
+                    serde_json::json!(DOCKER_ENGINE);
                 with_image(None)(values);
             },
             &[OPENCLAW_IMAGE],
@@ -2289,7 +2287,7 @@ async fn wizard_at_engine_question(
         if wizard
             .question()
             .unwrap()
-            .is_some_and(|question| question.id() == "/spec/gateway/engine")
+            .is_some_and(|question| question.id() == "/spec/gateway/target/docker/engine")
         {
             return wizard;
         }
@@ -2740,7 +2738,7 @@ fn typing_replaces_the_placeholder() {
 
 #[test]
 fn an_optional_suggested_value_is_left_out_with_the_omit_key_the_screen_names() {
-    let engine = "/spec/gateway/engine";
+    let engine = "/spec/gateway/target/docker/engine";
     let mut wizard = wizard_at(engine);
     let question = wizard.question().unwrap().unwrap();
     assert!(question.omittable() && question.suggestion().is_some());
