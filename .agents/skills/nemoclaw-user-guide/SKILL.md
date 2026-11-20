@@ -29,7 +29,7 @@ If the executable and the documentation disagree, establish which deployment the
 | Inference API, models, recipes, or SSH placement | [Inference](../../../docs/agents-inference/inference.md), [models](../../../docs/agents-inference/models.md), [recipes](../../../docs/agents-inference/recipes.md), [remote service](../../../docs/agents-inference/remote-service.md) |
 | Native agents, dashboards, or integrations | [Agents](../../../docs/agents-inference/agents.md), [interfaces](../../../docs/agents-inference/interfaces.md) |
 | SDK, provider, accepted fields, or flags | [SDK](../../../docs/references/sdk.md), [provider](../../../docs/references/provider.md), [configuration](../../../docs/reference/configuration.md), [CLI](../../../docs/references/cli.md) |
-| Earlier-product migration or security | [Migration](../../../docs/get-started/migration.md), [security](../../../docs/security/security.md), [sandbox policy](../../../docs/security/sandbox-network.md) |
+| Earlier-product migration or security | [Migration](../../../docs/get-started/migration.md), the [V0 migration skill](../nemoclaw-v0-migration/SKILL.md), [security](../../../docs/security/security.md), [sandbox policy](../../../docs/security/sandbox-network.md) |
 
 Read only the sources for the task, and follow their verification and recovery steps.
 **TBD** marks something not yet verified.
