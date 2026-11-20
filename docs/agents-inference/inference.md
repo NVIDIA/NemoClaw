@@ -189,21 +189,6 @@ The provider's key under `inferenceProviders` is the local name routes reference
 It doesn't select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
 
-### Pointing Hermes at an Anthropic Endpoint
-
-Hermes sends an `anthropic` provider's requests to its `endpoint` only when [Hermes's rule](https://github.com/NousResearch/hermes-agent/blob/b200f5bc60e31588ba2cb60e288029c4a54ba5fa/hermes_cli/runtime_provider.py#L395-L403) recognizes the endpoint as Anthropic's:
-
-- Its path ends in `/anthropic` or `/anthropic/v1`, such as `https://gateway.example/anthropic/v1`, where Anthropic-compatible gateways serve the protocol.
-- Its host is `api.anthropic.com` or ends in `.anthropic.com`, `.claude.com`, or `.azure.com`.
-
-For any other endpoint, such as `https://gateway.example/v1`, Hermes's processes that read its configuration file, such as its API server, send the requests to `https://api.anthropic.com` instead.
-OpenShell refuses those connections, because the provider grants only its own endpoint, and the agent doesn't answer.
-NemoClaw doesn't check the endpoint, so plan and apply succeed.
-
-Use an endpoint whose path ends in `/anthropic` or `/anthropic/v1`, or an `openai` provider when the endpoint also serves OpenAI's API.
-The `docker-openclaw-hermes-interfaces` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios) gets OpenClaw and Hermes replies through an `anthropic` provider at an `/anthropic/v1` endpoint.
-Fabric's Hermes adapter would need to configure Hermes to use the endpoint whatever its path ([current limits](../resources/limits.md#inference)).
-
 ### Preparing an External Endpoint
 
 Before writing its provider declaration, obtain the base URL, API, exact model ID, required credential, and model limits from the endpoint operator.
