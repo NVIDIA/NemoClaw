@@ -489,7 +489,7 @@ describe("Hermes config export live evidence", () => {
         exitCode: 2,
         stdout: "",
         stderr:
-          "Config export failed (unsupported, policy-not-representable).\nspec.sandboxes[].integrations.messaging (unsupported): Detail.",
+          "Config export failed (unsupported, policy-not-representable).\nspec.sandboxes[].integrations.messaging (unsupported): Detail.\nspec.sandboxes[].network.policy (policy-not-representable): Detail.",
       });
     await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
     expect(mocks.writeJson).toHaveBeenCalledWith(
@@ -631,6 +631,26 @@ describe("Hermes config export live evidence", () => {
       driver: "docker",
       diagnostics:
         "Config export failed (policy-not-representable).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
+    },
+
+    {
+      name: "policy category without a policy finding",
+      scheme: "https",
+      driver: "docker",
+      diagnostics: [
+        "Config export failed (unsupported, policy-not-representable).",
+        "spec.sandboxes[].integrations.messaging (unsupported): Messaging is excluded.",
+      ].join("\n"),
+    },
+    {
+      name: "policy finding without its header category",
+      scheme: "https",
+      driver: "docker",
+      diagnostics: [
+        "Config export failed (unsupported).",
+        "spec.sandboxes[].integrations.messaging (unsupported): Messaging is excluded.",
+        "spec.sandboxes[].network.policy (policy-not-representable): Policy is not representable.",
+      ].join("\n"),
     },
 
     {

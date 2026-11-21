@@ -1067,6 +1067,7 @@ a matching field for each active refusal cause, absence of output files, and omi
 values. Refusal detail wording is incidental and can change during redaction. The credential field
 may retain a redaction marker in place of its category token. Domain config-export tests own the
 exact refusal messages; live evidence confirms the configured source caused the refusal.
+An optional policy-refusal category and its policy finding must occur together in each diagnostic.
 A pinned-V1 consumer exception still fails validation. Its evidence records the launcher alias,
 pinned revision, operation, and a redacted diagnostic limited to 2,000 characters, while preserving
 any earlier successful launcher result. Support tests cover exceptions from each alias, redaction,

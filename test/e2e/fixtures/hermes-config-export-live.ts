@@ -324,22 +324,27 @@ export async function verifyHermesConfigExportLive(
     expectsMessagingRefusal || entry.openshellDriver === "podman" || expectsCredentialHttpRefusal;
   if (expectsRefusal || !launchersSucceeded) {
     if (expectsRefusal) {
-      const categories = [nemoclawDiagnostics, nemohermesDiagnostics].map(refusalCategories);
+      const diagnostics = [nemoclawDiagnostics, nemohermesDiagnostics];
+      const categories = diagnostics.map(refusalCategories);
       const allowedCategories = expectsMessagingRefusal
         ? ["unsupported", "policy-not-representable"]
         : ["unsupported"];
       const refusalCategoriesMatch = categories.every(
-        (values) =>
+        (values, index) =>
           values.includes("unsupported") &&
           new Set(values).size === values.length &&
-          values.every((category) => allowedCategories.includes(category)),
+          values.every((category) => allowedCategories.includes(category)) &&
+          values.includes("policy-not-representable") ===
+            diagnostics[index]!.split("\n").some((line) =>
+              line.startsWith("spec.sandboxes[].network.policy (policy-not-representable): "),
+            ),
       );
       const expectedFields = [
         ...(expectsCredentialHttpRefusal ? ["spec.inferenceProviders[].credential"] : []),
         ...(entry.openshellDriver === "podman" ? ["spec.sandboxes[].runtime.provider"] : []),
         ...(expectsMessagingRefusal ? ["spec.sandboxes[].integrations.messaging"] : []),
       ];
-      const refusalCausesMatch = [nemoclawDiagnostics, nemohermesDiagnostics].every((diagnostic) =>
+      const refusalCausesMatch = diagnostics.every((diagnostic) =>
         expectedFields.every((field) =>
           diagnostic.split("\n").some(
             (line) =>
