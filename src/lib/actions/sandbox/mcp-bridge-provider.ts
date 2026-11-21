@@ -12,6 +12,8 @@ export {
   assertNoAttachedProviderCredentialCollisions,
   assertNoProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
+  formatDeleteMcpProviderCommand,
+  formatMcpGatewayAttachmentCheckCommands,
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
