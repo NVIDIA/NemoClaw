@@ -10,7 +10,11 @@ import type {
 } from "../../adapters/openshell/sandbox-logs";
 import { cliOpenShellSandboxSettings } from "../../adapters/openshell/sandbox-settings-cli";
 import type { OpenShellSandboxSettings } from "../../adapters/openshell/sandbox-settings";
-import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import {
+  namedOpenShellGateway,
+  type OpenShellGatewayTarget,
+  selectedOpenShellGateway,
+} from "../../adapters/openshell/sandbox-observer";
 import * as agentRuntime from "../../agent/runtime";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import {
@@ -23,6 +27,7 @@ import {
   tagGatewayLogLines,
 } from "../../domain/sandbox/logs";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import { getKnownSandboxTargetGatewayName } from "./gateway-target";
 
 /**
  * How long a piped log source may keep draining after its child exits before
@@ -107,6 +112,7 @@ type ExitFn = (code: number) => never;
 export type SandboxLogsRuntimeDeps = {
   enableAuditLogs?: OpenShellSandboxSettings["enableAuditLogs"];
   exit?: ExitFn;
+  getKnownSandboxTargetGatewayName?: typeof getKnownSandboxTargetGatewayName;
   getSessionAgent?: typeof agentRuntime.getSessionAgent;
   isDockerRuntimeDown?: typeof isDockerRuntimeDown;
   logs?: OpenShellSandboxLogs;
@@ -137,9 +143,11 @@ function shouldIncludeGatewayLogSource(sandboxName: string, deps: SandboxLogsRun
   return agentRuntime.hasGatewayRuntime(agent);
 }
 
+/** Stream gateway and OpenShell logs from `target` until interrupted. */
 async function streamSandboxFollowLogs(
   sandboxName: string,
   options: SandboxLogsOptions,
+  target: OpenShellGatewayTarget,
   deps: SandboxLogsRuntimeDeps,
 ): Promise<void> {
   const logs = deps.logs ?? cliOpenShellSandboxLogs;
@@ -150,7 +158,6 @@ async function streamSandboxFollowLogs(
     exit(1);
     return;
   }
-  const target = selectedOpenShellGateway();
   const includeGateway = !options.since && shouldIncludeGatewayLogSource(sandboxName, deps);
   const outputStream = deps.stdout ?? process.stdout;
   const diagnosticStream = deps.stderr ?? process.stderr;
@@ -459,7 +466,7 @@ async function streamSandboxFollowLogs(
   if (includeGateway) {
     addSource("OpenClaw log source", "gateway", true);
   }
-  await enableSandboxAuditLogs(sandboxName, deps);
+  await enableSandboxAuditLogs(sandboxName, target, deps);
   if (requestedExitCode !== null) {
     setupComplete = true;
     maybeExit();
@@ -470,9 +477,14 @@ async function streamSandboxFollowLogs(
   maybeExit();
 }
 
-async function enableSandboxAuditLogs(sandboxName: string, deps: SandboxLogsRuntimeDeps) {
+/** Enable OpenShell audit logs on `target`; warn instead of failing. */
+async function enableSandboxAuditLogs(
+  sandboxName: string,
+  target: OpenShellGatewayTarget,
+  deps: SandboxLogsRuntimeDeps,
+) {
   const result = await (deps.enableAuditLogs ?? cliOpenShellSandboxSettings.enableAuditLogs)({
-    target: selectedOpenShellGateway(),
+    target,
     sandboxName,
     timeoutMs: getLogsProbeTimeoutMs(),
   });
@@ -488,6 +500,7 @@ export async function showSandboxLogs(sandboxName: string, options: SandboxLogsO
   await showSandboxLogsWithDeps(sandboxName, options);
 }
 
+/** Show sandbox logs from its recorded gateway, with injectable dependencies. */
 export async function showSandboxLogsWithDeps(
   sandboxName: string,
   options: SandboxLogsOptions | boolean,
@@ -507,14 +520,19 @@ export async function showSandboxLogsWithDeps(
     (deps.exit ?? process.exit)(1);
   }
 
+  // Prefer the sandbox's recorded gateway over the selected one (#12585).
+  const gatewayName = (deps.getKnownSandboxTargetGatewayName ?? getKnownSandboxTargetGatewayName)(
+    sandboxName,
+  );
+  const target = gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway();
+
   if (logsOptions.follow) {
-    await streamSandboxFollowLogs(sandboxName, logsOptions, deps);
+    await streamSandboxFollowLogs(sandboxName, logsOptions, target, deps);
     return;
   }
 
-  await enableSandboxAuditLogs(sandboxName, deps);
+  await enableSandboxAuditLogs(sandboxName, target, deps);
   const logs = deps.logs ?? cliOpenShellSandboxLogs;
-  const target = selectedOpenShellGateway();
 
   // Capture stdout from both sources so --tail N can be applied once
   // to the merged stream rather than independently per source
