@@ -20,6 +20,7 @@ cargo ci live-kind
 ```
 
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
+Meanwhile, the node pulls the pinned OpenShell gateway, supervisor, and sandbox images and the development issuer's image, so that no scenario's time includes those pulls.
 It then runs two [HCL E2E scenarios](#hcl-e2e-scenarios), one after the other, each in new namespaces.
 
 The `kind-kubernetes-development` scenario deploys one agent with the `kubernetes` target and the `development` authentication profile, whose tokens the SDK issues.
@@ -164,6 +165,8 @@ CI / Bundle also runs on `copy-pr-bot`'s pushes to `pull-request/<number>`, as i
 
 These runs report no `Test /` checks and are not merge requirements. Running jobs are not automatically cancelled. Hardware jobs recheck PR eligibility after queueing and before deployment. GitLab/Colorunner continues to own leases and replacement; CI does not provision hosts.
 
+The hardware suite refreshes one PR selection comment for the analyzed commit, including when no hardware case is selected. It explains automatic, non-gating execution and groups case IDs under fixed selection reasons. Execution links, outcomes, timing, artifacts, runner identities and raw diagnostics stay out of that comment; Actions evidence retains its existing visibility. Comment-write permission belongs to a separate job that neither checks out candidate code nor runs its executables.
+
 Operators can run the HCL cases by dispatching **CI / Bundle** with `suite=hcl` on `v1`, or on a current, non-draft v1 PR's bot-admitted `pull-request/<number>` branch. The run builds the target's Linux platform, Linux AMD64 for `rtx-pro-6000` and Linux ARM64 for Station and Spark, and Live / HCL runs its cases from those artifacts. The optional `hcl-jobs` input selects individual comma-separated case IDs on the target; unknown or misplaced IDs fail before hardware jobs queue. An empty input selects every case on that target:
 
 ```bash
@@ -177,6 +180,8 @@ Spark uses the same workflow and persistent-runner path, with the fixed `colossu
 gh workflow run rust.yml --repo NVIDIA/NemoClaw --ref "pull-request/<number>" \
   -f suite=hcl -f hcl-target=dgx-spark -f hcl-hosted=false -f hcl-jobs=dgx-spark-openclaw-nemotron
 ```
+
+For a reviewer-requested extra case, dispatch CI / Bundle with `suite=hcl` on the PR's current admitted `pull-request/<number>` branch with that case ID in `hcl-jobs`. This starts an additional selection and leaves automatic selections intact. To preview an additive selection locally, use `changes cases --base origin/v1 --add CASE`; reviewed additions do not require an Advisor service.
 
 Build, inference, and cleanup failures fail the run visibly. An offline runner leaves its hardware job queued. A queued PR revision that becomes draft, closes, or is superseded cannot deploy when it reaches a runner.
 

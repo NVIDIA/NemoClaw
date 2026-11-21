@@ -144,6 +144,78 @@ jobs:
         {"layer": "integration", "shard": 1, "shards": 3},
         {"layer": "integration", "shard": 2, "shards": 3},
         {"layer": "integration", "shard": 3, "shards": 3}]
+  # A copied pull request's selected hardware cases, in one comment on the
+  # pull request; only this job may write to pull requests.
+  recommendations:
+    needs: plan
+    # The plan selects the hardware suite only for copy-pr-bot's push of an open,
+    # non-draft v1 pull request's current head.
+    if: needs.plan.result == 'success' && needs.plan.outputs.suite == 'hardware'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: v1-e2e-recommendations-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      pull-requests: write
+    steps:
+      # The publisher consumes data only, with no candidate checkout or executable.
+      - name: Post public E2E recommendations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOMMENDATIONS: ${{ needs.plan.outputs.recommendations }}
+        shell: bash
+        run: |
+          [[ $GITHUB_REF_NAME =~ ^pull-request/([1-9][0-9]*)$ ]] || exit 1
+          number=${BASH_REMATCH[1]}
+          [[ $GITHUB_SHA =~ ^[a-f0-9]{40}$ ]] || exit 1
+          is_current_pr() {
+            jq -e --arg sha "$GITHUB_SHA" '
+              .state == "open" and .draft == false and .base.ref == "v1" and .head.sha == $sha
+            ' > /dev/null
+          }
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+          is_current_pr <<< "$pr" || exit 0
+
+          # Raw reasons can contain diagnostics. Only fixed reason text is public.
+          jq -er --arg sha "$GITHUB_SHA" '
+            def public_reason:
+              if startswith("could not analyze changes") then "Conservative selection: impact analysis could not narrow the cases."
+              elif startswith("every case runs:") then "Shared code or test infrastructure changed."
+              elif . == "every case selected with --all" then "All cases were requested."
+              elif . == "requested with --add" then "An operator requested this additional case."
+              elif endswith(", an input of a runtime image this case runs") then "This test’s model runtime image changed."
+              elif endswith(" changed") then "This test’s deployment or scenario changed."
+              else "Selected by changed-file rules." end;
+            if .commit == $sha and (.cases | type) == "object" and
+              (.runners.gpu | type) == "array" and (.runners["dgx-station"] | type) == "array"
+            then . else error("Invalid recommendation plan") end |
+            . as $plan | (.runners.gpu + .runners["dgx-station"] | unique | sort) as $ids |
+            if all($ids[]; if type == "string" then test("^[a-z0-9-]+$") else false end) and
+              all($ids[]; $plan.cases[.].run == true and ($plan.cases[.].reason | type) == "string")
+            then ["<!-- nemoclaw-v1-e2e-recommendations -->", "## Selected hardware E2Es", "", "Commit: `\($sha)`", "",
+              (if $ids == [] then "No hardware E2Es selected by changed-file rules."
+               else "Selected cases run automatically; results do not gate merging.",
+                 ($ids | map({id: ., reason: ($plan.cases[.].reason | public_reason)}) | group_by(.reason)[] |
+                   "", .[0].reason, (.[] | "- `\(.id)`")) end)] | join("\n")
+            else error("Invalid recommendation cases") end
+          ' <<< "$RECOMMENDATIONS" > "$RUNNER_TEMP/recommendations.md"
+          jq -n --rawfile body "$RUNNER_TEMP/recommendations.md" '{body: $body}' > "$RUNNER_TEMP/recommendations.json"
+
+          id=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$number/comments?per_page=100" |
+            jq -r '[.[][] | select(.user.login == "github-actions[bot]" and .user.type == "Bot") |
+              select((.body // "") | startswith("<!-- nemoclaw-v1-e2e-recommendations -->"))] |
+              if length > 1 then error("Multiple recommendation comments require reconciliation")
+              else .[0].id // empty end')
+          # Selection and comment pagination take time; bind the write to the head again.
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+          is_current_pr <<< "$pr" || exit 0
+          if [[ -n $id ]]; then
+            [[ $id =~ ^[1-9][0-9]*$ ]] || exit 1
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" --input "$RUNNER_TEMP/recommendations.json" > /dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$number/comments" --input "$RUNNER_TEMP/recommendations.json" > /dev/null
+          fi
   # Live / Brev prepares its VM and image while Linux AMD64 builds the bundle
   # and the e2e test executable, which its lifecycle then runs.
   brev-host:

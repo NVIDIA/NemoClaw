@@ -15,7 +15,7 @@ A draft's images are in internal packages, so deployments need registry credenti
 
 ## Choosing the Archive
 
-The archive for release `TAG`, such as `v0.1.0-rc12`, is `nemoclaw-TAG-PLATFORM.tar.gz`, and it unpacks to `dist/PLATFORM`:
+The archive for release `TAG`, such as `v0.1.0-rc.1`, is `nemoclaw-TAG-PLATFORM.tar.gz`, and it unpacks to `dist/PLATFORM`:
 
 | Client | `PLATFORM` | Requirement |
 |---|---|---|
@@ -36,7 +36,7 @@ Use the CLI with the agent and runtime images that the same release lists by dig
 In an empty directory, set the release and platform, then download the archive and the checksums:
 
 ```sh
-TAG=v0.1.0-rc12
+TAG=v0.1.0-rc.1
 PLATFORM=linux_arm64
 curl -fLO "https://github.com/NVIDIA/NemoClaw/releases/download/$TAG/nemoclaw-$TAG-$PLATFORM.tar.gz"
 curl -fLO "https://github.com/NVIDIA/NemoClaw/releases/download/$TAG/SHA256SUMS"
@@ -93,7 +93,7 @@ In PowerShell, in an empty directory, download the archive and the checksums, an
 
 ```powershell
 $ProgressPreference = "SilentlyContinue"
-$Tag = "v0.1.0-rc12"
+$Tag = "v0.1.0-rc.1"
 $Archive = "nemoclaw-$Tag-windows_amd64.tar.gz"
 Invoke-WebRequest "https://github.com/NVIDIA/NemoClaw/releases/download/$Tag/$Archive" -OutFile $Archive
 Invoke-WebRequest "https://github.com/NVIDIA/NemoClaw/releases/download/$Tag/SHA256SUMS" -OutFile SHA256SUMS

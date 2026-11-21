@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Security review, scan binding, and controlled draft publication added for #13523.
-# Stage a release from a semver tag such as v0.1.0-rc1 on the v1 branch. Promote
+# Stage a release from a semver tag such as v0.1.0-rc.1 on the v1 branch. Promote
 # the images CI checked on the tagged history to v1/<image>:<tag>, build the runtime
 # images, and create a draft release listing every digest, with the CLI bundles
 # CI / Bundle built and checked at the tag. The protected

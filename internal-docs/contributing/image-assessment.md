@@ -116,7 +116,7 @@ Use the same scanner and input flags as `release-assess`, then add these control
 cargo run --locked -p nemoclaw-build --no-default-features -- release-gate \
   --inventory /private/inventory.json --sboms /private/sboms.json \
   --sbom-directory /private/sboms --grype /tools/grype --database /private/grype-db \
-  --max-db-age-hours 72 --release-tag v0.1.0-rc1 \
+  --max-db-age-hours 72 --release-tag v0.1.0-rc.1 \
   --controller-revision <full-reviewed-controller-commit> \
   --exceptions .github/security/v1-vulnerability-exceptions.json \
   --reviewed-policy-sha256 <approved-policy-sha256> \

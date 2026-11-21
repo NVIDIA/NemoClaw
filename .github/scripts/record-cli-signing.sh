@@ -11,7 +11,7 @@
 #
 # SIGNED/<platform> holds a platform's bundle when its signing job passed, with
 # the programs signing-inventory.sh assigns to NVIDIA signed, and
-# SIGNED/<platform>.verification.txt the output of that job's signature checks. A final release, whose tag has no prerelease suffix such as -rc1,
+# SIGNED/<platform>.verification.txt the output of that job's signature checks. A final release, whose tag has no prerelease suffix such as -rc.1,
 # needs signed darwin_arm64 and windows_amd64 executables. The only way to stage
 # one without them is the RELEASE_UNSIGNED_EXCEPTION repository variable set to
 # `<tag>:<reason>` for exactly this tag. Linux has no OS code signing; a final
