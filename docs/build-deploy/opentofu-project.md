@@ -207,6 +207,13 @@ resource "openshell_api" "bookings" {
 `var.bookings.credential_env` defaults to `BOOKINGS_API_KEY`, so the job sets that variable before `tofu apply`.
 In a pipeline, map it from your secret store into the job's environment.
 The gateway connection takes names the same way: `data.openshell_gateway` takes `credential_env` for the gateway's bearer credential, `tls_ca_env` for the variable naming its CA file, and `tls_certificate_env` and `tls_key_env` for mutual TLS.
+A managed Kubernetes gateway's resources take `kubeconfig_env`, the variable whose value is the kubeconfig file's path, and `environment`, the variables the kubeconfig's exec credential plugin needs.
+Without `kubeconfig_env`, the provider uses the service account of the pod that runs OpenTofu, as [Managed Kubernetes Gateway](../references/provider.md#managed-kubernetes-gateway) describes.
+
+A model server's key reaches `openshell_inference` through its `server` object, and the provider reads the key during apply.
+For a server NemoClaw does not run, such as the travel team's hosted model in [`models.tf`](../../examples/hcl/travel-team/models.tf), the literal `inference_server` object names the key's variable in `credential_env`.
+A readiness read's `ref` for a server NemoClaw runs names no variable.
+When that server requires its generated key, as vLLM with `authentication` and every Ollama proxy do, the ref's `credential_source` names where the key lives, as [Runtime Capacity and Readiness](../references/provider.md#runtime-capacity-and-readiness) describes.
 
 Changing only the value behind the same variable does not change the plan.
 To rotate an `openshell_api` key, name a new variable; the next apply updates the stored credential in place.
