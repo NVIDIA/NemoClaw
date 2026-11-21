@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Temporary credential-free runner admission check for #14621.
+name: Signing runner admission probe
+on:
+  push:
+    branches: [prekshiv/runner-admission-check-20261120]
+permissions:
+  contents: read
+jobs:
+  denied-unrelated-job:
+    if: ${{ !contains(github.event.head_commit.message, '[admission-allow]') }}
+    runs-on: [self-hosted, linux, x64, nemoclaw-release-signing]
+    timeout-minutes: 3
+    steps:
+      - name: Detect execution after denied admission
+        if: always()
+        run: |
+          echo '::error::DENIED_JOB_STEP_EXECUTED'
+          exit 93
+  sign-macos-3s:
+    if: contains(github.event.head_commit.message, '[admission-allow]')
+    runs-on: [self-hosted, linux, x64, nemoclaw-release-signing]
+    timeout-minutes: 6
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Confirm admission-only access permits the reviewed job
+        run: echo 'ADMISSION_ACCEPTED_STEP_RAN'
