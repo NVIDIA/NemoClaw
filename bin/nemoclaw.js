@@ -9,6 +9,19 @@ if (invokedAs === "nemo-deepagents") {
   process.env.NEMOCLAW_INVOKED_AS = "nemo-deepagents";
 }
 
+// `node:sqlite` is still experimental on Node 22, which prints an ExperimentalWarning on
+// stderr for every command that opens the state store and breaks `VER=$(nemoclaw
+// --version)`-style scripts (#12741). Drop only that warning; all others still print.
+const emitWarning = process.emitWarning;
+process.emitWarning = function (warning, ...args) {
+  const type = typeof args[0] === "string" ? args[0] : args[0]?.type;
+  const message = warning instanceof Error ? warning.message : String(warning);
+  if (type === "ExperimentalWarning" && message.startsWith("SQLite is an experimental feature")) {
+    return;
+  }
+  return emitWarning.call(this, warning, ...args);
+};
+
 let topLevelLog = null;
 
 const PORT_ENV_NAME =
