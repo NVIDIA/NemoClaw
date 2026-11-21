@@ -40,9 +40,15 @@ To recover a damaged import, stop the preview server, remove only the generated 
 
 ## Release Notes
 
-The v1 [changelog overview](../../docs/changelog/overview.md) tracks 0.1.0 until its final release. Keep candidate changes in the [development notes](../../docs/about/release-notes.md).
+The v1 [changelog overview](../../docs/changelog/overview.md) introduces the release series.
+Fern displays each `docs/changelog/YYYY-MM-DD.md` file as a searchable entry.
+Use the version as its heading, for example `## v0.1.0`.
+Keep changes between release candidates in the [maintainer notes](release-candidates.md).
 
-When 0.1.0 ships, move the release summary from the overview to `docs/changelog/YYYY-MM-DD.md` using the published release date. Use `## v0.1.0` as the entry heading. Add later releases to the same directory. Fern orders dated entries and links to each release. The v0 branch maintains the 0.0.x changelog separately.
+The first entry uses the date its draft was written.
+When 0.1.0 ships, update that entry with the published changes and rename the file to match the release date.
+If the filename changes, redirect the draft entry URL to the published entry in `fern/docs.yml`.
+Use the published release date for each subsequent entry.
 
 ## Validating Locally
 
