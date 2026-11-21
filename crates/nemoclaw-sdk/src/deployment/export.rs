@@ -217,7 +217,7 @@ pub(super) fn exported(
         expected.insert("id".into(), observed["id"].clone());
         match target.kind.as_str() {
             "inference" => export_provider(&mut document, &expected, &observed)?,
-            "web_search" => export_web_search(&expected, &observed)?,
+            "api" => export_api(&expected, &observed)?,
             "sandbox" => export_sandbox(&expected, &observed)?,
             _ => {}
         }
@@ -343,17 +343,17 @@ fn consistent_provider_credentials(
     Ok(())
 }
 
-/// Web search comes from selected integrations, not inference definitions:
-/// export keeps their authored scopes and credential references unchanged,
-/// and refuses when the deployed resource drifted from them.
-fn export_web_search(expected: &Row, observed: &Row) -> Result<(), Error> {
+/// API credentials, web search included, come from selected integrations:
+/// export keeps their authored definitions unchanged, and refuses when the
+/// deployed resource drifted from them. Projection validation already
+/// compared the typed inputs that rows carry as JSON.
+fn export_api(expected: &Row, observed: &Row) -> Result<(), Error> {
     if expected
         .iter()
+        .filter(|(key, _)| !key.ends_with("_json"))
         .any(|(key, value)| observed.get(key) != Some(value))
     {
-        return Err(Error::Conflict(
-            "web search provider drift requires inspection",
-        ));
+        return Err(Error::Conflict("API credential drift requires inspection"));
     }
     Ok(())
 }
@@ -696,8 +696,24 @@ mod tests {
             .values
     }
 
+    /// What the provider reports for `target`: its values, with each typed
+    /// input under its attribute.
+    fn observation(target: &Target) -> Value {
+        let inputs = nemoclaw_openshell::structured_inputs(&target.kind);
+        let mut observed = json!({"id": "observed"});
+        for (field, value) in &target.values {
+            match inputs.iter().find(|input| input.field == field) {
+                Some(input) => {
+                    observed[input.attribute] = serde_json::from_str(value).unwrap();
+                }
+                None => observed[field] = json!(value),
+            }
+        }
+        observed
+    }
+
     #[test]
-    fn export_preserves_search_definitions_and_rejects_registration_drift() {
+    fn export_rejects_a_search_registration_that_drifted() {
         for provider in ["tavily", "brave"] {
             for scope in ["deployment", "sandbox", "agent"] {
                 let mut document = Document::parse(
@@ -720,37 +736,55 @@ mod tests {
                     }
                 }
                 let record = Record::new(document.clone()).unwrap();
-                let expected = compile::targets(&document, &record.generations)
+                let target = compile::targets(&document, &record.generations)
                     .unwrap()
                     .into_iter()
                     .find(|target| {
-                        target.kind == "web_search" && target.values["provider_type"] == provider
+                        target.kind == "api"
+                            && target.values["name"].starts_with(&format!("{provider}-search-"))
                     })
-                    .unwrap()
-                    .values;
-                let exported = document.clone();
-                export_web_search(&expected, &expected).unwrap();
-                assert_eq!(exported, document, "{provider}/{scope}");
+                    .unwrap();
+                // Typed inputs are compared as the JSON rows carry.
+                let observed = observation(&target);
+                validate_projection(&target, &observed).unwrap();
+                for (attribute, replacement) in [
+                    ("endpoints", json!(["https://search.example.com"])),
+                    (
+                        "rest",
+                        json!({"rules":[{"allow":{"method":"GET","path":"/**"}}]}),
+                    ),
+                ] {
+                    let mut drifted = observed.clone();
+                    drifted[attribute] = replacement;
+                    assert!(
+                        validate_projection(&target, &drifted).is_err(),
+                        "{provider}/{scope}/{attribute}"
+                    );
+                }
+                // The other inputs are compared as rows carry them.
+                let mut expected = target.values.clone();
+                expected.insert("id".into(), "observed".into());
+                export_api(&expected, &expected).unwrap();
                 for field in [
-                    "provider_type",
                     "credential_env",
+                    "sandbox_env",
+                    "auth_style",
                     "name",
                     "workspace",
                     "owner",
                     "generation",
                 ] {
                     for replacement in [Some("foreign"), None] {
-                        let mut observed = expected.clone();
+                        let mut drifted = expected.clone();
                         if let Some(value) = replacement {
-                            observed.insert(field.into(), value.into());
+                            drifted.insert(field.into(), value.into());
                         } else {
-                            observed.remove(field);
+                            drifted.remove(field);
                         }
                         assert!(
-                            export_web_search(&expected, &observed).is_err(),
+                            export_api(&expected, &drifted).is_err(),
                             "{provider}/{scope}/{field}/{replacement:?}"
                         );
-                        assert_eq!(exported, document);
                     }
                 }
             }

@@ -760,7 +760,7 @@ Web search with gateway-held credentials and explicit agent grants.
 | `credential` | [SecretRef](#secretref) | Yes | — | Host environment reference. OpenShell supplies the search provider's placeholder to the sandbox. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"webSearch"`. |
 | `provider` | [SearchProvider](#searchprovider) | Yes | — | Supported search service. |
-| `sandboxEnv` | string | No | — | Variable name the sandbox sees for the key, such as BRAVE_SEARCH_API_KEY for Hermes's Brave plugin. Defaults to the credential's variable. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
+| `sandboxEnv` | string | No | — | Variable name the sandbox sees for the key, such as BRAVE_SEARCH_API_KEY for Hermes's Brave plugin. Defaults to the provider's own, BRAVE_API_KEY or TAVILY_API_KEY. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 
 ### Alternative 2
 

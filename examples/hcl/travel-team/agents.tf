@@ -179,7 +179,7 @@ resource "openshell_sandbox" "agent" {
   launch_json = data.fabric_harness.agent[each.key].launch_json
   providers = concat(
     [each.value.model == "local" ? openshell_inference.local.ref : openshell_inference.frontier.ref],
-    each.value.search ? [openshell_web_search.research.ref] : [],
+    each.value.search ? [openshell_api.research.ref] : [],
     each.key == "buyer" ? [openshell_api.bookings.ref] : [],
   )
   # The skills volume, for researchers, mounted with OpenShell's defaults.

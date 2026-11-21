@@ -60,6 +60,47 @@ pub struct Target {
     pub values: Row,
 }
 
+/// The `openshell_api` resource that registers `api` under `registration`,
+/// with an optional REST policy as JSON.
+fn api_target(
+    workspace: &str,
+    owner: &str,
+    generation: &str,
+    registration: String,
+    api: &crate::config::Api,
+    rest: Option<String>,
+) -> Target {
+    let mut values: Row = [
+        ("workspace".into(), workspace.into()),
+        ("name".into(), registration.clone()),
+        ("owner".into(), owner.into()),
+        ("generation".into(), generation.into()),
+        (
+            "endpoints_json".into(),
+            serde_json::to_string(&api.endpoints).expect("endpoint list"),
+        ),
+        ("credential_env".into(), api.credential.env.clone()),
+    ]
+    .into();
+    if let Some(style) = api.auth_style {
+        values.insert("auth_style".into(), style.name().into());
+    }
+    if let Some(header) = &api.header_name {
+        values.insert("header_name".into(), header.clone());
+    }
+    if let Some(name) = &api.sandbox_env {
+        values.insert("sandbox_env".into(), name.clone());
+    }
+    if let Some(rest) = rest {
+        values.insert(nemoclaw_openshell::api::REST_POLICY.into(), rest);
+    }
+    Target {
+        kind: "api".into(),
+        address: format!("openshell_api.{}", registration.replace('-', "_")),
+        values,
+    }
+}
+
 fn generation<'a>(generations: &'a Generations, kind: &str) -> Result<&'a str, ConfigError> {
     generations
         .get(kind)
@@ -215,77 +256,25 @@ fn targets_with_plans(
             address: format!("openshell_sandbox.{}", sandbox.name),
             values,
         });
-        // One web search resource per provider, credential reference, and
-        // image: sandboxes sharing all three share it.
-        if let Some(search) = web_search {
-            let mut target = Target {
-                kind: "web_search".into(),
-                address: format!(
-                    "openshell_web_search.{}_{}_{}",
-                    search.provider.name(),
-                    image_scope,
-                    search.credential.env.to_ascii_lowercase()
-                ),
-                values: [
-                    ("workspace".into(), workspace.clone()),
-                    ("name".into(), image_scope.clone()),
-                    ("owner".into(), document.metadata.uid.clone()),
-                    (
-                        "generation".into(),
-                        generation(generations, "provider")?.into(),
-                    ),
-                    ("provider_type".into(), search.provider.name().into()),
-                    ("credential_env".into(), search.credential.env.clone()),
-                ]
-                .into(),
-            };
-            if let Some(name) = &search.sandbox_env {
-                target.values.insert("sandbox_env".into(), name.clone());
-            }
-            if let Some(previous) = result.iter().find(|t| t.address == target.address) {
-                if previous != &target {
-                    return Err(ConfigError::new(
-                        "web search provider registration conflicts with an existing target",
-                    ));
-                }
-            } else {
-                result.push(target);
-            }
-        }
-        // One API resource per definition and image: sandboxes sharing both
-        // share it.
-        for api in apis {
-            let registration = api.registration(&image_scope);
-            let mut target = Target {
-                kind: "api".into(),
-                address: format!("openshell_api.{}", registration.replace('-', "_")),
-                values: [
-                    ("workspace".into(), workspace.clone()),
-                    ("name".into(), registration),
-                    ("owner".into(), document.metadata.uid.clone()),
-                    (
-                        "generation".into(),
-                        generation(generations, "provider")?.into(),
-                    ),
-                    (
-                        "endpoints_json".into(),
-                        serde_json::to_string(&api.api.endpoints).expect("endpoint list"),
-                    ),
-                    ("credential_env".into(), api.api.credential.env.clone()),
-                ]
-                .into(),
-            };
-            if let Some(style) = api.api.auth_style {
-                target
-                    .values
-                    .insert("auth_style".into(), style.name().into());
-            }
-            if let Some(header) = &api.api.header_name {
-                target.values.insert("header_name".into(), header.clone());
-            }
-            if let Some(name) = &api.api.sandbox_env {
-                target.values.insert("sandbox_env".into(), name.clone());
-            }
+        // One API resource per registration: sandboxes sharing it share the
+        // resource. A web search is an API with its provider's host, key and
+        // REST policy.
+        let search = web_search.map(|search| {
+            let (api, rest) = search.api();
+            (search.registration(&image_scope), api, Some(rest))
+        });
+        let apis = apis
+            .into_iter()
+            .map(|api| (api.registration(&image_scope), api.api, None));
+        for (registration, api, rest) in search.into_iter().chain(apis) {
+            let target = api_target(
+                &workspace,
+                &document.metadata.uid,
+                generation(generations, "provider")?,
+                registration,
+                &api,
+                rest,
+            );
             if let Some(previous) = result.iter().find(|t| t.address == target.address) {
                 if previous != &target {
                     return Err(ConfigError::new(
@@ -315,15 +304,12 @@ fn targets_with_plans(
     let gateway = gateway_values(document, generations)?;
     let apf = document.spec.gateway.policy_authority().is_some();
     for target in &mut result {
-        if apf
-            && matches!(
-                target.kind.as_str(),
-                "sandbox" | "web_search" | "api" | "inference"
-            )
-        {
+        if apf && matches!(target.kind.as_str(), "sandbox" | "api" | "inference") {
             target
                 .values
                 .insert("policy_authority".into(), "apf".into());
+            // APF's profile sets an API's endpoint rules, a search's included.
+            target.values.remove(nemoclaw_openshell::api::REST_POLICY);
         }
         if nemoclaw_openshell::references(&target.kind)
             .iter()
@@ -799,9 +785,12 @@ fn compile_with_plans(
                 .entry(format!("nemoclaw-inference-{}", provider.key))
                 .or_insert_with(|| source.clone());
         }
-        if document.web_search(sandbox)?.is_some() {
+        if let Some(search) = document.web_search(sandbox)? {
             profile_sources
-                .entry(format!("web_search:{}", document.image_scope(sandbox)?))
+                .entry(format!(
+                    "api:{}",
+                    search.registration(&document.image_scope(sandbox)?)
+                ))
                 .or_insert_with(|| source.clone());
         }
         for api in document.apis(sandbox)? {
@@ -967,12 +956,6 @@ fn compile_with_plans(
                 profile_sources[&format!("nemoclaw-inference-{}", target.values["name"])]
             ));
         }
-        if target.kind == "web_search" {
-            attributes["binaries"] = json!(format!(
-                "${{jsondecode({}.binaries_json)}}",
-                profile_sources[&format!("web_search:{}", target.values["name"])]
-            ));
-        }
         if target.kind == "api" {
             attributes["binaries"] = json!(format!(
                 "${{jsondecode({}.binaries_json)}}",
@@ -994,16 +977,11 @@ fn compile_with_plans(
                 .into_iter()
                 .map(|provider| provider_dependencies[&provider.key].clone())
                 .collect();
-            if let Some(search) = document.web_search(sandbox)? {
-                let name = nemoclaw_openshell::search::web_search_names(
-                    search.provider,
-                    &search.credential.env,
-                    &document.image_scope(sandbox)?,
-                )
-                .1;
-                dependencies.push(provider_dependencies[&name].clone());
-            }
             let image_scope = document.image_scope(sandbox)?;
+            if let Some(search) = document.web_search(sandbox)? {
+                dependencies
+                    .push(provider_dependencies[&search.registration(&image_scope)].clone());
+            }
             for api in document.apis(sandbox)? {
                 dependencies.push(provider_dependencies[&api.registration(&image_scope)].clone());
             }
