@@ -427,6 +427,14 @@
       "rust-notice-aleph-alpha--ts-rs--1dce5297090804082e9639d2b7d851ba815aa359--LICENSE": {
         "url": "https://raw.githubusercontent.com/Aleph-Alpha/ts-rs/1dce5297090804082e9639d2b7d851ba815aa359/LICENSE",
         "sha256": "db7f7f8e7236a2d0b41b855b2501b7b913caebbcda6ce498637a304ad1706ce1"
+      },
+      "python-nemo-relay-source.tar.gz": {
+        "url": "https://files.pythonhosted.org/packages/96/22/7d1b069ea917b058a1a2954b279f46ddec618a3111b66e9db6bb8a8e87e8/nemo_relay-0.11.0.tar.gz",
+        "sha256": "c9d022948901a19a22851f2cf717140c5b8c48d39c188799148d1ef1c878c531"
+      },
+      "codex-rg-source.tar.gz": {
+        "url": "https://codeload.github.com/BurntSushi/ripgrep/tar.gz/e89fff89ac9af12e8d4ce9d5fd07beb408ca730f",
+        "sha256": "af40d0f4cb7a55994906c009a7ba865047f0d487c95bceb8db59ffc4f2173d20"
       }
     },
     "ollama": {

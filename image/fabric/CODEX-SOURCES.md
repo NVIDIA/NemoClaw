@@ -41,6 +41,7 @@ The dependency archive supports Cargo's offline source resolution; native build 
 These inputs do not establish identical release binaries or complete non-Cargo native source/relinking delivery.
 
 `codex-rg-LICENSE-MIT` retains the MIT choice for the bundled ripgrep 15.2.0.
+`codex-rg-source.tar.gz` retains its matching source revision and Cargo lock; the native dependency archive separately retains that lock's registry sources and original notices.
 `codex-zsh-LICENCE` retains Zsh's license from `77045ef899e53b9598bebc5a41db93a548a40ca6`, the revision named by the bundled shell's patch level.
 Codex's shell modification patch and build script are in its source archive.
 The image copies only the Zsh executable, not the upstream shell-function collection.

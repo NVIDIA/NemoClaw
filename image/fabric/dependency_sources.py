@@ -73,7 +73,7 @@ def registry_sources(sboms, locks, sdists):
             ]
             if not locks:
                 print(
-                    f"{path.name}: no Cargo.lock; transitive Rust versions are unverified",
+                    f"{path.name}: no Cargo.lock in this source distribution",
                     file=sys.stderr,
                 )
             for member in locks:

@@ -114,6 +114,30 @@ COPY --from=sources \
     /rust-notice-aleph-alpha--ts-rs--1dce5297090804082e9639d2b7d851ba815aa359--LICENSE \
     /notices/
 
+# Build the unmodified sdist with our retained Cargo lock: upstream wheels do
+# not publish their dependency lock or an embedded dependency SBOM.
+FROM base AS tiktoken-wheels
+COPY --from=rust /usr/local/cargo /usr/local/cargo
+COPY --from=rust /usr/local/rustup /usr/local/rustup
+COPY --from=uv /uv /usr/local/bin/uv
+ENV CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup PATH=/usr/local/cargo/bin:$PATH
+ARG SOURCE_DATE_EPOCH=1789516800
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=sources /python-tiktoken-source.tar.gz /sources/
+COPY image/fabric/tiktoken-Cargo.lock /tmp/tiktoken-Cargo.lock
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/root/.cache/uv \
+    mkdir -p /src/tiktoken/.cargo /out \
+    && tar -xzf /sources/python-tiktoken-source.tar.gz -C /src/tiktoken --strip-components=1 \
+    && cd /src/tiktoken \
+    && cp /tmp/tiktoken-Cargo.lock Cargo.lock \
+    && cargo vendor --locked --versioned-dirs vendor > .cargo/config.toml \
+    && CARGO_NET_OFFLINE=true uv build --python /usr/local/bin/python3 --wheel --out-dir /out . \
+    && python3 -c 'import tomllib; assert tomllib.load(open("Cargo.lock", "rb")) == tomllib.load(open("/tmp/tiktoken-Cargo.lock", "rb")), "Tiktoken dependency pins changed"' \
+    && tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+        -I 'gzip -n' -cf /out/tiktoken-cargo-source.tar.gz Cargo.lock .cargo vendor \
+    && rm -rf /src/tiktoken
+
 FROM common-wheels AS harness-wheels
 ARG HARNESS
 ARG ADAPTER
@@ -121,13 +145,23 @@ ARG EXTRA
 COPY image/fabric/ /build/
 COPY image/NOTICE.md image/SOURCES.md docker-bake.hcl .dockerignore /build/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
+    --mount=type=bind,from=tiktoken-wheels,source=/out,target=/tiktoken-wheels \
+    mkdir -p /sources/runtime-extra \
+    && case "$HARNESS" in \
+        deepagents|mini-swe-agent) cp /tiktoken-wheels/*.whl /wheels/; \
+            cp /tiktoken-wheels/tiktoken-cargo-source.tar.gz /sources/runtime-extra/; \
+            set -- --no-emit-package tiktoken ;; \
+        *) set -- ;; \
+    esac \
+    && if [ -n "$ADAPTER" ]; then uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels "/src/fabric/adapters/python/$ADAPTER"; fi \
     && sh /build/inputs.sh lock /wheels > /own-requirements.txt \
-    && uv export --project /src/fabric --frozen --no-default-groups --no-emit-local ${EXTRA:+--extra=$EXTRA} --output-file /requirements.txt \
+    && uv export --project /src/fabric --frozen --no-default-groups --no-emit-local ${EXTRA:+--extra=$EXTRA} --output-file /requirements.txt "$@" \
     && cat /own-requirements.txt >> /requirements.txt \
     && uv pip install --python /opt/fabric/bin/python --require-hashes --find-links /wheels -r /requirements.txt \
     && sh /build/inputs.sh provenance /build > /provenance.json
 COPY --from=sources \
+    /codex-rg-source.tar.gz \
+    /python-nemo-relay-source.tar.gz \
     /python-fastuuid-source.tar.gz \
     /python-litellm-source.tar.gz \
     /python-tiktoken-source.tar.gz \
@@ -136,10 +170,13 @@ COPY --from=sources \
 RUN --mount=type=cache,target=/root/.cache/nemoclaw-crates \
     --mount=type=bind,from=upstream-notices,source=/notices,target=/upstream-notices \
     case "$HARNESS" in \
-        deepagents) set -- --sdist /sources/python-ormsgpack-source.tar.gz --sdist /sources/python-tiktoken-source.tar.gz ;; \
-        mini-swe-agent) set -- --sdist /sources/python-fastuuid-source.tar.gz --sdist /sources/python-litellm-source.tar.gz --sdist /sources/python-tiktoken-source.tar.gz ;; \
+        deepagents) set -- --lock /build/tiktoken-Cargo.lock --sdist /sources/python-ormsgpack-source.tar.gz --sdist /sources/python-tiktoken-source.tar.gz ;; \
+        mini-swe-agent) set -- --lock /build/tiktoken-Cargo.lock --sdist /sources/python-fastuuid-source.tar.gz --sdist /sources/python-litellm-source.tar.gz --sdist /sources/python-tiktoken-source.tar.gz ;; \
+        codex) python3 -c 'import tarfile; t=tarfile.open("/sources/codex-rg-source.tar.gz"); m=next(m for m in t if m.name.count("/")==1 and m.name.endswith("/Cargo.lock")); open("/sources/codex-rg-Cargo.lock", "wb").write(t.extractfile(m).read())'; \
+            set -- --lock /sources/codex-rg-Cargo.lock ;; \
         *) set -- ;; \
     esac; \
+    if [ -x /opt/fabric/bin/nemo-relay ]; then set -- "$@" --sdist /sources/python-nemo-relay-source.tar.gz; fi; \
     python3 /build/dependency_sources.py --sboms /opt/fabric/lib --cache /root/.cache/nemoclaw-crates \
         --upstream-notices /upstream-notices --output /sources/native-dependency-sources.tar.gz "$@"
 
@@ -149,6 +186,7 @@ COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.t
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
 COPY --from=harness-wheels --chmod=0644 /sources/fabric-vendor.tar.gz /sources/rust-COPYRIGHT-library.html /opt/nemoclaw/source/
 COPY --from=harness-wheels --chmod=0644 /sources/native-dependency-sources.tar.gz /opt/nemoclaw/source/
+COPY --from=harness-wheels /sources/runtime-extra/ /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
 COPY image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
@@ -220,6 +258,7 @@ COPY --from=codex-vendor --chmod=0644 /out/codex-cargo-source.tar.gz /opt/nemocl
 COPY --from=sources --chmod=0644 /codex-LICENSE /codex-NOTICE /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /codex-rg-LICENSE-MIT /codex-zsh-LICENCE /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /codex-rusty-v8-LICENSE /opt/nemoclaw/source/
+COPY --from=sources --chmod=0644 /codex-rg-source.tar.gz /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /codex-symphonia-source.tar.gz /codex-nucleo-source.tar.gz /option-ext-source.crate /opt/nemoclaw/source/codex/
 COPY --from=codex-sources --chmod=0644 /sources/codex-source.tar.gz /sources/codex-libcap-source.tar.xz /sources/codex-bubblewrap-COPYING /sources/codex-libcap-License /sources/codex-rust-COPYRIGHT-library.html /sources/codex-rg-rust-COPYRIGHT-library.html /opt/nemoclaw/source/
 COPY --from=codex-sources --chmod=0644 /sources/codex-v8-source.tar.gz /sources/codex-v8-LICENSE /opt/nemoclaw/source/
