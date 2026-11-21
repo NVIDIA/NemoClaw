@@ -395,6 +395,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     undefined,
     "Authenticate to Docker Hub",
     "Install target host dependencies",
+    "Set up the pinned v1 protoc",
     "Download reviewed OpenShell SDK archive",
     "Prepare E2E workspace",
     "Install reviewed OpenShell SDK archive without package credentials",
@@ -528,6 +529,16 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
 
   const prepare = requireStep(errors, workflowSteps, "Prepare E2E workspace");
+
+  const protoc = requireStep(errors, workflowSteps, "Set up the pinned v1 protoc");
+  if (
+    !isDeepStrictEqual(protoc, {
+      name: "Set up the pinned v1 protoc",
+      uses: E2E_ACTION_PROVENANCE.v1Protoc.reference,
+    })
+  ) {
+    errors.push("standard E2E profile must install the pinned v1 protoc with the reviewed action");
+  }
 
   const hostDependencies = requireStep(errors, workflowSteps, "Install target host dependencies");
   if (

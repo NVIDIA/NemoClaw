@@ -71,6 +71,72 @@ describe("standard E2E execution profile", () => {
   });
 
   it.each([
+    { field: "uses", value: "./.github/actions/setup-v1-protoc" },
+    { field: "uses", value: "NVIDIA/NemoClaw/.github/actions/setup-v1-protoc@main" },
+    {
+      field: "uses",
+      value:
+        "NVIDIA/NemoClaw/.github/actions/setup-v1-protoc@0000000000000000000000000000000000000000",
+    },
+    { field: "if", value: "${{ false }}" },
+    { field: "env", value: { BASH_ENV: "scripts/unreviewed.sh" } },
+    { field: "with", value: { version: "latest" } },
+    { field: "continue-on-error", value: true },
+    { field: "run", value: "bash .github/actions/setup-v1-protoc/install.sh" },
+  ])("rejects an unreviewed protoc setup: $field $value", ({ field, value }) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    ) as { jobs: { run: { steps: Array<Record<string, unknown>> } } };
+    const steps = profile.jobs.run.steps;
+    const index = steps.findIndex((step) => step.name === "Set up the pinned v1 protoc");
+    steps[index][field] = value;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-protoc-boundary-"));
+    try {
+      const profilePath = path.join(directory, "profile.yaml");
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
+        "standard E2E profile must install the pinned v1 protoc with the reviewed action",
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each<[string, (steps: Array<Record<string, unknown>>, index: number) => void]>([
+    [
+      "missing",
+      (steps, index) => {
+        steps.splice(index, 1);
+      },
+    ],
+    [
+      "late",
+      (steps, index) => {
+        steps.push(...steps.splice(index, 1));
+      },
+    ],
+  ])("rejects %s protoc setup", (_scenario, mutate) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    ) as { jobs: { run: { steps: Array<Record<string, unknown>> } } };
+    const steps = profile.jobs.run.steps;
+    mutate(
+      steps,
+      steps.findIndex((step) => step.name === "Set up the pinned v1 protoc"),
+    );
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-protoc-order-"));
+    try {
+      const profilePath = path.join(directory, "profile.yaml");
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
+        "standard E2E profile must keep its reviewed step set and order",
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
     { field: "uses", value: "actions/setup-python@v7" },
     { field: "if", value: "true" },
     { field: "with", value: { "python-version": "3.14" } },
