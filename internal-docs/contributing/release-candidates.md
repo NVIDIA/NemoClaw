@@ -27,6 +27,13 @@ Bundles:
   Only release candidate tags of the form `v0.1.0-rc.<N>` count, and only the tag push's run reports the tag: a clean local checkout of the tag now reports `0.1.0-dev.<hash>`.
   Before, every bundle but a clean checkout of a tag reported `0.1.0-dev.<hash>` of its source files, so CI builds of the same sources shared a version.
 
+Releases:
+
+- Each release attaches `version-pins.json`, the versions and digests that a deployment of it uses: OpenTofu, the Docker and Helm providers, the OpenShell images and chart, the development issuer, Fabric, and the release's own images ([#14722](https://github.com/NVIDIA/NemoClaw/issues/14722)).
+  See [compatibility](../../docs/references/compatibility.md#using-one-release-together).
+  A final release is published only when the file matches its tag's `versions.json` and the images it staged.
+  Before, hand-written HCL copied `versions.json` from the release's tag.
+
 Agents:
 
 - Agent images build Fabric from its [`v0.7.0`](https://github.com/NVIDIA/NeMo-Fabric/tree/v0.7.0) release tag instead of a commit on its `release/0.7` branch, without patches ([#13318](https://github.com/NVIDIA/NemoClaw/issues/13318)).

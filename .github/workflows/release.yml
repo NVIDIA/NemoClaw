@@ -603,6 +603,17 @@ jobs:
             fi
             echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` | $metadata |" >> "$notes"
           done
+          pins="$RUNNER_TEMP/version-pins.json"
+          cargo run --locked -q -p nemoclaw-build --no-default-features -- release-pins \
+            --versions versions.json --inventory "$inventory" --tag "$TAG" > "$pins"
+          {
+            echo
+            echo '## Version pins'
+            echo
+            cat <<'NOTES'
+          `version-pins.json` lists each component that a deployment of this release uses, with its version and digest or checksum: OpenTofu, the Docker and Helm providers, the OpenShell gateway, supervisor, sandbox, and Helm chart, the development issuer, Fabric, and the images above. Hand-written HCL can read it instead of the repository's `versions.json`.
+          NOTES
+          } >> "$notes"
           # Each platform's SPDX document was recorded where the image was built,
           # under its digest. Syft scans only an image whose record doesn't name it.
           sboms="$RUNNER_TEMP/sboms"
@@ -647,7 +658,7 @@ jobs:
               --title "NemoClaw $TAG" --notes-file "$notes"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$bundles"/*.metadata.json
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$cli"/nemoclaw-* "$cli/SHA256SUMS" "$cli/release-evidence.json"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$cli"/nemoclaw-* "$cli/SHA256SUMS" "$cli/release-evidence.json" "$pins"
           cp "$inventory" "$sboms/inventory.json"
           echo "inventory_sha256=$(sha256sum "$inventory" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "sboms_sha256=$(sha256sum "$sboms/sboms.json" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
@@ -784,6 +795,26 @@ jobs:
           done < "$dir/tags"
           echo "::error::No release candidate of $TAG staged these images. Tag one from this commit and test it first."
           exit 1
+      - name: Require the version pins of the tag and its images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          CANDIDATE_REVISION: ${{ github.sha }}
+          INVENTORY_SHA256: ${{ needs.stage.outputs.inventory_sha256 }}
+        run: |
+          # The controller, not the tag's build tool, derives the expected pins.
+          dir="$RUNNER_TEMP/pins"
+          mkdir -p "$dir"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern inventory.json --output "$dir/inventory.json"
+          test "$(sha256sum "$dir/inventory.json" | cut -d ' ' -f1)" = "$INVENTORY_SHA256"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern version-pins.json --output "$dir/staged.json"
+          git show "$CANDIDATE_REVISION:versions.json" > "$dir/versions.json"
+          cargo run --locked -q -p nemoclaw-build --no-default-features -- release-pins \
+            --versions "$dir/versions.json" --inventory "$dir/inventory.json" --tag "$TAG" > "$dir/expected.json"
+          if ! cmp -s "$dir/expected.json" "$dir/staged.json"; then
+            echo "::error::The draft's version-pins.json doesn't match the versions.json of $TAG and the images staging recorded."
+            exit 1
+          fi
       - name: Assess the staged release
         id: gate
         uses: ./.github/actions/release-assessment
