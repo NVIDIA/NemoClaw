@@ -416,6 +416,289 @@ esac
     }
 }
 
+#[cfg(unix)]
+mod recommendations {
+    use super::*;
+    use std::{os::unix::fs::PermissionsExt, process::Command};
+
+    const MARKER: &str = "<!-- nemoclaw-v1-e2e-recommendations -->";
+
+    struct Fixture {
+        directory: tempfile::TempDir,
+        script: String,
+        sha: String,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let workflow: Value = serde_saphyr::from_str(
+                &fs::read_to_string(repository().join(".github/workflows/rust.yml")).unwrap(),
+            )
+            .unwrap();
+            let script = workflow["jobs"]["recommendations"]["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|step| step["name"] == "Post public E2E recommendations")
+                .unwrap()["run"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let directory = tempfile::tempdir().unwrap();
+            let gh = directory.path().join("gh");
+            fs::write(
+                &gh,
+                r#"#!/bin/bash
+set -euo pipefail
+method=GET input= endpoint= paginate=false slurp=false
+while (( $# )); do
+  case "$1" in
+    api) shift ;;
+    --paginate) paginate=true; shift ;;
+    --slurp) slurp=true; shift ;;
+    --method) method=$2; shift 2 ;;
+    --input) input=$2; shift 2 ;;
+    repos/*) endpoint=$1; shift ;;
+    *) exit 2 ;;
+  esac
+done
+if [[ $method != GET ]]; then
+  jq -cn --arg method "$method" --arg endpoint "$endpoint" --slurpfile payload "$input" \
+    '{method: $method, endpoint: $endpoint, body: $payload[0].body}' >> mutations
+  echo '{}'
+elif [[ $endpoint == repos/NVIDIA/NemoClaw/pulls/42 ]]; then
+  if [[ -e seen ]]; then cat next-pr; else touch seen; cat pr; fi
+elif [[ $endpoint == 'repos/NVIDIA/NemoClaw/issues/42/comments?per_page=100' ]]; then
+  filter='.[0]'
+  [[ $paginate != true ]] || filter='.[]'
+  [[ $slurp != true ]] || filter="[$filter]"
+  jq "$filter" comments
+else
+  echo 'Unexpected fixture request' >&2; exit 2
+fi
+"#,
+            )
+            .unwrap();
+            fs::set_permissions(gh, fs::Permissions::from_mode(0o700)).unwrap();
+            Self {
+                directory,
+                script,
+                sha: "a".repeat(40),
+            }
+        }
+
+        fn pr(&self) -> Value {
+            serde_json::json!({"state":"open", "draft":false, "base":{"ref":"v1"}, "head":{"sha":self.sha}})
+        }
+
+        fn selection(&self) -> Value {
+            serde_json::json!({
+                "commit":self.sha,
+                "runners":{"gpu":["gpu-one"], "dgx-station":["station-two"], "hosted":["ignored-case"]},
+                "cases":{
+                    "gpu-one":{"run":true,"reason":"image/vllm/Dockerfile changed, an input of a runtime image this case runs"},
+                    "station-two":{"run":true,"reason":"could not analyze changes since base (https://PRIVATE-SENTINEL.invalid); running every case"},
+                    "ignored-case":{"run":true,"reason":"PRIVATE-SENTINEL"}
+                },
+                "execution_url":"https://PRIVATE-SENTINEL.invalid/run", "status":"PRIVATE-SENTINEL",
+                "runner":"PRIVATE-SENTINEL", "artifact":"PRIVATE-SENTINEL", "timing":"PRIVATE-SENTINEL"
+            })
+        }
+
+        fn publish(
+            &self,
+            selection: Value,
+            pr: Value,
+            comments: Value,
+            next_pr: Option<Value>,
+        ) -> Result<Vec<Value>, (std::process::Output, Vec<Value>)> {
+            let root = self.directory.path();
+            for (name, value) in [
+                ("pr", pr.clone()),
+                ("next-pr", next_pr.unwrap_or(pr)),
+                ("comments", comments),
+            ] {
+                fs::write(root.join(name), value.to_string()).unwrap();
+            }
+            for name in ["seen", "mutations"] {
+                let _ = fs::remove_file(root.join(name));
+            }
+            let path = std::env::join_paths(
+                [root.to_path_buf()]
+                    .into_iter()
+                    .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+            )
+            .unwrap();
+            let output = Command::new("bash")
+                .args(["--noprofile", "--norc", "-e", "-o", "pipefail", "-c"])
+                .arg(&self.script)
+                .env_clear()
+                .env("PATH", path)
+                .env("RUNNER_TEMP", root)
+                .env("GITHUB_REPOSITORY", "NVIDIA/NemoClaw")
+                .env("GITHUB_REF_NAME", "pull-request/42")
+                .env("GITHUB_SHA", &self.sha)
+                .env("GH_TOKEN", "fixture")
+                .env("RECOMMENDATIONS", selection.to_string())
+                .current_dir(root)
+                .output()
+                .unwrap();
+            let writes = fs::read_to_string(root.join("mutations"))
+                .unwrap_or_default()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            if output.status.success() {
+                Ok(writes)
+            } else {
+                Err((output, writes))
+            }
+        }
+    }
+
+    #[test]
+    fn current_pr_receives_only_public_case_recommendations() {
+        let fixture = Fixture::new();
+        let writes = fixture
+            .publish(
+                fixture.selection(),
+                fixture.pr(),
+                serde_json::json!([[]]),
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            writes.len(),
+            1,
+            "An eligible current PR should receive one recommendation comment"
+        );
+        let body = writes[0]["body"].as_str().unwrap();
+        assert!(body.contains(&fixture.sha), "Identify the analyzed commit");
+        assert!(
+            body.contains("gpu-one") && body.contains("station-two"),
+            "Name the selected hardware cases"
+        );
+        assert!(
+            !body.contains("PRIVATE-SENTINEL"),
+            "Exclude raw diagnostics and execution metadata"
+        );
+        assert!(
+            !body.contains("ignored-case"),
+            "Exclude cases outside the hardware selection"
+        );
+        assert!(
+            body.starts_with(MARKER),
+            "Identify the bot-owned recommendation comment"
+        );
+    }
+
+    #[test]
+    fn groups_automatically_selected_cases_under_one_public_reason() {
+        let fixture = Fixture::new();
+        let mut selection = fixture.selection();
+        for id in ["gpu-one", "station-two"] {
+            selection["cases"][id]["reason"] =
+                serde_json::json!("every case runs: PRIVATE-SENTINEL");
+        }
+        let writes = fixture
+            .publish(selection, fixture.pr(), serde_json::json!([[]]), None)
+            .unwrap();
+        let body = writes[0]["body"].as_str().unwrap();
+        assert!(body.contains("## Selected hardware E2Es"));
+        assert!(body.contains("run automatically"));
+        assert_eq!(
+            body.matches("Shared code or test infrastructure changed.")
+                .count(),
+            1
+        );
+        assert!(body.contains("gpu-one") && body.contains("station-two"));
+        assert!(!body.contains("PRIVATE-SENTINEL"));
+    }
+
+    fn own_comment() -> Value {
+        serde_json::json!({"id":99,"user":{"login":"github-actions[bot]","type":"Bot"},"body":format!("{MARKER}\nold recommendations")})
+    }
+
+    #[test]
+    fn updates_its_comment_on_a_later_page_without_touching_human_comments() {
+        let fixture = Fixture::new();
+        let human =
+            serde_json::json!({"id":12,"user":{"login":"reviewer","type":"User"},"body":MARKER});
+        let comments = serde_json::json!([[human], [own_comment()]]);
+        let writes = fixture
+            .publish(fixture.selection(), fixture.pr(), comments, None)
+            .unwrap();
+        assert_eq!(writes.len(), 1, "Refresh one bot-owned comment");
+        assert_eq!(writes[0]["method"], "PATCH");
+        assert_eq!(
+            writes[0]["endpoint"], "repos/NVIDIA/NemoClaw/issues/comments/99",
+            "Leave the human comment untouched"
+        );
+    }
+
+    #[test]
+    fn no_match_refreshes_the_previous_recommendations() {
+        let fixture = Fixture::new();
+        let mut selection = fixture.selection();
+        selection["runners"]["gpu"] = serde_json::json!([]);
+        selection["runners"]["dgx-station"] = serde_json::json!([]);
+        let writes = fixture
+            .publish(
+                selection,
+                fixture.pr(),
+                serde_json::json!([[own_comment()]]),
+                None,
+            )
+            .unwrap();
+        assert_eq!(writes.len(), 1);
+        let body = writes[0]["body"].as_str().unwrap();
+        assert!(body.contains(&fixture.sha));
+        assert!(body.contains("No hardware E2Es selected"));
+        assert!(!body.contains("gpu-one"), "Clear the previous selection");
+    }
+
+    #[test]
+    fn ineligible_and_superseded_heads_do_not_publish() {
+        let fixture = Fixture::new();
+        for (field, value) in [
+            ("draft", serde_json::json!(true)),
+            ("state", serde_json::json!("closed")),
+            ("base", serde_json::json!({"ref":"main"})),
+            ("head", serde_json::json!({"sha":"b".repeat(40)})),
+        ] {
+            let mut ineligible = fixture.pr();
+            ineligible[field] = value;
+            for (pr, next) in [(ineligible.clone(), None), (fixture.pr(), Some(ineligible))] {
+                let writes = fixture
+                    .publish(fixture.selection(), pr, serde_json::json!([[]]), next)
+                    .unwrap();
+                assert!(
+                    writes.is_empty(),
+                    "Do not publish for an ineligible {field}, including after pagination"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_plan_data_does_not_reach_a_public_comment() {
+        let fixture = Fixture::new();
+        let mut wrong_commit = fixture.selection();
+        wrong_commit["commit"] = serde_json::json!("b".repeat(40));
+        let mut unsafe_id = fixture.selection();
+        unsafe_id["runners"]["gpu"] = serde_json::json!(["bad](https://PRIVATE-SENTINEL.invalid)"]);
+        let mut unselected = fixture.selection();
+        unselected["cases"]["gpu-one"]["run"] = serde_json::json!(false);
+        for selection in [wrong_commit, unsafe_id, unselected] {
+            let (output, writes) = fixture
+                .publish(selection, fixture.pr(), serde_json::json!([[]]), None)
+                .unwrap_err();
+            assert!(writes.is_empty());
+            assert!(!String::from_utf8_lossy(&output.stderr).contains("PRIVATE-SENTINEL"));
+        }
+    }
+}
+
 /// Execute the plan's suite selection against a GitHub fixture: only
 /// copy-pr-bot's push of an open, non-draft v1 PR's current head runs the
 /// hardware cases, only NVIDIA/NemoClaw runs Live / Brev, and a manual run of

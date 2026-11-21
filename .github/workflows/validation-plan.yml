@@ -35,6 +35,11 @@ on:
       arm64_target:
         description: With arm64, the Live / HCL target that runs on Linux ARM64.
         value: ${{ jobs.plan.outputs.arm64_target }}
+      recommendations:
+        description: >-
+          With the hardware suite, the analyzed commit, the selected cases with their
+          reasons, and the cases by where they run, for the pull request's comment.
+        value: ${{ jobs.plan.outputs.recommendations }}
       bundle:
         value: ${{ jobs.plan.outputs.bundle }}
       lifecycle:
@@ -66,6 +71,7 @@ jobs:
       arm64: ${{ steps.cases.outputs.arm64 }}
       gpu: ${{ steps.cases.outputs.gpu }}
       arm64_target: ${{ steps.cases.outputs.arm64_target }}
+      recommendations: ${{ steps.cases.outputs.recommendations }}
       bundle: ${{ steps.plan.outputs.bundle }}
       lifecycle: ${{ steps.plan.outputs.lifecycle }}
       images: ${{ steps.plan.outputs.images }}
@@ -192,7 +198,8 @@ jobs:
             hardware)
               gpu=$(jq '.runners.gpu | length > 0' "$RUNNER_TEMP/hcl-cases.json")
               amd64=$gpu
-              arm64=$(jq '.runners["dgx-station"] | length > 0' "$RUNNER_TEMP/hcl-cases.json") ;;
+              arm64=$(jq '.runners["dgx-station"] | length > 0' "$RUNNER_TEMP/hcl-cases.json")
+              echo "recommendations=$(jq -c '{commit,cases,runners}' "$RUNNER_TEMP/hcl-cases.json")" >> "$GITHUB_OUTPUT" ;;
             brev) amd64=true ;;
             hcl)
               case "$TARGET" in
