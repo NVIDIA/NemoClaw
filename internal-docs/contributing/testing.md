@@ -364,7 +364,7 @@ Documentation previews publish only for PRs targeting `v1`.
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64`; beside them, `Build / llama.cpp runtime / linux_arm64` and `Build / llama.cpp runtime / linux_amd64` build the llama.cpp runtime image and run its server's and supervisor's version commands |
 | CI / Dependencies | `Policy`, `Python scripts` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
-| Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
+| Live / Brev | In CI / Bundle's `brev` suite: image build and VM preparation alongside Linux AMD64's bundle build, then lifecycle qualification and verified VM deletion |
 | E2E / Colossus runner connectivity | Manual, on `v1` only: `smoke` runs `true` without credentials on `runner_label` (default `colossus-gb300`), and `bundle` runs the Linux ARM64 bundle, unit, contract, and integration jobs on `colossus-gb300` one after another, to compare their times with the hosted runners'; it restores the hosted runners' Rust caches but never saves them |
 
 The `v1` ruleset requires the four `Test /` checks, the two `Build /` checks, `Policy`, and `Validate`; `Python scripts` isn't required.
@@ -479,10 +479,10 @@ Only the hosted and GPU jobs receive the key, and a GPU case receives it only wh
 `E2E Kubernetes (kind) tests` runs only HCL cases, so it is skipped when none is selected; `cargo ci live-docker` and `live-kind` take the selection as `--hcl-cases`, and without it run every case placed on them.
 
 Whenever the plan selects a hosted case, Linux AMD64 runs it as `linux_amd64 / E2E / E2E HCL CASE`, from the same test archive, bundle, and live images as the live suites, except on a fork's pull request, which cannot use the inference secret.
-On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse `pull_request` jobs. Separately, [Live / V1 PR hardware](../../.github/workflows/pr-self-hosted.yml) consumes bot-admitted copied PR branches and runs the affected qualified hardware cases for open, non-draft v1 PRs. Those runs remain outside merge requirements; see [hardware dispatch](live-tests.md#dgx-station-on-colossus).
+On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse `pull_request` jobs. Separately, CI / Bundle's `hardware` suite runs on bot-admitted copied PR branches and runs the affected qualified hardware cases for open, non-draft v1 PRs. Those runs report no `Test /` checks and remain outside merge requirements; see [hardware dispatch](live-tests.md#dgx-station-and-spark-on-colossus).
 Live / HCL's `Cases` job lists the cases and fetches the model runtime images' pinned sources, and each case's job runs the same test archive, bundle, and live images as the hosted cases, which the GPU runner can run because CI / Bundle builds them on Ubuntu 22.04. Each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services.
-Dispatch Live / HCL to run the hosted or GPU cases alone: without CI / Bundle's artifacts, its `Build` job builds the bundle, test executable, and agent images on Ubuntu 22.04 from the dispatched branch.
-A `dgx-station` dispatch skips `Build`, and the Station case's job builds them on the Station runner before it runs the case: two machines share that runner's label, and Actions artifacts move the 1 GB candidate at 3-8 MB/s there.
+Dispatch CI / Bundle with `suite=hcl` to run the hosted or GPU cases alone: it builds the target platform's bundle, test executable, and agent images on Ubuntu 22.04 from the dispatched branch, without that platform's other suites, and calls Live / HCL with them.
+A Station or Spark case's job downloads them on its runner before it runs the case, since two machines share that runner's label; Actions artifacts move at 3-8 MB/s there.
 
 To see which live HCL cases a pull request affects, such as before dispatching the GPU cases, which its CI does not run, run from a clean checkout of its commit:
 
@@ -625,7 +625,7 @@ Dependency caches are keyed by platform and the Rust toolchain, manifests, lockf
 The native build-and-test job and `E2E build images` share each platform's dependency cache instead of adding their job names to its key.
 Only the native build-and-test job writes that shared cache; `E2E build images` restores it without uploading a duplicate copy, and the bundle job writes its own.
 The live suites' Docker, Kind, and HCL jobs compile nothing, so they restore no Rust cache.
-Documentation restores the bundle job's cache without saving one; Live / Brev and Live / HCL's candidate builds keep their own prefixes.
+Documentation restores the bundle job's cache without saving one.
 The shared key causes a one-time cold build when first enabled; old job-specific entries can expire normally.
 
 `E2E build images` keeps BuildKit's layers for the live images in the same cache, through `cargo images build --gha-cache`: about 1.8 GB per Linux platform, mostly the OpenClaw application, the Rust toolchain, and the Fabric runtime's Rust build.
@@ -636,7 +636,7 @@ The checksum-addressed OpenTofu archives in `.build/downloads` use a separate ca
 Source-only changes reuse that archive cache without uploading it again.
 Bundle assembly still verifies every archive checksum and builds a fresh bundle; `dist` is not cached.
 
-The [shared Rust setup](../../.github/actions/setup-rust/action.yml) runs `cargo ci tools` for native, documentation, Brev, and Live / HCL builds and for `E2E build images`, and exports the installed `PROTOC` to later steps.
+The [shared Rust setup](../../.github/actions/setup-rust/action.yml) runs `cargo ci tools` for native and documentation builds and for `E2E build images`, and exports the installed `PROTOC` to later steps.
 On a runner without rustup, such as a leased Colossus machine, it first installs the `rustup-init` that `versions.json` pins, checked against its SHA-256, for the runner user without changing shell profiles, and then the toolchain that `rust-toolchain.toml` names.
 That runner compiles without the SDK in `target/ci-runner`, so it can install the compiler before anything needs it.
 GitHub restricts cache access by branch: temporary Brev branches may start cold because `v1` is not the default branch.

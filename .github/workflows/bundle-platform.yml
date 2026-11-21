@@ -30,6 +30,12 @@ on:
         description: Run contract and integration tests when their inputs are affected.
         type: boolean
         default: true
+      unit:
+        description: >-
+          Check formatting, lints, and the schema, and run the unit tests; a run that
+          builds the bundle and test executables only for live cases skips them.
+        type: boolean
+        default: true
       partitions:
         description: JSON list of the contract and integration partitions, each {layer, shard, shards}.
         type: string
@@ -38,9 +44,15 @@ on:
           {"layer": "integration", "shard": 1, "shards": 2},
           {"layer": "integration", "shard": 2, "shards": 2}]
       e2e:
-        description: Run the Docker and Kubernetes live suites, which need a Linux runner.
+        description: >-
+          Archive the live test executables and run the selected live suites and HCL
+          cases, which need a Linux runner.
         type: boolean
         default: false
+      live-suites:
+        description: With e2e, run the Docker and Kubernetes live suites.
+        type: boolean
+        default: true
       live-images-commit:
         description: A v1 commit whose pushed images the live suites pull instead of building, or empty to build them.
         type: string
@@ -55,6 +67,18 @@ on:
         default: false
       hcl-cases:
         description: The validation plan's live HCL case selection, by where each case runs; required with e2e.
+        type: string
+        default: ""
+      hcl-target:
+        description: With hcl-gpu, Live / HCL's hardware target, which runs on this platform.
+        type: string
+        default: rtx-pro-6000
+      hcl-hosted:
+        description: With hcl-gpu, also run the hosted cases in Live / HCL.
+        type: boolean
+        default: false
+      hcl-jobs:
+        description: With hcl-gpu, comma-separated case IDs on the target, or empty for every selected case.
         type: string
         default: ""
       save-cache:
@@ -73,6 +97,9 @@ on:
       lifecycle-artifact:
         description: The lifecycle artifacts' common name prefix, or empty when the build job uploaded none.
         value: ${{ jobs.build.outputs.artifact }}
+      bundle-artifact:
+        description: The bundle artifact's name, or empty when the bundle job uploaded none.
+        value: ${{ jobs.bundle.outputs.artifact }}
       partitions:
         description: The contract and integration partitions, as given.
         value: ${{ inputs.partitions }}
@@ -111,8 +138,10 @@ jobs:
           platform: ${{ inputs.platform }}
           save-cache: ${{ inputs.save-cache }}
       - name: Check formatting
+        if: inputs.unit
         run: cargo ci fmt
       - name: Lint Rust
+        if: inputs.unit
         run: cargo ci clippy
       - name: Clear cached build timings
         id: timings
@@ -132,12 +161,13 @@ jobs:
       # that took up to 5.5 s on some hosted runners. Reading them here keeps
       # that out of the tests' time limits. Without Docker, the tests skip.
       - name: Load Docker Buildx from disk
-        if: runner.os == 'Linux'
+        if: inputs.unit && runner.os == 'Linux'
         run: docker buildx version || true
       - name: Run tests
+        if: inputs.unit
         run: cargo ci test
       - name: Upload test timings
-        if: always()
+        if: always() && inputs.unit
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-${{ inputs.platform }}-${{ github.run_attempt }}
@@ -145,6 +175,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
       - name: Check generated configuration schema and reference
+        if: inputs.unit
         run: cargo ci schema
       - name: Archive lifecycle executables and inputs
         if: inputs.lifecycle || inputs.e2e
@@ -501,7 +532,8 @@ jobs:
   # last build saved to the Actions cache for unchanged image inputs.
   live-images:
     name: E2E build images
-    if: inputs.e2e && inputs.live-images-commit == ''
+    # Only the live suites and HCL cases load them.
+    if: inputs.e2e && inputs.live-images-commit == '' && (inputs.live-suites || inputs.hcl || inputs.hcl-gpu)
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
@@ -569,7 +601,8 @@ jobs:
     name: E2E
     needs: [build, bundle, live-images]
     if: >-
-      ${{ !cancelled() && inputs.e2e && needs.build.result == 'success' && needs.bundle.result == 'success' &&
+      ${{ !cancelled() && inputs.e2e && (inputs.live-suites || inputs.hcl || inputs.hcl-gpu) &&
+      needs.build.result == 'success' && needs.bundle.result == 'success' &&
       (needs.live-images.result == 'success' ||
       (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
     uses: ./.github/workflows/e2e-platform.yml
@@ -583,5 +616,9 @@ jobs:
       hcl: ${{ inputs.hcl }}
       hcl-gpu: ${{ inputs.hcl-gpu }}
       hcl-cases: ${{ inputs.hcl-cases }}
+      live-suites: ${{ inputs.live-suites }}
+      hcl-target: ${{ inputs.hcl-target }}
+      hcl-hosted: ${{ inputs.hcl-hosted }}
+      hcl-jobs: ${{ inputs.hcl-jobs }}
     # The HCL cases read NVIDIA_API_KEY.
     secrets: inherit
