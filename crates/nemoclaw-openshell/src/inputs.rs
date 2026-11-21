@@ -35,6 +35,18 @@ fn mcp_input() -> Shape {
     MCP.clone()
 }
 
+/// Typed API REST policy, derived from the schema once like the sandbox policy.
+fn rest_input() -> Shape {
+    static REST: std::sync::LazyLock<Shape> = std::sync::LazyLock::new(|| {
+        let schema = schemars::schema_for!(crate::api::RestPolicy).to_value();
+        Shape::Object(
+            nemoclaw_tofu::shape::fields(&schema, &[])
+                .expect("the API's REST policy maps to OpenTofu"),
+        )
+    });
+    REST.clone()
+}
+
 /// One sandbox service endpoint, in OpenShell's terms.
 fn service_input() -> nemoclaw_tofu::shape::Fields {
     use nemoclaw_tofu::shape::Field;
@@ -84,8 +96,9 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
             input("binaries", "binaries_json", strings()),
             input("endpoints", "endpoints_json", strings()),
             input("mcp", crate::api::MCP_POLICY, mcp_input()),
+            input("rest", crate::api::REST_POLICY, rest_input()),
         ],
-        "web_search" | "inference" => {
+        "inference" => {
             vec![input("binaries", "binaries_json", strings())]
         }
         "sandbox" => vec![
@@ -113,7 +126,7 @@ pub fn export(kind: &str) -> Option<Export> {
     let fields: &[&'static str] = match kind {
         "workspace" => &["name", "owner", "generation", "id"],
         // Registrations name what sandboxes attach: `registration`.
-        "web_search" | "inference" | "api" => &[
+        "inference" | "api" => &[
             "workspace",
             "name",
             "registration",
@@ -189,8 +202,8 @@ fn object_references(kind: &str) -> Vec<Reference> {
         list: false,
     };
     match kind {
-        // A web search registration belongs to its workspace's owner.
-        "web_search" | "api" => vec![Reference {
+        // An API registration belongs to its workspace's owner.
+        "api" => vec![Reference {
             attribute: "workspace",
             kind: "openshell_workspace",
             fields: vec![("name", "workspace"), ("owner", "owner")],

@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use nemoclaw_openshell::api::MCP_POLICY;
-use nemoclaw_openshell::search::SearchProvider;
+use nemoclaw_openshell::api::{MCP_POLICY, REST_POLICY};
 
 const BINARIES: &str = "nemoclaw.nvidia.com/binaries";
 const ENDPOINT: &str = "nemoclaw.nvidia.com/endpoint";
@@ -16,7 +15,7 @@ const SANDBOX_ENV: &str = "nemoclaw.nvidia.com/sandbox-env";
 const ENDPOINTS: &str = "nemoclaw.nvidia.com/endpoints";
 
 /// Each ownership and definition field, and the profile annotation that carries it.
-const FIELDS: [(&str, &str); 13] = [
+const FIELDS: [(&str, &str); 14] = [
     ("owner", OWNER),
     ("generation", GENERATION),
     ("binaries_json", BINARIES),
@@ -30,6 +29,7 @@ const FIELDS: [(&str, &str); 13] = [
     ("header_name", HEADER_NAME),
     ("sandbox_env", SANDBOX_ENV),
     (MCP_POLICY, "nemoclaw.nvidia.com/mcp-policy"),
+    (REST_POLICY, "nemoclaw.nvidia.com/rest-policy"),
 ];
 
 fn annotations(fields: Row) -> Result<std::collections::HashMap<String, String>, ObservationError> {
@@ -66,73 +66,6 @@ fn binaries(want: &Row) -> Result<Vec<proto::NetworkBinary>, ObservationError> {
         .collect())
 }
 
-fn definition(
-    provider: SearchProvider,
-    want: &Row,
-) -> Result<proto::ProviderProfile, ObservationError> {
-    definition_with_rule(
-        provider,
-        want,
-        nemoclaw_openshell::search::search_policy(provider),
-    )
-}
-
-fn definition_with_rule(
-    provider: SearchProvider,
-    want: &Row,
-    mut rule: nemoclaw_openshell::policy::PolicyRule,
-) -> Result<proto::ProviderProfile, ObservationError> {
-    let name = &want["name"];
-    rule.name = name.clone();
-    let policy = openshell_policy::parse_sandbox_policy(
-        &serde_json::json!({
-            "version": 1, "network_policies": {name: rule}
-        })
-        .to_string(),
-    )
-    .map_err(|_| ObservationError::Query)?;
-    let network = &policy.network_policies[name];
-    let (display, auth_style, header_name) = match provider {
-        SearchProvider::Brave => ("Brave", "header", "X-Subscription-Token"),
-        SearchProvider::Tavily => ("Tavily", "bearer", "authorization"),
-    };
-    Ok(proto::ProviderProfile {
-        id: name.clone(),
-        display_name: format!("NemoClaw {display} Search"),
-        description: format!("Declared {display} web search"),
-        category: proto::ProviderProfileCategory::Knowledge as i32,
-        credentials: vec![proto::ProviderProfileCredential {
-            name: sandbox_env(provider, want),
-            description: format!("{display} Search API key"),
-            env_vars: vec![sandbox_env(provider, want)],
-            required: true,
-            auth_style: auth_style.into(),
-            header_name: header_name.into(),
-            ..Default::default()
-        }],
-        endpoints: network.endpoints.clone(),
-        binaries: binaries(want)?,
-        // A default variable name is recorded as no annotation at all.
-        annotations: annotations(
-            ["owner", "generation", "binaries_json", "sandbox_env"]
-                .into_iter()
-                .filter_map(|key| {
-                    let value = want.get(key).cloned().unwrap_or_default();
-                    (key != "sandbox_env" || !value.is_empty()).then(|| (key.into(), value))
-                })
-                .collect(),
-        )?,
-        ..Default::default()
-    })
-}
-/// The variable sandboxes see the search key in: the one named, or the
-/// provider's default.
-pub(super) fn sandbox_env(provider: SearchProvider, want: &Row) -> String {
-    want.get("sandbox_env")
-        .filter(|name| !name.is_empty())
-        .cloned()
-        .unwrap_or_else(|| provider.credential_env().into())
-}
 pub(super) fn cluster_source(
     want: &Row,
     services: &dyn Services,
@@ -223,8 +156,8 @@ pub(super) fn credential_variable(profile: &proto::ProviderProfile) -> &str {
 }
 
 /// The variable NemoClaw tells the agent to read the credential of the profile
-/// half `want` from: the inference key when authenticated, the API key, or the
-/// search key's sandbox variable. Empty when the profile needs no credential.
+/// half `want` from: the inference key when authenticated, or the API key.
+/// Empty when the profile needs no credential.
 pub(super) fn apf_credential_variable(want: &Row) -> Result<String, ObservationError> {
     let name = want.get("name").map(String::as_str).unwrap_or_default();
     if let Some(registration) = name.strip_prefix("nemoclaw-inference-") {
@@ -233,17 +166,15 @@ pub(super) fn apf_credential_variable(want: &Row) -> Result<String, ObservationE
             _ => String::new(),
         });
     }
-    if let Some(api) = name.strip_prefix("nemoclaw-api-") {
-        return Ok(
-            match want.get("sandbox_env").filter(|env| !env.is_empty()) {
-                Some(env) => env.clone(),
-                None => nemoclaw_openshell::api::credential_key(api),
-            },
-        );
-    }
-    SearchProvider::from_profile(name)
-        .map(|provider| sandbox_env(provider, want))
-        .ok_or(ObservationError::Query)
+    let api = name
+        .strip_prefix("nemoclaw-api-")
+        .ok_or(ObservationError::Query)?;
+    Ok(
+        match want.get("sandbox_env").filter(|env| !env.is_empty()) {
+            Some(env) => env.clone(),
+            None => nemoclaw_openshell::api::credential_key(api),
+        },
+    )
 }
 
 pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationError> {
@@ -251,6 +182,10 @@ pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, Obser
         .strip_prefix("nemoclaw-api-")
         .ok_or(ObservationError::Query)?;
     let mcp = want.get(MCP_POLICY).map(String::as_str).unwrap_or_default();
+    let rest = want
+        .get(REST_POLICY)
+        .map(String::as_str)
+        .unwrap_or_default();
     let sandbox_env = want
         .get("sandbox_env")
         .map(String::as_str)
@@ -260,7 +195,7 @@ pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, Obser
         &nemoclaw_openshell::api::endpoints(&want["endpoints_json"])?,
         &want["auth_style"],
         &want["header_name"],
-        mcp,
+        nemoclaw_openshell::api::Rules::from_fields(mcp, rest)?,
         sandbox_env,
     )?;
     profile.binaries = binaries(want)?;
@@ -276,6 +211,7 @@ pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, Obser
     .into_iter()
     .map(|field| (field.into(), want[field].clone()))
     .chain((!mcp.is_empty()).then(|| (MCP_POLICY.into(), mcp.into())))
+    .chain((!rest.is_empty()).then(|| (REST_POLICY.into(), rest.into())))
     .chain((!sandbox_env.is_empty()).then(|| ("sandbox_env".into(), sandbox_env.into())))
     .collect();
     profile.annotations = annotations(metadata)?;
@@ -298,9 +234,8 @@ fn row(
         .collect();
     let owner = metadata.get("owner").cloned().unwrap_or_default();
     let generation = metadata.get("generation").cloned().unwrap_or_default();
-    let search = SearchProvider::from_profile(name);
     let api = name.starts_with("nemoclaw-api-");
-    if (!name.starts_with("nemoclaw-inference-") && !api && search.is_none())
+    if (!name.starts_with("nemoclaw-inference-") && !api)
         || profile.id != name
         || profile.resource_version == 0
         || if catalog_entry {
@@ -337,16 +272,11 @@ fn row(
                 .ok_or(ObservationError::Incomplete)?,
         ),
     ]);
-    if search.is_some() {
-        // Empty means the provider's default variable name.
-        fields.insert(
-            "sandbox_env".into(),
-            metadata.get("sandbox_env").cloned().unwrap_or_default(),
-        );
-    }
     let expected = if api {
-        if let Some(mcp) = metadata.get(MCP_POLICY) {
-            fields.insert(MCP_POLICY.into(), mcp.clone());
+        for policy in [MCP_POLICY, REST_POLICY] {
+            if let Some(rules) = metadata.get(policy) {
+                fields.insert(policy.into(), rules.clone());
+            }
         }
         // Empty means the derived variable name.
         fields.insert(
@@ -364,7 +294,7 @@ fn row(
             );
         }
         api_definition(&fields)?
-    } else if name.starts_with("nemoclaw-inference-") {
+    } else {
         fields.extend([
             ("name".into(), name.into()),
             ("owner".into(), owner.clone()),
@@ -390,8 +320,6 @@ fn row(
             );
         }
         native_definition(&fields, services)?
-    } else {
-        definition(search.ok_or(ObservationError::Query)?, &fields)?
     };
     if profile != expected {
         return Err(ObservationError::BindingMismatch);
@@ -409,51 +337,6 @@ fn row(
         .map(|(k, v)| (k.into(), v)),
     );
     Ok(fields)
-}
-pub(super) fn provider_row(
-    provider: proto::Provider,
-    name: &str,
-    removing: bool,
-) -> Result<Row, ObservationError> {
-    let search =
-        SearchProvider::from_profile(&provider.r#type).ok_or(ObservationError::BindingMismatch)?;
-    let metadata = provider
-        .metadata
-        .as_ref()
-        .ok_or(ObservationError::Incomplete)?;
-    if !provider.config.is_empty()
-        || metadata.workspace.is_empty()
-        || provider.profile_workspace != metadata.workspace
-    {
-        return Err(ObservationError::BindingMismatch);
-    }
-    let credential = metadata
-        .labels
-        .get(CREDENTIAL)
-        .filter(|s| !s.is_empty())
-        .ok_or(ObservationError::Incomplete)?
-        .clone();
-    if name
-        != nemoclaw_openshell::search::search_provider_name(search, &credential, &provider.r#type)
-    {
-        return Err(ObservationError::BindingMismatch);
-    }
-    // OpenShell reports credential names with their values redacted. The
-    // one name is the variable sandboxes see; empty means the default.
-    let sandbox_env = match provider.credentials.keys().collect::<Vec<_>>()[..] {
-        [key] if key != search.credential_env() => key.clone(),
-        _ => String::new(),
-    };
-    let mut result = base(provider.metadata, name, removing)?;
-    result.insert("credential_source".into(), String::new());
-    result.extend([
-        ("sandbox_env".into(), sandbox_env),
-        ("endpoint".into(), search.endpoint().into()),
-        ("provider_type".into(), search.name().into()),
-        ("profile_name".into(), provider.r#type),
-        ("credential_env".into(), credential),
-    ]);
-    Ok(result)
 }
 async fn checked_profile_row_with<F>(
     profile: proto::ProviderProfile,
@@ -610,16 +493,12 @@ impl ConnectedOpenShellGateway {
     }
 
     pub(super) async fn create_profile(&self, want: &Row) -> Result<String, ObservationError> {
-        let search = SearchProvider::from_profile(&want["name"]);
         let api = want["name"].starts_with("nemoclaw-api-");
-        if search.is_none() && !api && !want["name"].starts_with("nemoclaw-inference-") {
+        if !api && !want["name"].starts_with("nemoclaw-inference-") {
             return Err(ObservationError::Query);
         }
         let mut observed = want.clone();
         if cluster_source(want, self.services.as_ref())? {
-            if search.is_some() {
-                return Err(ObservationError::Query);
-            }
             let addresses = self.services.cluster_addresses(want).await?;
             observed.insert(
                 "cluster_addresses".into(),
@@ -634,8 +513,6 @@ impl ConnectedOpenShellGateway {
                 profiles: vec![proto::ProviderProfileImportItem {
                     profile: Some(if api {
                         api_definition(want)?
-                    } else if let Some(search) = search {
-                        definition(search, want)?
                     } else {
                         native_definition(&observed, self.services.as_ref())?
                     }),
@@ -735,29 +612,22 @@ mod tests {
         .collect()
     }
 
-    fn search_definition(provider: SearchProvider) -> proto::ProviderProfile {
+    /// The fields of an API profile that sends its key only with the requests
+    /// its REST rules list.
+    fn rest_api_fields() -> Row {
         let mut fields = native_fields("", true);
-        fields.insert("name".into(), provider.profile().into());
-        definition(provider, &fields).unwrap()
-    }
-
-    #[test]
-    fn unsupported_search_rules_return_an_observation_error() {
-        for provider in [SearchProvider::Brave, SearchProvider::Tavily] {
-            for invalid_tls in [true, false] {
-                let mut fields = native_fields("", true);
-                fields.insert("name".into(), provider.profile().into());
-                let mut rule = nemoclaw_openshell::search::search_policy(provider);
-                if invalid_tls {
-                    rule.endpoints[0].tls = Some("unsupported-mode".into());
-                } else {
-                    rule.endpoints[0].enforcement = Some("unsupported-mode".into());
-                }
-                let error = definition_with_rule(provider, &fields, rule)
-                    .expect_err("unsupported search policy must return an error, not panic");
-                assert_eq!(error, ObservationError::Query);
-            }
-        }
+        fields.insert("name".into(), "nemoclaw-api-search".into());
+        fields.insert(
+            "endpoints_json".into(),
+            r#"["https://api.search.brave.com"]"#.into(),
+        );
+        fields.insert("auth_style".into(), "header".into());
+        fields.insert("header_name".into(), "X-Subscription-Token".into());
+        fields.insert(
+            nemoclaw_openshell::api::REST_POLICY.into(),
+            r#"{"rules":[{"allow":{"method":"GET","path":"/res/v1/web/search"}}]}"#.into(),
+        );
+        fields
     }
 
     #[test]
@@ -766,8 +636,9 @@ mod tests {
             let mut want = native_fields("", true);
             want.insert("binaries_json".into(), encoded.into());
             assert!(native_definition(&want, &DockerServices).is_err());
-            want.insert("name".into(), SearchProvider::Brave.profile().into());
-            assert!(definition(SearchProvider::Brave, &want).is_err());
+            let mut api = rest_api_fields();
+            api.insert("binaries_json".into(), encoded.into());
+            assert!(api_definition(&api).is_err());
         }
         let mut profile = native_definition(&native_fields("", true), &DockerServices).unwrap();
         assert_eq!(
@@ -806,10 +677,7 @@ mod tests {
 
     #[test]
     fn imported_profiles_survive_wire_round_trips() {
-        let mut profiles = vec![
-            search_definition(SearchProvider::Brave),
-            search_definition(SearchProvider::Tavily),
-        ];
+        let mut profiles = vec![api_definition(&rest_api_fields()).unwrap()];
         for kind in ["", "anthropic"] {
             for authenticated in [false, true] {
                 profiles.push(
@@ -952,6 +820,47 @@ mod tests {
     }
 
     #[test]
+    fn api_profiles_round_trip_enforced_rest_rules_and_refuse_both_policies() {
+        use nemoclaw_openshell::api::REST_POLICY;
+        let mut want = native_fields("", true);
+        want.insert("name".into(), "nemoclaw-api-search".into());
+        want.insert(
+            "endpoints_json".into(),
+            r#"["https://api.search.brave.com"]"#.into(),
+        );
+        want.insert("auth_style".into(), "header".into());
+        want.insert("header_name".into(), "X-Subscription-Token".into());
+        let rest = r#"{"rules":[{"allow":{"method":"GET","path":"/res/v1/web/search"}}]}"#;
+        want.insert(REST_POLICY.into(), rest.into());
+        let mut profile = api_definition(&want).unwrap();
+        let [endpoint] = profile.endpoints.as_slice() else {
+            panic!("expected one endpoint");
+        };
+        assert_eq!(endpoint.protocol, "rest");
+        assert_eq!(
+            endpoint.enforcement(),
+            proto::NetworkEnforcementMode::Enforce
+        );
+        assert_eq!(endpoint.rules.len(), 1);
+        profile.resource_version = 1;
+        profile.source = "user".into();
+        profile.scope = "workspace".into();
+        let read = |profile| row(profile, "workspace", &want["name"], true, &DockerServices);
+        let observed = read(profile.clone()).unwrap();
+        assert_eq!(observed[REST_POLICY], rest);
+        assert!(!observed.contains_key(MCP_POLICY));
+        profile.endpoints[0].rules.clear();
+        assert_eq!(read(profile), Err(ObservationError::BindingMismatch));
+
+        let mut both = want.clone();
+        both.insert(
+            MCP_POLICY.into(),
+            r#"{"rules":[{"allow":{"method":"tools/call","tool":"x"}}]}"#.into(),
+        );
+        assert!(api_definition(&both).is_err());
+    }
+
+    #[test]
     fn profile_metadata_is_one_annotation_per_field() {
         let native = native_definition(&native_fields("anthropic", true), &DockerServices).unwrap();
         assert_eq!(
@@ -967,94 +876,8 @@ mod tests {
             .map(|(key, value)| (key.to_owned(), value.to_owned()))
             .into()
         );
-        let mut search: Vec<_> = search_definition(SearchProvider::Brave)
-            .annotations
-            .into_keys()
-            .collect();
-        search.sort();
-        assert_eq!(search, [BINARIES, GENERATION, OWNER]);
     }
 
-    #[test]
-    fn search_profiles_define_provider_auth_and_reject_endpoint_or_credential_drift() {
-        for (provider, auth, header, env) in [
-            (
-                SearchProvider::Brave,
-                "header",
-                "X-Subscription-Token",
-                "BRAVE_API_KEY",
-            ),
-            (
-                SearchProvider::Tavily,
-                "bearer",
-                "authorization",
-                "TAVILY_API_KEY",
-            ),
-        ] {
-            let mut profile = search_definition(provider);
-            assert_eq!(profile.credentials.len(), 1);
-            assert_eq!(profile.credentials[0].auth_style, auth);
-            assert_eq!(profile.credentials[0].header_name, header);
-            assert_eq!(profile.credentials[0].env_vars, [env]);
-            assert!(profile.credentials[0].required);
-            assert_eq!(profile.endpoints.len(), 1);
-            assert_eq!(
-                format!("https://{}", profile.endpoints[0].host),
-                provider.endpoint()
-            );
-            profile.resource_version = 1;
-            profile.source = "user".into();
-            profile.scope = "workspace".into();
-            let observed = row(
-                profile.clone(),
-                "workspace",
-                provider.profile(),
-                true,
-                &DockerServices,
-            )
-            .unwrap();
-            assert_eq!(observed["owner"], "deployment");
-            assert_eq!(
-                observed["id"],
-                format!("workspace/{}/1", provider.profile())
-            );
-            let mut changed = profile.clone();
-            changed.endpoints[0].host = "other.example".into();
-            assert!(
-                row(
-                    changed,
-                    "workspace",
-                    provider.profile(),
-                    true,
-                    &DockerServices
-                )
-                .is_err()
-            );
-            let mut changed = profile.clone();
-            changed.credentials[0].env_vars = vec!["OTHER_KEY".into()];
-            assert!(
-                row(
-                    changed,
-                    "workspace",
-                    provider.profile(),
-                    true,
-                    &DockerServices
-                )
-                .is_err()
-            );
-            profile.credentials[0].auth_style = "none".into();
-            assert!(
-                row(
-                    profile,
-                    "workspace",
-                    provider.profile(),
-                    true,
-                    &DockerServices
-                )
-                .is_err()
-            );
-        }
-    }
     const FIXTURE_CLUSTER_SOURCE: &str = "fixture-cluster-source";
     const CLUSTER_ENDPOINT: &str = "http://model.agents.svc.cluster.local:8000/v1";
 

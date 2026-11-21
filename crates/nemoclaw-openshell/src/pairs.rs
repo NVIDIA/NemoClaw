@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! The OpenShell provider profile and registration rows that an
-//! `openshell_inference`, `openshell_web_search` or `openshell_api` row owns.
-use crate::search::{SearchProvider, web_search_names};
+//! `openshell_inference` or `openshell_api` row owns.
 use std::collections::BTreeMap;
 
 type Row = BTreeMap<String, String>;
@@ -51,9 +50,11 @@ pub fn api_rows(row: &Row) -> (Row, Row) {
     ] {
         profile_row.insert(field.into(), value(row, field).into());
     }
-    let mcp = value(row, crate::api::MCP_POLICY);
-    if !mcp.is_empty() {
-        profile_row.insert(crate::api::MCP_POLICY.into(), mcp.into());
+    for policy in [crate::api::MCP_POLICY, crate::api::REST_POLICY] {
+        let rules = value(row, policy);
+        if !rules.is_empty() {
+            profile_row.insert(policy.into(), rules.into());
+        }
     }
     let mut registration = common(row);
     registration.extend([
@@ -68,32 +69,6 @@ pub fn api_rows(row: &Row) -> (Row, Row) {
     bind(&mut registration, row);
     authority(row, &mut profile_row, &mut registration);
     (profile_row, registration)
-}
-
-/// The profile and registration rows a web search row owns, or `None` for an
-/// unknown search provider.
-pub fn web_search_rows(row: &Row) -> Option<(Row, Row)> {
-    let provider = SearchProvider::from_name(value(row, "provider_type"))?;
-    let (profile, registration) =
-        web_search_names(provider, value(row, "credential_env"), value(row, "name"));
-    let mut profile_row = common(row);
-    profile_row.extend([
-        ("name".into(), profile.clone()),
-        ("binaries_json".into(), value(row, "binaries_json").into()),
-        ("sandbox_env".into(), value(row, "sandbox_env").into()),
-    ]);
-    let mut registration_row = common(row);
-    registration_row.extend([
-        ("name".into(), registration),
-        ("endpoint".into(), provider.endpoint().into()),
-        ("credential_env".into(), value(row, "credential_env").into()),
-        ("sandbox_env".into(), value(row, "sandbox_env").into()),
-        ("provider_type".into(), provider.name().into()),
-        ("profile_name".into(), profile),
-    ]);
-    bind(&mut registration_row, row);
-    authority(row, &mut profile_row, &mut registration_row);
-    Some((profile_row, registration_row))
 }
 
 /// The provider type an inference `api` registers: Anthropic's, or the

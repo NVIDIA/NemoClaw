@@ -1279,13 +1279,23 @@ async fn an_apf_governed_api_resource_adopts_the_profile_apf_serves() {
             ],
         )
         .await;
-        // APF's profile sets the endpoint's rules, so an MCP policy has no effect.
+        // APF's profile sets the endpoint's rules, so neither policy has an effect.
         let mut mcp = row.clone();
         mcp.insert(
             nemoclaw_openshell::api::MCP_POLICY.into(),
             r#"{"rules":[{"allow":{"method":"tools/call","tool":"get_quote"}}]}"#.into(),
         );
         assert!(crate::composite::validate_api(&mcp, &[]).is_err());
+        let mut rest = row.clone();
+        rest.insert(
+            "endpoints_json".into(),
+            r#"["https://booking.example.com"]"#.into(),
+        );
+        rest.insert(
+            nemoclaw_openshell::api::REST_POLICY.into(),
+            r#"{"rules":[{"allow":{"method":"GET","path":"/quotes"}}]}"#.into(),
+        );
+        assert!(crate::composite::validate_api(&rest, &[]).is_err());
         adopts_the_apf_profile(
             &fixture,
             &client,
@@ -1306,43 +1316,6 @@ async fn an_apf_governed_api_resource_adopts_the_profile_apf_serves() {
         )
         .await;
     }
-}
-
-#[tokio::test]
-async fn an_apf_governed_web_search_resource_adopts_the_profile_apf_serves() {
-    let fixture = Fixture::start().await;
-    let client = client(&fixture, Arc::new(Keys));
-    let row = apf_credential_row(
-        &client,
-        &[
-            ("name", "brave"),
-            ("provider_type", "brave"),
-            ("credential_env", "NEMOCLAW_TEST_BRAVE_KEY"),
-            ("sandbox_env", "BRAVE_SEARCH_API_KEY"),
-        ],
-    )
-    .await;
-    let (profile, registration) = nemoclaw_openshell::search::web_search_names(
-        nemoclaw_openshell::search::SearchProvider::Brave,
-        "NEMOCLAW_TEST_BRAVE_KEY",
-        "brave",
-    );
-    adopts_the_apf_profile(
-        &fixture,
-        &client,
-        "web_search",
-        &row,
-        (&profile, "BRAVE_SEARCH_API_KEY", &registration),
-        &[
-            "id",
-            "owner",
-            "generation",
-            "binaries_json",
-            "sandbox_env",
-            "credential_env",
-        ],
-    )
-    .await;
 }
 
 #[tokio::test]

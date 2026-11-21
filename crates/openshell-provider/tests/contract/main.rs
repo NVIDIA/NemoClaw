@@ -167,10 +167,10 @@ pub fn assert_same_managed_resources(actual: &[u8], expected: &[u8]) {
     assert_eq!(managed(actual), managed(expected));
 }
 
-/// Credential variables the fixture's registrations, inference servers, and
-/// web search resources name, with fixture values.
+/// Credential variables the fixture's API credentials and inference servers
+/// name, with fixture values.
 fn credentials(fixture: &Value) -> BTreeSet<String> {
-    let direct = ["openshell_provider_registration", "openshell_web_search"]
+    let direct = ["openshell_api"]
         .into_iter()
         .filter_map(|kind| fixture["resource"][kind].as_object())
         .flat_map(|registrations| registrations.values())
@@ -388,7 +388,7 @@ fn every_compiled_type_has_a_fixture() {
     for kind in [
         "openshell_workspace",
         "openshell_inference",
-        "openshell_web_search",
+        "openshell_api",
         "openshell_sandbox",
         "openshell_gateway",
     ] {

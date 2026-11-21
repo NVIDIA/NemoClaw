@@ -71,6 +71,11 @@
           "slug": "usage"
         },
         {
+          "title": "Using the Providers From Your Own OpenTofu Project",
+          "source": "docs/build-deploy/opentofu-project.md",
+          "slug": "opentofu-project"
+        },
+        {
           "title": "Deploying to Kubernetes or OpenShift",
           "source": "docs/build-deploy/kubernetes.md",
           "slug": "kubernetes"
