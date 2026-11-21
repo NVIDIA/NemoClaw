@@ -110,6 +110,12 @@ export function createFinalOnboardFlowPhases<
       hermesToolGateways: context.hermesToolGateways,
       managedOpenclawStartup: options.managedOpenclawStartup === true,
       initializeNativeInferenceRoute,
+      initializeExternalHermesInference:
+        typeof context.agent === "object" &&
+        context.agent !== null &&
+        "name" in context.agent &&
+        context.agent.name === "hermes" &&
+        Boolean(context.session?.metadata?.fromImage),
       settleOpenclawStartupBeforeConfiguration,
       revalidateSandboxIdentity: context.revalidateSandboxIdentity,
       deps: options.agentSetupDeps,

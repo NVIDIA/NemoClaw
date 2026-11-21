@@ -22,7 +22,6 @@ import type { SandboxEntry } from "../../src/lib/state/registry/types";
 import { createPortableOnboardEnvironmentScope } from "../../src/lib/onboard/session-bootstrap";
 import {
   prepareHostLocalInferenceStartup,
-  type HostLocalInferenceGatewayMutation,
   type HostLocalInferenceStartupRequest,
 } from "../../src/lib/onboard/runtime-provider/host-local-inference-routing";
 import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "../../src/lib/onboard/runtime-provider/host-local-inference-routing";
@@ -254,16 +253,6 @@ function sandboxInspect(
   ]);
 }
 
-function createGatewayMutation(mutation: HostLocalInferenceGatewayMutation): void {
-  mutation.upsertProvider!(
-    "ollama-local",
-    "openai",
-    "NEMOCLAW_OLLAMA_PROXY_TOKEN",
-    "http://host.openshell.internal:11434/v1",
-    { NEMOCLAW_OLLAMA_PROXY_TOKEN: "ollama" },
-  );
-}
-
 export interface HermesPortableUninstallFixture {
   readonly cleanupInput: PortableRuntimeCleanupInput;
   readonly deps: HermesPortableUninstallDeps;
@@ -397,7 +386,7 @@ export async function createHermesPortableUninstallFixture(
     model: "qwen3-vl:4b",
     providerBaseUrl: "http://host.openshell.internal:11434/v1",
   });
-  createGatewayMutation(mutation);
+  const nativeLocalProviderAttachment = await mutation.registerNativeProvider!();
   await mutation.commit();
   route.prepared.commit();
   const inferenceStateRoot = path.join(stateDir, "portable-inference");
@@ -434,6 +423,7 @@ export async function createHermesPortableUninstallFixture(
     endpointSource: null,
     preferredInferenceApi: null,
     hostLocalInferenceReceipt: serializedInferenceReceipt,
+    nativeLocalProviderAttachment,
   };
   const siblingRow: SandboxEntry = {
     ...targetRow,
@@ -497,7 +487,9 @@ export async function createHermesPortableUninstallFixture(
     timeout,
   ) => {
     if (args[0] === "provider") {
-      return gatewayProvider.run([...args], {
+      if (args[2] !== "-g" || args[3] !== GATEWAY_NAME)
+        throw new Error("Unexpected provider gateway scope");
+      return gatewayProvider.run([...args.slice(0, 2), ...args.slice(4)], {
         ignoreError: true,
         suppressOutput: true,
         stdio: ["ignore", "pipe", "pipe"],

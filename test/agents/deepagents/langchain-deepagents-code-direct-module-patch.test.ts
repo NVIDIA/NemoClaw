@@ -144,42 +144,6 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     expect(result.stderr).toContain("Managed package patch is partial: helper is missing or stale");
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
-  it("preserves upstream MCP JSON diagnostics around the managed descriptor loader", () => {
-    const tempDir = createPatchedPackageFixture();
-    const invalidConfig = path.join(tempDir, "invalid-mcp.json");
-    fs.writeFileSync(invalidConfig, '{"mcpServers": }\n', "utf8");
-    const result = spawnSync(
-      "python3",
-      [
-        "-c",
-        `import json
-from deepagents_code.mcp_tools import load_mcp_config
-
-try:
-    load_mcp_config(${JSON.stringify(invalidConfig)})
-except json.JSONDecodeError as exc:
-    print(str(exc))
-else:
-    raise AssertionError("invalid JSON unexpectedly loaded")
-`,
-      ],
-      {
-        encoding: "utf8",
-        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
-      },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("Invalid JSON in MCP config file");
-    expect(result.stdout).toContain("Check the JSON syntax.");
-    expect(result.stdout).toContain("^");
-    const patchedLoader = fs.readFileSync(
-      path.join(tempDir, "deepagents_code", "mcp_tools.py"),
-      "utf8",
-    );
-    expect(patchedLoader).toContain("return json.loads(managed_payload)");
-    expect(patchedLoader).toContain("return json.load(file_obj)");
-  });
 
   it.each([
     ["update"],
@@ -1207,6 +1171,15 @@ async def validate():
     assert os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] == "1"
     assert os.environ["OTEL_ENABLED"] == "false"
 
+    hostile_network_env = {
+        "OPENAI_PROXY": "http://attacker.example:8080",
+        "HTTP_PROXY": "http://attacker.example:8080",
+        "ALL_PROXY": "socks5://attacker.example:1080",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://attacker.example/v1/traces",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://attacker.example/v1/traces",
+        "OTEL_EXPORTER_OTLP_HEADERS": "authorization=attacker",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "authorization=attacker",
+    }
     analytics_child = server.ServerProcess(
         [
             sys.executable,
@@ -1217,6 +1190,8 @@ async def validate():
                 "assert os.environ['LANGGRAPH_CLI_NO_ANALYTICS'] == '1'; "
                 "assert os.environ['OTEL_ENABLED'] == 'false'; "
                 "assert 'OPENAI_PROXY' not in os.environ; "
+                "assert 'HTTP_PROXY' not in os.environ; "
+                "assert 'ALL_PROXY' not in os.environ; "
                 "assert 'OTEL_EXPORTER_OTLP_ENDPOINT' not in os.environ; "
                 "assert 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT' not in os.environ; "
                 "assert 'OTEL_EXPORTER_OTLP_HEADERS' not in os.environ; "
@@ -1228,32 +1203,20 @@ async def validate():
             "LANGGRAPH_NO_VERSION_CHECK": "false",
             "LANGGRAPH_CLI_NO_ANALYTICS": "0",
             "OTEL_ENABLED": "true",
-            "OPENAI_PROXY": "http://attacker.example:8080",
-            "OTEL_EXPORTER_OTLP_ENDPOINT": "https://attacker.example/v1/traces",
-            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://attacker.example/v1/traces",
-            "OTEL_EXPORTER_OTLP_HEADERS": "authorization=attacker",
-            "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "authorization=attacker",
+            **hostile_network_env,
         },
     )
     analytics_child._persistent_env_overrides.update({
         "LANGGRAPH_NO_VERSION_CHECK": "false",
         "LANGGRAPH_CLI_NO_ANALYTICS": "false",
         "OTEL_ENABLED": "true",
-        "OPENAI_PROXY": "http://attacker.example:8080",
-        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://attacker.example/v1/traces",
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://attacker.example/v1/traces",
-        "OTEL_EXPORTER_OTLP_HEADERS": "authorization=attacker",
-        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "authorization=attacker",
+        **hostile_network_env,
     })
     analytics_child._env_overrides.update({
         "LANGGRAPH_NO_VERSION_CHECK": "0",
         "LANGGRAPH_CLI_NO_ANALYTICS": "0",
         "OTEL_ENABLED": "1",
-        "OPENAI_PROXY": "http://attacker.example:8080",
-        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://attacker.example/v1/traces",
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://attacker.example/v1/traces",
-        "OTEL_EXPORTER_OTLP_HEADERS": "authorization=attacker",
-        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "authorization=attacker",
+        **hostile_network_env,
     })
     await analytics_child.start()
     await analytics_child.restart()
@@ -1271,7 +1234,12 @@ async def validate():
     assert "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL" not in os.environ
     assert "PROJECT_API_KEY" not in config._preview_dotenv_environ()
     assert "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL" not in config._preview_dotenv_environ()
-    assert _nemoclaw_managed.managed_fetch_proxy_url() is None
+    assert _nemoclaw_managed._managed_fetch_uses_openshell() is True
+    proxy_names = ('HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'ALL_PROXY', 'all_proxy', 'grpc_proxy', 'GRPC_PROXY', 'NODE_USE_ENV_PROXY', 'DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL', 'NEMOCLAW_PROXY_HOST', 'NEMOCLAW_PROXY_PORT', 'OPENAI_PROXY')
+    for name in proxy_names:
+        os.environ[name] = "http://attacker.example:8080"
+    _nemoclaw_managed.assert_safe_runtime()
+    assert all(name not in os.environ for name in proxy_names)
     for name in (
         "LANGSMITH_TRACING",
         "LANGSMITH_TRACING_V2",
@@ -1396,7 +1364,7 @@ print("managed-auto-approval-ok")
   });
 
   it("fails closed when the installed version or required source shape drifts", () => {
-    const wrongVersion = createPackageFixture("0.1.31");
+    const wrongVersion = createPackageFixture("0.1.51");
     const versionResult = spawnSync("python3", [patcher], {
       env: { PATH: process.env.PATH, PYTHONPATH: wrongVersion },
       encoding: "utf8",

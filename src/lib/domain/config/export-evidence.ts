@@ -79,6 +79,7 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "nativeNvidiaProviderAttachment",
   "nativeLocalProviderAttachment",
   "nativeHostedProviderAttachment",
+  "registeredInferenceProviderAttachment",
   "nimContainer",
   "observabilityEnabled",
   "openshellDriver",
@@ -184,6 +185,11 @@ export interface ObservedExportEndpointEvidence {
         readonly kind: "provider-config";
         readonly key: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
       }
+    | {
+        readonly kind: "registered-provider";
+        readonly profileId: string;
+        readonly profileDigest: string;
+      }
     | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" }
     | {
         readonly kind: "managed-profile";
@@ -213,7 +219,6 @@ export interface ObservedManagedVllmRuntime {
   readonly serving: import("../../config/model").NemoClawManagedVllmServing;
   readonly containerId: string;
   readonly imageId: string;
-  readonly networkId: string;
   readonly startedAt: string;
 }
 

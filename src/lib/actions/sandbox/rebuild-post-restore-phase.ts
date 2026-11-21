@@ -30,6 +30,7 @@ import {
 } from "./rebuild/cli-exit";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
+  restoreExternalHermesInference,
   type HermesCronRestoreIdentity,
   type HermesPostRestoreGatewayRestartState,
   isHermesCronRestoreDrainMarkerRollbackFailure,
@@ -170,6 +171,15 @@ function printRebuildVersionFailureRecovery(
     );
   }
   return failureMessage;
+}
+
+function printRebuildPairingFailure(pairing: {
+  readonly reason: string;
+  readonly pairingField?: string;
+}): void {
+  console.error(
+    `  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}${formatOpenClawPairingMismatchField(pairing.pairingField)}`,
+  );
 }
 
 function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: string): void {
@@ -417,11 +427,35 @@ export async function runRebuildPostRestorePhase(
             hermesPostRestoreGatewayDeps,
           )
         : "not-applicable";
+    if (
+      restoreSucceeded &&
+      backupManifest &&
+      targetAgentName === "hermes" &&
+      recreatedEntry.workload?.kind === "external-image"
+    ) {
+      // Native startup validates restored state and refreshes its integrity
+      // anchor. Only then can the guarded writer replace stripped references.
+      if (hermesGatewayRestartState !== "restarted") {
+        throw new Error(
+          "Restored Hermes inference requires a verified gateway restart. The rebuild backup is preserved.",
+        );
+      }
+      await restoreExternalHermesInference(
+        recreatedEntry,
+        mcpRuntimeSelection,
+        registry.getSandbox,
+      );
+    }
     if (targetAgentName === "openclaw") {
       if (!openClawDoctorWindow) {
         bail("OpenClaw gateway-down maintenance authority was lost during rebuild.");
         return;
       }
+      await rebuildOnboardDependencies.refreshRestoredRegisteredOpenclawInferenceRoute(
+        recreatedEntry,
+        mcpRuntimeSelection,
+        registry.getSandbox,
+      );
       log("Releasing OpenClaw for one final start after all offline post-restore writes");
       const startResult = await finishUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
       log(`OpenClaw native final start: ${startResult.ok ? "verified" : startResult.stage}`);
@@ -517,7 +551,10 @@ export async function runRebuildPostRestorePhase(
     verifiedAgentVersion = rebuiltVersion.sandboxVersion;
   }
   if (targetAgentName === "hermes") {
-    const mutableConfigVerification = inspectMutableHermesConfigPerms(sandboxName);
+    const mutableConfigVerification = inspectMutableHermesConfigPerms(
+      sandboxName,
+      registry.getSandbox,
+    );
     mutableConfigPermissionsVerified = mutableConfigVerification.verified;
     if (mutableConfigPermissionsVerified) {
       log("Verified the rebuilt Hermes mutable config posture");
@@ -643,10 +680,7 @@ export async function runRebuildPostRestorePhase(
         ? await settleOrdinaryOpenClawPairing(sandboxName)
         : portablePairing;
     if (pairing.kind !== "settled") {
-      const pairingField = "pairingField" in pairing ? pairing.pairingField : null;
-      console.error(
-        `  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}${formatOpenClawPairingMismatchField(pairingField)}`,
-      );
+      printRebuildPairingFailure(pairing);
       if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
       console.error(
         `  Resolve the pairing failure, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,
@@ -711,7 +745,9 @@ export async function runRebuildPostRestorePhase(
   }
   if (
     targetAgentName === "hermes" &&
-    (hermesGatewayRestoreUnverified || mcpBridgeRestoreUnverified)
+    (hermesGatewayRestoreUnverified ||
+      mcpBridgeRestoreUnverified ||
+      !mutableConfigPermissionsVerified)
   ) {
     bail(`Hermes post-restore verification failed for '${sandboxName}'.`);
     return;

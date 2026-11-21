@@ -88,13 +88,6 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
         .end();
       return;
     }
-    if (fail) {
-      evidence.errors++;
-      response
-        .writeHead(500, { "content-type": "application/json" })
-        .end(JSON.stringify({ error: { message: `${SWITCHYARD_BODY_CANARY}:${credential}` } }));
-      return;
-    }
     let body: { model?: string; response_format?: unknown };
     try {
       body = JSON.parse(text);
@@ -103,14 +96,20 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
       return;
     }
     const judge = Boolean(body.response_format);
+    if (fail && !judge) {
+      evidence.errors++;
+      response
+        .writeHead(500, { "content-type": "application/json" })
+        .end(JSON.stringify({ error: { message: `${SWITCHYARD_BODY_CANARY}:${credential}` } }));
+      return;
+    }
     evidence[judge ? "judge" : "answer"]++;
     const content = judge
       ? JSON.stringify({
+          crux: "bounded fixture task",
+          primary_rule: "SUP-1",
+          capability_boundary: "supported",
           p_solve: 0.99,
-          confidence: 0.99,
-          difficulty: "easy",
-          category: "general",
-          reason: "fixture",
         })
       : SWITCHYARD_BOUNDARY_ANSWER;
     response.writeHead(200, { "content-type": "application/json" }).end(

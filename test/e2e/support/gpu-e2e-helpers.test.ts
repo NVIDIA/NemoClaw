@@ -2,9 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { captureGpuInstallFailure } from "../fixtures/gpu-install-failure.ts";
 import { ChildProcess, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import fs, {
+  appendFileSync,
+  renameSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  symlinkSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -26,6 +38,7 @@ import {
   ollamaProxyTokenFile,
   openClawModelConfigProjectionScript,
   REPO_ROOT,
+  SANDBOX_NAME,
   startAttachedOllama,
   trackGpuGatewayCleanup,
   waitForAttachedOllama,
@@ -43,6 +56,268 @@ import {
 
 const GPU_MODEL = "qwen3.5:9b";
 const SYNC_E2E_CHILD_OPTIONS = { killSignal: "SIGKILL" as const, timeout: 5_000 };
+
+describe("GPU install failure evidence", () => {
+  const probe = {
+    command: [],
+    signal: null,
+    timedOut: false,
+    artifacts: { stdout: "", stderr: "", result: "" },
+  };
+  const attempt = "a".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
+  const marker = `Create-attempt label: ai.nvidia.nemoclaw.create-attempt=${attempt}`;
+  const status = {
+    name: SANDBOX_NAME,
+    labels: { "ai.nvidia.nemoclaw.create-attempt": attempt },
+    phase: "Error",
+    exit_code: 7,
+    restart_count: 0,
+    main_process_instance_id: "private-runtime-identity",
+    main_process_started_at_ms: 1234,
+    next_restart_at_ms: null,
+    conditions: [{ message: "private-error-token" }],
+    policy: { env: { TOKEN: "private-policy-token" } },
+  };
+
+  it.each([SANDBOX_NAME, "e2e-hermes-gpu"])(
+    "projects only current-attempt process fields for %s",
+    async (sandboxName) => {
+      const openshell = vi.fn(async () => ({
+        ...probe,
+        exitCode: 0,
+        stdout: JSON.stringify({ ...status, name: sandboxName }),
+        stderr: "",
+      }));
+      const artifacts = { writeText: vi.fn(), writeJson: vi.fn() };
+      const install = {
+        exitCode: 1,
+        stdout: marker,
+        stderr: "",
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+      };
+      await captureGpuInstallFailure(install, { openshell }, artifacts, {}, sandboxName);
+      expect(openshell).toHaveBeenCalledWith(["sandbox", "get", sandboxName, "--output", "json"], {
+        env: {},
+        timeoutMs: 15_000,
+        captureLimitBytes: 64 * 1024,
+        persistArtifacts: false,
+      });
+      expect(artifacts.writeJson).toHaveBeenCalledExactlyOnceWith(
+        "gpu-install-failure-process.json",
+        {
+          attempt,
+          phase: "Error",
+          mainProcessObserved: true,
+          exit_code: 7,
+          restart_count: 0,
+          main_process_started_at_ms: 1234,
+        },
+      );
+      expect(install.exitCode).toBe(1);
+    },
+  );
+
+  it.each([
+    ["success", 0, marker, status],
+    ["missing attempt", 1, "", status],
+    [
+      "ambiguous attempt",
+      1,
+      `${marker}\nai.nvidia.nemoclaw.create-attempt=${"b".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH)}`,
+      status,
+    ],
+    ["renamed sandbox", 1, marker, { ...status, name: "other" }],
+    ["stale attempt", 1, marker, { ...status, labels: {} }],
+    ["invalid response", 1, marker, null],
+  ])("retains no status for %s", async (_name, exitCode, stdout, observed) => {
+    const openshell = vi.fn(async () => ({
+      ...probe,
+      exitCode: 0,
+      stdout: JSON.stringify(observed),
+      stderr: "private-command-error",
+    }));
+    const artifacts = { writeText: vi.fn(), writeJson: vi.fn() };
+    await captureGpuInstallFailure(
+      {
+        exitCode,
+        stdout,
+        stderr: "",
+        startedAt: "",
+        finishedAt: "",
+      },
+      { openshell },
+      artifacts,
+      {},
+      SANDBOX_NAME,
+    );
+    expect(artifacts.writeJson).not.toHaveBeenCalled();
+    expect(artifacts.writeText).not.toHaveBeenCalled();
+  });
+
+  it.each([61, 63, 64])("refuses a %i-character attempt before querying status", async (length) => {
+    const invalidAttempt = "a".repeat(length);
+    const openshell = vi.fn();
+    const artifacts = { writeText: vi.fn(), writeJson: vi.fn() };
+    await captureGpuInstallFailure(
+      { exitCode: 1, stdout: `ai.nvidia.nemoclaw.create-attempt=${invalidAttempt}`, stderr: "" },
+      { openshell },
+      artifacts,
+      {},
+      SANDBOX_NAME,
+    );
+    expect(openshell).not.toHaveBeenCalled();
+    expect(artifacts.writeText).not.toHaveBeenCalled();
+    expect(artifacts.writeJson).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { timedOut: true, signal: null },
+    { timedOut: false, signal: "SIGTERM" as const },
+  ])("rejects incomplete status results %j", async (completion) => {
+    const openshell = vi.fn(async () => ({
+      ...probe,
+      ...completion,
+      exitCode: 0,
+      stdout: JSON.stringify(status),
+      stderr: "",
+    }));
+    const artifacts = { writeText: vi.fn(), writeJson: vi.fn() };
+    await captureGpuInstallFailure(
+      { exitCode: 1, stdout: marker, stderr: "" },
+      { openshell },
+      artifacts,
+      {},
+      SANDBOX_NAME,
+    );
+    expect(artifacts.writeJson).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "private current bundle",
+      (file: string) => writeFileSync(file, "running=false exit_code=7", { mode: 0o600 }),
+      true,
+      false,
+    ],
+    ["symlink", (file: string) => symlinkSync("/etc/passwd", file), false, false],
+    [
+      "public file",
+      (file: string) => writeFileSync(file, "private-canary", { mode: 0o644 }),
+      false,
+      false,
+    ],
+    [
+      "oversized file",
+      (file: string) => writeFileSync(file, "x".repeat(8193), { mode: 0o600 }),
+      false,
+      false,
+    ],
+    [
+      "stale bundle",
+      (file: string) => writeFileSync(file, "private-canary", { mode: 0o600 }),
+      false,
+      true,
+    ],
+  ] as const)(
+    "copies only the %s without changing the failure",
+    async (_name, prepare, copied, stale) => {
+      const home = mkdtempSync(path.join(tmpdir(), "gpu-failure-evidence-"));
+      const directory = path.join(
+        home,
+        ".nemoclaw",
+        "onboard-failures",
+        `${new Date().toISOString().replace(/[:.]/gu, "-")}-${SANDBOX_NAME}`,
+      );
+      try {
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        prepare(path.join(directory, "sandbox-container.log"));
+        const openshell = vi.fn(async () => {
+          throw new Error("private-diagnostic-error");
+        });
+        const artifacts = { writeText: vi.fn(), writeJson: vi.fn() };
+        const install = {
+          exitCode: 1,
+          stdout: `${marker}\nDiagnostics saved: ${directory}`,
+          stderr: "",
+          startedAt: new Date(stale ? Date.now() + 60_000 : Date.now() - 60_000).toISOString(),
+          finishedAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+        await captureGpuInstallFailure(
+          install,
+          { openshell },
+          artifacts,
+          { HOME: home },
+          SANDBOX_NAME,
+        );
+        expect(artifacts.writeText.mock.calls).toEqual(
+          copied ? [["gpu-install-failure-container.log", "running=false exit_code=7"]] : [],
+        );
+        expect(artifacts.writeJson).not.toHaveBeenCalled();
+        expect(install.exitCode).toBe(1);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+  it.each([
+    ["file growth", (file: string) => appendFileSync(file, "private-canary".repeat(1000))],
+    [
+      "parent replacement",
+      (file: string) => {
+        const directory = path.dirname(file);
+        renameSync(directory, `${directory}-moved`);
+        symlinkSync(`${directory}-moved`, directory);
+      },
+    ],
+  ] as const)("rejects %s during the bounded read", async (_name, mutate) => {
+    const home = mkdtempSync(path.join(tmpdir(), "gpu-failure-race-"));
+    const directory = path.join(
+      home,
+      ".nemoclaw",
+      "onboard-failures",
+      `${new Date().toISOString().replace(/[:.]/gu, "-")}-${SANDBOX_NAME}`,
+    );
+    try {
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      const file = path.join(directory, "sandbox-container.log");
+      writeFileSync(file, "running=false", { mode: 0o600 });
+      const actualRead = fs.readSync;
+      const read = vi.spyOn(fs, "readSync").mockImplementationOnce((fd, buffer, options) => {
+        mutate(file);
+        return actualRead(fd, buffer, options);
+      });
+      const artifacts = { writeText: vi.fn(), writeJson: vi.fn() };
+      await captureGpuInstallFailure(
+        {
+          exitCode: 1,
+          stdout: `${marker}\nDiagnostics saved: ${directory}`,
+          stderr: "",
+          startedAt: new Date(Date.now() - 60_000).toISOString(),
+          finishedAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+        {
+          openshell: async () => {
+            throw new Error("private-error");
+          },
+        },
+        artifacts,
+        { HOME: home },
+        SANDBOX_NAME,
+      );
+      expect(read).toHaveBeenCalledWith(expect.any(Number), expect.any(Buffer), {
+        offset: 0,
+        length: 8193,
+        position: 0,
+      });
+      expect(artifacts.writeText).not.toHaveBeenCalled();
+      expect(artifacts.writeJson).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
 
 function loopbackPort(server: ReturnType<typeof createServer>): number {
   const address = server.address();

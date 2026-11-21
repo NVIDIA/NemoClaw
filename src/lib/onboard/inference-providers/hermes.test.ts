@@ -459,7 +459,7 @@ describe("native Hermes Provider setup", () => {
         ok: true,
         nativeInference: { endpointUrl: endpoint, credentialEnv: "OPENAI_API_KEY" },
       });
-      expect(prepareNativeProvider).toHaveBeenCalledExactlyOnceWith("host-secret", endpoint);
+      expect(prepareNativeProvider).toHaveBeenCalledExactlyOnceWith("host-secret", endpoint, false);
       expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
       expect(deps.verifyInferenceRoute).not.toHaveBeenCalled();
       expect(deps.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
@@ -473,27 +473,47 @@ describe("native Hermes Provider setup", () => {
     },
   );
 
-  it("reuses exact registered authority noninteractively without another login", async () => {
-    const prepareNativeProvider = vi.fn(async () => receipt);
-    const deps = makeDeps({
-      getNativeProviderAuthority: () => receipt,
-      prepareNativeProvider,
-      isNonInteractive: () => true,
-    });
-    await expect(
-      setupHermesProviderInference(
-        { ...makeArgs(endpoint), provider: "hermes-provider" },
-        deps as never,
-      ),
-    ).resolves.toEqual({
-      ok: true,
-      nativeInference: { endpointUrl: endpoint, credentialEnv: "OPENAI_API_KEY" },
-    });
-    expect(prepareNativeProvider).toHaveBeenCalledExactlyOnceWith(null, endpoint);
-    expect(deps.hermesProviderAuth.ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
-    expect(deps.hermesProviderAuth.ensureHermesProviderApiKeyCredentials).not.toHaveBeenCalled();
-    expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
-  });
+  it.each([
+    { endpoint, omit: false, allowedIps: ["8.8.8.8"] },
+    {
+      endpoint: "http://host.openshell.internal:42103/team/v1",
+      omit: false,
+      allowedIps: undefined,
+    },
+    { endpoint: "http://host.openshell.internal:42103/team/v1", omit: true, allowedIps: undefined },
+  ])(
+    "reuses registered $endpoint with omitted URL $omit without another login",
+    async ({ endpoint, omit, allowedIps }) => {
+      const definition = hostedNativeProvider("hermes-provider", endpoint)!;
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "retained-id",
+        endpointUrl: endpoint,
+        ...(allowedIps ? { allowedIps } : {}),
+      };
+      const prepareNativeProvider = vi.fn(async () => receipt);
+      const deps = makeDeps({
+        getNativeProviderAuthority: () => receipt,
+        prepareNativeProvider,
+        isNonInteractive: () => true,
+      });
+      await expect(
+        setupHermesProviderInference(
+          { ...makeArgs(omit ? null : endpoint), provider: "hermes-provider" },
+          deps as never,
+        ),
+      ).resolves.toEqual({
+        ok: true,
+        nativeInference: { endpointUrl: endpoint, credentialEnv: "OPENAI_API_KEY" },
+      });
+      expect(prepareNativeProvider).toHaveBeenCalledExactlyOnceWith(null, endpoint, true);
+      expect(deps.hermesProviderAuth.ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
+      expect(deps.hermesProviderAuth.ensureHermesProviderApiKeyCredentials).not.toHaveBeenCalled();
+      expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not publish success or use the shared route when native registration fails", async () => {
     const deps = makeDeps({
@@ -553,4 +573,93 @@ describe("Hermes managed-tool profile reuse", () => {
     expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
     expect(deps.hermesProviderAuth.ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
   });
+});
+
+it.each([
+  { endpointUrl: "http://retained.example/team/v1", registered: "http://8.8.8.8/team/v1" },
+  { endpointUrl: "https://8.8.8.8/team/v1", registered: "https://8.8.8.8/team/v1" },
+  {
+    endpointUrl: "http://host.openshell.internal:42103/team/v1",
+    registered: "http://host.openshell.internal:42103/team/v1",
+  },
+])(
+  "restores retained Hermes $endpointUrl through native credential registration",
+  async ({ endpointUrl, registered }) => {
+    const definition = hostedNativeProvider("hermes-provider", registered)!;
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: definition.profileId,
+      providerName: definition.providerName,
+      providerId: "retained-id",
+      endpointUrl: registered,
+    };
+    const prepareNativeProvider = vi.fn(async () => receipt);
+    const register = vi.fn(async (_sandbox, options) => {
+      await options.registerInferenceCredential({
+        apiKey: "retained-host-key",
+        credentialEnv: "NOUS_API_KEY",
+        baseUrl: options.baseUrl,
+      });
+      return { inference_base_url: options.baseUrl, credential_env: "OPENAI_API_KEY" };
+    });
+    const deps = makeDeps({
+      lookup: publicLookup(),
+      getNativeProviderAuthority: () => undefined,
+      prepareNativeProvider,
+      resolveHermesNousApiKey: () => "retained-host-key",
+      hermesProviderAuth: {
+        isHermesProviderRegistered: vi.fn(),
+        ensureHermesProviderApiKeyCredentials: register,
+        ensureHermesProviderOAuthCredentials: vi.fn(),
+      },
+    });
+    const result = await setupHermesProviderInference(
+      { ...makeArgs(endpointUrl), provider: "hermes-provider" },
+      deps as never,
+    );
+    expect(prepareNativeProvider).toHaveBeenCalledExactlyOnceWith(
+      "retained-host-key",
+      registered,
+      true,
+    );
+    expect(result).toEqual({
+      ok: true,
+      nativeInference: { endpointUrl: registered, credentialEnv: "OPENAI_API_KEY" },
+    });
+    expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+    expect(
+      JSON.stringify([result, deps.registry.updateSandbox.mock.calls, deps.log.mock.calls]),
+    ).not.toContain("retained-host-key");
+  },
+);
+
+it("rejects a login-returned HTTP replacement for a retained Hermes endpoint", async () => {
+  const prepareNativeProvider = vi.fn();
+  const deps = makeDeps({
+    getNativeProviderAuthority: () => undefined,
+    prepareNativeProvider,
+    normalizeHermesAuthMethod: () => "oauth",
+    hermesProviderAuth: {
+      isHermesProviderRegistered: vi.fn(),
+      ensureHermesProviderApiKeyCredentials: vi.fn(),
+      ensureHermesProviderOAuthCredentials: async (
+        _sandbox: unknown,
+        options: { registerInferenceCredential: (value: unknown) => Promise<unknown> },
+      ) =>
+        options.registerInferenceCredential({
+          apiKey: "host-secret",
+          credentialEnv: "OPENAI_API_KEY",
+          baseUrl: "http://different.example/v1",
+        }),
+    },
+  });
+  await expect(
+    setupHermesProviderInference(
+      { ...makeArgs("http://host.openshell.internal:42103/v1"), provider: "hermes-provider" },
+      deps as never,
+    ),
+  ).resolves.toEqual({ retry: "selection" });
+  expect(prepareNativeProvider).not.toHaveBeenCalled();
+  expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("requires an HTTPS endpoint"));
+  expect(deps.registry.updateSandbox).not.toHaveBeenCalled();
 });

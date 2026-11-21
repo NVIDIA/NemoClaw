@@ -7,6 +7,20 @@
 const Module = require("node:module");
 const path = require("node:path");
 
+function readMessagingProfile() {
+  const fs = require("node:fs");
+  const YAML = require("yaml");
+  return YAML.parse(
+    fs.readFileSync(
+      path.resolve(
+        __dirname,
+        "../../nemoclaw-blueprint/provider-profiles/nemoclaw-messaging-v1.yaml",
+      ),
+      "utf8",
+    ),
+  );
+}
+
 // Onboarding fixtures use synthetic Discord tokens and must not contact Discord.
 const fixtureFetch = global.fetch;
 global.fetch = (url, options) =>
@@ -269,7 +283,8 @@ function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable
       status: 0,
       stdout: JSON.stringify({
         id: profileId,
-        credentials: [],
+        credentials:
+          profileId === "nemoclaw-messaging-v1" ? readMessagingProfile().credentials : [],
         endpoints: [],
         binaries: [],
         inference_capable: inferenceCapable,
@@ -290,7 +305,7 @@ function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable
 }
 
 function mockManagedEndpointlessProviderProfileRun(command) {
-  return mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  return mockEndpointlessProviderProfileRun(command, "nemoclaw-messaging-v1", false);
 }
 
 function mockProviderPreparationRun(command, gatewayName, profileId, inferenceCapable) {
@@ -315,13 +330,7 @@ function createStatefulMessagingProviderRunner({
   const providers = new Map(
     initialProviders.map(([name, type, credential]) => [name, { type, credential }]),
   );
-  const messagingProfile = JSON.stringify({
-    id: "nemoclaw-mcp-v1",
-    credentials: [],
-    endpoints: [],
-    binaries: [],
-    inference_capable: false,
-  });
+  const messagingProfileOutput = JSON.stringify(readMessagingProfile());
   let messagingProfileImported = false;
   let lifecycleReleased = false;
   return (command, options = {}) => {
@@ -339,7 +348,7 @@ function createStatefulMessagingProviderRunner({
         args[profileActionIndex] === "-g" ? args[profileActionIndex + 2] : args[profileActionIndex];
       if (profileAction === "export") {
         return messagingProfileImported
-          ? { status: 0, stdout: messagingProfile, stderr: "" }
+          ? { status: 0, stdout: messagingProfileOutput, stderr: "" }
           : { status: 1, stdout: "", stderr: "provider profile not found" };
       }
       const fileIndex = args.indexOf("--file");
@@ -685,7 +694,7 @@ function createCreatedSandboxFixture(options = {}) {
         !exactArgs[5].startsWith(prefix) ||
         exactArgs[6] !== "--output" ||
         exactArgs[7] !== "json" ||
-        exactArgs[8] !== "--limit" ||
+        exactArgs[8] !== "--page-size" ||
         exactArgs[9] !== "2"
       ) {
         return null;
@@ -1312,7 +1321,7 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
         state.finalCommitReleased || state.legacyRecoverySandboxId
           ? ONBOARD_SANDBOX_NEW_CONTAINER_ID
           : ONBOARD_SANDBOX_OLD_CONTAINER_ID;
-      return `${containerId}\topenshell\tdefault\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n`;
+      return `${containerId}\topenshell\tdefault\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\t\t\n`;
     }
     if (
       (state.finalCommitReleased || state.legacyRecoverySandboxId) &&

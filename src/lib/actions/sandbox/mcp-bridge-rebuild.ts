@@ -8,7 +8,10 @@ import YAML from "yaml";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import type { PreparedStoppedNativeState } from "../../state/state-directory-restore";
 import * as policies from "../../policy";
-import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
+import {
+  isSandboxPolicyCredentialFree,
+  parseAndValidateSandboxPolicy,
+} from "../../policy/sandbox-policy-validation";
 import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
@@ -199,6 +202,7 @@ export async function prepareMcpBridgesForStoppedSandboxRebuild(
   if (!policyHandoff || !isSandboxPolicyCredentialFree(policyHandoff)) {
     throw new McpBridgeError("Stopped MCP preservation requires a credential-free live policy.");
   }
+  parseAndValidateSandboxPolicy(policyHandoff);
   return {
     ...prepared,
     policyHandoff,
@@ -264,6 +268,7 @@ export async function prepareMcpBridgesForRebuild(
       `Cannot prepare the MCP rebuild policy handoff for sandbox '${sandboxName}' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.`,
     );
   }
+  parseAndValidateSandboxPolicy(policyHandoff);
   const expectedTeardownPolicy = policyWithoutManagedMcpEntries(policyHandoff, entries);
   const detached: McpSourceEntry[] = [];
   const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];

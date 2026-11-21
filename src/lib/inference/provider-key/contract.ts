@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isLegacyModelRouterProvider } from "../../core/model-router-port";
+
 const PROVIDER_KEY_ROUTE_VALUES = new Set([
   "anthropic",
   "anthropiccompatible",
@@ -42,7 +44,11 @@ export const MODEL_ROUTER_REMOVED_MESSAGE =
 /** Reject retired selections before callers acquire credentials or change resources. */
 export function rejectRetiredModelRouter(provider: string | null | undefined): void {
   const normalized = provider?.trim().toLowerCase().replaceAll("_", "-");
-  if (normalized === "routed" || normalized === "nvidia-router") {
+  if (
+    normalized === "routed" ||
+    isLegacyModelRouterProvider(provider) ||
+    isLegacyModelRouterProvider(normalized)
+  ) {
     throw new Error(MODEL_ROUTER_REMOVED_MESSAGE);
   }
 }

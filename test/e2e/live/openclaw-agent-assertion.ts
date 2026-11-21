@@ -42,8 +42,9 @@ export interface OpenClawAgentAssertionEvidence {
 
 export interface OpenClawAgentAssertionOptions {
   apiKey: string;
+  collectToolEvidenceOnFailure?: boolean;
   expected: string;
-  finalReplyContract?: "unavailable-search";
+  finalReplyContract?: "unavailable-search" | "exact-token";
   label: string;
   prompt: string;
   persistCommandArtifacts?: boolean;
@@ -148,6 +149,14 @@ export async function runOpenClawAgentAssertion(
       });
       if (
         classification.passed &&
+        args.finalReplyContract === "exact-token" &&
+        (reply.trim() !== args.expected || finalVisibleReply.trim() !== args.expected)
+      ) {
+        classification = { passed: false, failureClass: "deterministic" };
+        lastFailure = "payload and final visible reply must contain only the expected token";
+      }
+      if (
+        classification.passed &&
         args.finalReplyContract === "unavailable-search" &&
         !isUnavailableSearchReply(finalVisibleReply)
       ) {
@@ -212,7 +221,10 @@ export async function runOpenClawAgentAssertion(
       }
       const validation = await validateOpenClawAgentAttemptEvidence({
         classification,
-        collectToolEvidence: args.publicFetchExpectation !== undefined && !classification.passed,
+        collectToolEvidence:
+          (args.publicFetchExpectation !== undefined ||
+            args.collectToolEvidenceOnFailure === true) &&
+          !classification.passed,
         label: args.label,
         recordToolEvidenceReductionFailure: async (failure) => {
           await recordAttemptEvidence(
@@ -223,9 +235,20 @@ export async function runOpenClawAgentAssertion(
         recordToolEvidence: async (toolEvidence) => {
           await recordAttemptEvidence(
             `actions/${args.label}-attempt-${attempt}-reduced.json`,
-            (args.toolEvidence?.project ?? projectPersonalPublicFetchToolEvidenceArtifact)(
-              toolEvidence,
-            ),
+            args.toolEvidence?.project(toolEvidence) ??
+              (args.publicFetchExpectation
+                ? projectPersonalPublicFetchToolEvidenceArtifact(toolEvidence)
+                : {
+                    schemaVersion: 1,
+                    errorCount: toolEvidence.errors.length,
+                    finalStatusCount: toolEvidence.finalStatuses.length,
+                    toolCallCount: toolEvidence.toolCalls.length,
+                    toolExecutionCount: toolEvidence.toolExecutions.length,
+                    toolResultCount: toolEvidence.toolResults.length,
+                    execCalls: toolEvidence.toolCalls.filter(({ name }) => name === "exec").length,
+                    execResults: toolEvidence.toolResults.filter(({ name }) => name === "exec")
+                      .length,
+                  }),
           );
         },
         reduceToolEvidence,

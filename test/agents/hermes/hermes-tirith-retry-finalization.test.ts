@@ -56,6 +56,7 @@ function runTirithFinalizer(commands: readonly string[]) {
         "set -euo pipefail",
         extractShellFunction(source, "retry_tirith_marker_if_needed"),
         extractShellFunction(source, "prepare_tirith_marker_retry"),
+        extractShellFunction(source, "settle_tirith_marker_retry"),
         extractShellFunction(source, "prepare_hermes_root_runtime"),
         extractShellFunction(source, "finalize_tirith_marker_retry"),
         `HERMES_DIR=${shellQuote(hermesHome)}`,
@@ -84,6 +85,118 @@ function runTirithFinalizer(commands: readonly string[]) {
 }
 
 describe("agents/hermes/start.sh Tirith retry finalization", () => {
+  it.each(["delayed", "stalled", "failed", "disabled"])(
+    "settles a %s installer before returning control to gateway startup",
+    (scenario) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tirith-prepare-"));
+      try {
+        const result = spawnSync(
+          process.env.PYTHON || "python3",
+          [
+            "-I",
+            "-c",
+            `
+import importlib.util, pathlib, sys, threading, types
+spec = importlib.util.spec_from_file_location("finalizer", ${JSON.stringify(FINALIZER)})
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+marker = pathlib.Path(${JSON.stringify(path.join(tmpDir, "marker"))})
+scenario = ${JSON.stringify(scenario)}
+runtime = types.ModuleType("tools.tirith_security")
+runtime._install_thread = None
+runtime._resolved_path = None
+def ensure_installed(**kwargs):
+    if scenario == "disabled":
+        return
+    if scenario == "delayed":
+        def finish():
+            marker.write_text("download_failed")
+            runtime._resolved_path = False
+        runtime._install_thread = threading.Timer(0.02, finish)
+        runtime._install_thread.start()
+    else:
+        runtime._install_thread = types.SimpleNamespace(
+            join=lambda timeout: None, is_alive=lambda: scenario == "stalled")
+runtime.ensure_installed = ensure_installed
+sys.modules["tools"] = types.SimpleNamespace(tirith_security=runtime)
+try:
+    m.prepare_retry()
+except RuntimeError as error:
+    assert scenario in ("stalled", "failed")
+    assert str(error) == "Hermes Tirith startup retry did not settle"
+else:
+    assert scenario in ("delayed", "disabled")
+    assert marker.exists() == (scenario == "delayed")
+    if scenario == "delayed":
+        assert not runtime._install_thread.is_alive()
+        assert m.finalize_marker(marker) == 0
+        assert not marker.exists()
+`,
+          ],
+          { encoding: "utf8", timeout: 5000 },
+        );
+        expect(result.status, result.stderr).toBe(0);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    [0, 0, false],
+    [1, 0, false],
+    [1, 124, false],
+    [0, 0, true],
+  ] as const)(
+    "settles authorized retry %s with installer status %s and absent marker %s",
+    (handled, status, absent) => {
+      const { result } = runTirithFinalizer([
+        `TIRITH_RETRY_MARKER_CLEARED=${handled}`,
+        absent ? 'rm -f "$MARKER"' : ":",
+        `timeout() { printf '%s\\n' "$*"; return ${status}; }`,
+        "settle_tirith_marker_retry",
+        "echo gateway-start-allowed",
+      ]);
+      expect(result.status).toBe(status === 0 ? 0 : 1);
+      expect(result.stdout.includes("gateway-start-allowed")).toBe(status === 0);
+      expect(result.stdout.includes("--prepare-retry")).toBe(handled === 1 || absent);
+      expect(result.stdout.includes("--signal=TERM --kill-after=5s 60s")).toBe(
+        handled === 1 || absent,
+      );
+    },
+  );
+
+  it.each([0, 1, 124])(
+    "requires sandbox Tirith settlement before root gateway launch with installer status %s",
+    (status) => {
+      const { result } = runTirithFinalizer([
+        "id() { printf '0\\n'; }",
+        "STEP_DOWN_PREFIX_SANDBOX=(sandbox_identity)",
+        "sandbox_identity() { printf 'sandbox-identity\\n'; return " + status + "; }",
+        'timeout() { printf \'%s\\n\' "$*"; shift 3; "$@"; }',
+        "ensure_hermes_config_root_mode() { :; }",
+        "migrate_legacy_hermes_dashboard_state() { :; }",
+        "validate_hermes_env_secret_boundary() { :; }",
+        "validate_hermes_runtime_env_secret_boundary() { :; }",
+        "refresh_hermes_runtime_config_hashes() { :; }",
+        "prepare_hermes_lazy_dependencies() { :; }",
+        "ensure_hermes_runtime_api_server_key() { :; }",
+        "refresh_hermes_provider_placeholders() { :; }",
+        "configure_messaging_channels() { :; }",
+        "NEMOCLAW_CMD=()",
+        "prepare_hermes_root_runtime",
+        "echo gateway-start-allowed",
+      ]);
+      expect(result.status).toBe(status === 0 ? 0 : 1);
+      expect(result.stdout.includes("gateway-start-allowed")).toBe(status === 0);
+      expect(result.stdout).toContain(
+        "--signal=TERM --kill-after=5s 60s sandbox_identity env HOME=/sandbox",
+      );
+      expect(result.stdout).toContain("--prepare-retry");
+      expect(result.stdout).toContain("sandbox-identity");
+    },
+  );
+
   it("returns FAILED without a traceback when the marker parent is missing", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tirith-missing-parent-"));
     try {
@@ -180,6 +293,7 @@ describe("agents/hermes/start.sh Tirith retry finalization", () => {
       "migrate_legacy_hermes_dashboard_state() { :; }",
       "configure_messaging_channels() { :; }",
       "TIRITH_RETRY_MARKER_CLEARED=1",
+      "NEMOCLAW_CMD=(/bin/true)",
       'rm -f "$MARKER"',
       "prepare_hermes_root_runtime",
       'printf %s download_failed > "$MARKER"',

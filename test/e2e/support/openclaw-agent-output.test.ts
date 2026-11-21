@@ -433,7 +433,7 @@ describe("OpenClaw native state doctor evidence", () => {
 
 describe("OpenClaw native state process identities", () => {
   const identities = ` EUID EGID PID PPID COMMAND
-    0 0 1 0 openshell-sandb
+    998 998 1 0 openshell-sandb
     998 998 892 1 bash
     998 998 1315 892 openclaw-gatewa
     998 998 2196 1 ps`;
@@ -456,8 +456,10 @@ describe("OpenClaw native state process identities", () => {
     ["duplicate PID", 0, false, `${identities}\n998 998 892 1 bash`, false],
     ["non-Bash parent", 0, false, identities.replace("1 bash", "1 sh"), false],
     ["indirect parent", 0, false, identities.replace("892 1 bash", "892 900 bash"), false],
-    ["non-root PID1 user", 0, false, identities.replace("0 0 1 0", "998 0 1 0"), false],
-    ["non-root PID1 group", 0, false, identities.replace("0 0 1 0", "0 998 1 0"), false],
+    ["root PID1 user", 0, false, identities.replace("998 998 1 0", "0 998 1 0"), false],
+    ["root PID1 group", 0, false, identities.replace("998 998 1 0", "998 0 1 0"), false],
+    ["different PID1 user", 0, false, identities.replace("998 998 1 0", "999 998 1 0"), false],
+    ["different PID1 group", 0, false, identities.replace("998 998 1 0", "998 999 1 0"), false],
     ["malformed row", 0, false, `${identities}\ntruncated`, false],
     ["empty stdout", 0, false, "", false],
     ["failed command", 1, false, identities, false],

@@ -700,7 +700,8 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 FROM scratch AS openclaw-patch-payload
 
 COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
-COPY scripts/lib/patch-openclaw-container-restart.mts scripts/lib/patch-openclaw-agent-message-input.mts /usr/local/lib/nemoclaw/
+COPY scripts/lib/patch-openclaw-native-network.mts /usr/local/lib/nemoclaw/patch-openclaw-native-network.mts
+COPY scripts/lib/patch-openclaw-container-restart.mts scripts/lib/openclaw-broker-session-probe.mts scripts/lib/openclaw-command-session-cleanup.mts scripts/lib/patch-openclaw-agent-message-input.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /usr/local/lib/nemoclaw/npm12.mts
 COPY scripts/lib/patch-openclaw-worker-proxy.mts scripts/lib/patch-openclaw-node-compile-cache.mts scripts/lib/patch-openclaw-plugin-source-root.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/patch-openclaw-worker-device-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-worker-device-approval.mts
@@ -734,7 +735,7 @@ COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.c
 COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
 COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
 COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
-COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/catalog.ts /src/lib/inference/native-provider/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 
@@ -900,6 +901,7 @@ COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/we
 COPY --from=openclaw-patch-payload / /
 
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-native-network.mts \
         /usr/local/lib/nemoclaw/npm12.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-container-restart.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
@@ -1077,24 +1079,12 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     fi; \
     rm -f /tmp/mcporter-npm-audit.json /tmp/mcporter-npm-audit-policy.json
 
-# Patch OpenClaw media fetch for proxy-only sandbox (#1755, #4687).
-# 1. Map strict media fetch exports to trusted-env-proxy mode. Direct
-#    DNS-pinned connections cannot cross the proxy-only sandbox network;
-#    local strict implementations retain their original behavior.
-# 2. Authorize only the proxy endpoint in the root-owned openclaw-proxy-url
-#    file. Image build and managed startup populate it from validated inputs.
-#    Process environment overrides cannot select another proxy; outside
-#    OpenShell, native SSRF validation remains.
-# 2b. Allow host.openshell.internal only in web_fetch's trusted proxy policy
-#     inside OpenShell after policy allows that host and port. Generic SSRF
-#     and direct fetch paths still reject private targets.
-# 4. Enable OpenClaw's managed proxy route for unconfigured strict fetches
-#    inside OpenShell. Target DNS and SSRF checks remain; explicit-proxy and
-#    direct mTLS policies keep their behavior.
-# Remove each patch when OpenClaw supplies the corresponding media proxy
-# selection, authoritative explicit-proxy validation, narrow host-gateway
-# web_fetch policy, or managed strict-fetch route. Build-time dist
-# classification fails on unknown or mixed shapes.
+# Patch OpenClaw network boundaries for OpenShell 0.1.3.
+# Current images use native socket mediation and synthetic DNS answers. Preserve
+# upstream SSRF checks except for the reviewed mapped-address boundary.
+# Legacy proxy patches below apply only to the existing E2E fixture selector;
+# the reviewed-package install above restricts its accepted versions.
+# Remove the native patch when OpenClaw supports these OpenShell DNS mappings.
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
     OC_DIST=/usr/local/lib/node_modules/openclaw/dist; \
@@ -1107,9 +1097,11 @@ RUN set -eu; \
         echo "       Inspect ${OC_DIST} and update the Dockerfile patch rules for this OpenClaw layout." >&2; \
         exit 1; \
     }; \
-    # The worker has separately verified minified copies of these modules. \
-    node /usr/local/lib/nemoclaw/patch-openclaw-worker-proxy.mts "$OC_DIST"; \
-    if [ "$OC_VERSION" = "2026.10.5" ]; then node /usr/local/lib/nemoclaw/patch-openclaw-node-compile-cache.mts "$OC_DIST"; node /usr/local/lib/nemoclaw/patch-openclaw-plugin-source-root.mts "$OC_DIST"; fi; \
+    if [ "$OC_VERSION" = "2026.9.2" ] || [ "$OC_VERSION" = "2026.10.5" ]; then \
+        node /usr/local/lib/nemoclaw/patch-openclaw-native-network.mts "$OC_DIST"; \
+        if [ "$OC_VERSION" = "2026.10.5" ]; then node /usr/local/lib/nemoclaw/patch-openclaw-node-compile-cache.mts "$OC_DIST"; node /usr/local/lib/nemoclaw/patch-openclaw-plugin-source-root.mts "$OC_DIST"; fi; \
+        echo "INFO: OpenClaw ${OC_VERSION} native network patch applied"; \
+    elif [ "${NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW:-0}" = "1" ]; then \
     # --- Patch 1: rewrite fetch-guard export --- \
     fg_export="$(grep -RIlE --include='*.js' --include='*.mjs' --exclude='worker.mjs' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' "$OC_DIST" || true)"; \
     if [ -n "$fg_export" ]; then \
@@ -1284,6 +1276,9 @@ RUN set -eu; \
             printf '%s\n' "$preflight_refs" | head -n 5 >&2; \
             patch_fail "Patch 6 cannot safely skip"; \
         fi; \
+    fi; \
+    else \
+        patch_fail "Native network patch requires the reviewed current version"; \
     fi; \
     # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \
     # Replace legacy lstat checks with stat while retaining realpath containment. \
@@ -1531,12 +1526,6 @@ ARG NEMOCLAW_BUILD_ID=default
 # starts NemoClaw as the non-root sandbox user, so uid-owned 770/660 paths
 # become unreadable unless this Darwin-only compatibility mode is enabled.
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
-# Sandbox egress proxy host/port. Defaults match the OpenShell-injected
-# gateway (10.200.0.1:3128). Operators on non-default networks can override
-# at sandbox creation time by exporting NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT
-# before running `nemoclaw onboard`. See #1409.
-ARG NEMOCLAW_PROXY_HOST=10.200.0.1
-ARG NEMOCLAW_PROXY_PORT=3128
 # Non-secret web-search selection from onboard. The actual API key is injected
 # at runtime via openshell:resolve:env, never baked into the image.
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
@@ -1545,8 +1534,8 @@ ARG NEMOCLAW_OPENCLAW_OTEL=0
 # The default local OTEL endpoint is intentionally the single host-gateway
 # collector path covered by the openclaw-diagnostics-otel-local policy preset.
 # @openclaw/diagnostics-otel@2026.9.1 exports through OpenTelemetry's OTLP
-# trace exporter path, not OpenClaw web_fetch, so Patch 2b's host gateway
-# exception remains scoped to user-requested web_fetch proxy calls.
+# trace exporter path. The native DNS patch separately handles web_fetch
+# requests to the host gateway.
 ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=http://host.openshell.internal:4318
 ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=openclaw-gateway
 ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=1.0
@@ -1579,8 +1568,6 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_WSL_DASHBOARD_EXPOSURE=${NEMOCLAW_WSL_DASHBOARD_EXPOSURE} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=${NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE} \
-    NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
-    NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
     NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
     NEMOCLAW_WEB_SEARCH_PROVIDER=${NEMOCLAW_WEB_SEARCH_PROVIDER} \
     NEMOCLAW_OPENCLAW_OTEL=${NEMOCLAW_OPENCLAW_OTEL} \
@@ -1642,8 +1629,21 @@ RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox" \
     fi
 USER sandbox
 
-# Entrypoint supplies auth; defer managed proxy.
-RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
+# Write openclaw.json with gateway config but WITHOUT the real auth token.
+# The gateway auth token is generated at container startup by the entrypoint
+# and passed via OPENCLAW_GATEWAY_TOKEN env var only to the gateway process
+# (running as 'gateway' user). The token file location depends on startup mode:
+#   Root mode:     /run/nemoclaw/gateway-token (gateway:gateway 0400)
+#   Non-root mode: $XDG_RUNTIME_DIR/nemoclaw/gateway-token (sandbox:sandbox 0400)
+# See: scripts/nemoclaw-start.sh generate_gateway_token()
+#
+# Config remains mutable at runtime (group-writable sandbox:sandbox).
+# Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
+#
+# Generate base openclaw.json from environment variables. Messaging build
+# steps run through src/lib/messaging/applier/build/messaging-build-applier.mts.
+#
+RUN NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0 \
     node /scripts/generate-openclaw-config.mts
 
 # Validate both tool-search modes against the installed OpenClaw schema and fail on drift.
@@ -1659,7 +1659,6 @@ RUN set -eu; \
             NEMOCLAW_PRIMARY_MODEL_REF=inference/test-model \
             NEMOCLAW_TOOL_DISCLOSURE="$mode" \
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0 \
-            NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
             node /scripts/generate-openclaw-config.mts; \
         node /scripts/validate-openclaw-tool-search.mts \
             /usr/local/lib/node_modules/openclaw/dist \
@@ -1876,21 +1875,13 @@ ENV NPM_CONFIG_OFFLINE=false
 # SECURITY: Clear any gateway auth token that openclaw doctor/plugins may have
 # auto-generated. The real token is created at container startup by the
 # entrypoint (generate_gateway_token) and never stored in openclaw.json.
-# Also add the final OpenClaw managed proxy config after build-time OpenClaw
-# commands are done, so runtime Discord/WebSocket traffic uses the OpenShell
-# gateway proxy without forcing image-build npm traffic through that proxy.
+# Remove obsolete application proxy state from the generated config.
 RUN python3 -c "\
 import json, os; \
 path = os.path.expanduser('~/.openclaw/openclaw.json'); \
 cfg = json.load(open(path)); \
 cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''; \
-proxy_host = os.environ.get('NEMOCLAW_PROXY_HOST') or '10.200.0.1'; \
-proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; \
-cfg['proxy'] = { \
-    'enabled': True, \
-    'proxyUrl': f'http://{proxy_host}:{proxy_port}', \
-    'loopbackMode': 'gateway-only', \
-}; \
+cfg.pop('proxy', None); \
 json.dump(cfg, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
 
@@ -2168,38 +2159,6 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
             find "$p" -type d -exec chmod a+rwx {} +; \
         done; \
         chmod a+rw /sandbox/.nemoclaw/config.json; \
-    fi
-
-# Temporary workaround for OpenTelemetry JS OTLP/HTTP proxy handling.
-# When diagnostics OTEL is enabled, patch the bundled exporter so Node's
-# NODE_USE_ENV_PROXY=1 handling can apply instead of forcing the default agent.
-# Remove once https://github.com/open-telemetry/opentelemetry-js/issues/6638
-# is fixed in @opentelemetry/otlp-exporter-base.
-# hadolint ignore=DL4006
-RUN set -eu; \
-    if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
-        target="$(find /sandbox/.openclaw \
-            -path '*/@opentelemetry/otlp-exporter-base/build/src/transport/http-transport-utils.js' \
-            -print -quit 2>/dev/null || true)"; \
-        if [ -z "$target" ]; then \
-            echo "ERROR: NEMOCLAW_OPENCLAW_OTEL=1 but otlp-exporter-base transport was not found" >&2; \
-            exit 1; \
-        fi; \
-        if grep -q 'NODE_USE_ENV_PROXY' "$target"; then \
-            echo "INFO: OpenTelemetry OTLP proxy patch already present in $target"; \
-        else \
-            owner="$(stat -c '%u:%g' "$target")"; \
-            mode="$(stat -c '%a' "$target")"; \
-            cp -p "$target" "$target.bak"; \
-            sed -i "0,/^[[:space:]]*agent,$/s//        agent: process.env.NODE_USE_ENV_PROXY === '1' ? undefined : agent,/" "$target"; \
-            grep -q 'NODE_USE_ENV_PROXY' "$target" || { \
-                echo "ERROR: failed to patch OpenTelemetry OTLP transport at $target" >&2; \
-                exit 1; \
-            }; \
-            chown "$owner" "$target"; \
-            chmod "$mode" "$target"; \
-            echo "INFO: patched OpenTelemetry OTLP proxy handling in $target"; \
-        fi; \
     fi
 
 RUN check_metadata() { \

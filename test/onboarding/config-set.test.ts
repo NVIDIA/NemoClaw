@@ -88,10 +88,10 @@ describe("selectDirectSandboxContainer", () => {
 
 describe("config set helpers", () => {
   describe("buildConfigSetRestartGuidance", () => {
-    it("names Hermes in the Hermes restart note (#8614)", () => {
+    it("reports the verified Hermes reload and optional additional restart (#8614)", () => {
       const output = buildConfigSetRestartGuidance("alpha").join("\n");
 
-      expect(output).toContain("Hermes may restart");
+      expect(output).toContain("Hermes verified its gateway reload");
       expect(output).toContain("--restart");
       expect(output).toContain("nemoclaw 'alpha' gateway restart");
     });
@@ -134,19 +134,28 @@ describe("config set helpers", () => {
       expect(calls).toEqual(["alpha"]);
     });
 
-    it("fails with a written-but-not-applied message and a retry hint when the restart fails", async () => {
-      let thrown: unknown;
-      try {
-        await restartSandboxAgentAfterConfigSet("alpha", "openclaw", async () => ({ ok: false }));
-      } catch (error) {
-        thrown = error;
-      }
+    it.each([
+      ["openclaw", "written to disk but NOT applied to the running agent"],
+      [
+        "hermes",
+        "configuration was applied and its reload verified. The additional restart was not confirmed.",
+      ],
+    ])(
+      "reports the %s application state and a retry hint when the restart fails",
+      async (agentName, applicationState) => {
+        let thrown: unknown;
+        try {
+          await restartSandboxAgentAfterConfigSet("alpha", agentName, async () => ({ ok: false }));
+        } catch (error) {
+          thrown = error;
+        }
 
-      const message = thrown instanceof Error ? thrown.message : String(thrown);
-      expect(message).toContain("written to disk but NOT applied to the running agent");
-      expect(message).toContain("openclaw gateway restart did not complete for 'alpha'");
-      expect(message).toContain("nemoclaw 'alpha' gateway restart");
-    });
+        const message = thrown instanceof Error ? thrown.message : String(thrown);
+        expect(message).toContain(applicationState);
+        expect(message).toContain(`${agentName} gateway restart did not complete for 'alpha'`);
+        expect(message).toContain("nemoclaw 'alpha' gateway restart");
+      },
+    );
   });
 
   describe("extractDotpath", () => {

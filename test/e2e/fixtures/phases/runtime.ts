@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../../../src/lib/inference/native-local/agent-config.ts";
+import { shellQuote } from "../../../../src/lib/core/shell-quote.ts";
+import { trustedSandboxShellScript } from "../clients/sandbox.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { assertExitZero } from "../clients/command.ts";
 import type {
@@ -297,26 +300,38 @@ export class RuntimePhaseFixture {
     instance: Pick<NemoClawInstance, "sandboxName">,
     options: InferenceRuntimeChatOptions & {
       readonly route?: InferenceRoute;
+      readonly modelRouter?: boolean;
     } = {},
   ): Promise<InferenceRuntimeProbeResult> {
-    const endpoint = inferenceRouteUrl(options.route, CHAT_COMPLETIONS_PATH);
+    const endpoint = options.modelRouter
+      ? `http://host.openshell.internal:4000${CHAT_COMPLETIONS_PATH}`
+      : inferenceRouteUrl(options.route, CHAT_COMPLETIONS_PATH);
     const payload = openAiChatPayload(options);
-    const result = await this.sandbox.exec(
-      instance.sandboxName,
-      [
-        "curl",
-        "-fsS",
-        "--max-time",
-        curlMaxTime(options),
-        "-H",
-        "Content-Type: application/json",
-        ...headerArgs(options.headers),
-        "--data-raw",
-        payload,
-        endpoint,
-      ],
-      shellOptions(options, "runtime-inference-local-chat-completion"),
-    );
+    const command = [
+      "curl",
+      "-fsS",
+      "--max-time",
+      curlMaxTime(options),
+      "-H",
+      "Content-Type: application/json",
+      ...headerArgs(options.headers),
+      "--data-raw",
+      payload,
+      endpoint,
+    ];
+    const result = options.modelRouter
+      ? await this.sandbox.execShell(
+          instance.sandboxName,
+          trustedSandboxShellScript(
+            `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; ${command.map(shellQuote).join(" ")} -H "$AUTH_HEADER"`,
+          ),
+          shellOptions(options, "runtime-native-model-router-chat-completion"),
+        )
+      : await this.sandbox.exec(
+          instance.sandboxName,
+          command,
+          shellOptions(options, "runtime-inference-local-chat-completion"),
+        );
     assertExitZero(result, "inference.local chat completion probe");
     assertChatCompletionShape(
       parseJsonBody(result.stdout, "inference.local chat completion"),

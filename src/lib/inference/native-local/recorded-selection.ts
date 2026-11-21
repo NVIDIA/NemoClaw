@@ -3,7 +3,8 @@
 
 import { isPublishedSandboxRegistration } from "../../state/registry/route-reservation";
 import type { SandboxEntry } from "../../state/registry/types";
-import { isLocalInferenceProvider, NATIVE_LOCAL_CREDENTIAL_ENV } from "./agent-config";
+import { NATIVE_LOCAL_CREDENTIAL_ENV } from "./agent-config";
+import { usesNativeLocalInference } from "./eligibility";
 import {
   normalizeNativeLocalProviderAttachment,
   type NativeLocalProviderAttachment,
@@ -36,8 +37,7 @@ export function authorizedNativeLocalAttachment(
         ? attachment.agent === sandbox.agent
         : sandbox.agent === "openclaw" &&
           attachment.agent === "openclaw" &&
-          isLocalInferenceProvider(sandbox.provider) &&
-          !sandbox.nimContainer)
+          usesNativeLocalInference(sandbox.provider, attachment.endpointUrl))
   )
     return undefined;
   return attachment;

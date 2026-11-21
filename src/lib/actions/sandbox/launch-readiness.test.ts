@@ -10,16 +10,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
 import {
+  fence,
+  lease,
   entry,
   servingProfile,
   launchReadinessPolicy as POLICY_A,
 } from "../../../../test/helpers/native-launch-readiness.ts";
 import { loadAgent } from "../../agent/defs";
-import { OpenClawPairingQualificationError } from "./launch-readiness/openclaw-pairing-qualification";
 import type {
-  LaunchReadinessFence,
   LaunchReadinessIdentity,
-  LaunchReadinessLease,
   LaunchReadinessOpenClawSessionQualification,
 } from "../../state/launch-readiness-lease";
 import { LaunchReadinessFenceError } from "../../state/launch-readiness-lease";
@@ -35,7 +34,10 @@ import {
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
 
-import { OpenClawPairingIncompatibleError } from "./launch-readiness/openclaw-pairing-qualification";
+import {
+  OpenClawPairingQualificationError,
+  OpenClawPairingIncompatibleError,
+} from "./launch-readiness/openclaw-pairing-qualification";
 
 const SANDBOX = "alpha";
 const GATEWAY_NAME = "nemoclaw";
@@ -45,52 +47,6 @@ const FINGERPRINT = "b".repeat(64);
 const DIGEST = "c".repeat(64);
 
 const POLICY_B = POLICY_A.replace("example.com", "api.example.com");
-
-function fence(): LaunchReadinessFence {
-  return {
-    schemaVersion: 3,
-    kind: "fence",
-    epochId: EPOCH,
-    sandboxName: SANDBOX,
-    fencedWallMs: 1,
-    fencedUptimeMs: 1,
-    bootId: "boot-a",
-    uid: 1,
-    homeDevice: "1",
-    homeInode: "2",
-    storeDevice: "1",
-    storeInode: "3",
-    gatewayName: GATEWAY_NAME,
-    gatewayPort: GATEWAY_PORT,
-    publicationState: "ready",
-    preservedLeaseStartedWallMs: null,
-    preservedLeaseExpiresWallMs: null,
-    preservedLeaseElapsedMs: null,
-  };
-}
-
-function lease(identity: LaunchReadinessIdentity): LaunchReadinessLease {
-  return {
-    schemaVersion: 3,
-    kind: "lease",
-    epochId: EPOCH,
-    sandboxName: SANDBOX,
-    leaseStartedWallMs: 1,
-    leaseExpiresWallMs: 86_400_001,
-    elapsedAtPublicationMs: 0,
-    publishedWallMs: 1,
-    publishedUptimeMs: 1,
-    bootId: "boot-a",
-    uid: 1,
-    homeDevice: "1",
-    homeInode: "2",
-    storeDevice: "1",
-    storeInode: "3",
-    gatewayName: GATEWAY_NAME,
-    gatewayPort: GATEWAY_PORT,
-    identity,
-  };
-}
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -432,7 +388,11 @@ describe("launch readiness validation", () => {
       publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
     ).resolves.toEqual({
       kind: "evidence-failed",
-      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
+      diagnostic: {
+        stage: "publication-validation",
+        reason: "pairing-observation-failed",
+        pairingFailureCategory: "unclassified",
+      },
     });
     expect(currentDeps.commandExecutor!.runBuffered).not.toHaveBeenCalled();
     expect(publishedIdentity).toBeNull();
@@ -1359,9 +1319,13 @@ describe("launch readiness validation", () => {
     expect(publishLease).not.toHaveBeenCalled();
   });
 
-  it.each(["state-read", "state-changed", "timeout"] as const)(
+  it.each([
+    ["state-read", "input-unavailable"],
+    ["state-changed", "state-changing"],
+    ["timeout", "deadline-exceeded"],
+  ] as const)(
     "retains the pairing observation reason %s without publishing a lease",
-    async (failureReason) => {
+    async (failureReason, failureCategory) => {
       const currentDeps = deps();
       const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
       const publication = publicationFromDecision(SANDBOX, first);
@@ -1374,6 +1338,7 @@ describe("launch readiness validation", () => {
           stage: "publication-validation",
           reason: "pairing-observation-failed",
           pairingFailureReason: failureReason,
+          pairingFailureCategory: failureCategory,
         },
       });
       expect(publishedIdentity).toBeNull();
@@ -1395,6 +1360,7 @@ describe("launch readiness validation", () => {
         diagnostic: {
           stage: "publication-validation",
           reason: "pairing-state-incompatible",
+          pairingFailureCategory: "incompatible-state",
           ...(field === "paired.clientMode" ? { pairingMismatchField: field } : {}),
         },
       });
@@ -1446,7 +1412,25 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, pairingObservationUnavailable)).toEqual({
       kind: "evidence-failed",
-      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
+      diagnostic: {
+        stage: "publication-validation",
+        reason: "pairing-observation-failed",
+        pairingFailureCategory: "unclassified",
+      },
+    });
+
+    const pairingDeadline = deps();
+    pairingDeadline.observeOpenClawPairingQualification = () => {
+      throw new OpenClawPairingQualificationError("deadline-exceeded");
+    };
+    expect(await publishLaunchReadiness(publication, pairingDeadline)).toEqual({
+      kind: "evidence-failed",
+      diagnostic: {
+        stage: "publication-validation",
+        reason: "pairing-observation-failed",
+        pairingFailureCategory: "deadline-exceeded",
+        pairingFailureReason: "timeout",
+      },
     });
 
     const hashUnavailable = deps();

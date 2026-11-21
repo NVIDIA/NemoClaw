@@ -7,6 +7,9 @@ import {
   type ModelSelectionProvenance,
 } from "../domain/telemetry/provenance";
 import { usesNativeLocalInferenceForAgent } from "./native-local/contract";
+import { isCustomNativeEndpoint } from "./native-provider/custom";
+import { recordedNativeProviderAttachment } from "./native-provider/recorded-selection";
+import { recordedRegisteredInferenceProviderAttachment } from "./native-provider/registered";
 
 export {
   isPersistedPiSharedLocalInferenceRoute,
@@ -24,13 +27,23 @@ export function hasLegacySharedLocalInferenceRoute(recorded: {
 }): boolean {
   return (
     recorded.nativeLocalProviderAttachment === undefined &&
-    !recorded.nimContainer &&
     usesNativeLocalInferenceForAgent(
       recorded.agent ?? "openclaw",
       recorded.provider,
       recorded.endpointUrl,
       Boolean(recorded.nimContainer),
     )
+  );
+}
+
+/** Identify retained custom routes that still need the removed shared inference service. */
+export function hasLegacySharedCustomInferenceRoute(
+  recorded: Parameters<typeof recordedRegisteredInferenceProviderAttachment>[0],
+): boolean {
+  return (
+    isCustomNativeEndpoint(recorded.provider ?? "", recorded.endpointUrl) &&
+    !recordedNativeProviderAttachment(recorded) &&
+    !recordedRegisteredInferenceProviderAttachment(recorded)
   );
 }
 
@@ -168,3 +181,5 @@ export function inferenceSelectionRegistryFields(
 ): InferenceSelection {
   return normalizeInferenceSelection(input);
 }
+
+export { recordedRegisteredInferenceProviderAttachment };

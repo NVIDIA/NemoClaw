@@ -79,70 +79,93 @@ function publicFetchSessionJsonLines(options: { isError?: boolean; payload?: obj
 const SECRET_SENTINEL = "nvidia-api-key-must-not-remain";
 
 describe("OpenClaw agent assertion", () => {
-  it("keeps OpenShell SSH configuration outside artifacts and removes its temporary file", async () => {
-    const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-assertion-"));
-    const artifactRoot = join(fixtureRoot, "artifacts");
-    const temporaryRoot = join(fixtureRoot, "tmp");
-    mkdirSync(temporaryRoot);
-    vi.stubEnv("TMPDIR", temporaryRoot);
-    const sshConfigSentinel = `ProxyCommand connect -H bearer=${SECRET_SENTINEL}`;
-    const shellResult = {
-      artifacts: { result: "", stderr: "", stdout: "" },
-      command: [],
-      durationMs: 1,
-      exitCode: 0,
-      signal: null,
-      stderr: "",
-      stdout: sshConfigSentinel,
-      timedOut: false,
-    };
-    const sandbox = {
-      exec: vi.fn(),
-      openshell: vi.fn().mockResolvedValue(shellResult),
-    } as unknown as SandboxClient;
-    const host = {
-      command: vi.fn().mockImplementation(async (_command: string, args: string[]) => {
-        const configPath = args[1];
-        expect(readFileSync(configPath!, "utf8")).toBe(sshConfigSentinel);
-        expect(statSync(configPath!).mode & 0o777).toBe(0o600);
-        return {
+  it.each([
+    { collectToolEvidenceOnFailure: false, expectedReducedArtifacts: [] },
+    {
+      collectToolEvidenceOnFailure: true,
+      expectedReducedArtifacts: [
+        { toolCallCount: 1, toolResultCount: 1, execCalls: 0, execResults: 0 },
+      ],
+    },
+  ])(
+    "keeps failed-turn evidence and SSH cleanup safe with tool collection $collectToolEvidenceOnFailure",
+    async ({ collectToolEvidenceOnFailure, expectedReducedArtifacts }) => {
+      const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-assertion-"));
+      const artifactRoot = join(fixtureRoot, "artifacts");
+      const temporaryRoot = join(fixtureRoot, "tmp");
+      mkdirSync(temporaryRoot);
+      vi.stubEnv("TMPDIR", temporaryRoot);
+      const sshConfigSentinel = `ProxyCommand connect -H bearer=${SECRET_SENTINEL}`;
+      const shellResult = {
+        artifacts: { result: "", stderr: "", stdout: "" },
+        command: [],
+        durationMs: 1,
+        exitCode: 0,
+        signal: null,
+        stderr: "",
+        stdout: sshConfigSentinel,
+        timedOut: false,
+      };
+      const sandbox = {
+        exec: vi.fn().mockResolvedValue({
           ...shellResult,
-          exitCode: 1,
-          stderr: `credential=${SECRET_SENTINEL}`,
-          stdout: "wrong reply",
-        };
-      }),
-    } as unknown as HostCliClient;
-
-    try {
-      await expect(
-        runOpenClawAgentAssertion(host, sandbox, new ArtifactSink(artifactRoot), {
-          apiKey: SECRET_SENTINEL,
-          expected: "PERSONAL_PUBLIC_FETCH_OK",
-          label: "personal-public-fetch",
-          persistCommandArtifacts: false,
-          prompt: "fetch the fixed public reference",
-          redactOutputInFailure: true,
-          sandboxName: "personal-sandbox",
+          stdout:
+            "__NEMOCLAW_TOOL_EVIDENCE__=" +
+            JSON.stringify(reduceOpenClawToolEvidence(publicFetchSessionJsonLines(), "")),
         }),
-      ).rejects.toThrow(/agent output omitted; exit=1/u);
+        openshell: vi.fn().mockResolvedValue(shellResult),
+      } as unknown as SandboxClient;
+      const host = {
+        command: vi.fn().mockImplementation(async (_command: string, args: string[]) => {
+          const configPath = args[1];
+          expect(readFileSync(configPath!, "utf8")).toBe(sshConfigSentinel);
+          expect(statSync(configPath!).mode & 0o777).toBe(0o600);
+          return {
+            ...shellResult,
+            exitCode: 1,
+            stderr: `credential=${SECRET_SENTINEL}`,
+            stdout: "wrong reply",
+          };
+        }),
+      } as unknown as HostCliClient;
 
-      expect(sandbox.openshell).toHaveBeenCalledWith(
-        ["sandbox", "ssh-config", "personal-sandbox"],
-        expect.objectContaining({ persistArtifacts: false }),
-      );
-      expect(readdirSync(temporaryRoot)).toEqual([]);
-      expect(existsSync(join(artifactRoot, "ssh"))).toBe(false);
-      const persistedActions = readdirSync(join(artifactRoot, "actions"))
-        .map((name) => readFileSync(join(artifactRoot, "actions", name), "utf8"))
-        .join("\n");
-      expect(persistedActions).not.toContain(SECRET_SENTINEL);
-      expect(sandbox.exec).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllEnvs();
-      rmSync(fixtureRoot, { force: true, recursive: true });
-    }
-  });
+      try {
+        await expect(
+          runOpenClawAgentAssertion(host, sandbox, new ArtifactSink(artifactRoot), {
+            apiKey: SECRET_SENTINEL,
+            collectToolEvidenceOnFailure,
+            expected: "PERSONAL_PUBLIC_FETCH_OK",
+            label: "personal-public-fetch",
+            persistCommandArtifacts: false,
+            prompt: "fetch the fixed public reference",
+            redactOutputInFailure: true,
+            sandboxName: "personal-sandbox",
+          }),
+        ).rejects.toThrow(/agent output omitted; exit=1/u);
+
+        expect(sandbox.openshell).toHaveBeenCalledWith(
+          ["sandbox", "ssh-config", "personal-sandbox"],
+          expect.objectContaining({ persistArtifacts: false }),
+        );
+        expect(readdirSync(temporaryRoot)).toEqual([]);
+        expect(existsSync(join(artifactRoot, "ssh"))).toBe(false);
+        const persistedActions = readdirSync(join(artifactRoot, "actions"))
+          .map((name) => readFileSync(join(artifactRoot, "actions", name), "utf8"))
+          .join("\n");
+        expect(persistedActions).not.toContain(SECRET_SENTINEL);
+        expect(sandbox.exec).toHaveBeenCalledTimes(expectedReducedArtifacts.length);
+        const reducedArtifacts = readdirSync(join(artifactRoot, "actions"))
+          .filter((name) => name.endsWith("-reduced.json"))
+          .map((name) => JSON.parse(readFileSync(join(artifactRoot, "actions", name), "utf8")));
+        expect(reducedArtifacts).toHaveLength(expectedReducedArtifacts.length);
+        expect(reducedArtifacts).toMatchObject(expectedReducedArtifacts);
+        expect(persistedActions).not.toContain(PUBLIC_FETCH_EXPECTATION.url);
+      } finally {
+        vi.unstubAllEnvs();
+        rmSync(fixtureRoot, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("collects failed-turn records and a separate HTTP probe before preserving the reply failure", async () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-fetch-diagnostic-"));
@@ -482,6 +505,83 @@ function replyFixture(reply: string, meta: Record<string, unknown> = {}) {
     artifacts: new ArtifactSink(join(root, "artifacts")),
   };
 }
+
+describe("weather reply assertion", () => {
+  it.each(["WEATHER_AGENT_OK", "\nWEATHER_AGENT_OK\n"])(
+    "accepts the exact weather reply with surrounding whitespace: %j",
+    async (reply) => {
+      const f = replyFixture(reply);
+      try {
+        await expect(
+          runOpenClawAgentAssertion(
+            f.host as unknown as HostCliClient,
+            f.sandbox as unknown as SandboxClient,
+            f.artifacts,
+            {
+              ...f.options,
+              expected: "WEATHER_AGENT_OK",
+              label: "weather",
+              finalReplyContract: "exact-token",
+              collectToolEvidenceOnFailure: true,
+            },
+          ),
+        ).resolves.toMatchObject({ reply: reply.trim() });
+        expect(f.host.command).toHaveBeenCalledTimes(1);
+        expect(f.sandbox.exec).not.toHaveBeenCalled();
+      } finally {
+        rmSync(f.root, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each([
+    {
+      caseName: "tool-call markup instead of execution",
+      reply: '<<<tool_call tool="exec" args={"command":"printf WEATHER_AGENT_OK"}>>>',
+      visible: '<<<tool_call tool="exec" args={"command":"printf WEATHER_AGENT_OK"}>>>',
+    },
+    {
+      caseName: "a printed command with a fabricated final token",
+      reply: "printf WEATHER_AGENT_OK",
+      visible: "WEATHER_AGENT_OK",
+    },
+    {
+      caseName: "a missing final visible reply",
+      reply: "WEATHER_AGENT_OK",
+      visible: undefined,
+    },
+  ])("rejects $caseName and retains tool counts without retrying", async ({ reply, visible }) => {
+    const f = replyFixture(reply, { finalAssistantVisibleText: visible });
+    try {
+      await expect(
+        runOpenClawAgentAssertion(
+          f.host as unknown as HostCliClient,
+          f.sandbox as unknown as SandboxClient,
+          f.artifacts,
+          {
+            ...f.options,
+            expected: "WEATHER_AGENT_OK",
+            label: "weather",
+            finalReplyContract: "exact-token",
+            collectToolEvidenceOnFailure: true,
+          },
+        ),
+      ).rejects.toThrow("payload and final visible reply must contain only the expected token");
+      expect(f.host.command).toHaveBeenCalledTimes(1);
+      expect(f.sandbox.exec).toHaveBeenCalledTimes(1);
+      const reduced = JSON.parse(
+        readFileSync(
+          join(f.root, "artifacts", "actions", "weather-attempt-1-reduced.json"),
+          "utf8",
+        ),
+      );
+      expect(reduced).toMatchObject({ execCalls: 0, execResults: 0, toolCallCount: 0 });
+      expect(JSON.stringify(reduced)).not.toContain(SECRET_SENTINEL);
+    } finally {
+      rmSync(f.root, { force: true, recursive: true });
+    }
+  });
+});
 
 describe("unavailable-search assertion wiring", () => {
   it.each([

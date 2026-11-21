@@ -231,7 +231,7 @@ fi`,
   });
 }
 
-/** Writes the package files that make a temporary root a source checkout. */
+/** Writes package identities for a source checkout. */
 export function writeSourceCheckoutPackages(root: string): void {
   fs.writeFileSync(
     path.join(root, "package.json"),

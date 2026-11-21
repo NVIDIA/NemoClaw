@@ -22,6 +22,9 @@ const ORIGINAL_OPENSHELL = process.env.NEMOCLAW_OPENSHELL_BIN;
 const BIN_DIR = path.join(TMP_HOME, "bin");
 
 fs.mkdirSync(BIN_DIR, { recursive: true });
+fs.writeFileSync(path.join(BIN_DIR, "sftp"), "#!/usr/bin/env node\nprocess.stdin.resume();\n", {
+  mode: 0o755,
+});
 fs.writeFileSync(
   path.join(BIN_DIR, "openshell"),
   `#!/bin/sh
@@ -41,6 +44,10 @@ fs.writeFileSync(
   path.join(BIN_DIR, "ssh"),
   `#!/usr/bin/env node
 const command = process.argv.at(-1) || "";
+if (command.includes('mkdir -m 700 -- "$transfer"')) {
+  process.stdout.write("1:1\\n");
+  process.exit(0);
+}
 if (command.includes("printf") && command.includes("$HOME")) {
   process.stdout.write(Buffer.from("/sandbox\\0/sandbox\\0"));
   process.exit(0);
@@ -180,6 +187,10 @@ describe("managed rebuild restore authority", () => {
 const fs = require("node:fs");
 const command = process.argv.at(-1) || "";
 if (${exitCode} !== 0) { process.stderr.write("operation failed"); process.exit(${exitCode}); }
+if (command.includes('mkdir -m 700 -- "$transfer"')) {
+  process.stdout.write("1:1\\n");
+  process.exit(0);
+}
 if (command.includes("printf") && command.includes("$HOME")) {
   process.stdout.write(Buffer.from("/sandbox\\0/sandbox\\0"));
   process.exit(0);
@@ -283,7 +294,7 @@ process.stdin.on("end", () => process.exit(0));
         },
       );
       expect(restored.success, restored.error).toBe(true);
-      expect(validateBeforeMutation).toHaveBeenCalledOnce();
+      expect(validateBeforeMutation).toHaveBeenCalledTimes(2);
     },
   );
 });

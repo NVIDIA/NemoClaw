@@ -168,7 +168,6 @@ describe("managed vLLM serving-port guard (#8685)", () => {
       hasImage: true,
       nonInteractive: false,
       promptFn,
-      resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
     expect(result).toEqual({ ok: true });
@@ -479,7 +478,6 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     const runArgs = mocks.dockerRunDetached.mock.calls[0]![0] as string[];
     expect(runArgs.flatMap((arg, i) => (arg === "-p" ? [runArgs[i + 1]] : []))).toEqual([
       "127.0.0.1:8000:8000",
-      "172.18.0.1:8000:8000",
     ]);
     expect(errSpy.mock.calls.flat().join("\n")).not.toContain("another process");
     const dockerOptions = [

@@ -61,3 +61,43 @@ describe("published route repair on resume (#13018)", () => {
     expect(calls.setupInference.mock.calls[0]?.[7]?.deferPublishedRouteReservation).toBe(defer);
   });
 });
+
+it("reruns native local resume without exporting the retained gateway credential", async () => {
+  const session = createSession({
+    provider: "compatible-endpoint",
+    model: "model",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+  });
+  session.steps.provider_selection.status = "complete";
+  const { deps, calls } = createDeps({
+    isInferenceRouteReady: vi.fn(() => true),
+    ensureResumeProviderReady: vi.fn(async () => ({
+      forceInferenceSetup: true,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      nativeCustomSetup: true,
+      nativeLocalSetup: true,
+    })),
+  });
+  calls.hydrate.mockReturnValue(null);
+  calls.complete.mockResolvedValue(session);
+  await handleProviderInferenceState({
+    ...baseOptions(deps, session),
+    resume: true,
+    sandboxName: "my-assistant",
+  });
+  expect(calls.setupNim).not.toHaveBeenCalled();
+  expect(calls.setupInference).toHaveBeenCalledWith(
+    "my-assistant",
+    "model",
+    "compatible-endpoint",
+    "http://host.openshell.internal:8000/v1",
+    "COMPATIBLE_API_KEY",
+    null,
+    [],
+    expect.objectContaining({
+      reuseGatewayCredentialWithoutLocalKey: true,
+      skipHostInferenceSmoke: true,
+    }),
+  );
+});

@@ -17,6 +17,7 @@ const OPENCLAW_VERSION_EXTRACTOR = path.join(
 );
 
 export const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.9.5";
+export const LEGACY_OPENCLAW_PATCH_FIXTURE_VERSION = "2026.7.1";
 
 export function dockerRunCommandBetween(startMarker: string, endMarker: string): string {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
@@ -113,14 +114,23 @@ export function runDockerfilePatchBlock(
   dist: string,
   tmp: string,
   endMarker: string,
-  version = CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
+  version = LEGACY_OPENCLAW_PATCH_FIXTURE_VERSION,
+  legacyFixture = true,
 ) {
-  prepareReviewedWorkerFixture(dist);
+  if (!["2026.9.2", "2026.10.5"].includes(version)) prepareReviewedWorkerFixture(dist);
   const command = dockerRunCommandBetween(
-    "# Patch OpenClaw media fetch for proxy-only sandbox",
+    "# Patch OpenClaw network boundaries for OpenShell 0.1.3.",
     endMarker,
   )
     .replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist)
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-native-network.mts",
+      "'" +
+        path
+          .join(import.meta.dirname, "../../scripts/lib/patch-openclaw-native-network.mts")
+          .replaceAll("'", "'\\''") +
+        "'",
+    )
     .replaceAll(
       "/usr/local/lib/nemoclaw/patch-openclaw-explicit-proxy.mts",
       shellQuote(
@@ -147,7 +157,11 @@ export function runDockerfilePatchBlock(
   const fakeBin = createSedWrapper(tmp);
   return spawnSync("bash", [scriptPath], {
     encoding: "utf-8",
-    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    env: {
+      ...process.env,
+      NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW: legacyFixture ? "1" : "0",
+      PATH: `${fakeBin}:${process.env.PATH || ""}`,
+    },
     timeout: 10000,
   });
 }

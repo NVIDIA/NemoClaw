@@ -226,6 +226,14 @@ esac`,
   *) exit 93 ;;
 esac`,
       );
+      command(
+        "node",
+        `source="$(cat)"
+case "$source" in
+  *currentRuntimeProviderBundles*) printf '127.0.0.1' ;;
+  *) printf '%s' "$source" | "$REAL_NODE" "$@" ;;
+esac`,
+      );
       command("ip", "echo '1: fixture inet 192.168.1.2/24'");
       command("curl", "exit 0");
       command("sleep", "exec /bin/sleep 0.02");
@@ -249,6 +257,7 @@ esac`,
             REPO: workspace.root,
             SANDBOX_NAME: "test-sandbox",
             NEMOCLAW_CLI_BIN: cli,
+            REAL_NODE: process.execPath,
             REAL_TSX: path.resolve("node_modules/.bin/tsx"),
             REAL_HELPER: path.resolve("test/e2e/live/deepagents-observability-contract.ts"),
             NATIVE_STATUS: String(nativeStatus),

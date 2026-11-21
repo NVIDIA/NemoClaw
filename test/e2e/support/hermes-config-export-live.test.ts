@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { redactString } from "../fixtures/redaction.ts";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { V1_IMAGE_REF_PLACEHOLDER } from "../../../src/lib/domain/config/export-document.ts";
@@ -308,7 +309,10 @@ describe("Hermes config export live evidence", () => {
     ).toBe(false);
   });
 
-  it("accepts the live mock route only when both aliases refuse the unsupported export", async () => {
+  it.each([
+    { label: "raw", project: (value: string) => value },
+    { label: "fixture-redacted", project: (value: string) => redactString(value) },
+  ])("accepts the live mock refusal across the $label redaction boundary", async ({ project }) => {
     mocks.load.mockReturnValue({
       sandboxes: {
         hermes: {
@@ -322,8 +326,9 @@ describe("Hermes config export live evidence", () => {
     const refusal = {
       exitCode: 2,
       stdout: "",
-      stderr:
+      stderr: project(
         "Config export failed (unsupported).\nspec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.\n",
+      ),
     };
     mocks.command.mockResolvedValue(refusal);
 
@@ -827,6 +832,52 @@ describe("Hermes config export live evidence", () => {
       }),
     );
   });
+
+  it.each([
+    { launcher: "nemoclaw", prepare: () => undefined, completedAliases: [], calls: 1 },
+    {
+      launcher: "nemohermes",
+      prepare: () => mocks.validateWithPinnedV1.mockReturnValueOnce(pinnedConsumerEvidence()),
+      completedAliases: ["nemoclaw"],
+      calls: 2,
+    },
+  ])(
+    "retains a bounded redacted consumer failure for $launcher and withholds YAML",
+    async ({ launcher, prepare, completedAliases, calls }) => {
+      const writeExport = async (_command: string, args: string[]) => {
+        fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, exportedHermesYaml());
+        return { exitCode: 0, stderr: "", stdout: "" };
+      };
+      mocks.command
+        .mockImplementationOnce(writeExport)
+        .mockImplementationOnce(writeExport)
+        .mockResolvedValue({ exitCode: 2, stderr: "sandbox identity drifted", stdout: "" });
+      prepare();
+      const secret = "fixture-consumer-secret-must-not-enter-evidence";
+      const canonicalSecret = `nvapi-${"x".repeat(32)}`;
+      mocks.validateWithPinnedV1.mockImplementationOnce(() => {
+        throw new Error(
+          `${"build output ".repeat(500)}\n\u001b[31m${secret} ${canonicalSecret}\u001b[0m\nprotoc unavailable`,
+        );
+      });
+
+      await expect(runEnabledFixture([secret])).resolves.toEqual({ checked: true, passed: false });
+
+      const evidence = mocks.writeJson.mock.calls.find(
+        ([name]) => name === "hermes-config-export-live-evidence.json",
+      )?.[1];
+      expect(evidence.consumer.passed).toBe(false);
+      expect(evidence.consumer.failure.launcher).toBe(launcher);
+      expect(evidence.consumer.failure.diagnostic).toContain("protoc unavailable");
+      expect(evidence.consumer.failure.diagnostic.length).toBeLessThanOrEqual(4096);
+      expect(evidence.consumer.failure.diagnostic).not.toContain(secret);
+      expect(evidence.consumer.failure.diagnostic).not.toContain(canonicalSecret);
+      expect(evidence.consumer.failure.diagnostic).not.toContain("\u001b");
+      expect(Object.keys(evidence.consumer.actual)).toEqual(completedAliases);
+      expect(mocks.validateWithPinnedV1).toHaveBeenCalledTimes(calls);
+      expect(mocks.writeText).not.toHaveBeenCalled();
+    },
+  );
 
   it("withholds YAML when the pinned v1 parse differs from source intent", async () => {
     const raw = exportedHermesYaml();

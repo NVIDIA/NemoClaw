@@ -146,6 +146,69 @@ describe("inference-switch catalogue boundary", () => {
     });
   });
 
+  it.each([
+    "src/lib/inference/native-provider/registered.ts",
+    "src/lib/actions/inference-set/native.ts",
+    "test/e2e/fixtures/registered-inference.ts",
+    "test/e2e/live/openclaw-inference-switch.test.ts",
+  ])("selects the registered-provider consumer proof when %s changes", (changedFile) => {
+    const targetId = "openclaw-registered-provider-inference-switch";
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      targetId,
+    );
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: [changedFile], gatewayRuntimes: ["docker", "podman"] },
+    );
+    expect(
+      plan.catalogueMatrices.standard
+        .filter((row) => row.id === targetId)
+        .map((row) => row.execution_id)
+        .sort(),
+    ).toEqual([
+      "openclaw-registered-provider-inference-switch-registered-provider-docker",
+      "openclaw-registered-provider-inference-switch-registered-provider-podman",
+    ]);
+  });
+
+  it("uses the registered-provider branch and authenticated fixture model", () => {
+    expect(() => validateE2eTargetCatalogue(E2E_TARGET_CATALOGUE)).not.toThrow();
+    expect(catalogueTarget("openclaw-registered-provider-inference-switch")).toMatchObject({
+      targetId: "openclaw-inference-switch",
+      selector: "^openclaw-inference-switch:",
+      profile: "standard",
+      runner: "ubuntu-latest",
+      testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
+      timeoutMinutes: 90,
+      installMode: "none",
+      restoreCli: true,
+      exposeCliBin: true,
+      shard: "registered-provider",
+      gatewayRuntimes: ["docker", "podman"],
+      environment: {
+        NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_E2E_SHARD: "registered-provider",
+        NEMOCLAW_SANDBOX_NAME: "e2e-oc-registered",
+        NEMOCLAW_SWITCH_PROVIDER: "e2e-operator-inference",
+        NEMOCLAW_SWITCH_MODEL: "openclaw-switch-baseline-model",
+        NEMOCLAW_SWITCH_INFERENCE_API: "openai-completions",
+        OPENSHELL_GATEWAY: "nemoclaw",
+      },
+    });
+    const plan = buildE2eWorkflowPlan(
+      {},
+      {
+        changedFiles: ["src/lib/cli/public-display-defaults.ts"],
+        gatewayRuntimes: ["docker", "podman"],
+      },
+    );
+    expect(
+      Object.values(plan.catalogueMatrices)
+        .flat()
+        .map((row) => row.id),
+    ).not.toContain("openclaw-registered-provider-inference-switch");
+  });
+
   it("keeps canonical compatible Anthropic switch targets for both agents", () => {
     expect(catalogueTarget("openclaw-compatible-anthropic-inference-switch")).toMatchObject({
       targetId: "openclaw-inference-switch",

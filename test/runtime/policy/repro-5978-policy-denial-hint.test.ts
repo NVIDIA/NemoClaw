@@ -165,7 +165,8 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
   // observable outcomes through the boundary rather than internal shape.
   const gate = (env: NodeJS.ProcessEnv) =>
     runInPty([stanza, "SHLVL=1; _nemoclaw_maybe_policy_denial_hint"].join("\n"), {
-      HTTPS_PROXY: "http://127.0.0.1:3128",
+      HTTPS_PROXY: "",
+      https_proxy: "",
       ...env,
     });
 
@@ -175,7 +176,7 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     expect(stdout).toContain("nemoclaw qa-5978 logs --tail 50");
   });
 
-  it.each(["", "1", "true"])(
+  it.each(["1", "true"])(
     "falls back to <name> when OPENSHELL_SANDBOX is unusable (older OpenShell) [case %#]",
     (value) => {
       const { stdout, status } = gate({ OPENSHELL_SANDBOX: value });
@@ -287,10 +288,10 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     },
   );
 
-  it("emits a tool-agnostic breadcrumb naming the 403 signature and `logs --tail 50`", () => {
+  it("points sandbox users to network denial logs without proxy settings", () => {
     const { stdout, status } = gate({ OPENSHELL_SANDBOX: "qa-5978" });
     expect(status).toBe(0);
-    expect(stdout).toContain("CONNECT tunnel failed, response 403");
+    expect(stdout).toContain("OpenShell blocks requests that the network policy denies.");
     expect(stdout).toContain("nemoclaw qa-5978 logs --tail 50");
   });
 
@@ -305,10 +306,10 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     expect(stdout).not.toContain("logs --tail 50");
   });
 
-  it("stays silent when no proxy is configured (nothing to deny)", () => {
+  it("stays silent outside an OpenShell sandbox", () => {
     const snippet = [stanza, "SHLVL=1; _nemoclaw_maybe_policy_denial_hint"].join("\n");
     const { stdout, status } = runInPty(snippet, {
-      OPENSHELL_SANDBOX: "qa-5978",
+      OPENSHELL_SANDBOX: "",
       HTTPS_PROXY: "",
       https_proxy: "",
     });

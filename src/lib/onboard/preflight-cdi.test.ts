@@ -64,6 +64,22 @@ function healthySystemctlAndStat(command: readonly string[]) {
 }
 
 describe("assessHost — CDI", () => {
+  it("distinguishes ARM64 native CDI from x86 compatibility in Docker Desktop recovery advice", () => {
+    const actions = planHostAdvisories(
+      baseAssessment({
+        isWsl: true,
+        runtime: "docker-desktop",
+        cdiNvidiaGpuSpecMissing: true,
+      }),
+    );
+    const action = actions.find((entry) => entry.id === "wsl_docker_desktop_gpu_compatibility");
+    expect(action?.reason).toContain("On x86");
+    expect(action?.reason).toContain("On ARM64");
+    expect(action?.reason).toContain("NAT");
+    expect(action?.reason).toContain("native OpenShell");
+    expect(action?.reason).toContain("stop GPU setup");
+    expect(actions.some((entry) => entry.id === "generate_nvidia_cdi_spec")).toBe(false);
+  });
   it("flags missing nvidia.com/gpu specs on an NVIDIA Linux host with CDI dirs configured", () => {
     const result = assessHost({
       platform: "linux",

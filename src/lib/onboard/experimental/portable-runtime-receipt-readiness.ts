@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
-import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import { readPrivateConfig } from "./portable-private-config";
 import { hardenPodmanSocketDirectory, type PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { parsePortableRuntimeAuthority } from "../../state/onboard/portable-runtime-authority";
@@ -133,15 +133,13 @@ function loadReceiptAuthority(
     }
   | "legacy"
   | null {
-  let file;
+  const source = readPrivateConfig(
+    portableDemoReceiptPath(sandboxName, stateDir),
+    MAX_RECEIPT_BYTES,
+  );
+  if (source === null) return null;
   try {
-    file = openRegularFileNoFollow(portableDemoReceiptPath(sandboxName, stateDir));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-  try {
-    const parsed = JSON.parse(file.readBytes(MAX_RECEIPT_BYTES).toString("utf8")) as unknown;
+    const parsed = JSON.parse(source) as unknown;
     const runtimeAuthority = parseReceiptAuthority(parsed, sandboxName);
     if (runtimeAuthority === "legacy") return runtimeAuthority;
     return {
@@ -153,8 +151,6 @@ function loadReceiptAuthority(
       throw new Error("Portable demo lifecycle receipt is malformed");
     }
     throw error;
-  } finally {
-    file.close();
   }
 }
 

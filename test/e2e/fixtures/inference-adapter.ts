@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
+import {
+  nativeLocalCredentialReference,
+  NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
+} from "../../../src/lib/inference/native-local/agent-config.ts";
 import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import { nativeHostedAuthHeaderScript } from "../../../src/lib/inference/native-provider/contract.ts";
 import {
@@ -469,19 +473,22 @@ export function buildSandboxInferenceChatCommand(
   requestBody: string,
   logicalProvider: string,
   endpointUrl?: string,
+  maxTimeSeconds: 60 | 90 = 90,
 ): [string, ...string[]] {
   const nativeCustom = logicalProvider === "compatible-endpoint" && endpointUrl;
   if (logicalProvider === NVIDIA_HOSTED_LOGICAL_PROVIDER || nativeCustom) {
     const auth = nativeCustom
-      ? nativeHostedAuthHeaderScript({
-          credentialEnv: "COMPATIBLE_API_KEY",
-          api: "openai-completions",
-        })
+      ? nativeLocalCredentialReference(logicalProvider, endpointUrl, "openclaw")
+        ? NATIVE_LOCAL_AUTH_HEADER_SCRIPT
+        : nativeHostedAuthHeaderScript({
+            credentialEnv: "COMPATIBLE_API_KEY",
+            api: "openai-completions",
+          })
       : NATIVE_NVIDIA_AUTH_HEADER_SCRIPT;
     return [
       "bash",
       "-c",
-      `${auth}; exec curl -fsS --max-time 90 "$1" -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-raw "$2"`,
+      `${auth}; exec curl -fsS --max-time ${maxTimeSeconds} "$1" -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-raw "$2"`,
       "full-e2e-native-inference",
       `${(nativeCustom ? endpointUrl : NVIDIA_HOSTED_NATIVE_ENDPOINT).replace(/\/+$/u, "")}/chat/completions`,
       requestBody,
@@ -491,7 +498,7 @@ export function buildSandboxInferenceChatCommand(
     "curl",
     "-fsS",
     "--max-time",
-    "90",
+    String(maxTimeSeconds),
     "https://inference.local/v1/chat/completions",
     "-H",
     "Content-Type: application/json",

@@ -178,7 +178,7 @@ function stageSecurityInventorySources(rootDir: string, buildCtx: string): void 
 function stageNativeInferenceConfig(rootDir: string, buildCtx: string): void {
   const relativeDir = path.join("src", "lib", "inference", "native-provider");
   fs.mkdirSync(path.join(buildCtx, relativeDir), { recursive: true });
-  for (const fileName of ["agent-config.ts", "hosted.ts", "contract.ts"]) {
+  for (const fileName of ["agent-config.ts", "catalog.ts"]) {
     fs.copyFileSync(
       path.join(rootDir, relativeDir, fileName),
       path.join(buildCtx, relativeDir, fileName),
@@ -400,6 +400,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-native-network.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-native-network.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "patch-openclaw-dependency-overrides.mts"),
     path.join(stagedScriptsDir, "lib", "patch-openclaw-dependency-overrides.mts"),
   );
@@ -416,6 +420,8 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "patch-openclaw-worker-proxy.mts"),
   );
   for (const name of [
+    "openclaw-broker-session-probe.mts",
+    "openclaw-command-session-cleanup.mts",
     "patch-openclaw-node-compile-cache.mts",
     "patch-openclaw-plugin-source-root.mts",
     "patch-openclaw-worker-archive.py",

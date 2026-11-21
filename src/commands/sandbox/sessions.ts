@@ -10,7 +10,7 @@ import { createCliOpenShellSandboxCommandExecutor } from "../../lib/adapters/ope
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { REPOSITORY_ROOT } from "../../lib/core/repository-root";
 
-const runSessionsPassthrough = createSessionsPassthrough({
+export const runSessionsPassthrough = createSessionsPassthrough({
   sandboxCommandExecutor: createCliOpenShellSandboxCommandExecutor({ hostCwd: REPOSITORY_ROOT }),
 });
 

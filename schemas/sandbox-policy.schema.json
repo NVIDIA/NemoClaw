@@ -40,7 +40,7 @@
         "compatibility": {
           "type": "string",
           "enum": [
-            "strict",
+            "hard_requirement",
             "best_effort"
           ]
         }

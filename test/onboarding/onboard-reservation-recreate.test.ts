@@ -522,7 +522,7 @@ const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 let createChild = null;
 runner.run = (command) => {
   const cmd = normalize(command);
-  const profile = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profile = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-messaging-v1", false);
   if (profile !== null) return profile;
   return createdSandbox.run(command) ?? { status: 0 };
 };

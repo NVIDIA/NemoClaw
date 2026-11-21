@@ -8,6 +8,7 @@ import {
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   isOpenShellSandboxId,
+  observeCreatedOpenShellSandboxId,
   parseOpenShellSandboxId,
   parseStrictOpenShellSandboxListJson,
 } from "../../src/lib/adapters/openshell/sandbox-identity";
@@ -49,7 +50,7 @@ function selectorListCommand(gatewayName: string | null, nonce = CREATE_ATTEMPT_
     `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
     "--output",
     "json",
-    "--limit",
+    "--page-size",
     "2",
   ];
 }
@@ -76,6 +77,18 @@ describe("created sandbox fixture", () => {
     expect(fixture.capture(selectorListCommand("gateway-alpha"))).toBe("[]");
     fixture.create(createCommand());
     const createdSandboxId = fixture.state.sandboxId;
+
+    expect(
+      observeCreatedOpenShellSandboxId(
+        {
+          sandboxName: "alpha",
+          gatewayName: "gateway-alpha",
+          createAttemptNonce: CREATE_ATTEMPT_NONCE,
+          runCaptureOpenshell: (args) => fixture.capture(["openshell", ...args]) ?? "",
+        },
+        1000,
+      ),
+    ).toEqual({ state: "matched", sandboxId: createdSandboxId });
 
     const selectorOutput = fixture.capture(selectorListCommand("gateway-alpha"));
     const rows = parseStrictOpenShellSandboxListJson(selectorOutput ?? "");

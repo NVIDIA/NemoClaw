@@ -414,6 +414,11 @@ describe("complete managed-image publication workflow", () => {
       "managed-image workflow is missing staging QA",
     );
     const prBuilder = managedPrBuilder(workflow);
+    expect(step(prBuilder, "Checkout").with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
+      "fetch-depth": 1,
+      "persist-credentials": false,
+    });
     const matrix = prBuilder.strategy?.matrix?.include ?? [];
     const steps = prBuilder.steps ?? [];
     const permissionDrift = step(prBuilder, "Reproduce reviewed discovery permission drift");
@@ -443,6 +448,7 @@ describe("complete managed-image publication workflow", () => {
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",
         "ci/reviewed-npm-audit.json",
+        "src/lib/inference/native-provider/catalog.ts",
         "test/helpers/openclaw-real-agent-reload-proof.ts",
         "test/helpers/openclaw-real-legacy-migration-proof.ts",
       ]),

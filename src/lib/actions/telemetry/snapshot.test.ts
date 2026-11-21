@@ -793,6 +793,33 @@ it.each(nativeRouteCases)(
   },
 );
 
+it.each([undefined, "openai-responses"] as const)(
+  "reports a recorded OpenClaw compatible %s selection as the current route",
+  async (api) => {
+    const binding: NativeLocalBinding = {
+      ...nativeLocalBinding,
+      agent: "openclaw",
+      provider: "compatible-endpoint",
+      api,
+    };
+    const { event } = await collectNativeEvent(
+      "openclaw",
+      {
+        provider: binding.provider,
+        model: "selected-model",
+        gatewayName: binding.gatewayName,
+        nativeLocalProviderAttachment: nativeLocalAttachment(binding),
+      } as Partial<SandboxEntry>,
+      { [JSON.stringify(["uname", "-s"])]: "Linux" },
+    );
+    expect(event.parameters.configurations[0]).toMatchObject({
+      currentInferenceRouteStatus: "reported",
+      currentInferenceRoute: { modelId: "selected-model", providerProfile: "compatible-endpoint" },
+    });
+    expect(mocks.createReader.mock.results[0].value.observeInferenceRoute).not.toHaveBeenCalled();
+  },
+);
+
 it("reports a recorded Pi native-local selection as the current route (#14241)", async () => {
   const { entry, route } = nativeRouteCases[2];
   // Pi has no telemetry config parser, so the collector reads only the sandbox OS.

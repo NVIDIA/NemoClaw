@@ -146,7 +146,7 @@ for name, data in files.items():
     descriptor = os.open(stage / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700)
     with os.fdopen(descriptor, "wb") as target:
         target.write(data)
-print(json.dumps({"hash": digest, "modules": sorted(archive.MODULES)}))
+print(json.dumps({"hash": digest, "modules": sorted(archive.MODULES | {"worker-chunk-CimbqAym.mjs", "worker-chunk-A05CVh6v.mjs"})}))
 `,
         path.resolve(import.meta.dirname, "../../scripts/lib/patch-openclaw-worker-archive.py"),
         options.dist,

@@ -25,6 +25,11 @@ import {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../provider-profile";
 import { filterEnabledPlanEntries } from "./plan-filter";
+import {
+  credentialFamilyProfileType,
+  matchesCredentialFamilyProfileType,
+  withCredentialFamilyProfile,
+} from "./credential-family-profile";
 import type {
   MessagingCredentialApplyOptions,
   MessagingCredentialApplyResult,
@@ -93,23 +98,26 @@ export async function applyCredentialsAtOpenShell(
 ): Promise<MessagingCredentialApplyResult> {
   const target = options.target ?? selectedOpenShellGateway();
   const providerAdapter = resolveProviderAdapter(options);
-  const definitions =
+  const requestedDefinitions =
     options.definitions ??
     definitionsFromPlan(
       options.env ?? process.env,
       filterEnabledPlanEntries(plan, plan.credentialBindings),
     );
   const refreshes = options.refreshes ?? [];
-  assertUniqueDefinitions(definitions);
-  assertRefreshDefinitions(refreshes, definitions);
+  assertUniqueDefinitions(requestedDefinitions);
+  assertRefreshDefinitions(refreshes, requestedDefinitions);
   assertAuthorizedAttachment(options);
 
+  const definitions: MessagingCredentialProviderEphemeralInput[] = [];
   const states = new Map<string, ProviderBindingState>();
-  for (const definition of definitions) {
+  for (const requested of requestedDefinitions) {
     const observed = await providerAdapter.getProvider({
       target,
-      providerName: definition.providerName,
+      providerName: requested.providerName,
     });
+    const definition = resolveCredentialFamilyDefinition(requested, observed);
+    definitions.push(definition);
     const state = classifyProviderDefinition(observed, definition, true);
     const primaryCredentialKey = requiredCredentialKey(definition)!;
     const hasAnyCredential = definition.credentials.some(({ value }) => Boolean(value));
@@ -124,6 +132,28 @@ export async function applyCredentialsAtOpenShell(
     }
     if (state === "collision" && (!options.replaceExisting || !hasPrimaryCredential)) {
       throw bindingConflict(definition);
+    }
+    if (
+      state === "collision" &&
+      observed.ok &&
+      (definition.profile?.credentialFamily ||
+        (/^nemoclaw-mcp-v1(?:-[a-f0-9]{32})?$/u.test(observed.value.type) &&
+          requested.providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) ||
+        (observed.value.type !== requested.providerType &&
+          matchesCredentialFamilyProfileType(
+            observed.value.type,
+            requested.providerType,
+            primaryCredentialKey,
+            observed.value.credentialKeys,
+          ))) &&
+      observed.value.credentialKeys.some(
+        (key) => !definition.credentials.some(({ name, value }) => name === key && Boolean(value)),
+      )
+    ) {
+      throw new MessagingProviderApplyError({
+        message: `Messaging provider '${definition.providerName}' cannot be replaced without every stored credential. Supply its credential values again before changing its profile.`,
+        bindingConflict: true,
+      });
     }
     if (state === "missing" && hasAnyCredential && !hasPrimaryCredential) {
       throw new MessagingProviderApplyError({
@@ -617,17 +647,76 @@ async function prepareProfiles(
 ): Promise<void> {
   const profiles = new Map(
     definitions.flatMap(({ profile }) =>
-      profile ? [[profile.profileType, profile.profilePath] as const] : [],
+      profile ? [[profile.profileType, profile] as const] : [],
     ),
   );
-  for (const [profileType, profilePath] of profiles) {
-    const imported = await providerAdapter.importProviderProfile({ target, profilePath });
+  for (const [profileType, profile] of profiles) {
+    const importProfile = (profilePath: string) =>
+      providerAdapter.importProviderProfile({ target, profilePath });
+    const imported = profile.credentialFamily
+      ? await withCredentialFamilyProfile(
+          profile.profilePath,
+          profile.credentialFamily.primary,
+          profile.credentialFamily.keys,
+          (generated) => {
+            if (generated.profileType !== profileType) {
+              throw new Error("The owned credential profile changed before registration.");
+            }
+            return importProfile(generated.profilePath);
+          },
+        )
+      : await importProfile(profile.profilePath);
     if (!imported.ok) {
       throw new MessagingProviderApplyError({
         message: `Could not prepare messaging provider profile '${profileType}': ${providerErrorMessage(imported.error)}`,
       });
     }
   }
+}
+
+function resolveCredentialFamilyDefinition(
+  definition: MessagingCredentialProviderEphemeralInput,
+  observed: OpenShellProviderResult<OpenShellProviderMetadata>,
+): MessagingCredentialProviderEphemeralInput {
+  const primary = requiredCredentialKey(definition);
+  if (!definition.profile || !primary || definition.credentials.length === 1) return definition;
+  const declared = new Set(definition.credentials.map(({ name }) => name));
+  const keys = new Set([
+    primary,
+    ...definition.credentials.filter(({ value }) => Boolean(value)).map(({ name }) => name),
+  ]);
+  if (
+    observed.ok &&
+    observed.value.name === definition.providerName &&
+    observed.value.configKeys.length === 0 &&
+    observed.value.credentialKeys.includes(primary) &&
+    observed.value.credentialKeys.every((key) => declared.has(key))
+  ) {
+    const retainedType = credentialFamilyProfileType(
+      definition.providerType,
+      primary,
+      observed.value.credentialKeys,
+    );
+    if (observed.value.type === retainedType) {
+      for (const key of observed.value.credentialKeys) keys.add(key);
+    }
+  }
+  if (keys.size === 1) return definition;
+  const credentialKeys = [...keys].sort();
+  const providerType = credentialFamilyProfileType(
+    definition.providerType,
+    primary,
+    credentialKeys,
+  );
+  return {
+    ...definition,
+    providerType,
+    profile: {
+      ...definition.profile,
+      profileType: providerType,
+      credentialFamily: { primary, keys: credentialKeys },
+    },
+  };
 }
 
 function readCredentialEnv(env: NodeJS.ProcessEnv, envKey: string): string | null {

@@ -10,7 +10,10 @@ import type {
 import { type OpenShellRuntimeSelection } from "../adapters/openshell/command-argv";
 import { type GatewayReuseState } from "../state/gateway";
 import * as dockerDriverGatewayLaunch from "./docker-driver-gateway-launch";
-import { configuredRuntimeProviderOwnsHostReadiness } from "./docker-driver-gateway-env";
+import {
+  configuredRuntimeProviderOwnsHostReadiness,
+  observeConfiguredGatewayHostRuntime,
+} from "./docker-driver-gateway-env";
 import * as gatewayService from "./docker-driver-gateway-service";
 import type { PortProbeResult } from "./preflight";
 
@@ -160,14 +163,17 @@ export function createDockerDriverGatewayReuseApplication(
     const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
     const driftBin = resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
     const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
+    const requiresBridge =
+      observeConfiguredGatewayHostRuntime().gatewayConfig.driverConfigLayout !== "split-supervisor";
     const networkName = desiredEnv.OPENSHELL_DOCKER_NETWORK_NAME;
-    if (!networkName) {
+    if (requiresBridge && !networkName) {
       throw new Error(
         "NemoClaw cannot verify the OpenShell Docker network because the NemoClaw-managed OpenShell gateway configuration has no network name.",
       );
     }
 
     function reconcileManagedGatewayNetwork(): GatewayReuseState {
+      if (!requiresBridge) return state;
       const network = inspectNetwork(networkName);
       if (network.kind === "present") return state;
       if (network.kind === "absent") {
@@ -182,6 +188,7 @@ export function createDockerDriverGatewayReuseApplication(
     }
 
     function verifyNetworkWithoutLifecycleAuthority(): GatewayReuseState {
+      if (!requiresBridge) return state;
       const network = inspectNetwork(networkName);
       if (network.kind === "present") return state;
       if (network.kind === "absent") {
