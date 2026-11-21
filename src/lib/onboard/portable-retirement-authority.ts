@@ -90,59 +90,88 @@ function strictJson(bytes: Buffer, description: string): Record<string, unknown>
   }
 }
 
+function incompleteSession(defect: string): never {
+  throw new Error(
+    `Completed onboarding session authority is incomplete: ${defect}. Restore the onboarding session from trusted completed-onboarding state, then rerun the command.`,
+  );
+}
+
 function completedSession(bytes: Buffer, expected?: Profile) {
   const raw = strictJson(bytes, "Completed onboarding session");
   const session = normalizeSession(raw as never);
-  const checkpoint = session?.checkpoint;
   const rawMachine = raw.machine;
   const rawCheckpoint = raw.checkpoint;
   const rawMetadata = raw.metadata;
+  if (raw.version !== 1) incompleteSession('field "version" is not 1');
+  if (typeof raw.sessionId !== "string" || raw.sessionId.length === 0)
+    incompleteSession('field "sessionId" is missing');
+  if (typeof raw.sandboxName !== "string" || raw.sandboxName.length === 0)
+    incompleteSession('field "sandboxName" is missing');
+  if (raw.agent !== null && typeof raw.agent !== "string")
+    incompleteSession('field "agent" is not a string or null');
+  if (raw.status !== "complete") incompleteSession('field "status" is not "complete"');
+  if (raw.resumable !== false) incompleteSession('field "resumable" is not false');
   if (
-    raw.version !== 1 ||
-    typeof raw.sessionId !== "string" ||
-    raw.sessionId.length === 0 ||
-    typeof raw.sandboxName !== "string" ||
-    raw.sandboxName.length === 0 ||
-    (raw.agent !== null && typeof raw.agent !== "string") ||
-    raw.status !== "complete" ||
-    raw.resumable !== false ||
     !rawMachine ||
     typeof rawMachine !== "object" ||
     Array.isArray(rawMachine) ||
     (rawMachine as Record<string, unknown>).version !== 1 ||
     (rawMachine as Record<string, unknown>).state !== "complete" ||
     !Number.isSafeInteger((rawMachine as Record<string, unknown>).revision) ||
-    ((rawMachine as Record<string, unknown>).revision as number) < 0 ||
+    ((rawMachine as Record<string, unknown>).revision as number) < 0
+  )
+    incompleteSession('field "machine" is not a complete version 1 snapshot');
+  if (
     !rawCheckpoint ||
     typeof rawCheckpoint !== "object" ||
     Array.isArray(rawCheckpoint) ||
     (rawCheckpoint as Record<string, unknown>).schemaVersion !== 4 ||
     (rawCheckpoint as Record<string, unknown>).sessionId !== raw.sessionId ||
-    (rawCheckpoint as Record<string, unknown>).machineState !== "complete" ||
+    (rawCheckpoint as Record<string, unknown>).machineState !== "complete"
+  )
+    incompleteSession('field "checkpoint" is not a complete schema 4 checkpoint for this session');
+  if (
     !session ||
     session.sessionId !== raw.sessionId ||
     session.status !== "complete" ||
     session.resumable !== false ||
     session.machine.state !== "complete" ||
     session.machine.revision !== (rawMachine as Record<string, unknown>).revision ||
-    session.sandboxName !== raw.sandboxName ||
+    session.sandboxName !== raw.sandboxName
+  )
+    incompleteSession("the session record does not load as a completed onboarding session");
+  const checkpoint = session.checkpoint;
+  if (
     !checkpoint ||
     checkpoint.machineState !== "complete" ||
-    checkpoint.sessionId !== session.sessionId ||
+    checkpoint.sessionId !== session.sessionId
+  )
+    incompleteSession('field "checkpoint" does not load as a valid checkpoint');
+  if (
     checkpoint.profile.kind !== "selected" ||
-    (checkpoint.profile.value !== "default" && checkpoint.profile.value !== "portable") ||
-    (expected !== undefined && checkpoint.profile.value !== expected) ||
+    (checkpoint.profile.value !== "default" && checkpoint.profile.value !== "portable")
+  )
+    incompleteSession('field "checkpoint.profile" is not a selected default or portable profile');
+  if (expected !== undefined && checkpoint.profile.value !== expected)
+    incompleteSession(`field "checkpoint.profile" is not "${expected}"`);
+  if (
     checkpoint.sandboxIdentity.kind !== "selected" ||
     checkpoint.sandboxIdentity.value.name !== session.sandboxName ||
-    checkpoint.sandboxIdentity.value.agent !== (session.agent ?? "openclaw") ||
-    checkpoint.gatewayAuthority.kind !== "selected" ||
+    checkpoint.sandboxIdentity.value.agent !== (session.agent ?? "openclaw")
+  )
+    incompleteSession(
+      'field "checkpoint.sandboxIdentity" does not match "sandboxName" and "agent"',
+    );
+  if (checkpoint.gatewayAuthority.kind !== "selected")
+    incompleteSession('field "checkpoint.gatewayAuthority" is not selected');
+  if (
     !rawMetadata ||
     typeof rawMetadata !== "object" ||
     Array.isArray(rawMetadata) ||
     typeof (rawMetadata as Record<string, unknown>).gatewayName !== "string" ||
     session.metadata.gatewayName !== checkpoint.gatewayAuthority.value.gatewayName
   )
-    throw new Error("Completed onboarding session authority is incomplete");
+    incompleteSession('field "metadata.gatewayName" does not match "checkpoint.gatewayAuthority"');
   return session;
 }
 
