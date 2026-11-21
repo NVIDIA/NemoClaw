@@ -20,6 +20,7 @@ cargo ci live-kind
 ```
 
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
+Meanwhile, the node pulls the pinned OpenShell gateway, supervisor, and sandbox images and the development issuer's image, so that no scenario's time includes those pulls.
 It then runs two [HCL E2E scenarios](#hcl-e2e-scenarios), one after the other, each in new namespaces.
 
 The `kind-kubernetes-development` scenario deploys one agent with the `kubernetes` target and the `development` authentication profile, whose tokens the SDK issues.
