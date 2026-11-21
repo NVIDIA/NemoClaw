@@ -190,6 +190,26 @@ describe("connectSandbox route lifecycle", () => {
     expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalled();
   });
 
+  it("fails closed when a proxy-fronted Ollama route has no persisted proxy token", async () => {
+    const harness = createConnectHarness({
+      inferenceGetOutput: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3:0.6b\n",
+      inferenceProbeResponses: ["OK 200", "OK 200"],
+      isWsl: true,
+      frontOllamaWithProxy: true,
+      registryEntry: { model: "qwen3:0.6b", provider: "ollama-local" },
+    });
+    harness.probeOllamaAuthProxyHealthSpy.mockReturnValue(null);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "Ollama auth proxy token is missing",
+    );
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects hostile observed route values before drift recovery (#3726)", async () => {
     const sandboxName = "alpha's-box";
     const harness = createConnectHarness({
