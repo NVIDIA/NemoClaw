@@ -315,6 +315,28 @@ describe("sandbox registry normalization", () => {
     expect(persisted.defaultSelectionRevision).toBe(1);
   });
 
+  it.each([
+    { scenario: "missing profile", agent: "hermes", profile: undefined },
+    { scenario: "mismatched agent", agent: "openclaw", profile: "hermes" },
+    { scenario: "invalid profile", agent: "hermes", profile: "invalid" },
+  ])(
+    "does not grant Portable Hermes authority for $scenario (#13653)",
+    async ({ agent, profile }) => {
+      const registry = await loadRegistryWith({});
+      registry.registerSandbox({
+        name: "not-portable-hermes",
+        agent,
+        portableLifecycleProfile:
+          profile as import("./registry").SandboxEntry["portableLifecycleProfile"],
+      });
+      vi.resetModules();
+      const reloadedRegistry = await import("./registry");
+      expect(
+        reloadedRegistry.getSandbox("not-portable-hermes")?.portableLifecycleProfile,
+      ).toBeUndefined();
+    },
+  );
+
   it("round-trips the lifecycle proof used to retire a replaced workload", async () => {
     const registry = await loadRegistryWith({});
     const lifecycleGeneration = "22222222-2222-4222-8222-222222222222";

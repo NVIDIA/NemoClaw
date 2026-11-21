@@ -4,7 +4,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
-import type { HostLocalInferenceReceipt } from "../../runtime-provider/host-local-inference";
+import {
+  serializeHostLocalInferenceReceipt,
+  type HostLocalInferenceReceipt,
+} from "../../runtime-provider/host-local-inference";
 import type {
   HostLocalInferenceStartupSelection,
   HostLocalInferenceStartupSelectionInput,
@@ -23,9 +26,7 @@ const receiptWriter = {
   writeExact: (value: string) => value,
 };
 
-function publishedManagedOllamaSelection(
-  input: HostLocalInferenceStartupSelectionInput,
-): HostLocalInferenceStartupSelection {
+function publishedManagedOllamaSelection(input: HostLocalInferenceStartupSelectionInput) {
   const requireToolCalling = input.requireToolCalling ?? false;
   const receipt: HostLocalInferenceReceipt = {
     schemaVersion: 2,
@@ -65,10 +66,12 @@ function publishedManagedOllamaSelection(
       probeImageRef: PROBE_IMAGE,
       specSha256: "6".repeat(64),
       launchSha256: "7".repeat(64),
+      modelDigest: `sha256:${"8".repeat(64)}`,
       gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
     },
   };
   return {
+    sharedInferenceRoute: true,
     runtimeProviderId: "podman",
     request: {
       application: input.application,
@@ -92,12 +95,22 @@ function publishedManagedOllamaSelection(
     },
     resolveRuntimeProvider: () => null,
     prepareGatewayMutation: async () => ({ commit: () => {}, rollback: () => {} }),
-  };
+  } satisfies HostLocalInferenceStartupSelection;
 }
 
 describe("Hermes managed Ollama inference recovery", () => {
   it("heals a missing session route marker from exact published authority (#9211)", async () => {
     const model = "qwen3-vl:4b";
+    const publishedReceipt = publishedManagedOllamaSelection({
+      application: "hermes",
+      sandboxName: "portable-hermes",
+      provider: "ollama-local",
+      model,
+      acceleration: "nvidia-gpu",
+      requireToolCalling: null,
+      allowPublishedResume: true,
+      recover: false,
+    }).request.resumeReceipt;
     const session = createSession({
       provider: "ollama-local",
       model,
@@ -110,6 +123,15 @@ describe("Hermes managed Ollama inference recovery", () => {
       publishedManagedOllamaSelection(input),
     );
     const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: vi.fn(() => ({
+        name: "portable-hermes",
+        agent: "hermes",
+        portableLifecycleProfile: "hermes" as const,
+        provider: "ollama-local",
+        model,
+        endpointUrl: "https://inference.local/v1",
+        hostLocalInferenceReceipt: serializeHostLocalInferenceReceipt(publishedReceipt),
+      })),
       isInferenceRouteReady: vi.fn(() => true),
       resolveHostLocalInferenceStartupSelection: resolver,
     });
@@ -137,7 +159,7 @@ describe("Hermes managed Ollama inference recovery", () => {
         hostLocalInference: expect.objectContaining({
           request: expect.objectContaining({
             service: "ollama",
-            resumeReceipt: expect.objectContaining({ service: "ollama" }),
+            resumeReceipt: publishedReceipt,
           }),
         }),
       }),

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  isPersistedHermesPortableSharedLocalInferenceRoute,
   isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
@@ -26,12 +27,14 @@ export interface PolicyPresetEntry {
 
 export interface ActiveSandboxPolicyState {
   agent?: string | null;
+  portableLifecycleProfile?: "openclaw" | "hermes" | null;
   provider?: string | null;
   model?: string | null;
   endpointUrl?: string | null;
   createdAt?: string | null;
   lifecycleLiveIdentityFingerprint?: string | null;
   pendingRouteReservation?: boolean;
+  hostLocalInferenceReceipt?: string | null;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nimContainer?: string | null;
   messaging?: { plan: SandboxMessagingPlan } | null;
@@ -192,6 +195,11 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       provider === "vllm-local" &&
         Boolean(activeSandbox ? activeSandbox.nimContainer : latestSession?.nimContainer),
     ) &&
+    !isPersistedHermesPortableSharedLocalInferenceRoute(activeSandbox, {
+      provider,
+      model,
+      endpointUrl,
+    }) &&
     !(
       resume &&
       isPersistedPiSharedLocalInferenceRoute(activeSandbox, { provider, model, endpointUrl })

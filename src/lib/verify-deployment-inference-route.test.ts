@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { hostLocalInferenceReceipt } from "../../test/helpers/host-local-inference-receipt";
+import {
+  hostLocalInferenceReceipt,
+  serializedHostLocalInferenceReceipt,
+  serializedOllamaHostLocalInferenceReceipt,
+} from "../../test/helpers/host-local-inference-receipt";
 import { serializeHostLocalInferenceReceipt } from "./onboard/runtime-provider/host-local-inference";
 import { buildChain } from "./dashboard/contract.js";
 import {
@@ -104,6 +108,78 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(nim.route.nativeLocalProviderAttachment).toBeUndefined();
     expect(nim.invocation.nativeLocalProviderAttachment).toBeUndefined();
     expect(vllm.route.nativeLocalExpected).toBe(true);
+  });
+
+  it("selects the shared route for Portable Hermes Ollama only when the receipt service and model match", async () => {
+    const flow = {
+      provider: "ollama-local",
+      model: "qwen3-vl:4b",
+      endpointUrl: "https://inference.local/v1",
+      preferredInferenceApi: "openai-completions",
+    };
+    const recordedPortable = {
+      agent: "hermes",
+      portableLifecycleProfile: "hermes" as const,
+      provider: "ollama-local",
+      model: "qwen3-vl:4b",
+      endpointUrl: "https://inference.local/v1",
+      hostLocalInferenceReceipt: serializedOllamaHostLocalInferenceReceipt("qwen3-vl:4b"),
+    };
+    const portable = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      "hermes",
+      flow,
+      recordedPortable,
+    );
+    const mismatchedService = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      "hermes",
+      flow,
+      {
+        ...recordedPortable,
+        hostLocalInferenceReceipt: serializedHostLocalInferenceReceipt("ollama"),
+      },
+    );
+    const mismatchedModel = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      "hermes",
+      flow,
+      {
+        ...recordedPortable,
+        hostLocalInferenceReceipt: serializedOllamaHostLocalInferenceReceipt("other-model:8b"),
+      },
+    );
+    const nonPortable = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      "hermes",
+      flow,
+      {
+        ...recordedPortable,
+        portableLifecycleProfile: undefined,
+      },
+    );
+    expect(portable.route.nativeLocalExpected).toBe(false);
+    expect(portable.invocation.nativeLocalExpected).toBe(false);
+    const probe = vi.fn(async () => ({ ok: true }) as const);
+    expect(await probeOnboardInferenceInvocation(portable.invocation, probe)).toEqual({ ok: true });
+    expect(probe).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "my-sandbox",
+      gatewayName: "my-gateway",
+      agentName: "hermes",
+      provider: "ollama-local",
+      model: "qwen3-vl:4b",
+      preferredInferenceApi: "openai-completions",
+    });
+    expect(mismatchedService.route.nativeLocalExpected).toBe(true);
+    expect(mismatchedService.invocation.nativeLocalExpected).toBe(true);
+    expect(mismatchedModel.route.nativeLocalExpected).toBe(true);
+    expect(mismatchedModel.invocation.nativeLocalExpected).toBe(true);
+    expect(nonPortable.route.nativeLocalExpected).toBe(true);
+    expect(nonPortable.invocation.nativeLocalExpected).toBe(true);
   });
 
   it("uses the recorded native local attachment instead of the shared models route", async () => {

@@ -6,9 +6,13 @@ import {
   readModelSelectionProvenance,
   type ModelSelectionProvenance,
 } from "../domain/telemetry/provenance";
-import { usesNativeLocalInferenceForAgent } from "./native-local/contract";
+import {
+  isPersistedHermesPortableSharedLocalInferenceRoute,
+  usesNativeLocalInferenceForAgent,
+} from "./native-local/contract";
 
 export {
+  isPersistedHermesPortableSharedLocalInferenceRoute,
   isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInferenceForAgent,
@@ -17,14 +21,19 @@ export {
 /** Identify an existing local selection that predates sandbox-attached providers. */
 export function hasLegacySharedLocalInferenceRoute(recorded: {
   agent?: string | null;
+  portableLifecycleProfile?: "openclaw" | "hermes" | null;
   provider?: string | null;
+  model?: string | null;
   endpointUrl?: string | null;
   nimContainer?: string | null;
+  pendingRouteReservation?: boolean;
+  hostLocalInferenceReceipt?: string | null;
   nativeLocalProviderAttachment?: unknown;
 }): boolean {
   return (
     recorded.nativeLocalProviderAttachment === undefined &&
     !recorded.nimContainer &&
+    !isPersistedHermesPortableSharedLocalInferenceRoute(recorded) &&
     usesNativeLocalInferenceForAgent(
       recorded.agent ?? "openclaw",
       recorded.provider,
