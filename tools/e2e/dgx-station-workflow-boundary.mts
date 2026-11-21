@@ -102,7 +102,7 @@ export function validateDgxStationDispatchBoundary(workflow: unknown): string[] 
   );
   requireEqual(
     dispatch.run,
-    "node --no-warnings tools/e2e/dgx-dispatch-client.mts",
+    "node --no-warnings tools/e2e/dgx-station-dispatch-client.mts",
     "Station dispatch must invoke only the fixed controller client",
   );
   const upload = step("Upload Station Express artifacts");

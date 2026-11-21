@@ -459,7 +459,6 @@ export async function runDispatchClient(options: {
   receiptName: string;
   archiveName: string;
   requestImpl?: typeof dispatcherRequest;
-  waitMs?: number;
 }): Promise<void> {
   const { request, baseUrl, artifactDirectory } = options;
   const requestImpl = options.requestImpl ?? dispatcherRequest;
@@ -503,7 +502,7 @@ export async function runDispatchClient(options: {
     });
     const dispatched = submission.status;
     console.log(`${request.target} dispatch accepted as ${jobId}`);
-    const deadline = Date.now() + (options.waitMs ?? MAX_WAIT_MS);
+    const deadline = Date.now() + MAX_WAIT_MS;
     await pollJetsonDispatch({
       baseUrl,
       cancel: cancelDispatch,

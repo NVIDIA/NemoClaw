@@ -65,21 +65,7 @@ export interface DgxStationDispatchRequest extends Omit<
   target: typeof DGX_STATION_DISPATCH_TARGET;
 }
 
-export const DGX_SPARK_DISPATCH_TARGET = "spark-vllm-extra-arguments";
-export const DGX_SPARK_DISPATCH_AUDIENCE = "nemoclaw-dgx-spark-dispatch";
-
-export interface DgxSparkDispatchRequest extends Omit<
-  DgxStationDispatchRequest,
-  "schemaVersion" | "target"
-> {
-  schemaVersion: 4;
-  target: typeof DGX_SPARK_DISPATCH_TARGET;
-}
-
-export type DispatchRequest =
-  | JetsonDispatchRequest
-  | DgxStationDispatchRequest
-  | DgxSparkDispatchRequest;
+export type DispatchRequest = JetsonDispatchRequest | DgxStationDispatchRequest;
 
 export interface DgxStationDeviceIdentity {
   model: string;
@@ -104,25 +90,8 @@ export function parseDgxStationDispatchRequest(value: unknown): DgxStationDispat
   return { ...parsed, schemaVersion: 3, target: DGX_STATION_DISPATCH_TARGET };
 }
 
-export function parseDgxSparkDispatchRequest(value: unknown): DgxSparkDispatchRequest {
-  const request = record(value, "Spark dispatch request");
-  if (request.schemaVersion !== 4 || request.target !== DGX_SPARK_DISPATCH_TARGET) {
-    throw new Error(
-      "Spark dispatch requires schemaVersion 4 and target spark-vllm-extra-arguments",
-    );
-  }
-  const parsed = parseDgxStationDispatchRequest({
-    ...request,
-    schemaVersion: 3,
-    target: DGX_STATION_DISPATCH_TARGET,
-  });
-  return { ...parsed, schemaVersion: 4, target: DGX_SPARK_DISPATCH_TARGET };
-}
-
 export function parseDispatchRequest(value: unknown): DispatchRequest {
-  const target = record(value, "dispatch request").target;
-  if (target === DGX_SPARK_DISPATCH_TARGET) return parseDgxSparkDispatchRequest(value);
-  return target === DGX_STATION_DISPATCH_TARGET
+  return record(value, "dispatch request").target === DGX_STATION_DISPATCH_TARGET
     ? parseDgxStationDispatchRequest(value)
     : parseJetsonDispatchRequest(value);
 }
@@ -307,15 +276,12 @@ function parseDeviceIdentity(value: unknown): JetsonDeviceIdentity {
   };
 }
 
-function parseStationDeviceIdentity(
-  value: unknown,
-  platform = "Station",
-): DgxStationDeviceIdentity {
-  const device = record(value, `${platform} device identity`);
+function parseStationDeviceIdentity(value: unknown): DgxStationDeviceIdentity {
+  const device = record(value, "Station device identity");
   const fields = ["model", "gpuUuid", "driverVersion", "osRelease", "kernel"];
   requireFields(
     device,
-    `${platform} device identity`,
+    "Station device identity",
     fields,
     [],
     DGX_STATION_DISPATCH_CONTRACT_VERSION,
@@ -328,7 +294,7 @@ function parseStationDeviceIdentity(
       entry.length > MAX_DEVICE_IDENTITY_CHARACTERS ||
       /[\u0000-\u001f\u007f-\u009f]/u.test(entry)
     ) {
-      throw new Error(`${platform} device ${field} is invalid`);
+      throw new Error(`Station device ${field} is invalid`);
     }
   }
   return device as unknown as DgxStationDeviceIdentity;
@@ -431,12 +397,8 @@ export function parseDispatchStatus(value: unknown): DispatchStatus {
   const device =
     status.device === undefined
       ? undefined
-      : request.target === DGX_STATION_DISPATCH_TARGET ||
-          request.target === DGX_SPARK_DISPATCH_TARGET
-        ? parseStationDeviceIdentity(
-            status.device,
-            request.target === DGX_SPARK_DISPATCH_TARGET ? "Spark" : "Station",
-          )
+      : request.target === DGX_STATION_DISPATCH_TARGET
+        ? parseStationDeviceIdentity(status.device)
         : parseDeviceIdentity(status.device);
   if (status.conclusion === "success" && device === undefined) {
     throw new Error("successful Jetson dispatch must include device identity");

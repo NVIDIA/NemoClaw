@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { dgxDispatchOptionsFromEnvironment } from "../../../tools/e2e/dgx-dispatch-client.mts";
+import { dgxStationDispatchRequestFromEnvironment } from "../../../tools/e2e/dgx-station-dispatch-client.mts";
 import {
   createGitHubOidcTokenProvider,
   dispatcherBaseUrl,
@@ -18,11 +18,9 @@ import {
 } from "../../../tools/e2e/jetson-dispatch-client.mts";
 import {
   DGX_STATION_DISPATCH_AUDIENCE,
-  DGX_SPARK_DISPATCH_TARGET,
-  DGX_SPARK_DISPATCH_AUDIENCE,
-  parseDgxSparkDispatchRequest,
   dispatchJobId,
   parseDgxStationDispatchRequest,
+  parseDispatchRequest,
   parseDispatchArtifact,
   parseDispatchStatus,
   parseDispatchStatusResponse,
@@ -47,77 +45,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   for (const directory of directories.splice(0))
     fs.rmSync(directory, { recursive: true, force: true });
-});
-
-describe("DGX dispatch configuration", () => {
-  it.each([
-    ["dgx-station-express", "DGX_STATION_DISPATCH", 3, "station", 54],
-    ["spark-vllm-extra-arguments", "DGX_SPARK_DISPATCH", 4, "spark", 90],
-  ] as const)(
-    "runs %s with its own controller settings and artifacts",
-    async (target, prefix, schemaVersion, platform, minutes) => {
-      const directory = artifactDirectory();
-      const { audience, ...options } = dgxDispatchOptionsFromEnvironment({
-        E2E_TARGET_ID: target,
-        [`${prefix}_CANDIDATE_SHA`]: request.candidateSha,
-        [`${prefix}_MANAGED_IMAGE_REVISION`]: request.managedImageRevision,
-        [`${prefix}_URL`]: `https://${platform}.example.test`,
-        GITHUB_RUN_ID: request.workflowRunId,
-        GITHUB_RUN_ATTEMPT: String(request.workflowRunAttempt),
-        E2E_ARTIFACT_DIR: directory,
-      });
-      const expectedRequest = { ...request, schemaVersion, target };
-      expect(options).toEqual({
-        request: expectedRequest,
-        baseUrl: new URL(`https://${platform}.example.test`),
-        artifactDirectory: directory,
-        waitMs: minutes * 60_000,
-        receiptName: `dgx-${platform}-dispatch.json`,
-        archiveName: `dgx-${platform}-e2e-artifacts.tar.gz`,
-      });
-      const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ value: "fixture-token" }));
-      const provider = createGitHubOidcTokenProvider({ audience, fetchImpl });
-      await provider({
-        ACTIONS_ID_TOKEN_REQUEST_URL: "https://example.test/token",
-        ACTIONS_ID_TOKEN_REQUEST_TOKEN: "request-token",
-      });
-      expect(new URL(String(fetchImpl.mock.calls[0]?.[0])).searchParams.get("audience")).toBe(
-        `nemoclaw-dgx-${platform}-dispatch`,
-      );
-      const status = {
-        ...vectors.completedStatus,
-        schemaVersion,
-        request: expectedRequest,
-        jobId: dispatchJobId(options.request),
-        device: {
-          ...vectors.completedStatus.device,
-          model:
-            platform === "spark"
-              ? "NVIDIA DGX Spark GB10 fixture"
-              : vectors.completedStatus.device.model,
-        },
-      };
-      const transport = vi.fn(async (value: Parameters<typeof dispatcherRequest>[0]) =>
-        value.path.endsWith("/artifact") ? { ...vectors.artifact, status } : { job: status },
-      );
-      await runDispatchClient({ ...options, requestImpl: transport });
-      expect(fs.readFileSync(path.join(directory, `dgx-${platform}-e2e-artifacts.tar.gz`))).toEqual(
-        Buffer.from(vectors.artifact.artifactArchiveBase64, "base64"),
-      );
-      expect(
-        JSON.parse(fs.readFileSync(path.join(directory, `dgx-${platform}-dispatch.json`), "utf8")),
-      ).toMatchObject({ status: { request: expectedRequest, conclusion: "success" } });
-    },
-  );
-
-  it.each([undefined, "", "jetson-nvmap-gpu", "__proto__"])(
-    "rejects the unsupported DGX target %s",
-    (target) => {
-      expect(() => dgxDispatchOptionsFromEnvironment({ E2E_TARGET_ID: target })).toThrow(
-        "E2E_TARGET_ID must select",
-      );
-    },
-  );
 });
 
 describe("Station dispatch contract and controller", () => {
@@ -154,21 +81,17 @@ describe("Station dispatch contract and controller", () => {
 
   it("constructs Station requests without reading the Jetson candidate settings", () => {
     expect(
-      dgxDispatchOptionsFromEnvironment({
-        E2E_TARGET_ID: "dgx-station-express",
-        DGX_STATION_DISPATCH_URL: "https://station.example.test",
+      dgxStationDispatchRequestFromEnvironment({
         DGX_STATION_DISPATCH_CANDIDATE_SHA: request.candidateSha,
         DGX_STATION_DISPATCH_MANAGED_IMAGE_REVISION: request.managedImageRevision,
         JETSON_DISPATCH_CANDIDATE_SHA: "c".repeat(40),
         JETSON_DISPATCH_MANAGED_IMAGE_REVISION: "d".repeat(40),
         GITHUB_RUN_ID: request.workflowRunId,
         GITHUB_RUN_ATTEMPT: String(request.workflowRunAttempt),
-      }).request,
+      }),
     ).toEqual(request);
     expect(() =>
-      dgxDispatchOptionsFromEnvironment({
-        E2E_TARGET_ID: "dgx-station-express",
-        DGX_STATION_DISPATCH_URL: "https://station.example.test",
+      dgxStationDispatchRequestFromEnvironment({
         JETSON_DISPATCH_CANDIDATE_SHA: request.candidateSha,
       }),
     ).toThrow();
@@ -285,140 +208,12 @@ it("removes terminal controls from a dispatcher error before printing it", () =>
   expect(printableDispatchError(new Error("x".repeat(2000)))).toHaveLength(1000);
 });
 
-describe("Spark candidate-bound dispatch evidence", () => {
-  const sparkVectorBytes = fs.readFileSync(
-    path.join(process.cwd(), "tools/e2e/contracts/v4/dgx-spark-dispatch.json"),
-  );
-  const sparkVectors = JSON.parse(sparkVectorBytes.toString("utf8"));
-
-  it("matches the pinned Spark v4 compatibility bytes", () => {
-    expect(createHash("sha256").update(sparkVectorBytes).digest("hex")).toBe(
-      "e371cb66f64546780bdaa4365b856803efb710681c172c2ef8584ccfb9317453",
-    );
-    expect(parseDgxSparkDispatchRequest(sparkVectors.request)).toEqual(sparkVectors.request);
-    expect(parseDispatchStatus(sparkVectors.completedStatus)).toEqual(sparkVectors.completedStatus);
-    expect(
-      parseDispatchArtifact(sparkVectors.artifact, sparkVectors.completedStatus.jobId),
-    ).toEqual(sparkVectors.artifact);
-  });
-
-  it.each(sparkVectors.invalidRequests as { name: string; value: unknown }[])(
-    "rejects the Spark backend request with $name",
-    ({ value }) => {
-      expect(() => parseDgxSparkDispatchRequest(value)).toThrow();
-    },
-  );
-
-  it("requests a Spark OIDC token without using Station's audience", async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ value: "spark-token" }));
-    const provider = createGitHubOidcTokenProvider({
-      fetchImpl,
-      audience: DGX_SPARK_DISPATCH_AUDIENCE,
-    });
-    expect(
-      await provider({
-        ACTIONS_ID_TOKEN_REQUEST_URL: "https://example.test/token",
-        ACTIONS_ID_TOKEN_REQUEST_TOKEN: "request-token",
-      }),
-    ).toBe("spark-token");
-    expect(new URL(String(fetchImpl.mock.calls[0]?.[0])).searchParams.get("audience")).toBe(
-      "nemoclaw-dgx-spark-dispatch",
-    );
-  });
-
-  it("fails a Spark success that omits its evidence archive", async () => {
-    const directory = artifactDirectory();
-    const transport = vi.fn(async (options: Parameters<typeof dispatcherRequest>[0]) =>
-      options.path.endsWith("/artifact")
-        ? { status: sparkVectors.completedStatus, log: "fixture" }
-        : { job: sparkVectors.completedStatus },
-    );
-    await expect(
-      runDispatchClient({
-        request: parseDgxSparkDispatchRequest(sparkVectors.request),
-        baseUrl: new URL("https://example.test"),
-        artifactDirectory: directory,
-        receiptName: "spark.json",
-        archiveName: "spark.tar.gz",
-        requestImpl: transport,
-      }),
-    ).rejects.toThrow("include its artifact archive");
-    expect(JSON.parse(fs.readFileSync(path.join(directory, "spark.json"), "utf8")).request).toEqual(
-      sparkVectors.request,
-    );
-  });
-  const sparkRequest = {
-    ...request,
-    schemaVersion: 4,
-    target: DGX_SPARK_DISPATCH_TARGET,
-  } as const;
-
-  it("keeps Spark and Station requests distinct and binds both revisions", () => {
-    expect(parseDgxSparkDispatchRequest(sparkRequest)).toEqual(sparkRequest);
-    expect(() => parseDgxStationDispatchRequest(sparkRequest)).toThrow();
-    expect(() => parseDgxSparkDispatchRequest(request)).toThrow();
-    expect(dispatchJobId(sparkRequest)).not.toBe(dispatchJobId(request));
-    expect(dispatchJobId({ ...sparkRequest, candidateSha: "c".repeat(40) })).not.toBe(
-      dispatchJobId(sparkRequest),
-    );
-    expect(dispatchJobId({ ...sparkRequest, managedImageRevision: "c".repeat(40) })).not.toBe(
-      dispatchJobId(sparkRequest),
-    );
-  });
-
-  it("requires Spark settings and cannot read Station settings as a fallback", () => {
-    expect(
-      dgxDispatchOptionsFromEnvironment({
-        E2E_TARGET_ID: "spark-vllm-extra-arguments",
-        DGX_SPARK_DISPATCH_URL: "https://spark.example.test",
-        DGX_SPARK_DISPATCH_CANDIDATE_SHA: request.candidateSha,
-        DGX_SPARK_DISPATCH_MANAGED_IMAGE_REVISION: request.managedImageRevision,
-        GITHUB_RUN_ID: request.workflowRunId,
-        GITHUB_RUN_ATTEMPT: String(request.workflowRunAttempt),
-      }).request,
-    ).toEqual(sparkRequest);
-    expect(() =>
-      dgxDispatchOptionsFromEnvironment({
-        E2E_TARGET_ID: "spark-vllm-extra-arguments",
-        DGX_SPARK_DISPATCH_URL: "https://spark.example.test",
-        DGX_STATION_DISPATCH_CANDIDATE_SHA: request.candidateSha,
-        DGX_STATION_DISPATCH_MANAGED_IMAGE_REVISION: request.managedImageRevision,
-      }),
-    ).toThrow();
-  });
-
-  it("retains Spark's candidate, device, and cleanup receipt with the returned archive", async () => {
-    const directory = artifactDirectory();
-    const status = {
-      ...vectors.completedStatus,
+it("rejects Spark requests without a supported dispatch controller", () => {
+  expect(() =>
+    parseDispatchRequest({
+      ...vectors.request,
       schemaVersion: 4,
-      request: sparkRequest,
-      jobId: dispatchJobId(sparkRequest),
-      device: { ...vectors.completedStatus.device, model: "NVIDIA DGX Spark GB10 fixture" },
-    };
-    const artifact = { ...vectors.artifact, status };
-    const transport = vi.fn(async (options: Parameters<typeof dispatcherRequest>[0]) =>
-      options.path.endsWith("/artifact") ? artifact : { job: status },
-    );
-    await runDispatchClient({
-      request: sparkRequest,
-      baseUrl: new URL("https://example.test"),
-      artifactDirectory: directory,
-      receiptName: "dgx-spark-dispatch.json",
-      archiveName: "dgx-spark-e2e-artifacts.tar.gz",
-      requestImpl: transport,
-    });
-    const saved = JSON.parse(
-      fs.readFileSync(path.join(directory, "dgx-spark-dispatch.json"), "utf8"),
-    );
-    expect(saved.status).toEqual(status);
-    expect(fs.readFileSync(path.join(directory, "dgx-spark-e2e-artifacts.tar.gz"))).toEqual(
-      Buffer.from(artifact.artifactArchiveBase64, "base64"),
-    );
-    expect(() =>
-      parseDispatchStatusResponse({ job: vectors.completedStatus }, sparkRequest),
-    ).toThrow();
-    expect(() => parseDispatchArtifact(artifact, dispatchJobId(request))).toThrow();
-    expect(() => parseDispatchStatus({ ...status, cleanup: "pending" })).toThrow();
-  });
+      target: "spark-vllm-extra-arguments",
+    }),
+  ).toThrow();
 });

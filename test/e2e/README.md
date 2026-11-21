@@ -2492,7 +2492,6 @@ Spark and Station retain their own probe targets and request results.
 
 Before either standalone Spark command, select independently verified managed-image authority.
 Set `verified_image_revision` to the publication's 40-character source commit and `verified_cohort_receipt_file` to its complete cohort receipt JSON file.
-Follow [managed-image authority selection](docs/dgx-station-dispatch.md#select-managed-image-authority) to verify the source and choose a cohort receipt or trusted candidate catalog.
 Do not derive the expected authority from the sandbox under test.
 Export the revision and receipt contents in the shell that runs the target:
 
@@ -2500,6 +2499,14 @@ Export the revision and receipt contents in the shell that runs the target:
 export E2E_MANAGED_IMAGE_REVISION="$verified_image_revision"
 export E2E_MANAGED_IMAGE_COHORT_RECEIPT="$(cat "$verified_cohort_receipt_file")"
 ```
+
+A trusted candidate catalog is an alternative in the GitHub Actions live-E2E context, where `GITHUB_ACTIONS=true` and `NEMOCLAW_RUN_LIVE_E2E=1`.
+Clear `E2E_MANAGED_IMAGE_REVISION` and `E2E_MANAGED_IMAGE_COHORT_RECEIPT` before selecting this alternative.
+For a file catalog, set `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG` to its filename and `NEMOCLAW_E2E_MANAGED_IMAGE_REVISION` to the verified publication source commit.
+For inline JSON, set `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON` to the catalog contents instead; do not set both catalog variables.
+Verify that the catalog source revision matches the requested managed-image revision.
+On a standalone host outside that Actions context, use the cohort receipt above.
+Both Spark variants require the durable sandbox workload receipt to match the selected authority before runtime and inference probes.
 
 Run the target from a clean candidate checkout on the Spark host with that authority exported:
 
@@ -2512,12 +2519,10 @@ The extra-arguments case compares the real container command with the bounded re
 Fast installer tests own the selected-profile output, 32,768-token context and argument-order assertions.
 Each case keeps the existing 65-minute test deadline and identity-bound cleanup.
 Both Spark variants are standalone hardware tests.
-The workflow and planner do not select `spark-vllm-extra-arguments` while its receiver deployment remains unverified.
-Hosted qualification still requires an independently reviewed trusted-main controller and accepted receiver implementation.
-See [Spark dispatch prerequisites](docs/dgx-station-dispatch.md#dgx-spark-extra-arguments-dispatch).
-The command below also runs the extra-arguments case directly on a physical Spark reporting at least 60 GB and less than 64 GB.
-A standalone result does not qualify the GitHub dispatch path.
-Keep the [independently verified image authority](docs/dgx-station-dispatch.md#select-managed-image-authority) exported before running this standalone command:
+The workflow and planner do not select `spark-vllm-extra-arguments`.
+The command below runs the extra-arguments case directly on a physical Spark reporting at least 60 GB and less than 64 GB.
+A standalone result does not establish hosted qualification.
+Keep the independently verified image authority exported before running this standalone command:
 
 ```bash
 E2E_JOB=1 E2E_TARGET_ID=spark-vllm-extra-arguments NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-vllm-extra-arguments:'
