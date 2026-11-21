@@ -253,7 +253,7 @@
         "sha256": "521ebffb8a181d56c3904e5a61f20903edee0d9d3275967b8fb345f866215c06"
       },
       "codex-libcap-source.tar.xz": {
-        "url": "https://mirrors.edge.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.75.tar.xz",
+        "url": "https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.75.tar.xz",
         "sha256": "de4e7e064c9ba451d5234dd46e897d7c71c96a9ebf9a0c445bc04f4742d83632"
       },
       "codex-v8-source.tar.gz": {
