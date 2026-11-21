@@ -159,6 +159,7 @@ COPY image/fabric/CODEX-SOURCES.md /opt/nemoclaw/source/codex/README.md
 FROM generic AS deepagents
 # These exact release notices supplement Fabric's attribution placeholders.
 COPY --from=sources --chmod=0644 /langsmith-LICENSE /sqlite-vec-LICENSE-MIT /opt/nemoclaw/source/
+COPY --from=sources --chmod=0644 /deepagents-orjson-source.tar.gz /opt/nemoclaw/source/deepagents/orjson-source.tar.gz
 
 FROM runtime-base AS interactive
 COPY --from=node /node/ /
