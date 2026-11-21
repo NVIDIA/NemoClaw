@@ -17,10 +17,10 @@ variable "AGENT_PLATFORM" {
 
 variable "HARNESSES" {
   default = {
-    deepagents     = { stage = "generic", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents", extra = "deepagents" }
+    deepagents     = { stage = "deepagents", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents", extra = "deepagents" }
     claude         = { stage = "generic", adapter = "claude", adapter_id = "nvidia.fabric.claude", extra = "claude" }
-    codex          = { stage = "generic", adapter = "codex", adapter_id = "nvidia.fabric.codex", extra = "codex" }
-    mini-swe-agent = { stage = "generic", adapter = "mini-swe-agent", adapter_id = "nvidia.fabric.mini-swe-agent", extra = "mini-swe-agent" }
+    codex          = { stage = "codex", adapter = "codex", adapter_id = "nvidia.fabric.codex", extra = "codex" }
+    mini-swe-agent = { stage = "mini-swe-agent", adapter = "mini-swe-agent", adapter_id = "nvidia.fabric.mini-swe-agent", extra = "mini-swe-agent" }
     nooa           = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa", extra = "nooa" }
     nooa-bench     = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa.bench-agent", extra = "nooa" }
     remote-agent   = { stage = "generic", adapter = "remote-agent", adapter_id = "nvidia.fabric.remote-agent", extra = "remote-agent" }
@@ -59,6 +59,14 @@ target "agents" {
     STAGE = HARNESSES[harness].stage
   }
   tags = ["${IMAGE_PREFIX}:${harness}"]
+}
+
+# The agent images a release stages. claude stays out: its claude-agent-sdk
+# wheels bundle Anthropic's proprietary Claude Code CLI, which NVIDIA has no
+# permission to redistribute (#13524). CI still builds and checks it with the
+# other agents, and users build it locally.
+group "release-agents" {
+  targets = [for harness in keys(HARNESSES) : harness if harness != "claude"]
 }
 
 target "ollama-proxy" {

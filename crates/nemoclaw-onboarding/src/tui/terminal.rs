@@ -4,11 +4,11 @@
 use super::{app::JourneyWizard, logo::BrandImage};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use nemoclaw_authoring::{
-    Capabilities, JourneyQuestionKind, JourneyState, credential_queries, discovery_queries,
-    inference_request_for_document,
+    Capabilities, DiscoveryAssessment, JourneyQuestionKind, JourneyState, credential_queries,
+    discovery_queries, inference_request_for_document,
 };
 use nemoclaw_discovery::Direct;
-use nemoclaw_sdk::discovery::DiscoveryObservations;
+use nemoclaw_sdk::discovery::{DiscoveryObservations, plan_queries};
 use nemoclaw_sdk::{
     CancellationToken, EnvironmentSecrets, Error, config::Document, discovery::DiscoveryQuery,
 };
@@ -171,40 +171,21 @@ pub(crate) async fn run(
         }
         match key.code {
             KeyCode::Esc => return Ok(None),
-            KeyCode::Enter => {
-                if wizard.started
-                    && matches!(wizard.question(), Ok(None))
-                    && discover
-                    && let Some(document) = wizard
-                        .state()
-                        .resolve(&wizard.capabilities)
-                        .ok()
-                        .and_then(|resolution| resolution.materialized_document().cloned())
+            KeyCode::Enter if discover && wizard.reviewing() => {
+                match accept_review(
+                    &mut wizard,
+                    read_target,
+                    cancel,
+                    &mut queued_events,
+                    poll_pending_event,
+                )
+                .await
                 {
-                    let discovery_cancel = cancel.child_token();
-                    let observed = wait_for_discovery(
-                        observe_target(
-                            &document,
-                            wizard.state().current_route(),
-                            &discovery_cancel,
-                        ),
-                        cancel,
-                        &discovery_cancel,
-                        &mut queued_events,
-                        poll_pending_event,
-                    )
-                    .await;
-                    match observed {
-                        Ok(Some(observations)) => wizard.remember(observations),
-                        Ok(None) => return Ok(None),
-                        Err(Error::Cancelled) => return Err(Error::Cancelled.into()),
-                        Err(error) => {
-                            wizard.error = Some(error.to_string());
-                            continue;
-                        }
-                    }
+                    Ok(true) => {}
+                    Ok(false) => return Ok(None),
+                    Err(Error::Cancelled) => return Err(Error::Cancelled.into()),
+                    Err(error) => wizard.error = Some(error.to_string()),
                 }
-                wizard.press(key);
             }
             _ => wizard.press(key),
         }
@@ -288,7 +269,72 @@ fn target_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> {
     queries.extend(agent_images_probe(wizard));
     queries.extend(model_catalog_probe(wizard));
     queries.extend(credential_probe(wizard));
+    queries.extend(image_probe(wizard));
     queries
+}
+
+/// The engine and image reads plan makes for the current document, once the
+/// journey is at review and each has not been made. The review's Image row
+/// states their verdict, so it shows before Enter saves.
+pub(super) fn image_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> {
+    if !wizard.reviewing() {
+        return Vec::new();
+    }
+    let Some(document) = wizard
+        .resolution()
+        .ok()
+        .and_then(|resolution| resolution.assessment().document().cloned())
+    else {
+        return Vec::new();
+    };
+    let queries: Vec<DiscoveryQuery> = plan_queries(&document)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|query| matches!(query, DiscoveryQuery::Engine(_) | DiscoveryQuery::Fabric(_)))
+        .collect();
+    wizard.observations().missing(&queries)
+}
+
+/// Read the target again for the reviewed document, then save it only when
+/// the target's verdict is the one the review showed; otherwise the review
+/// shows the new verdict and the next Enter saves. `false` means the user
+/// escaped while it was being read.
+pub(super) async fn accept_review(
+    wizard: &mut JourneyWizard,
+    read: impl AsyncFnOnce(
+        Vec<DiscoveryQuery>,
+        &CancellationToken,
+    ) -> Result<DiscoveryObservations, Error>,
+    cancel: &CancellationToken,
+    queued_events: &mut VecDeque<Event>,
+    poll: impl FnMut() -> io::Result<Option<Event>>,
+) -> Result<bool, Error> {
+    let enter = crossterm::event::KeyEvent::from(KeyCode::Enter);
+    let Some(document) = wizard
+        .resolution()
+        .ok()
+        .and_then(|resolution| resolution.materialized_document().cloned())
+    else {
+        wizard.press(enter);
+        return Ok(true);
+    };
+    let queries = discovery_queries(&document, wizard.state().current_route())
+        .map_err(|_| Error::State("invalid discovery selection"))?;
+    let shown = target_verdict(wizard);
+    if !ask_target(wizard, read, queries, cancel, queued_events, poll).await? {
+        return Ok(false);
+    }
+    if target_verdict(wizard) == shown {
+        wizard.press(enter);
+    }
+    Ok(true)
+}
+
+fn target_verdict(wizard: &JourneyWizard) -> Option<DiscoveryAssessment> {
+    wizard
+        .resolution()
+        .ok()
+        .and_then(|resolution| resolution.target_assessment().cloned())
 }
 
 /// The current document's credential references, once the journey is at

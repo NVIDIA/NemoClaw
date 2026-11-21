@@ -1,0 +1,106 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Live / Brev's VM and candidate image, which CI / Bundle prepares while Linux
+# AMD64 builds the bundle; Live / Brev then runs the lifecycle and deletes the
+# VM. CI / Bundle's plan admits only v1 dispatches and run-brev-v1-e2e/ pushes.
+name: Live / Brev host
+
+on:
+  workflow_call:
+    outputs:
+      instance:
+        description: The VM this run owns, or empty when it named none; set before create, so a partial create still deletes it.
+        value: ${{ jobs.prepare.outputs.instance }}
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: Build image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact: ${{ steps.identity.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: identity
+        name: Identify candidate image
+        run: echo "artifact=brev-image-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      # The image builds' pinned sources, as CI / Images saved them.
+      - name: Restore the verified image sources
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build/downloads
+          key: image-sources-v1-${{ hashFiles('versions.json') }}
+      - name: Build candidate OCI archive
+        env:
+          AGENT_PLATFORM: linux/amd64
+        run: |
+          # Bake reads the pinned image sources from .build/image-sources.
+          cargo images fetch
+          mkdir candidate-image
+          docker buildx create --name brev --driver docker-container \
+            --driver-opt image=moby/buildkit@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb
+          docker buildx bake --builder brev openclaw \
+            --set 'openclaw.output=type=oci,dest=candidate-image/image.tar' \
+            --metadata-file candidate-image/metadata.json
+          python3 tools/ci/brev_image.py record candidate-image "$GITHUB_SHA"
+      - name: Upload candidate image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: |
+            candidate-image/image.tar
+            candidate-image/candidate.json
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  prepare:
+    name: Prepare VM
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    outputs:
+      instance: ${{ steps.identity.outputs.instance }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-brev
+        with:
+          api-key: ${{ secrets.BREV_API_KEY }}
+      # Publish ownership before create, including when create partially fails.
+      - id: identity
+        name: Identify owned VM
+        run: echo "instance=nclaw-v1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Provision VM and check fresh host
+        env:
+          INSTANCE_NAME: ${{ steps.identity.outputs.instance }}
+        run: bash tools/e2e/brev-v1-host.sh prepare
+
+  load-image:
+    name: Load image
+    needs: [image, prepare]
+    # Runs only when the jobs it needs ran.
+    if: needs.image.result == 'success' && needs.prepare.result == 'success'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-brev
+        with:
+          api-key: ${{ secrets.BREV_API_KEY }}
+      - name: Download candidate image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.image.outputs.artifact }}
+          path: candidate-image
+      - name: Transfer and verify candidate image
+        env:
+          INSTANCE_NAME: ${{ needs.prepare.outputs.instance }}
+        run: bash tools/e2e/brev-v1-host.sh load-image

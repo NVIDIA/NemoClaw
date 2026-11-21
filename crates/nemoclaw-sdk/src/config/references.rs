@@ -175,6 +175,29 @@ impl Document {
         sandbox.resolve_harness(&self.spec.harnesses)
     }
 
+    /// Where the sandbox's harness is authored, for diagnostics: inline, or the
+    /// definition its `harnessRef` selects.
+    pub fn harness_path(&self, sandbox: NamedSandbox<'_>) -> String {
+        let base = self.sandbox_path(sandbox);
+        match sandbox.harness_ref.as_deref() {
+            None => format!("{base}.harness"),
+            Some(name) if self.spec.harnesses.contains_key(name) => {
+                format!("spec.harnesses[{}]", diagnostic_name(name))
+            }
+            Some(name) => format!("{base}.harnesses[{}]", diagnostic_name(name)),
+        }
+    }
+
+    /// Where the sandbox's agent is authored, for diagnostics.
+    pub fn agent_path(&self, sandbox: NamedSandbox<'_>) -> String {
+        format!("{}.agent", self.sandbox_path(sandbox))
+    }
+
+    /// Where the sandbox is authored, for diagnostics.
+    pub fn sandbox_path(&self, sandbox: NamedSandbox<'_>) -> String {
+        format!("spec.sandboxes[{}]", diagnostic_name(sandbox.name))
+    }
+
     pub(super) fn validate_harness_references(&self) -> Result<(), ConfigError> {
         for sandbox in self.sandboxes() {
             if sandbox

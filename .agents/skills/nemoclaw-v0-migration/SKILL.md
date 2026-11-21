@@ -80,16 +80,26 @@ The v1 deployment must not share an identity, port, network, or state with V0 or
 3. Choose a free gateway port.
    Don't reuse the port from the `# gateway` line while V0 runs.
    On Linux, `ss -ltn` lists ports in use; on macOS, `lsof -nP -iTCP -sTCP:LISTEN`.
-   Set the port in `spec.gateway.endpoint`, such as `http://127.0.0.1:17921`.
+   If the export's `spec.gateway` has `runtime` and `endpoint`, the shape before `target`, `plan` refuses them; replace both with the managed `docker` target.
+   Set the port in the target's `port`, such as `17921`:
+
+   ```yaml
+   gateway:
+     management: managed
+     target:
+       docker:
+         port: 17921
+   ```
+
 4. Check the gateway network.
-   Without `spec.gateway.networkCIDR`, a managed gateway takes `172.30.N.0/24`, where `N` is the first byte of SHA-256 of `metadata.uid`; see the [field reference](../../../docs/reference/configuration.md).
+   Without `networkCIDR` in the `docker` target, a managed gateway takes `172.30.N.0/24`, where `N` is the first byte of SHA-256 of `metadata.uid`; see the [field reference](../../../docs/reference/configuration.md).
    List the subnets on the engine:
 
    ```sh
    docker network ls -q | xargs docker network inspect --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}}{{end}}'
    ```
 
-   If another network holds that subnet, set `networkCIDR` to a free `/24`.
+   If another network holds that subnet, set the target's `networkCIDR` to a free `/24`.
 5. If the export has `spec.services` entries, their names and published ports must not collide with V0's either.
 
 ## 4. Select an Agent Image

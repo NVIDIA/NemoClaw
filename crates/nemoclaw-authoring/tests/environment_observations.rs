@@ -24,7 +24,7 @@ struct RecordedHost {
     observations: DiscoveryObservations,
 }
 
-const RUNTIME: &str = "/spec/gateway/runtime/provider";
+const TARGET: &str = "/spec/gateway/target";
 
 const PODMAN_ONLY: &str = include_str!("fixtures/observations/podman-only.json");
 
@@ -72,18 +72,18 @@ fn suggested_runtime(host: &RecordedHost, template: &str) -> Option<Value> {
     let yaml =
         String::from_utf8(include_bytes!("../../../examples/onboarding/openclaw.yaml").to_vec())
             .unwrap();
-    // The example names its runtime exactly once.
-    let yaml = yaml.replace("provider: docker", &format!("provider: {template}"));
+    // The example names its target exactly once.
+    let yaml = yaml.replace("docker: {}", &format!("{template}: {{}}"));
     let base = PartialDocument::from_yaml(yaml.as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("runtime", base)
-        .ask([RUNTIME])
+        .ask([TARGET])
         .start(&capabilities)
         .unwrap();
     state.use_local_engines(&host.candidates, &host.observations);
     state
         .resolve_with_observations(&capabilities, &host.observations)
         .unwrap()
-        .question(RUNTIME)
+        .question(TARGET)
         .unwrap()
         .suggestion()
         .cloned()

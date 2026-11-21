@@ -188,19 +188,22 @@ fn external_ollama_proxy_should_work() {
 #[test]
 fn managed_podman_with_an_explicit_gateway_port_should_work() {
     let desired = DesiredState::from_yaml(include_bytes!("../../../examples/managed-podman.yaml"))
-        .gateway_endpoint("http://127.0.0.1:17891");
+        .gateway_port(17891);
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
     assert_eq!(desired["spec"]["gateway"]["management"], "managed");
     assert_eq!(
-        desired["spec"]["gateway"]["engine"],
+        desired["spec"]["gateway"]["target"]["podman"]["engine"],
         "unix:///run/user/1000/podman/podman.sock"
     );
     assert_eq!(
-        desired["spec"]["gateway"]["endpoint"],
-        "http://127.0.0.1:17891"
+        desired["spec"]["gateway"]["target"]["podman"]["port"],
+        17891
     );
-    assert_eq!(desired["spec"]["gateway"]["runtime"]["provider"], "podman");
+    assert_eq!(
+        document.spec.gateway.endpoint().as_deref(),
+        Some("http://127.0.0.1:17891")
+    );
 }
 
 #[test]
@@ -522,8 +525,15 @@ impl DesiredState {
         self
     }
 
+    /// The settings of the gateway's target, whichever it is.
+    fn target(&mut self) -> &mut Value {
+        let target = &mut self.value["spec"]["gateway"]["target"];
+        let key = target.as_object().unwrap().keys().next().unwrap().clone();
+        &mut target[key]
+    }
+
     fn host_mount(mut self) -> Self {
-        self.value["spec"]["gateway"]["runtime"]["hostMounts"] = json!([{
+        self.target()["hostMounts"] = json!([{
             "source": "/home/user/project",
             "target": "/sandbox/project",
             "readOnly": true
@@ -571,8 +581,8 @@ impl DesiredState {
         self
     }
 
-    fn gateway_endpoint(mut self, endpoint: &str) -> Self {
-        self.value["spec"]["gateway"]["endpoint"] = json!(endpoint);
+    fn gateway_port(mut self, port: u16) -> Self {
+        self.target()["port"] = json!(port);
         self
     }
 

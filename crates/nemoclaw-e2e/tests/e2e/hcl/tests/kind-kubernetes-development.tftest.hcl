@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# One agent with the default kubernetes runtime and development
-# authentication profiles on a managed gateway in kind: apply, a reply from
-# the agent's recorded runtime, the sandbox's explicit network policy
+# One agent with the kubernetes target and development authentication
+# profile on a managed gateway in kind: apply, a reply from the agent's
+# recorded runtime, an unchanged plan, the sandbox's explicit network policy
 # enforced, destroy that keeps only the gateway's storage, an install that an
 # admission policy refuses, and a redeploy that reuses that storage and
 # answers again.
@@ -60,6 +60,24 @@ run "reply" {
   assert {
     condition     = length(output.failed) == 0
     error_message = "failed: ${join(", ", output.failed)}"
+  }
+}
+
+# The document names no port: each command forwards its own free local port
+# to the gateway pod, so a plan of the applied deployment has no changes.
+run "unchanged_plan" {
+  module {
+    source = "./cli"
+  }
+
+  variables {
+    operation  = "plan"
+    empty_path = true
+  }
+
+  assert {
+    condition     = output.exit_code == 0 && output.changes == {}
+    error_message = "A plan of the applied deployment has changes or failed: ${output.error}"
   }
 }
 

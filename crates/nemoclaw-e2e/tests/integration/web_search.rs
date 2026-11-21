@@ -28,7 +28,7 @@ async fn search_credential_lifecycle(provider_type: &str, credential_env: &str) 
     let mut doc =
         Document::parse(include_str!("../../../../examples/fabric-openclaw.yaml").as_bytes())
             .unwrap();
-    *doc.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut doc, &fixture.endpoint);
     doc.spec.integrations = serde_json::from_value(serde_json::json!({
         "search":{"kind":"webSearch","provider":provider_type,"credential":{"env":"SEARCH_KEY"}}
     }))
@@ -162,7 +162,7 @@ async fn separate_search_credentials_reach_only_their_selected_sandbox_attachmen
     let mut doc =
         Document::parse(include_str!("../../../../examples/fabric-openclaw.yaml").as_bytes())
             .unwrap();
-    *doc.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut doc, &fixture.endpoint);
     let other = doc.spec.sandboxes["assistant"].clone();
     doc.spec.sandboxes.insert("other".into(), other);
     for (sandbox, reference) in doc

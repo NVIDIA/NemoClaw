@@ -81,7 +81,7 @@ async fn upgrade(keep_unsigned: bool) {
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let cancel = CancellationToken::new();
     Deployment::new(&state, &unsigned)
