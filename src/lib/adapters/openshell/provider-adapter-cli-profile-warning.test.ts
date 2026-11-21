@@ -311,6 +311,9 @@ describe("provider profile inspection and binding warnings (#12940, #13343)", ()
     });
 
     expect(result).toMatchObject({ ok: false, error: { reason: "profile_incompatible" } });
+    expect(result).toMatchObject({
+      error: { message: expect.stringContaining("Declared credential names: OTHER_TOKEN.") },
+    });
     expect(run).toHaveBeenCalledOnce();
     expect(run.mock.calls[0]?.[0]).toEqual([
       "provider",
@@ -322,6 +325,30 @@ describe("provider profile inspection and binding warnings (#12940, #13343)", ()
       "--output",
       "json",
     ]);
+  });
+
+  it("bounds the declared credential names in a registration rejection (#13541)", async () => {
+    const envVars = Array.from({ length: 7 }, (_, index) => `OTHER_${index}`);
+    const run = vi.fn().mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify({ id: "custom-profile", credentials: [{ env_vars: envVars }] }),
+    });
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    const result = await adapter.inspectProviderProfile({
+      target: namedOpenShellGateway("nemoclaw"),
+      profileType: "custom-profile",
+      registrationCredentials: ["CUSTOM_TOKEN"],
+    });
+
+    expect(result).toMatchObject({
+      error: {
+        message: expect.stringContaining(
+          "Declared credential names: OTHER_0, OTHER_1, OTHER_2, OTHER_3, OTHER_4 and 2 more.",
+        ),
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("OTHER_5");
   });
 
   it.each([
