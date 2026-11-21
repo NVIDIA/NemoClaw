@@ -446,14 +446,15 @@ export async function runHermesPongWithRetry(
   throw new Error("Hermes live probe completed without an attempt result.");
 }
 
-/** Real Hermes gateway requests must cross the attached local provider boundary. */
-export async function expectNativeLocalHermesTurn(options: {
+/** Real Hermes gateway requests must reach the authenticated configured endpoint. */
+export async function expectHermesEndpointTurn(options: {
   sandbox: SandboxClient;
-  endpoint: FakeOpenAiCompatibleServer;
+  endpoint: Pick<FakeOpenAiCompatibleServer, "requests">;
   model: string;
   artifactName: string;
   redactionValues: string[];
   onEvidence: NonNullable<HermesProbeRetryOptions["onEvidence"]>;
+  attempts?: number;
 }): Promise<void> {
   const offset = options.endpoint.requests().length;
   const payload = JSON.stringify({
@@ -463,6 +464,7 @@ export async function expectNativeLocalHermesTurn(options: {
   });
   await runHermesPongWithRetry({
     expectedModel: options.model,
+    attempts: options.attempts,
     onEvidence: options.onEvidence,
     run: (attempt) =>
       options.sandbox.execShell(
@@ -916,6 +918,97 @@ export function sandboxInferenceCommand(payload: string): string {
 
 export function hermesApiCommand(payload: string): string {
   return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; curl -sS --fail-with-body --write-out '%{stderr}\\n__NEMOCLAW_HTTP_STATUS__=%{http_code}\\n' --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -d '${quotePayload(payload)}'`;
+}
+
+/** Prove the archived hosted reference authenticates the first replacement turn. */
+export async function rebuildHermesCustomBaseline({
+  endpointUrl,
+  host,
+  sandbox,
+  endpoint,
+  apiKey,
+  model,
+  redactionValues,
+  progress,
+  artifacts,
+}: {
+  host: Pick<HostCliClient, "command">;
+  sandbox: SandboxClient;
+  endpointUrl: string;
+  endpoint: Pick<FakeOpenAiCompatibleServer, "baseUrl" | "requests">;
+  apiKey: string;
+  model: string;
+  redactionValues: string[];
+  progress: Pick<TestProgress, "phase">;
+  artifacts: InferenceSwitchRetryArtifactSink;
+}): Promise<void> {
+  progress.phase("onboard and exercise the custom Hermes hosted route");
+  // Match the archive regression: start with a custom hosted route. Child
+  // gateway restarts after inference set retain the entrypoint's old provider
+  // environment, so switching the preceding NVIDIA sandbox tests another path.
+  const destroyed = await host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "hermes-custom-previous-sandbox-destroy",
+    env: env(),
+    redactionValues,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(destroyed, "remove the preceding NVIDIA sandbox before custom onboarding");
+  const configured = await host.command(
+    "node",
+    [
+      CLI,
+      "onboard",
+      "--fresh",
+      "--non-interactive",
+      "--yes",
+      "--yes-i-accept-third-party-software",
+    ],
+    {
+      artifactName: "hermes-custom-hosted-route",
+      env: env(undefined, {
+        COMPATIBLE_API_KEY: apiKey,
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_COMPAT_MODEL: model,
+        NEMOCLAW_ENDPOINT_URL: endpointUrl,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        NEMOCLAW_POLICY_TIER: "balanced",
+      }),
+      redactionValues,
+      timeoutMs: 150_000,
+    },
+  );
+  expectExitZero(configured, "onboard the custom hosted route before rebuild");
+  await expectHermesEndpointTurn({
+    sandbox,
+    endpoint,
+    model,
+    redactionValues,
+    attempts: 1,
+    artifactName: "hermes-custom-before-rebuild",
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson("retry/hermes-custom-before-rebuild.json", evidence);
+    },
+  });
+  progress.phase("rebuild the custom Hermes route without a host credential");
+  const rebuilt = await host.command("node", [CLI, SANDBOX_NAME, "rebuild", "--yes"], {
+    artifactName: "hermes-custom-baseline-rebuild",
+    env: env(),
+    redactionValues,
+    timeoutMs: 5 * 60_000,
+  });
+  expectExitZero(rebuilt, "rebuild Hermes custom route without a host credential");
+  await expectHermesEndpointTurn({
+    sandbox,
+    endpoint,
+    model,
+    redactionValues,
+    attempts: 1,
+    artifactName: "hermes-custom-after-rebuild",
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson("retry/hermes-custom-after-rebuild.json", evidence);
+    },
+  });
 }
 
 /** Prove that a native NVIDIA rebuild retains Discord settings and agent inference. */

@@ -14,6 +14,7 @@ export function writeSnapshotRegistry(
   home: string,
   sandboxName: string,
   agent: "hermes" | "langchain-deepagents-code" | null = null,
+  route: { provider: string; endpointUrl?: string } = { provider: "p" },
 ): void {
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
@@ -24,7 +25,8 @@ export function writeSnapshotRegistry(
         [sandboxName]: {
           name: sandboxName,
           model: "m",
-          provider: "p",
+          provider: route.provider,
+          ...(route.endpointUrl ? { endpointUrl: route.endpointUrl } : {}),
           gpuEnabled: false,
           agent,
         },

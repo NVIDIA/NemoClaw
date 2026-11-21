@@ -139,14 +139,32 @@ describe("Hermes Discord rebuild evidence", () => {
     expect(exec.mock.calls[1]![1]).toContain("-z");
   });
 
-  it("reserves the damaged rebuild budget and workflow cleanup time", async () => {
+  it("reserves the NVIDIA, custom rebuild, and workflow cleanup budgets", async () => {
     const { command, exec } = await runPhase();
     const target = catalogueTarget("hermes-inference-switch");
     vi.stubEnv("NEMOCLAW_TEST_TIMEOUT", target.environment.NEMOCLAW_TEST_TIMEOUT ?? "");
     const timeout = testTimeout(45 * 60_000);
     const damagedCommands = [...command.mock.calls.slice(3), ...exec.mock.calls.slice(2)];
     const damagedTimeout = damagedCommands.reduce((total, call) => total + call[2]!.timeoutMs!, 0);
-    expect(timeout).toBeGreaterThanOrEqual(45 * 60_000 + damagedTimeout);
+    const phaseTimeout = [...command.mock.calls, ...exec.mock.calls].reduce(
+      (total, call) => total + call[2]!.timeoutMs!,
+      0,
+    );
+    expect([command.mock.calls[1]![2]!.timeoutMs, command.mock.calls[3]![2]!.timeoutMs]).toEqual([
+      15 * 60_000,
+      15 * 60_000,
+    ]);
+    expect(damagedTimeout).toBe(25.5 * 60_000);
+    expect(phaseTimeout).toBe(53 * 60_000);
+    // The inherited reservation includes the healthy rebuild and original phases.
+    // The custom helper's command sum is checked by hermes-custom-rebuild-contract.
+    const customRebuildTimeout = 13 * 60_000;
+    // The workflow provisions cloudflared before the test. Three tunnel attempts,
+    // including readiness probes, retry delays and graceful shutdown, fit three minutes.
+    const customFixtureSetupTimeout = 3 * 60_000;
+    expect(timeout).toBeGreaterThanOrEqual(
+      45 * 60_000 + damagedTimeout + customFixtureSetupTimeout + customRebuildTimeout,
+    );
     expect(target.timeoutMinutes * 60_000 - timeout).toBeGreaterThanOrEqual(10 * 60_000);
   });
 

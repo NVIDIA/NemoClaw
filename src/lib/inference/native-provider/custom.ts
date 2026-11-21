@@ -12,7 +12,11 @@ import {
   unsafeEndpointUrlViolation,
 } from "../../core/endpoint-url-safety";
 import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
-import type { NativeProviderDefinition } from "./contract";
+import {
+  normalizeNativeProviderAttachment,
+  type NativeProviderAttachment,
+  type NativeProviderDefinition,
+} from "./contract";
 import { nativeHostedAgentConfig } from "./agent-config";
 import { isPrivateIp, isLoopbackHostname } from "../../private-networks";
 import {
@@ -133,6 +137,39 @@ export function customNativeProvider(value: unknown): NativeProviderDefinition &
     api: custom.api,
     custom,
   };
+}
+
+/** Resolve the agent endpoint only from a matching logical selection and receipt. */
+export function customNativeProviderForSelection(selection: {
+  provider?: string | null;
+  endpointUrl?: string | null;
+  credentialEnv?: string | null;
+  preferredInferenceApi?: string | null;
+  nativeHostedProviderAttachment?: NativeProviderAttachment;
+}) {
+  const attachment = selection.nativeHostedProviderAttachment;
+  if (!attachment?.custom) return undefined;
+  const definition = customNativeProvider(attachment.custom);
+  const binding = definition.custom;
+  const api =
+    selection.preferredInferenceApi === "responses"
+      ? "openai-responses"
+      : selection.preferredInferenceApi;
+  if (
+    definition.logicalProvider !== selection.provider?.trim() ||
+    !normalizeNativeProviderAttachment(attachment, definition) ||
+    (api && api !== binding.api) ||
+    (selection.credentialEnv && selection.credentialEnv !== binding.credentialEnv) ||
+    (selection.endpointUrl &&
+      normalizeProviderBaseUrl(
+        selection.endpointUrl,
+        binding.provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai",
+      ) !== binding.endpointUrl)
+  )
+    throw new Error(
+      "Recorded custom native selection does not match its endpoint, API or credential authority",
+    );
+  return definition;
 }
 
 /** Bind the existing executable and credential boundary to one selected API. */

@@ -660,6 +660,31 @@ describe("restored Hermes native route projection", () => {
   });
 });
 
+describe("restored Hermes hosted custom route", () => {
+  it.each([
+    { provider: "compatible-endpoint", endpointUrl: "https://llm.example.test/v1" },
+    {
+      provider: "compatible-anthropic-endpoint",
+      endpointUrl: "https://llm.example.test/anthropic",
+    },
+  ])(
+    "leaves a restored $provider route to its environment reference (#14300)",
+    async ({ provider, endpointUrl }) => {
+      const f = fixture();
+      Object.assign(f.entry, { provider, endpointUrl, nativeLocalProviderAttachment: undefined });
+      const project = createInitialHermesInferenceRoute(f.deps, {
+        activation: "deferred",
+        workload: "registered",
+        projection: "credential",
+      });
+      await project("alpha", "selected-local-model", provider, "gateway-a", f.revalidate);
+      expect(f.deps.readCredentialHandle).not.toHaveBeenCalled();
+      expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+      expect(f.deps.restartGateway).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("restored Hermes NVIDIA route", () => {
   it.each([false, true])(
     "rebinds NVIDIA credentials with Discord enrolled: %s",

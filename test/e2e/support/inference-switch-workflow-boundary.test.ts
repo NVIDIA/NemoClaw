@@ -10,10 +10,42 @@ import {
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
+import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-boundary.mts";
 import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import { PUBLIC_NVIDIA_SWITCH_MODEL } from "../live/public-nvidia-switch-provider.ts";
 
+// Parse the shared workflow inventory during collection so each test measures selection.
+readFreeStandingJobsInventory();
+
 describe("inference-switch catalogue boundary", () => {
+  it.each([
+    "src/lib/state/sandbox.ts",
+    "src/lib/hermes-managed-route.ts",
+    "src/lib/hermes-archive-route.ts",
+    "src/lib/inference/native-provider/custom.ts",
+  ])("selects the hosted Hermes rebuild owner when %s changes (#14300)", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "hermes-inference-switch",
+    );
+    const plan = buildE2eWorkflowPlan(
+      {},
+      {
+        changedFiles: [changedFile],
+        gatewayRuntimes: ["docker", "podman"],
+      },
+    );
+    expect(
+      Object.values(plan.catalogueMatrices)
+        .flat()
+        .filter((row) => row.id === "hermes-inference-switch")
+        .map((row) => ({ executionId: row.execution_id, cloudflared: row.cloudflared }))
+        .sort((left, right) => left.executionId.localeCompare(right.executionId)),
+    ).toEqual([
+      { executionId: "hermes-inference-switch-native-nvidia-docker", cloudflared: true },
+      { executionId: "hermes-inference-switch-native-nvidia-podman", cloudflared: true },
+    ]);
+  });
+
   it("selects native-local enforcement coverage when IPv6 evidence changes (#13544)", () => {
     expect(
       catalogueTargetsForChangedFiles(["test/e2e/fixtures/native-local-ipv6-evidence.ts"]).map(
@@ -93,6 +125,7 @@ describe("inference-switch catalogue boundary", () => {
       const hermes = catalogueTarget("hermes-inference-switch");
       expect(hermes).toMatchObject({
         profile: "nvidia-api",
+        cloudflared: true,
         testFile: "test/e2e/live/hermes-inference-switch.test.ts",
         hostPreparation: "hermes-swap",
         runnerComparison: true,
