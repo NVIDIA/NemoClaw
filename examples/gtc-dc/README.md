@@ -45,6 +45,15 @@ These configurations provide neither CPU offloading nor multi-GPU serving.
 | DGX Spark | ARM64 GB10, compute capability at least 12.1, at least 118 GiB host RAM | 88 GiB serving budget plus 28 GiB host reserve; both use shared host/GPU RAM |
 | Windows + WSL2 RTX Spark | ARM64 N1X, 128 GB unified-memory configuration, compute capability at least 12.1 | 88 GiB serving budget plus 28 GiB host reserve inside WSL2; shared CPU/GPU memory |
 
+The hardware profiles identify the GPU by the name `nvidia-smi` reports, and the model container checks it when it starts, after apply has created the gateway.
+Check it on the target before applying:
+
+```sh
+nvidia-smi --query-gpu=name,compute_cap,driver_version --format=csv,noheader
+```
+
+A DGX Spark must report `NVIDIA GB10`; one that reports a placeholder name, such as `NVIDIA JMJWOA-Generic-GPU`, can't run these templates ([GPU identity](../../docs/agents-inference/models.md#choosing-a-hardware-profile)).
+
 RTX Spark combines an [ARM64 N1X processor](https://docs.nvidia.com/rtx-spark/rtx-spark-porting-guide/latest/overview.html) with [shared CPU/GPU memory](https://www.nvidia.com/en-us/products/rtx-spark/specifications/).
 These examples select its 128 GB configuration and the `rtx-spark` hardware profile.
 Run the Linux ARM64 tools inside WSL2, with the Docker API socket, NVIDIA GPU access, RAM, and disk available there.

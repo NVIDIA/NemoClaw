@@ -52,6 +52,7 @@ The following platform, model, and placement limits apply:
 | Local GPU deployment on Windows/WSL or macOS. | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | A model service on a separate physical SSH host. | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Serving one model across several GPUs on one host: `container.gpuDevices` takes one entry, so vLLM refuses a [parallel layout](../agents-inference/models.md#setting-the-parallel-layout) larger than one GPU. | [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) | [`cb8ef25`][v1-cb8ef25]: code, issue |
+| DGX Spark systems whose driver reports a placeholder GPU name, such as `NVIDIA JMJWOA-Generic-GPU`, instead of `NVIDIA GB10`: the `dgx-spark` profile and recipes that require `NVIDIA GB10` [don't match them](../agents-inference/models.md#choosing-a-hardware-profile). | [#14698](https://github.com/NVIDIA/NemoClaw/issues/14698) | [`c30c3f1`][v1-c30c3f1]: code, issue |
 | Distributed inference across several Sparks or Stations. | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Podman beyond a local rootless Linux gateway: rootful operation, remote engines, and model services on the Podman host. A Podman gateway can use one on a Docker host through [SSH placement](../agents-inference/remote-service.md). | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, docs, issue |
 | OpenShift beyond [OpenShift Local runs by hand](../build-deploy/kubernetes.md). No automated run covers OpenShift, and kind cannot run a managed `openshift` gateway, which needs OpenShift to assign its `fsGroup`. | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
@@ -177,6 +178,7 @@ General tool use, multimodal input, other models and Classic host parity need se
 Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006).
 
 [v1-cb8ef25]: https://github.com/NVIDIA/NemoClaw/tree/cb8ef25252ffffbca051787adb4711c96ebfcf28
+[v1-c30c3f1]: https://github.com/NVIDIA/NemoClaw/tree/c30c3f1b3fbf9d825d13fd4497c98b35ef33f1ee
 [v1-291723b]: https://github.com/NVIDIA/NemoClaw/tree/291723b41b77dbd502f5418b9b0a9b7c1a322dc9
 [v1-5223fdc]: https://github.com/NVIDIA/NemoClaw/tree/5223fdc0b6c9a7ec0b7d86b9c11699eb3de1a206
 [v1-ffe5406]: https://github.com/NVIDIA/NemoClaw/tree/ffe5406498c6a27c068ad52a56ddcfb1cb37b904
