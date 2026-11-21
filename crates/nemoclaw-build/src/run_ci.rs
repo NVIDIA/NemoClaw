@@ -281,6 +281,12 @@ fn run_step(
         run(build.args(["build", "--locked", "--workspace", "--all-targets"]))?;
     }
     for args in step.cargo_args() {
+        let nextest = args.first() == Some(&"nextest");
+        // Nextest does not run doctests, so the unit tests' first partition
+        // runs them and the others leave them out.
+        if step == Step::Test && !nextest && partition.is_some_and(|partition| !first(partition)) {
+            continue;
+        }
         let mut command = match archive_file {
             Some(archive) => archived(step, archive, &configure)?,
             None => {
@@ -290,6 +296,12 @@ fn run_step(
                 command
             }
         };
+        if step == Step::Test
+            && nextest
+            && let Some(partition) = partition
+        {
+            command.args(["--partition", partition]);
+        }
         if Step::BUNDLED.contains(&step) {
             if std::env::var_os("CI").is_none()
                 && std::env::var_os("GITHUB_ACTIONS").is_none()
@@ -325,6 +337,14 @@ fn run_step(
         run(&mut command)?;
     }
     Ok(())
+}
+
+/// Whether a nextest partition, such as `slice:1/2`, is the first of its kind.
+fn first(partition: &str) -> bool {
+    partition
+        .split_once(':')
+        .and_then(|(_, shard)| shard.split_once('/'))
+        .is_some_and(|(index, _)| index == "1")
 }
 
 /// Run a test step's executables from a nextest `archive` against this

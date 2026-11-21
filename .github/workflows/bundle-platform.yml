@@ -110,8 +110,8 @@ env:
   TEST_PLATFORM: ${{ inputs.platform }}
   CARGO_INCREMENTAL: "0"
 # Each job's name starts with its test layer: Unit, Contract, Integration, or
-# E2E. Unit build and test, Build bundle, and on Linux E2E build images run in
-# parallel on separate runners; the contract, integration, and live jobs start
+# E2E. Unit build and test, Unit tests 2 of 2, Build bundle, and on Linux E2E
+# build images run in parallel on separate runners; the contract, integration, and live jobs start
 # when the ones they read have uploaded their artifacts. With split-bundle, the
 # other Build bundle jobs compile the bundle's executables in parallel, and
 # Build bundle assembles them. Artifact names carry the run attempt, and consumers
@@ -158,14 +158,16 @@ jobs:
       - name: Load Docker Buildx from disk
         if: inputs.unit && runner.os == 'Linux'
         run: docker buildx version || true
+      # The unit tests' first partition, with the doctests; Unit tests 2 of 2
+      # runs the other.
       - name: Run tests
         if: inputs.unit
-        run: cargo ci test
+        run: cargo ci test --partition slice:1/2
       - name: Upload test timings
         if: always() && inputs.unit
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: test-${{ inputs.platform }}-${{ github.run_attempt }}
+          name: test-${{ inputs.platform }}-1-${{ github.run_attempt }}
           path: target/nextest/ci/test.xml
           if-no-files-found: ignore
           retention-days: 14
@@ -232,6 +234,39 @@ jobs:
           include-hidden-files: true
           retention-days: 1
           if-no-files-found: error
+
+  # The unit tests' second partition, on its own runner. The suite keeps the
+  # hosted runners' few vCPUs busy, so each partition takes about half its
+  # time: each stays within its budget on slower runners, and the build job,
+  # whose archives the contract and integration tests wait for, finishes
+  # sooner. This job compiles the test executables from the same dependency
+  # cache as the build job, without that job's format and lint checks.
+  unit:
+    name: Unit tests 2 of 2
+    if: inputs.unit
+    runs-on: ${{ inputs.build-runner || inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: ${{ inputs.platform }}
+      # As in the build job: keep reading Docker from disk out of the tests' time.
+      - name: Load Docker Buildx from disk
+        if: runner.os == 'Linux'
+        run: docker buildx version || true
+      - name: Run tests
+        run: cargo ci test --partition slice:2/2
+      - name: Upload test timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-${{ inputs.platform }}-2-${{ github.run_attempt }}
+          path: target/nextest/ci/test.xml
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Each part compiles some of the bundle's release executables, with the
   # features of the whole bundle, so every part reuses the bundle cache. Every

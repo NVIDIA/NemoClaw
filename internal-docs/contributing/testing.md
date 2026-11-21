@@ -147,6 +147,7 @@ The default steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bund
 | Live | `cargo ci bundle`, then `cargo ci live-docker` or `cargo ci live-kind` | See [live tests](live-tests.md) |
 
 `cargo ci test` runs the tests not marked `#[ignore]` with the `ci` nextest profile, then the doctests, which nextest does not run.
+With `--partition`, such as `cargo ci test --partition slice:2/2`, it runs that nextest partition, and runs the doctests only in the first one; CI runs the unit tests in two partitions.
 The `ci` profile runs at most eight tests concurrently, retries nothing, and finishes the remaining tests after a failure.
 
 The contract, integration, and live tests read `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle.
@@ -260,7 +261,7 @@ Plain `cargo ci` skips the bundle, contract, and integration steps that its plan
 
 | Step | Budget bounds | Wall budget | Per-test limit | Nextest stops a test after |
 |---|---|---|---|---|
-| `test` | The `ci` nextest run, without the doctests | 45 s | 8 s | 24 s |
+| `test` | Each partition's `ci` nextest run, without the doctests | 30 s | 8 s | 24 s |
 | `contract` | Each partition's nextest run | 300 s | 16 s | 32 s |
 | `integration` | Each partition's nextest run | 300 s | 90 s | 180 s |
 | `live-docker` | Its nextest commands together | 360 s | 180 s | 360 s |
@@ -280,7 +281,7 @@ Budgets are measured from each step's JUnit report, so compilation, image builds
 
 Budgets fail a run only on the Linux GitHub Actions runners, where `GITHUB_ACTIONS` is set; macOS, Windows, and local runs report them without failing.
 
-- The `test` step, each contract and integration partition, and each live suite check their step budget when the step ends; a step over its wall budget, or with a test over its limit, fails and names each offender with its time and limit.
+- Each unit, contract, and integration partition and each live suite check their step budget when the step ends; a step over its wall budget, or with a test over its limit, fails and names each offender with its time and limit.
 - Each platform's `Contract timing report` and `Integration timing report` jobs check the binary budgets, because a binary's tests run in several partitions.
   The macOS and Windows reports run on a Linux runner without `GITHUB_ACTIONS`, so they report the budgets without failing, and their `Test / PLATFORM` checks do not wait for them.
   `cargo ci --full`, `cargo ci contract`, and `cargo ci integration` run each whole suite in one step and report them there too.
@@ -336,7 +337,7 @@ After each test step, `cargo ci` prints where the time went and, in GitHub Actio
 - the 15 test modules with the most summed time, each with its binary, test count, and slowest test, and the 15 slowest tests;
 - the step's budget, whether this run enforces it, and each total or test over it.
 
-A contract or integration partition reports only its own tests.
+A unit, contract, or integration partition reports only its own tests.
 Each platform's `Contract timing report` and `Integration timing report` jobs report the whole suite from the partitions' JUnit reports: each partition's latest attempt, naming any partition without a report, with the slowest partition's time as the suite's wall time.
 It also shows each budgeted binary's test count, summed time, and slowest test against its budget, with its tests from every partition.
 To produce the same report locally, download the `STEP-PLATFORM-SHARD-ATTEMPT` artifacts of the `contract` or `integration` step into subdirectories of one directory and run:
@@ -345,7 +346,7 @@ To produce the same report locally, download the `STEP-PLATFORM-SHARD-ATTEMPT` a
 cargo run -q --locked -p nemoclaw-build --no-default-features -- suite-timing integration DIRECTORY --platform linux_amd64 --shards '[1, 2]'
 ```
 
-CI keeps each step's JUnit report, with per-test durations, for 14 days in the `test-PLATFORM-ATTEMPT`, `contract-PLATFORM-SHARD-ATTEMPT`, `integration-PLATFORM-SHARD-ATTEMPT`, `live-docker-PLATFORM-ATTEMPT`, and `live-kind-PLATFORM-ATTEMPT` artifacts; the `live-docker` report joins its nextest commands.
+CI keeps each step's JUnit report, with per-test durations, for 14 days in the `test-PLATFORM-SHARD-ATTEMPT`, `contract-PLATFORM-SHARD-ATTEMPT`, `integration-PLATFORM-SHARD-ATTEMPT`, `live-docker-PLATFORM-ATTEMPT`, and `live-kind-PLATFORM-ATTEMPT` artifacts; the `live-docker` report joins its nextest commands.
 The live reports hold outcomes and times only, so they can be shared as a run's result; failing tests' output stays in the job log.
 Each [HCL E2E scenario](live-tests.md#hcl-e2e-scenarios) also prints the time of each of its run blocks and, in GitHub Actions, adds them to the job summary.
 The rest of what a live run used is on its GitHub run: the commit and runner, and the `bundle-PLATFORM-COMMIT-ATTEMPT` and `live-images-PLATFORM-COMMIT-ATTEMPT` artifacts it downloaded, each with its digest, or the `v1` commit whose images it pulled, which the plan's summary names.
@@ -391,7 +392,7 @@ The other jobs run on Ubuntu 24.04: executables built against an older glibc run
 
 Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners, whose job names start with their test layer:
 
-1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables. On Linux, it runs `docker buildx version` before the tests, so the Bake tests' first Docker call doesn't spend their time limit reading the Docker CLI and Buildx from disk.
+1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test --partition slice:1/2`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables. On Linux, it runs `docker buildx version` before the tests, so the Bake tests' first Docker call doesn't spend their time limit reading the Docker CLI and Buildx from disk. At the same time, `Unit tests 2 of 2` builds the test executables on its own runner and runs `cargo ci test --partition slice:2/2`.
 2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time. On Windows, where one runner compiles the bundle slower than the unit job runs, three `Build bundle` jobs for the CLI, the NemoClaw providers, and the OpenShell and Fabric providers instead compile their release executables in parallel with `cargo ci bundle --executables`, and the CLI job also builds the build tool. `Build bundle` then assembles them with `nemoclaw-build bundle --prebuilt`, which compiles nothing.
 3. When selected and the build and bundle jobs finish, `Contract tests N of M` and `Integration tests N of M` run their layers in partitions. On Linux, `Contract timing report` and `Integration timing report` then report each whole suite and check the binary budgets; `CI / Bundle` reports the macOS and Windows suites in `PLATFORM / Contract timing report` and `PLATFORM / Integration timing report`, on Ubuntu, after the platform's jobs finish.
 4. On Linux, when the plan selects the live suites, `E2E build images` runs `cargo ci live-images` at the same time as the build and bundle jobs, because it reads neither job's artifacts. When all three finish, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E Docker tests` and `E2E Kubernetes (kind) tests` from the platform's archive, bundle, and live images. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, and `E2E GPU` for those on the NVIDIA GPU runner, from the same artifacts; see [live suites](#live-suites).
@@ -406,7 +407,7 @@ Manual runs are not cancelled; documentation and dependency pushes finish.
 
 ### Partitions
 
-Each platform runs the contract suite in one nextest slice partition, and the integration suite in two, or three on Windows, each on its own runner with four test slots.
+Each platform runs the unit suite in two nextest slice partitions, the contract suite in one, and the integration suite in two, or three on Windows, each on its own runner with four test slots.
 A slice partition deals the sorted test list round-robin, which spreads slow tests that sort next to each other across partitions.
 Adding or removing a test moves later tests to other partitions.
 
@@ -445,7 +446,7 @@ tar -xf .build/ci/lifecycle-inputs.tar
 The checkout must be at the path where the tests were built: they read fixtures through paths that `env!("CARGO_MANIFEST_DIR")` fixed at compile time, which the remap does not change.
 
 The worker compiles nothing and writes JUnit timings under `target/nextest/integration`; repeating the command overwrites the extracted files.
-`--partition` requires the `contract` or `integration` step, `--archive-file` requires `contract`, `integration`, `live-docker`, or `live-kind`, and `--images`, `--images-commit`, and `--hcl-cases` require `live-docker` or `live-kind`, so none of them narrows plain `cargo ci`.
+`--partition` requires the `test`, `contract`, or `integration` step, `--archive-file` requires `contract`, `integration`, `live-docker`, or `live-kind`, and `--images`, `--images-commit`, and `--hcl-cases` require `live-docker` or `live-kind`, so none of them narrows plain `cargo ci`.
 
 ### Windows
 
