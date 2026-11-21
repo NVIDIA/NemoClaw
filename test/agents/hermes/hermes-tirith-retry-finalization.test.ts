@@ -166,6 +166,37 @@ else:
     },
   );
 
+  it.each([0, 1, 124])(
+    "requires sandbox Tirith settlement before root gateway launch with installer status %s",
+    (status) => {
+      const { result } = runTirithFinalizer([
+        "id() { printf '0\\n'; }",
+        "STEP_DOWN_PREFIX_SANDBOX=(sandbox_identity)",
+        "sandbox_identity() { printf 'sandbox-identity\\n'; return " + status + "; }",
+        'timeout() { printf \'%s\\n\' "$*"; shift 3; "$@"; }',
+        "ensure_hermes_config_root_mode() { :; }",
+        "migrate_legacy_hermes_dashboard_state() { :; }",
+        "validate_hermes_env_secret_boundary() { :; }",
+        "validate_hermes_runtime_env_secret_boundary() { :; }",
+        "refresh_hermes_runtime_config_hashes() { :; }",
+        "prepare_hermes_lazy_dependencies() { :; }",
+        "ensure_hermes_runtime_api_server_key() { :; }",
+        "refresh_hermes_provider_placeholders() { :; }",
+        "configure_messaging_channels() { :; }",
+        "NEMOCLAW_CMD=()",
+        "prepare_hermes_root_runtime",
+        "echo gateway-start-allowed",
+      ]);
+      expect(result.status).toBe(status === 0 ? 0 : 1);
+      expect(result.stdout.includes("gateway-start-allowed")).toBe(status === 0);
+      expect(result.stdout).toContain(
+        "--signal=TERM --kill-after=5s 60s sandbox_identity env HOME=/sandbox",
+      );
+      expect(result.stdout).toContain("--prepare-retry");
+      expect(result.stdout).toContain("sandbox-identity");
+    },
+  );
+
   it("returns FAILED without a traceback when the marker parent is missing", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tirith-missing-parent-"));
     try {
@@ -262,6 +293,7 @@ else:
       "migrate_legacy_hermes_dashboard_state() { :; }",
       "configure_messaging_channels() { :; }",
       "TIRITH_RETRY_MARKER_CLEARED=1",
+      "NEMOCLAW_CMD=(/bin/true)",
       'rm -f "$MARKER"',
       "prepare_hermes_root_runtime",
       'printf %s download_failed > "$MARKER"',

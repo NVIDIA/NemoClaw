@@ -554,8 +554,11 @@ settle_tirith_marker_retry() {
     && { [ -e "$marker" ] || [ -L "$marker" ]; }; then
     return 0
   fi
-  if ! timeout --signal=TERM --kill-after=5s 60s \
-    "$_HERMES_PYTHON" -I "$_HERMES_TIRITH_MARKER_FINALIZER" --prepare-retry; then
+  local -a retry_command=("$_HERMES_PYTHON" -I "$_HERMES_TIRITH_MARKER_FINALIZER" --prepare-retry)
+  if [ "$(id -u)" -eq 0 ]; then
+    retry_command=("${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox "${retry_command[@]}")
+  fi
+  if ! timeout --signal=TERM --kill-after=5s 60s "${retry_command[@]}"; then
     echo "[gateway] Hermes Tirith startup retry did not settle; refusing gateway startup" >&2
     return 1
   fi
@@ -3099,6 +3102,9 @@ prepare_hermes_root_runtime() {
   refresh_hermes_provider_placeholders both || return 1
   configure_messaging_channels || return 1
   prepare_tirith_marker_retry || return 1
+  if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+    settle_tirith_marker_retry || return 1
+  fi
 }
 
 launch_hermes_gateway_current_user() {
