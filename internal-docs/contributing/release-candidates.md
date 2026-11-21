@@ -18,6 +18,13 @@ Refer to [the overview](../../docs/about/overview.md) for implemented boundaries
 
 These changes reached `v1` after the `v0.1.0-rc12` tag.
 
+Bundles:
+
+- No two bundles that CI builds report the same version, and versions sort in release order ([#14738](https://github.com/NVIDIA/NemoClaw/issues/14738)): CI / Bundle's run for a tag's push reports the tag, its other runs report `0.1.0-<run>` or `0.1.0-rc.<N>.<run>`, with `.<attempt>` from a second attempt, and a local or fork build reports `0.1.0-dev.<hash>`.
+  See [CLI bundles](releases.md#cli-bundles).
+  Only release candidate tags of the form `v0.1.0-rc.<N>` count, and only the tag push's run reports the tag: a clean local checkout of the tag now reports `0.1.0-dev.<hash>`.
+  Before, every bundle but a clean checkout of a tag reported `0.1.0-dev.<hash>` of its source files, so CI builds of the same sources shared a version.
+
 Agents:
 
 - Agent images build Fabric from its [`v0.7.0`](https://github.com/NVIDIA/NeMo-Fabric/tree/v0.7.0) release tag instead of a commit on its `release/0.7` branch, without patches ([#13318](https://github.com/NVIDIA/NemoClaw/issues/13318)).
