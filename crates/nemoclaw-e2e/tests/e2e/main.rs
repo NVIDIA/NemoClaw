@@ -6,8 +6,13 @@
 //!
 //! `hcl_live` runs the HCL E2E scenarios in `hcl/`, each a successful path
 //! through one document in the crate's `cases/`.
+//!
+//! `scenarios` runs the rows of `examples/scenarios.md` that this machine can
+//! run, each through `hcl/scenarios/lifecycle.tftest.hcl`.
 
 #[path = "hcl_live.rs"]
 mod hcl_live;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;
+#[path = "scenarios.rs"]
+mod scenarios;
