@@ -3,6 +3,16 @@
 
 use super::*;
 
+/// Whether `name` is a web search's registration name, `<provider>-search-…`.
+/// Web search registers as an API credential, so other registrations must not
+/// take these names, and output recognizes a web search by them.
+fn reserved_for_web_search(name: &str) -> bool {
+    ["brave-search", "tavily-search"].iter().any(|prefix| {
+        name.strip_prefix(prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+    })
+}
+
 pub(crate) fn require(valid: bool, reason: &'static str) -> Result<(), ConfigError> {
     if valid {
         Ok(())
@@ -76,18 +86,19 @@ impl Document {
             crate::image_runtime::policy_input(self, sandbox)?;
             if let Some(search) = web_search {
                 require(
-                    selected_providers.iter().all(|provider| {
-                        provider.name != "brave-search"
-                            && !provider.name.starts_with("brave-search-")
-                            && provider.name != "tavily-search"
-                            && !provider.name.starts_with("tavily-search-")
-                    }),
+                    selected_providers
+                        .iter()
+                        .all(|provider| !reserved_for_web_search(provider.name)),
                     "brave-search and tavily-search names are reserved for web search",
                 )?;
                 search.validate(std::iter::once(sandbox.agent.name.as_str()))?;
             }
             let image_scope = self.image_scope(sandbox)?;
             for api in self.apis(sandbox)? {
+                require(
+                    !reserved_for_web_search(&api.name),
+                    "brave-search and tavily-search names are reserved for web search",
+                )?;
                 require(
                     !api.agent_refs.is_empty()
                         && api
