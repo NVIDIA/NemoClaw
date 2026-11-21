@@ -69,6 +69,7 @@ describe("config export parses on current v1 (#14580)", () => {
       const exported = await exportSnapshots([source()]);
       expect(exported.outcome.ok).toBe(true);
       const { document } = consumer.parse(exported.writeStdout.mock.calls[0]![0]);
+      expect(document.spec.gateway.target.docker.port).toBe(8080);
       const sandboxes = Object.values(document.spec.sandboxes) as Array<{
         harness: { kind: string };
         image: { ref: string };

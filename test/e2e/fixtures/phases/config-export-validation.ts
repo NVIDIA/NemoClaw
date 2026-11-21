@@ -270,11 +270,15 @@ const ConfigExportDocumentSchema = Type.Object(
         gateway: Type.Object(
           {
             management: Type.Literal("managed"),
-            runtime: Type.Object(
-              { provider: Type.Literal("docker") },
+            target: Type.Object(
+              {
+                docker: Type.Object(
+                  { port: Type.Integer({ minimum: 1024, maximum: 65_535 }) },
+                  { additionalProperties: false },
+                ),
+              },
               { additionalProperties: false },
             ),
-            endpoint: NonEmptyStringSchema,
           },
           { additionalProperties: false },
         ),
@@ -692,7 +696,7 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
   return {
     sandboxName: sandboxName ?? null,
     agent: sandbox?.harness.kind ?? null,
-    runtimeProvider: document.spec.gateway.runtime.provider,
+    runtimeProvider: Object.keys(document.spec.gateway.target)[0] ?? null,
     imageRef: sandbox?.image?.ref ?? null,
     inferenceProviderName: provider ? (providerName ?? null) : null,
     inferenceProvider: provider?.provider ?? null,

@@ -371,7 +371,7 @@ if (process.argv.includes("--output")) {
     },
   );
   it("publishes exact bytes only when the pinned v1 parse matches (#11485)", async () => {
-    const exported = document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" });
+    const exported = document({ gatewayPort: 18_081 });
     Object.assign(exported.spec.sandboxes.sandbox!.network.policy, {
       explicit: POLICY,
     });
@@ -814,9 +814,9 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(() => parseConfigExport(JSON.stringify(missingImage))).toThrow(
       "complete v1alpha1 export contract",
     );
-    const missingEndpoint = structuredClone(candidate);
-    Reflect.deleteProperty(missingEndpoint.spec.gateway, "endpoint");
-    expect(() => parseConfigExport(JSON.stringify(missingEndpoint))).toThrow(
+    const missingTarget = structuredClone(candidate);
+    Reflect.deleteProperty(missingTarget.spec.gateway, "target");
+    expect(() => parseConfigExport(JSON.stringify(missingTarget))).toThrow(
       "complete v1alpha1 export contract",
     );
     Object.assign(sandbox, { agents: [sandbox.agent], agent: undefined });

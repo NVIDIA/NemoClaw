@@ -142,8 +142,7 @@ describe("Deep Agents config export (#11860)", () => {
     expect(document.apiVersion).toBe("nemoclaw.nvidia.com/v1alpha1");
     expect(document.spec.gateway).toEqual({
       management: "managed",
-      runtime: { provider: "docker" },
-      endpoint: "http://127.0.0.1:8080",
+      target: { docker: { port: 8080 } },
     });
     expect(document.spec.inferenceProviders).toEqual({
       "hosted-openai-api": {

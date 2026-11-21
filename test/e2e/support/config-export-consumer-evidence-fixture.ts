@@ -21,7 +21,7 @@ export const POLICY = {
   },
 };
 export const PINNED_CONSUMER_EVIDENCE: V1ParseSummary = {
-  revision: "d1d0c87e535f9c757f47dde6ee157e9859dd91fd",
+  revision: "1636069b91f402242a35714fde1011042c3f1f70",
   sandboxes: {
     sandbox: {
       harnessKind: "nvidia.fabric.openclaw",
@@ -60,12 +60,11 @@ export function document(
   overrides: {
     model?: string;
     credentialReference?: string;
-    gatewayEndpoint?: string;
+    gatewayPort?: number;
     agent?: "openclaw" | "hermes";
     searchProvider?: "brave" | "tavily";
   } = {},
 ): ConfigExportDocument {
-  const gatewayEndpoint = overrides.gatewayEndpoint ?? "http://127.0.0.1:8080";
   return {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",
@@ -76,8 +75,7 @@ export function document(
     spec: {
       gateway: {
         management: "managed",
-        runtime: { provider: "docker" },
-        endpoint: gatewayEndpoint,
+        target: { docker: { port: overrides.gatewayPort ?? 8080 } },
       },
       inferenceProviders: {
         "hosted-compatible-endpoint": {

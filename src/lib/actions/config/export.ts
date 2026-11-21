@@ -88,7 +88,7 @@ function withReportHeader(
   omissions: readonly ExportOmission[],
   yaml: string,
 ): string {
-  return renderExportReportHeader(omissions, config.spec.gateway.endpoint) + yaml;
+  return renderExportReportHeader(omissions, config.spec.gateway.target.docker.port) + yaml;
 }
 
 export async function runConfigExport(

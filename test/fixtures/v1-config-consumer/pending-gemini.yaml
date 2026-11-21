@@ -5,10 +5,10 @@ metadata:
   uid: 018f47e2-9d93-7d15-9c41-3ecf70b2550f
 spec:
   gateway:
-    endpoint: http://127.0.0.1:8080
     management: managed
-    runtime:
-      provider: docker
+    target:
+      docker:
+        port: 8080
   inferenceProviders:
     hosted-gemini-api:
       api: openai-completions

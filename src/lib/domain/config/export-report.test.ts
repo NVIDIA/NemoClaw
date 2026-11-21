@@ -101,9 +101,9 @@ describe("export report header (#14580)", () => {
   it("reports the reused gateway port without changing it", async () => {
     const yaml = await exported(snapshot());
     const header = headerOf(yaml);
-    const endpoint = /endpoint: (http:\/\/127\.0\.0\.1:\d+)/.exec(yaml)![1]!;
-    const port = Number(endpoint.split(":").pop());
-    expect(header).toContain(`\n# gateway endpoint="${endpoint}" port=${port}: `);
+    const port = YAML.parse(yaml).spec.gateway.target.docker.port;
+    expect(port).toBe(8080);
+    expect(header).toContain(`\n# gateway endpoint="http://127.0.0.1:${port}" port=${port}: `);
     expect(header).toMatch(/free port/);
   });
 
@@ -139,7 +139,7 @@ describe("export report header (#14580)", () => {
           value: { otlp: { endpoint: "http://user:pw@collector.example:4318/v1?token=abc#frag" } },
         },
       ],
-      "http://127.0.0.1:18080",
+      18080,
     );
     expect(header).toContain('"endpoint":"http://collector.example:4318/v1"');
     expect(header).not.toMatch(/user|pw|token|abc|frag/);

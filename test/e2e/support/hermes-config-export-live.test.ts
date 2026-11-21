@@ -51,8 +51,7 @@ function exportedHermesDocument() {
     spec: {
       gateway: {
         management: "managed",
-        runtime: { provider: "docker" },
-        endpoint: "http://127.0.0.1:8080",
+        target: { docker: { port: 8080 } },
       },
       inferenceProviders: {
         "hosted-compatible-endpoint": {
@@ -132,7 +131,7 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
 
 function pinnedConsumerEvidence(): V1ParseSummary {
   return {
-    revision: "d1d0c87e535f9c757f47dde6ee157e9859dd91fd",
+    revision: "1636069b91f402242a35714fde1011042c3f1f70",
     sandboxes: {
       hermes: {
         harnessKind: "nvidia.fabric.hermes",

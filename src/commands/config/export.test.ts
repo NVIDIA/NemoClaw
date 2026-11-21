@@ -70,7 +70,7 @@ describe("config export command", () => {
     mocks.exportOmissions.mockReset().mockReturnValue([]);
     mocks.buildExportConfig.mockReset().mockReturnValue({
       kind: "NemoClawConfig",
-      spec: { gateway: { endpoint: "http://127.0.0.1:18080" } },
+      spec: { gateway: { target: { docker: { port: 18080 } } } },
     });
     mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
       yaml: "kind: NemoClawConfig\n",
