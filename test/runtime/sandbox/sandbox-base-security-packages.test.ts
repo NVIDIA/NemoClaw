@@ -374,6 +374,7 @@ describe("sandbox base security packages", () => {
 
   const stalePackageCases = [
     ["libc6", "2.41-12+deb13u4"],
+    ["libc-bin", "2.41-12+deb13u4"],
     ["util-linux", "2.41-5"],
     ["login", "1:4.16.0-2+really2.41-5"],
     ["libpcre2-8-0", "10.46-1~deb13u1"],
@@ -561,7 +562,7 @@ describe("sandbox base security packages", () => {
   );
 
   it.each(ARCHITECTURES)(
-    "accepts the exact published Hermes security inventory on %s",
+    "rejects the published Hermes inventory with superseded glibc on %s",
     (architecture) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-published-security-"));
       const hermes = SECURITY_IMAGES.find((image) => image.name === "Hermes")!;
@@ -592,10 +593,8 @@ describe("sandbox base security packages", () => {
           ],
           { timeoutMs: 15_000 },
         );
-        expect({ status: result.status, stderr: result.stderr }).toEqual({
-          status: 0,
-          stderr: "",
-        });
+        expect(result.status).not.toBe(0);
+        expect(result.stdout).not.toContain("nemoclaw-security-inventory-ok");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
