@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-find-review-pr
 description: "Find high-priority open NemoClaw security PRs to review, including competing or superseded candidates."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
