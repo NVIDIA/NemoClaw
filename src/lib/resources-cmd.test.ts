@@ -229,19 +229,18 @@ describe("resources-cmd", () => {
   });
 
   it("uses Docker engine capacity when Kubernetes allocatable capacity is unavailable", () => {
-    vi.spyOn(docker, "dockerSpawnSync").mockImplementation((args) => {
-      if (args[0] === "info") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ NCPU: 4, MemTotal: 12 * 1024 ** 3 }),
-          stderr: "",
-          pid: 1,
-          output: [],
-          signal: null,
-        };
-      }
-      return { status: 1, stdout: "", stderr: "no k8s", pid: 1, output: [], signal: null };
-    });
+    const responses: Record<string, ReturnType<typeof docker.dockerSpawnSync>> = {
+      info: {
+        status: 0,
+        stdout: JSON.stringify({ NCPU: 4, MemTotal: 12 * 1024 ** 3 }),
+        stderr: "",
+        pid: 1,
+        output: [],
+        signal: null,
+      },
+      exec: { status: 1, stdout: "", stderr: "no k8s", pid: 1, output: [], signal: null },
+    };
+    vi.spyOn(docker, "dockerSpawnSync").mockImplementation((args) => responses[args[0]]);
 
     const hw = getHardwareResources();
     expect(hw.cpu.cores).toBe(os.cpus().length);
@@ -253,20 +252,48 @@ describe("resources-cmd", () => {
     expect(args).toEqual(["sandbox", "create", "--cpu", "3", "--memory", "9Gi"]);
   });
 
+  it("prefers Kubernetes allocatable capacity over Docker engine capacity", () => {
+    const responses: Record<string, ReturnType<typeof docker.dockerSpawnSync>> = {
+      exec: {
+        status: 0,
+        stdout: JSON.stringify({
+          items: [{ status: { allocatable: { cpu: "7500m", memory: "16384Mi" } } }],
+        }),
+        stderr: "",
+        pid: 1,
+        output: [],
+        signal: null,
+      },
+      info: {
+        status: 0,
+        stdout: JSON.stringify({ NCPU: 4, MemTotal: 12 * 1024 ** 3 }),
+        stderr: "",
+        pid: 1,
+        output: [],
+        signal: null,
+      },
+    };
+    vi.spyOn(docker, "dockerSpawnSync").mockImplementation((args) => responses[args[0]]);
+
+    const openshell = makeExecutable("#!/usr/bin/env sh\necho '--cpu --memory'\n");
+    const args = ["sandbox", "create"];
+    expect(appendResourceFlags(args, { cpu: "50%", memory: "25%" }, openshell)).toBe(true);
+    expect(args).toEqual(["sandbox", "create", "--cpu", "3750m", "--memory", "4Gi"]);
+  });
+
   it("falls back to host capacity when Docker engine info is invalid", () => {
-    vi.spyOn(docker, "dockerSpawnSync").mockImplementation((args) => {
-      if (args[0] === "info") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ NCPU: 0, MemTotal: -1 }),
-          stderr: "",
-          pid: 1,
-          output: [],
-          signal: null,
-        };
-      }
-      return { status: 1, stdout: "", stderr: "no k8s", pid: 1, output: [], signal: null };
-    });
+    const responses: Record<string, ReturnType<typeof docker.dockerSpawnSync>> = {
+      info: {
+        status: 0,
+        stdout: JSON.stringify({ NCPU: 0, MemTotal: -1 }),
+        stderr: "",
+        pid: 1,
+        output: [],
+        signal: null,
+      },
+      exec: { status: 1, stdout: "", stderr: "no k8s", pid: 1, output: [], signal: null },
+    };
+    vi.spyOn(docker, "dockerSpawnSync").mockImplementation((args) => responses[args[0]]);
 
     const hw = getHardwareResources();
     expect(hw.docker).toBeUndefined();
