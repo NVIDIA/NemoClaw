@@ -546,6 +546,21 @@ prepare_tirith_marker_retry() {
   retry_tirith_marker_if_needed
 }
 
+settle_tirith_marker_retry() {
+  local marker="${HERMES_DIR}/.tirith-install-failed"
+  # Preserve unsafe and non-retryable markers. Also settle the first install
+  # when no marker exists, before Hermes can start the same background writer.
+  if [ "$TIRITH_RETRY_MARKER_CLEARED" -ne 1 ] \
+    && { [ -e "$marker" ] || [ -L "$marker" ]; }; then
+    return 0
+  fi
+  if ! timeout --signal=TERM --kill-after=5s 60s \
+    "$_HERMES_PYTHON" -I "$_HERMES_TIRITH_MARKER_FINALIZER" --prepare-retry; then
+    echo "[gateway] Hermes Tirith startup retry did not settle; refusing gateway startup" >&2
+    return 1
+  fi
+}
+
 # sourceBoundary: Hermes runtime fallback recreates download_failed when its background Tirith fetch fails.
 # whyNotSourceFix: Hermes is an upstream image dependency; this entrypoint owns restart recovery only.
 # regressionTest: test/agents/hermes/hermes-tirith-retry-finalization.test.ts covers cleanup and unsafe-marker preservation.
@@ -2932,6 +2947,9 @@ prepare_hermes_nonroot_runtime() {
   refresh_hermes_runtime_config_hashes compat || return 1
   configure_messaging_channels || return 1
   prepare_tirith_marker_retry || return 1
+  if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+    settle_tirith_marker_retry || return 1
+  fi
 }
 
 migrate_legacy_hermes_dashboard_state() {

@@ -68,7 +68,31 @@ def finalize_marker(marker: Path, before_revalidate: Callable[[], None] | None =
 
 def main() -> int:
     """Run marker finalization for the path supplied by the Hermes entrypoint."""
+    if len(sys.argv) == 2 and sys.argv[1] == "--prepare-retry":
+        prepare_retry()
+        return 0
     return finalize_marker(Path(sys.argv[1])) if len(sys.argv) == 2 else FAILED
+
+
+def prepare_retry() -> None:
+    """Settle the authorized non-root retry before the gateway can report healthy."""
+    if os.geteuid() == 0:
+        raise RuntimeError("Tirith retry preparation requires the non-root sandbox identity")
+    sys.path.insert(0, "/opt/hermes")
+    from tools import tirith_security
+
+    # sourceBoundary: Hermes 0.21.3 ensure_installed starts a daemon worker that
+    # writes .tirith-install-failed after gateway health can already succeed.
+    # whyNotSourceFix: the pinned dependency exposes no public settlement API.
+    # regressionTest: hermes-tirith-retry-finalization.test.ts exercises delayed
+    # completion, timeout, and a failed worker without weakening marker refusals.
+    # removalCondition: use an upstream completion API when the pinned release has one.
+    tirith_security.ensure_installed(log_failures=False)
+    worker = tirith_security._install_thread
+    if worker is not None:
+        worker.join(50)
+        if worker.is_alive() or tirith_security._resolved_path is None:
+            raise RuntimeError("Hermes Tirith startup retry did not settle")
 
 
 if __name__ == "__main__":
