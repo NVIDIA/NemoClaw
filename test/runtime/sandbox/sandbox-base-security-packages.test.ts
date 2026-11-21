@@ -68,8 +68,8 @@ const SECURITY_IMAGES = [
 const ARCHITECTURES = ["amd64", "arm64"] as const;
 const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
   "zlib1g=1:1.3.dfsg+really1.3.1-1+b1+nemoclaw1",
-  "libc6=2.41-12+deb13u4",
-  "libc-bin=2.41-12+deb13u4",
+  "libc6=2.41-12+deb13u5",
+  "libc-bin=2.41-12+deb13u5",
   "bsdutils=1:2.41.5-0+deb13u1",
   "login=1:4.16.0-2+really2.41.5-0+deb13u1",
   "mount=2.41.5-0+deb13u1",
@@ -98,12 +98,34 @@ const EXPECTED_OPENCLAW_SECURITY_PACKAGE_INVENTORY = [
   ...EXPECTED_SECURITY_PACKAGE_INVENTORY,
   "libevent-core-2.1-7t64=2.1.13-stable-1",
 ] as const;
-const PUBLISHED_HERMES_SECURITY_PACKAGE_INVENTORY = EXPECTED_SECURITY_PACKAGE_INVENTORY.map(
-  (entry) =>
-    entry === "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1"
-      ? "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1"
-      : entry,
-);
+const PUBLISHED_HERMES_SECURITY_PACKAGE_INVENTORY = [
+  "zlib1g=1:1.3.dfsg+really1.3.1-1+b1+nemoclaw1",
+  "libc6=2.41-12+deb13u4",
+  "libc-bin=2.41-12+deb13u4",
+  "bsdutils=1:2.41.5-0+deb13u1",
+  "login=1:4.16.0-2+really2.41.5-0+deb13u1",
+  "mount=2.41.5-0+deb13u1",
+  "util-linux=2.41.5-0+deb13u1",
+  "libblkid1=2.41.5-0+deb13u1",
+  "liblastlog2-2=2.41.5-0+deb13u1",
+  "libmount1=2.41.5-0+deb13u1",
+  "libsmartcols1=2.41.5-0+deb13u1",
+  "libuuid1=2.41.5-0+deb13u1",
+  "libpcre2-8-0=10.46-1~deb13u3",
+  "libsqlite3-0=3.46.1-7+deb13u2",
+  "gzip=1.13-1+deb13u1",
+  "libexpat1=2.8.3-1",
+  "libonig5=6.9.9-1+b1",
+  "libjq1=1.8.2-1",
+  "jq=1.8.2-1",
+  "vim-common=2:9.2.0858-1",
+  "vim-tiny=2:9.2.0858-1",
+  "libssh2-1t64=1.11.1-1+deb13u2+nemoclaw2",
+  "libssl3t64=3.5.7-1~deb13u3",
+  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
+  "perl-base=5.44.0-1nemoclaw1",
+  "perl=5.44.0-1nemoclaw1",
+] as const;
 const SECURITY_CASES = SECURITY_IMAGES.flatMap((image) =>
   ARCHITECTURES.map((architecture) => [image.name, architecture, image] as const),
 );
@@ -278,15 +300,16 @@ function baseAptSecurityFunctionsWithLibeventVersion(
   );
 }
 
-function baseAptSecurityFunctionsWithPythonFixVersion(
+function baseAptSecurityFunctionsForPublishedHermes(
   architecture: (typeof ARCHITECTURES)[number],
-  version: string,
 ): string[] {
   return baseAptSecurityFunctions(architecture).map((definition) =>
-    definition.replace(
-      'nemoclaw-python3.13-htmlparser-fix) printf "3.13.5-2+deb13u5+nemoclaw1"',
-      `nemoclaw-python3.13-htmlparser-fix) printf "${version}"`,
-    ),
+    definition
+      .replaceAll("2.41-12+deb13u5", "2.41-12+deb13u4")
+      .replace(
+        'nemoclaw-python3.13-htmlparser-fix) printf "3.13.5-2+deb13u5+nemoclaw1"',
+        'nemoclaw-python3.13-htmlparser-fix) printf "3.13.5-2+deb13u4+nemoclaw1"',
+      ),
   );
 }
 
@@ -350,7 +373,7 @@ describe("sandbox base security packages", () => {
   );
 
   const stalePackageCases = [
-    ["libc6", "2.41-12+deb13u3"],
+    ["libc6", "2.41-12+deb13u4"],
     ["util-linux", "2.41-5"],
     ["login", "1:4.16.0-2+really2.41-5"],
     ["libpcre2-8-0", "10.46-1~deb13u1"],
@@ -538,7 +561,7 @@ describe("sandbox base security packages", () => {
   );
 
   it.each(ARCHITECTURES)(
-    "accepts the exact published Hermes Python package on %s",
+    "accepts the exact published Hermes security inventory on %s",
     (architecture) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-published-security-"));
       const hermes = SECURITY_IMAGES.find((image) => image.name === "Hermes")!;
@@ -563,10 +586,7 @@ describe("sandbox base security packages", () => {
               "}",
             ].join("\n"),
             ...useRealPatchedParser(
-              baseAptSecurityFunctionsWithPythonFixVersion(
-                architecture,
-                "3.13.5-2+deb13u4+nemoclaw1",
-              ),
+              baseAptSecurityFunctionsForPublishedHermes(architecture),
               prepared.pythonShim,
             ),
           ],

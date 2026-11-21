@@ -8,8 +8,8 @@ const PINNED_HERMES_BASE_PYTHON_HTMLPARSER_FIX_PACKAGE =
 
 export const SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
   "zlib1g=1:1.3.dfsg+really1.3.1-1+b1+nemoclaw1",
-  "libc6=2.41-12+deb13u4",
-  "libc-bin=2.41-12+deb13u4",
+  "libc6=2.41-12+deb13u5",
+  "libc-bin=2.41-12+deb13u5",
   "bsdutils=1:2.41.5-0+deb13u1",
   "login=1:4.16.0-2+really2.41.5-0+deb13u1",
   "mount=2.41.5-0+deb13u1",
@@ -35,11 +35,15 @@ export const SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
   "perl=5.44.0-1nemoclaw1",
 ] as const;
 
+const PINNED_HERMES_BASE_PACKAGE_REPLACEMENTS: Readonly<Record<string, string>> = {
+  [CURRENT_PYTHON_HTMLPARSER_FIX_PACKAGE]: PINNED_HERMES_BASE_PYTHON_HTMLPARSER_FIX_PACKAGE,
+  "libc6=2.41-12+deb13u5": "libc6=2.41-12+deb13u4",
+  "libc-bin=2.41-12+deb13u5": "libc-bin=2.41-12+deb13u4",
+};
+
 export const PINNED_HERMES_BASE_SECURITY_PACKAGE_INVENTORY =
-  SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY.map((packageSpec) =>
-    packageSpec === CURRENT_PYTHON_HTMLPARSER_FIX_PACKAGE
-      ? PINNED_HERMES_BASE_PYTHON_HTMLPARSER_FIX_PACKAGE
-      : packageSpec,
+  SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY.map(
+    (packageSpec) => PINNED_HERMES_BASE_PACKAGE_REPLACEMENTS[packageSpec] ?? packageSpec,
   );
 
 export const OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
