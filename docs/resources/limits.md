@@ -156,6 +156,10 @@ The following SDK and provider limits apply:
 | Configuration or state migration between releases | Not during alpha, as [compatibility](../references/compatibility.md) describes | [`cb8ef25`][v1-cb8ef25]: code, docs |
 | A hosted Rust API reference | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 | `tofu import`, adoption, and remote state for CLI and SDK deployments | Not supported, as [compatibility](../references/compatibility.md) describes | [`cb8ef25`][v1-cb8ef25]: code, docs |
+| [Hand-written HCL](../build-deploy/opentofu-project.md) under Terraform: the provider addresses are under `registry.opentofu.org`, and the examples' tests run only under OpenTofu. | [#14725](https://github.com/NVIDIA/NemoClaw/issues/14725) | [`1b5574f`][v1-1b5574f]: code, issue |
+| A guard against lost creation replies in hand-written HCL: only the SDK records the OpenShell and Fabric objects an apply might create. | [#14726](https://github.com/NVIDIA/NemoClaw/issues/14726) | [`1b5574f`][v1-1b5574f]: code, issue |
+| Handing an existing CLI deployment over to hand-written HCL | [#14721](https://github.com/NVIDIA/NemoClaw/issues/14721) | [`1b5574f`][v1-1b5574f]: code, issue |
+| A tested version set that hand-written HCL can read from a release: the gateway version and image pins are in the repository's `versions.json` at the release's tag. | [#14722](https://github.com/NVIDIA/NemoClaw/issues/14722) | [`1b5574f`][v1-1b5574f]: code, issue |
 
 ## Documentation Site
 
@@ -179,3 +183,4 @@ Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#is
 [v1-e7e1857]: https://github.com/NVIDIA/NemoClaw/tree/e7e1857514f4bed9269eeaf6786bcdb2d6d0ade3
 [v1-43c9dc9]: https://github.com/NVIDIA/NemoClaw/tree/43c9dc9cea1dea3bd59057fd18d96ed799475e9c
 [v1-1636069]: https://github.com/NVIDIA/NemoClaw/tree/1636069b91f402242a35714fde1011042c3f1f70
+[v1-1b5574f]: https://github.com/NVIDIA/NemoClaw/tree/1b5574f18137bb4a94b695dfa86b4be5e1c8d8e6
