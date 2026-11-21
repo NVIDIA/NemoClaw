@@ -55,20 +55,20 @@ To install the providers, perform the following steps from your project's root d
    jq -r .Version /absolute/path/to/bundle/manifest.json
    ```
 
-   A release archive reports its tag without the leading `v`, such as `0.1.0-rc12`.
-   A development bundle reports `0.1.0-dev.` followed by 16 hexadecimal characters derived from its sources, so the version changes with every source change.
+   A release archive reports its tag without the leading `v`, such as `0.1.0-rc.1`.
+   Another CI build reports a version numbered by its run, such as `0.1.0-3011`, and a bundle you build reports `-dev.` and a hash of its sources, such as `0.1.0-dev.9be3917c1bbe5321`, so the version changes with every build or source change.
 
 2. Pin each NVIDIA provider to that exact version.
-   This is the travel example's `terraform` block with the pins added; replace `0.1.0-rc12` with the version that step 1 printed:
+   This is the travel example's `terraform` block with the pins added; replace `0.1.0-rc.1` with the version that step 1 printed:
 
    ```hcl
    terraform {
      required_version = "~> 1.12"
      required_providers {
        docker    = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.7.0" }
-       ollama    = { source = "registry.opentofu.org/nvidia/ollama", version = "0.1.0-rc12" }
-       openshell = { source = "registry.opentofu.org/nvidia/openshell", version = "0.1.0-rc12" }
-       fabric    = { source = "registry.opentofu.org/nvidia/fabric", version = "0.1.0-rc12" }
+       ollama    = { source = "registry.opentofu.org/nvidia/ollama", version = "0.1.0-rc.1" }
+       openshell = { source = "registry.opentofu.org/nvidia/openshell", version = "0.1.0-rc.1" }
+       fabric    = { source = "registry.opentofu.org/nvidia/fabric", version = "0.1.0-rc.1" }
      }
    }
    ```
