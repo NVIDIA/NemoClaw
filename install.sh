@@ -22,6 +22,7 @@ INSTALL_TAG_EXAMPLE="vX.Y.Z"
 BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30
 BOOTSTRAP_CLI_LOOKUP_MAX_OUTPUT_BYTES=65536
 BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES=1048576
+BOOTSTRAP_FETCH_MAX_OUTPUT_BYTES=65536
 SELECTED_PAYLOAD_IDENTITY_REF=""
 
 resolve_release_tag() {
@@ -96,17 +97,25 @@ clone_nemoclaw_ref() {
     umask 022
     git init --quiet "$dest"
     git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-    local fetch_error="" elapsed_detail=""
-    if ! fetch_error="$(LC_ALL=C git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target" 2>&1)"; then
+    local fetch_error="" elapsed_detail="" fetch_status=0
+    # Bound the fetch itself; elapsed Git diagnostics do not establish a timeout.
+    if fetch_error="$(run_bounded_bootstrap_lookup "install ref lookup" "$BOOTSTRAP_FETCH_MAX_OUTPUT_BYTES" --quiet-timeout \
+      bash -c 'exec "$@" 2>&1' _ env LC_ALL=C git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target")"; then
+      :
+    else
+      fetch_status=$?
+      case "$fetch_status" in
+        130 | 143) exit "$fetch_status" ;;
+      esac
       [[ -z "$fetch_error" ]] || printf '%s\n' "$fetch_error" >&2
       [[ "$fetch_error" =~ after\ ([0-9]+)\ ms ]] \
         && elapsed_detail=" Git reported ${BASH_REMATCH[1]} ms elapsed before the lookup failed."
-      case "$(classify_install_ref_fetch_failure "$fetch_error")" in
-        connect-timeout)
+      case "$fetch_status:$(classify_install_ref_fetch_failure "$fetch_error")" in
+        124:* | *:connect-timeout)
           printf "[ERROR] Timed out looking up install ref '%s' at https://github.com/NVIDIA/NemoClaw.git.\n" "$ref" >&2
           printf "        The installed CLI was not changed. Check network access to github.com and try again.\n" >&2
           ;;
-        missing-ref)
+        *:missing-ref)
           printf "[ERROR] Requested install ref '%s' is not available from https://github.com/NVIDIA/NemoClaw.git.\n" "$ref" >&2
           printf "        The installed CLI was not changed. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again.\n" >&2
           ;;
@@ -181,8 +190,12 @@ release_version_is_newer() {
 }
 
 run_bounded_bootstrap_lookup() (
-  local label="$1" max_output_bytes="$2" output_file command_pid="" output_bytes status ticks=0 pending_signal=0
+  local label="$1" max_output_bytes="$2" output_file command_pid="" output_bytes status ticks=0 pending_signal=0 quiet_timeout=0
   shift 2
+  if [[ "${1:-}" == --quiet-timeout ]]; then
+    quiet_timeout=1
+    shift
+  fi
   output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
   # Invoked indirectly by the signal and exit traps below.
   # shellcheck disable=SC2329
@@ -212,8 +225,10 @@ run_bounded_bootstrap_lookup() (
   ((pending_signal == 0)) || cleanup_bootstrap_lookup "$pending_signal"
   while bootstrap_lookup_group_is_alive "$command_pid"; do
     if ((ticks >= BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS * 10)); then
-      printf '[ERROR] Timed out during %s after %s seconds.\n' "$label" "$BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS" >&2
-      printf '        The installed CLI was not changed. Retry or select an explicit immutable release tag.\n' >&2
+      if ((quiet_timeout == 0)); then
+        printf '[ERROR] Timed out during %s after %s seconds.\n' "$label" "$BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS" >&2
+        printf '        The installed CLI was not changed. Retry or select an explicit immutable release tag.\n' >&2
+      fi
       return 124
     fi
     sleep 0.1
@@ -228,10 +243,9 @@ run_bounded_bootstrap_lookup() (
   output_bytes="$(wc -c <"$output_file")"
   if ((output_bytes > max_output_bytes)); then
     status=2
-  elif ((status == 0)); then
+  else
     cat "$output_file"
-  elif ((status >= 128)); then
-    status=2
+    ((status < 128 && status != 124)) || status=2
   fi
   return "$status"
 )
