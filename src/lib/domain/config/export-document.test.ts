@@ -193,14 +193,14 @@ describe("export config builder", () => {
   });
 
   it("selects the managed Docker target with the source gateway port (#14696)", () => {
-    const result = buildExportConfig(source, {
-      documentName: alphaDocumentName,
-      documentUid: firstUid,
-    });
+    const result = buildExportConfig(
+      { ...source, gateway: { ...source.gateway, port: 18_081 } },
+      { documentName: alphaDocumentName, documentUid: firstUid },
+    );
 
     expect(result.spec.gateway).toEqual({
       management: "managed",
-      target: { docker: { port: 8080 } },
+      target: { docker: { port: 18_081 } },
     });
   });
 

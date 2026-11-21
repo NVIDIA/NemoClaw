@@ -105,6 +105,7 @@ function dependencies(
           webSearchProvider: options.searchProvider ?? null,
           openshellDriver: "docker",
           gatewayName: "nemoclaw",
+          gatewayPort: 8080,
           provider: "compatible-endpoint",
           preferredInferenceApi: "openai-completions",
           endpointUrl: "https://inference.example/v1",
@@ -371,7 +372,7 @@ if (process.argv.includes("--output")) {
     },
   );
   it("publishes exact bytes only when the pinned v1 parse matches (#11485)", async () => {
-    const exported = document({ gatewayPort: 18_081 });
+    const exported = document();
     Object.assign(exported.spec.sandboxes.sandbox!.network.policy, {
       explicit: POLICY,
     });
@@ -425,6 +426,7 @@ if (process.argv.includes("--output")) {
         "sandboxName",
         "agent",
         "runtimeProvider",
+        "gatewayPort",
         "imageRef",
         "inferenceProvider",
         "inferenceApi",
@@ -798,6 +800,15 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(test.writes.at(-1)?.verifications).toContainEqual(
       expect.objectContaining({ id: "sourceRegistryUnchanged", passed: false }),
     );
+  });
+  it("fails when export changes the registry gateway port (#14696)", async () => {
+    const exported = document({ gatewayPort: 18_081 });
+    const deps = dependencies({ parsedDocument: exported });
+    const test = fixture({ dependencies: deps, host: successfulHost(JSON.stringify(exported)) });
+    await captureFailure(test.phase.from(target("required"), instance()));
+    const port = test.writes.at(-1)?.verifications.find(({ id }) => id === "gatewayPort");
+    expect(port).toEqual({ id: "gatewayPort", passed: false, expected: 8080, actual: 18_081 });
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
   it("validates the current v1alpha1 Deep Agents document (#11860)", () => {
     const candidate = structuredClone(document());

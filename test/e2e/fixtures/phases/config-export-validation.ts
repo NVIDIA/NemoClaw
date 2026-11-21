@@ -326,6 +326,7 @@ export interface ConfigExportSemantics {
   sandboxName: string | null;
   agent: string | null;
   runtimeProvider: string | null;
+  gatewayPort: number | null;
   imageRef: string | null;
   inferenceProviderName: string | null;
   inferenceProvider: string | null;
@@ -397,6 +398,7 @@ export type ConfigExportRegistryEntry = Pick<
   | "agent"
   | "openshellDriver"
   | "gatewayName"
+  | "gatewayPort"
   | "provider"
   | "preferredInferenceApi"
   | "endpointUrl"
@@ -697,6 +699,7 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
     sandboxName: sandboxName ?? null,
     agent: sandbox?.harness.kind ?? null,
     runtimeProvider: Object.keys(document.spec.gateway.target)[0] ?? null,
+    gatewayPort: document.spec.gateway.target.docker.port,
     imageRef: sandbox?.image?.ref ?? null,
     inferenceProviderName: provider ? (providerName ?? null) : null,
     inferenceProvider: provider?.provider ?? null,
@@ -774,6 +777,7 @@ async function expectedSemantics(
     sandboxName: instance.sandboxName,
     agent: exportedHarnessKind(manifest.document.spec.onboarding.agent),
     runtimeProvider: entry.openshellDriver ?? null,
+    gatewayPort: entry.gatewayPort ?? null,
     imageRef: V1_IMAGE_REF_PLACEHOLDER,
     inferenceProviderName: exportedProviderName(entry.provider),
     inferenceProvider:
@@ -798,6 +802,7 @@ function compareSemantics(
     "sandboxName",
     "agent",
     "runtimeProvider",
+    "gatewayPort",
     "imageRef",
     "inferenceProviderName",
     "inferenceProvider",

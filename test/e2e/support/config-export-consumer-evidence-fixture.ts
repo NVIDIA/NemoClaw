@@ -5,6 +5,7 @@ import { managedStartupE2eProfile } from "../../../scripts/checks/generate-manag
 import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import type { V1ParseSummary } from "../../support/v1-parse-consumer.ts";
 import { V1_IMAGE_REF_PLACEHOLDER } from "../../../src/lib/domain/config/export-document.ts";
+import { V1ALPHA1_CHECKED_REVISION } from "../../../src/lib/domain/config/v1alpha1-checked-revision.ts";
 import type { ConfigExportDocument } from "../fixtures/phases/config-export-validation.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import type { NemoClawInstanceManifest } from "../registry/types.ts";
@@ -21,7 +22,7 @@ export const POLICY = {
   },
 };
 export const PINNED_CONSUMER_EVIDENCE: V1ParseSummary = {
-  revision: "1636069b91f402242a35714fde1011042c3f1f70",
+  revision: V1ALPHA1_CHECKED_REVISION,
   sandboxes: {
     sandbox: {
       harnessKind: "nvidia.fabric.openclaw",
