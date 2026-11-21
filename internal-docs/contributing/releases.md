@@ -63,12 +63,13 @@ Only `rc.N` release candidate tags count, not tags such as `v0.1.0-rc12`.
 Under semver comparison, a version's run-numbered builds sort before its source builds, which sort before its release candidates, and each candidate's builds sort after it.
 Until [signing](#signing) is configured, the executables are neither signed nor notarized ([#14621](https://github.com/NVIDIA/NemoClaw/issues/14621)).
 
-If CI / Bundle fails at the tag, staging fails before it pushes release images or drafts the release; rerun the failed jobs, then the staging workflow.
+Staging takes the bundles only from CI / Bundle's run for the tag's push, whose attempts all report the tag; a manual run at the tag numbers its bundles.
+If that run fails, staging fails before it pushes release images or drafts the release; rerun the failed jobs, then the staging workflow.
 CI keeps a run's bundles for 7 days; after that, staging names the missing platforms.
-Run CI / Bundle at the tag again, and rerun the staging workflow once it passes:
+Rerun all of the push run's jobs, which GitHub allows for 30 days, and rerun the staging workflow once it passes:
 
 ```sh
-gh workflow run rust.yml --ref v0.1.0-rc1
+gh run rerun <run-id>
 ```
 
 ### Signing
