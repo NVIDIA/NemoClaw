@@ -14,15 +14,13 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: kubernetes
-    endpoint: https://127.0.0.1:17671
-    kubernetes:
-      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
-      context: replace-with-explicit-context
-      namespace: nemoclaw-gtc-dc
-      authentication:
-        profile: development
+    target:
+      kubernetes:
+        kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+        context: replace-with-explicit-context
+        namespace: nemoclaw-gtc-dc
+        authentication:
+          profile: development
     config:
       openshell.drivers.kubernetes:
         allow_driver_config: true

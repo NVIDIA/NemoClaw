@@ -21,7 +21,7 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let input = directory.path().join("deployment.yaml");
     let state = directory.path().join("state");
@@ -111,7 +111,7 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let cancel = CancellationToken::new();
     let deployment = Deployment::new(directory.path(), &bundle);
@@ -132,9 +132,9 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
         "{error}"
     );
     assert!(
-        error.to_string().contains(
-            "gateway compute driver is podman, but spec.gateway.runtime.provider is docker"
-        ),
+        error
+            .to_string()
+            .contains("gateway compute driver is podman, but spec.gateway.target selects docker"),
         "{error}"
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
@@ -177,7 +177,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
@@ -211,6 +211,73 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
         Outcome::Destroyed
     );
     assert!(fixture.state.lock().unwrap().workspaces.is_empty());
+}
+
+/// OpenShell validates a sandbox create before it stores anything, so the
+/// provider's report of an `InvalidArgument` rejection, carried through
+/// OpenTofu, leaves no pending creation behind.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn an_invalid_sandbox_create_leaves_a_deployment_that_can_be_corrected_and_destroyed() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    fixture.state.lock().unwrap().reject_rpc = Some((
+        "CreateSandbox",
+        tonic::Code::InvalidArgument,
+        "network policy key uses a reserved prefix".into(),
+    ));
+    let error = deployment.apply(&document, &cancel).await.unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            nemoclaw_sdk::Error::Execution { uncreated: Some(uncreated), .. }
+                if uncreated.len() == 1 && uncreated[0].starts_with("openshell_sandbox.")
+        ),
+        "only the sandbox create is reported as having made nothing: {error:?}"
+    );
+    fixture.state.lock().unwrap().reject_rpc = None;
+    deployment
+        .plan_destroy(&cancel)
+        .await
+        .expect("no pending creation holds destroy back");
+    // A pending creation would require the sandbox's original policy.
+    let mut corrected = document.clone();
+    corrected
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .network
+        .grants
+        .insert(
+            "docs".into(),
+            serde_json::from_value(serde_json::json!({"endpoints": [{
+                "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
+                "rules": [{"allow": {"method": "GET", "path": "/**"}}]
+            }]}))
+            .unwrap(),
+        );
+    deployment
+        .apply(&corrected, &cancel)
+        .await
+        .expect("the corrected configuration applies");
+    assert_eq!(fixture.state.lock().unwrap().sandboxes.len(), 1);
+    assert_eq!(
+        deployment.destroy(&cancel).await.unwrap().outcome,
+        Outcome::Destroyed
+    );
+    let state = fixture.state.lock().unwrap();
+    assert!(state.sandboxes.is_empty());
+    assert!(state.workspaces.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -415,11 +482,8 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
     .unwrap();
     let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
     sandbox.agent.integration_refs = vec!["search".into(), "bookings".into()];
-    sandbox.harness.as_mut().unwrap().settings = Some(
-        serde_json::from_value(serde_json::json!({"native_config":{"tools":{"toolSearch":
-            {"mode":"tools","searchDefaultLimit":8,"maxSearchLimit":20}}}}))
-        .unwrap(),
-    );
+    sandbox.harness.as_mut().unwrap().settings =
+        Some(serde_json::from_value(serde_json::json!({"tools":{"toolSearch":true}})).unwrap());
     sandbox.network = serde_json::from_value(serde_json::json!({
         "tier": "isolated",
         "grants": {"docs": {"endpoints": [{
@@ -589,7 +653,7 @@ impl Lifecycle {
     pub(crate) async fn start(input: &str) -> Self {
         let fixture = Fixture::start().await;
         let mut document = Document::parse(input.as_bytes()).unwrap();
-        *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+        nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
         let image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
         let bundle =
             PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
@@ -806,7 +870,7 @@ async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapp
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     fixture.state.lock().unwrap().exec_exit = 1;
     let deployment = Deployment::new(directory.path(), &bundle);
@@ -873,7 +937,7 @@ async fn cli_redaction_withholds_short_and_colliding_credentials() {
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let provider = document.spec.inference_providers.get_mut("local").unwrap();
     provider.endpoint = "https://127.0.0.1:9/v1".into();
@@ -990,7 +1054,7 @@ async fn rejected_policy_fails_promptly_with_context_and_allows_recovery_or_dest
             include_str!("../../../../../examples/explicit-policy.yaml").as_bytes(),
         )
         .unwrap();
-        *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+        nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
         let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
         let name = "assistant";
         {
@@ -1102,7 +1166,7 @@ async fn a_sandbox_startup_failure_is_reported_safely_retained_and_recovered() {
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let input = directory.path().join("input.yaml");
     fs::write(&input, document.yaml().unwrap()).unwrap();

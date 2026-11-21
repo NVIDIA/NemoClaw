@@ -11,11 +11,11 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: docker
-    endpoint: http://127.0.0.1:17901
-    engine: unix:///var/run/docker.sock
-    networkCIDR: 172.30.180.0/24
+    target:
+      docker:
+        port: 17901
+        engine: unix:///var/run/docker.sock
+        networkCIDR: 172.30.180.0/24
   services:
     super:
       kind: vllm

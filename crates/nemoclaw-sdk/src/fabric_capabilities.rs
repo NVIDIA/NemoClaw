@@ -22,8 +22,10 @@ pub fn requirements_for_sandbox(
                 .cloned()
                 .collect()
         });
+    let (configuration, provenance) = crate::fabric_config::projection(document, sandbox)?;
     Ok(FabricRequirements {
-        configuration: crate::fabric_config::for_sandbox(document, sandbox)?,
+        configuration,
         filesystem_read,
+        provenance,
     })
 }

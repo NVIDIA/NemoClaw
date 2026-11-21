@@ -6,7 +6,7 @@
 # the development issuer runs, on the host network at the port the case's
 # `model` provider names. It lists one model and answers every OpenAI chat
 # completion, and every Anthropic Messages request at /anthropic/v1/messages
-# as Anthropic-compatible gateways serve them, with `reply`, streamed when the
+# as Anthropic-compatible gateways serve them, or at /custom/v1/messages, with `reply`, streamed when the
 # request asks, followed by the name of each of `markers` that the request
 # holds, so a test can see what an agent sent the model. It refuses a
 # Messages request without `x-api-key: KEY`, where Anthropic's API takes the
@@ -154,7 +154,7 @@ locals {
         server {
             listen ${local.port};
             set $credential $http_authorization;
-            if ($uri = /anthropic/v1/messages) { set $credential "Bearer $http_x_api_key"; }
+            if ($uri ~ ^/(anthropic|custom)/v1/messages$) { set $credential "Bearer $http_x_api_key"; }
             if ($credential != "Bearer ${var.key}") { return 401; }
             location = /v1/models {
                 default_type application/json;
@@ -168,6 +168,13 @@ locals {
                 proxy_pass http://unix:/tmp/stub.sock:/completion;
             }
             location = /anthropic/v1/messages {
+                client_body_buffer_size 1m;
+                client_body_in_single_buffer on;
+                proxy_set_header X-Reply-Kind $reply_kind;
+                proxy_set_header X-Reply "${local.text}";
+                proxy_pass http://unix:/tmp/stub.sock:/message;
+            }
+            location = /custom/v1/messages {
                 client_body_buffer_size 1m;
                 client_body_in_single_buffer on;
                 proxy_set_header X-Reply-Kind $reply_kind;
@@ -202,7 +209,7 @@ locals {
 }
 
 provider "docker" {
-  host = local.document.spec.gateway.engine
+  host = local.document.spec.gateway.target.docker.engine
 }
 
 resource "docker_image" "model" {

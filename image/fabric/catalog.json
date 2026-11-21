@@ -3013,8 +3013,8 @@
       ]
     }
   ],
-  "fabric_revision": "0dfdb25425f131d323d18a1372e9dde7826c9995",
+  "fabric_revision": "76bde16c40747062001bd6ea5f5d13cadab3d706",
   "schema_version": 2,
-  "source_sha256": "e588495823579fce99fd87089e77a288fd3674a7a0a35d57e3af4f55e0909d88",
+  "source_sha256": "ec859652522bb4ead9cf7d96fedf0fe3fa22a472d5fac395592a0e478f1eb3b8",
   "targets": []
 }

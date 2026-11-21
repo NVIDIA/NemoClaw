@@ -43,6 +43,22 @@ on:
         description: The validation plan's live HCL case selection, as JSON with the selected cases by where they run.
         type: string
         required: true
+      live-suites:
+        description: Run the Docker and Kubernetes live suites; a run for the hardware cases alone skips them.
+        type: boolean
+        default: true
+      hcl-target:
+        description: With hcl-gpu, Live / HCL's hardware target, which runs on this platform.
+        type: string
+        default: rtx-pro-6000
+      hcl-hosted:
+        description: With hcl-gpu, also run the hosted cases in Live / HCL, as a manual run of the HCL cases does.
+        type: boolean
+        default: false
+      hcl-jobs:
+        description: With hcl-gpu, comma-separated case IDs on the target, or empty for every selected case.
+        type: string
+        default: ""
 permissions:
   contents: read
   packages: read
@@ -58,6 +74,7 @@ jobs:
   # compile nothing. A selected suite that fails fails Test / PLATFORM.
   live-docker:
     name: E2E Docker tests
+    if: inputs.live-suites
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     permissions:
@@ -80,7 +97,7 @@ jobs:
   live-kind:
     name: E2E Kubernetes (kind) tests
     # Runs when the plan selected a kind case: the suite runs only those.
-    if: fromJSON(inputs.hcl-cases).runners['live-kind'][0] != null
+    if: inputs.live-suites && fromJSON(inputs.hcl-cases).runners['live-kind'][0] != null
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     permissions:
@@ -183,14 +200,17 @@ jobs:
           retention-days: 7
 
   # The selected HCL E2E cases on the NVIDIA GPU runner, which refuses pull
-  # request jobs, from the same test archive, bundle, and live images: built on
-  # Ubuntu 22.04, they run on that runner too.
+  # request jobs, or on Linux ARM64 on a DGX Station or Spark, from the same
+  # test archive, bundle, and live images: built on Ubuntu 22.04, they run on
+  # those runners too. Live / HCL selects the Station and Spark cases itself.
   gpu:
     name: E2E GPU
-    if: inputs.hcl-gpu && fromJSON(inputs.hcl-cases).runners.gpu[0] != null
+    if: inputs.hcl-gpu && (inputs.hcl-target != 'rtx-pro-6000' || fromJSON(inputs.hcl-cases).runners.gpu[0] != null)
     uses: ./.github/workflows/hcl-e2e.yml
     with:
-      hosted: false
+      target: ${{ inputs.hcl-target }}
+      hosted: ${{ inputs.hcl-hosted }}
+      jobs: ${{ inputs.hcl-jobs }}
       cases: ${{ inputs.hcl-cases }}
       tests: ${{ inputs.tests }}
       bundle: ${{ inputs.bundle }}

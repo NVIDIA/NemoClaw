@@ -6,7 +6,7 @@
 use std::sync::OnceLock;
 
 use crate::fingerprint::sha256;
-use nemoclaw_sdk::config::schema::{input_schema_ref, select_variant};
+use nemoclaw_sdk::config::schema::{input_schema_ref, select_variant, variant_keys};
 use nemoclaw_sdk::json_schema::schema_accepts;
 use serde_json::{Value, json};
 
@@ -313,6 +313,17 @@ pub(crate) fn sdk_selected_branch<'a>(schema: &'a Value, supplied: &Value) -> Op
             .and_then(|field| field.get("const"))
             == Some(selected)
     })
+}
+
+/// A choice among the variants of an externally tagged union, such as the
+/// gateway's target, by the keys that name them, in the union's order.
+pub(crate) fn sdk_variant_choice(union: &Value) -> Option<Value> {
+    let keys = variant_keys(union.get("oneOf")?.as_array()?)?;
+    let mut choice = json!({"type": "string", "enum": keys});
+    if let Some(description) = union.get("description") {
+        choice["description"] = description.clone();
+    }
+    Some(choice)
 }
 
 /// Finite values advertised by a field schema. Free input remains possible

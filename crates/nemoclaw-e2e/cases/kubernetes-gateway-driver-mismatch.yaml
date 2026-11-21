@@ -12,8 +12,8 @@ metadata:
 spec:
   gateway:
     management: external
-    runtime:
-      provider: kubernetes
+    target:
+      kubernetes: {}
     endpoint: https://openshell.example.com
   inferenceProviders:
     inference:
@@ -24,7 +24,7 @@ spec:
     assistant:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: fixture/agent@sha256:5eb3f399013e8390478176cace3e5fad026734c38f18b1ffc76755ea0458a05b
+        ref: fixture/agent@sha256:82647e30e31190c60c0e42655b84fc04cd869ae08734838b51ddc6f977f9abed
       network:
         tier: isolated
       harness:

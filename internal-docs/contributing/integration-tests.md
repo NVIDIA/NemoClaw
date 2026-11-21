@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Run Integration Tests
+# Running Integration Tests
 
 This page covers the [contract and integration layers](testing.md#test-layers): tests that run pinned OpenTofu from a bundle against local fixtures and temporary state.
 They create no Docker, OpenShell, Kubernetes, or inference resources; tests that use a real Docker engine are [live tests](live-tests.md#docker-live-suite).
@@ -109,7 +109,7 @@ Its authored modules each have a Rust test:
 | `credentials` | `tool_credentials` | Web search and API credentials: profiles, registrations, and keys a sandbox sees, rotation, recovery, a custom header, and removal |
 | `sandbox` | `sandbox_settings` | Driver configuration, service exposures and their URLs, a policy's middleware binding through apply and refresh, and sandboxes without providers |
 | `gateway` | `gateway_installation::gateway_settings_plan_without_contacting_a_host` | The Docker gateway launch, engine prerequisites, the Docker gateway's storage, and the managed Kubernetes resources, planned from typed settings; the engine fixture refuses any request but a read |
-| `chart` | `chart::*` | The pinned gateway chart rendered by the bundled Helm provider with the SDK's values, which `chart.rs` writes to `inputs/`: the release owns the gateway StatefulSet and no namespace or object NemoClaw prepares; the gateway keeps the chart's UID, or with the OpenShift profile leaves its UID and `fsGroup` for OpenShift to assign; pull Secret names reach the pod templates and the sandbox driver; with `gateway.kubernetes.expose`, the release's own Service publishes only the gateway's port at the endpoint's node port, the gateway serves no metrics, and its certificate names the endpoint's host; and the gateway refuses unauthenticated users and trusts only the deployment's own issuer and audience. Rendering pulls the chart by digest and needs no cluster. |
+| `chart` | `chart::*` | The pinned gateway chart rendered by the bundled Helm provider with the SDK's values, which `chart.rs` writes to `inputs/`: the release owns the gateway StatefulSet and no namespace or object NemoClaw prepares; the gateway keeps the chart's UID, or on the `openshift` target leaves its UID and `fsGroup` for OpenShift to assign; pull Secret names in `config` reach only the sandbox driver, not the gateway or helper pods; with `expose`, the release's own Service publishes only the gateway's port at the endpoint's node port, the gateway serves no metrics, and its certificate names the endpoint's host; and the gateway refuses unauthenticated users and trusts only the deployment's own issuer and audience. Rendering pulls the chart by digest and needs no cluster. |
 
 The generated fixtures in `crates/openshell-provider/tests/contract/fixtures` are the OpenShell resources the SDK compiles for each example with an external gateway, excluding examples whose credentials are read from a managed service's container.
 Fixtures that differ only in values, such as the harness a sandbox launches, have the same shape.
@@ -378,7 +378,7 @@ The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibi
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/0dfdb25425f131d323d18a1372e9dde7826c9995/tests), alongside the implementation.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/76bde16c40747062001bd6ea5f5d13cadab3d706/tests), alongside the implementation.
 The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 

@@ -13,11 +13,13 @@ metadata:
 spec:
   gateway:
     management: external
+    target:
+      docker: {}
     endpoint: http://127.0.0.1:17681
   sandboxes:
     assistant:
       image:
-        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#build-agent-images.
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#building-agent-images.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
         kind: nvidia.fabric.openclaw

@@ -291,7 +291,7 @@ mod tests {
             if expected == "unavailable" {
                 assert_eq!(
                     observation["reason"],
-                    "the gateway endpoint's port is in use by another container or process; free the port, or, before this deployment's first successful plan, set spec.gateway.endpoint to a free port"
+                    "the gateway's port is in use by another container or process; free the port, or, before this deployment's first successful plan, set the gateway target's port to a free one"
                 );
             }
         }

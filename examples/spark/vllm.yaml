@@ -9,11 +9,11 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: docker
-    endpoint: http://127.0.0.1:17695
-    engine: unix:///var/run/docker.sock
-    networkCIDR: 172.30.121.0/24
+    target:
+      docker:
+        port: 17695
+        engine: unix:///var/run/docker.sock
+        networkCIDR: 172.30.121.0/24
   services:
     qwen:
       kind: vllm
@@ -47,7 +47,7 @@ spec:
   sandboxes:
     assistant:
       image:
-        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#build-agent-images.
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#building-agent-images.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated

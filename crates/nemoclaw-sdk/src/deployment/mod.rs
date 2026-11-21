@@ -98,14 +98,20 @@ pub struct Change {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentConnection {
-    pub gateway_endpoint: String,
+    /// The address clients dial; absent for a managed cluster gateway
+    /// without `expose`, which clients reach through a port forward.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_endpoint: Option<String>,
     pub workspace: String,
 }
 impl DeploymentConnection {
     /// Whether the OpenShell CLI can select the gateway by its endpoint alone:
     /// a plaintext loopback endpoint. Others need an authenticated profile.
     pub fn plaintext_loopback(&self) -> bool {
-        url::Url::parse(&self.gateway_endpoint).is_ok_and(|url| {
+        let Some(endpoint) = &self.gateway_endpoint else {
+            return false;
+        };
+        url::Url::parse(endpoint).is_ok_and(|url| {
             url.scheme() == "http"
                 && match url.host() {
                     Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
@@ -276,7 +282,6 @@ impl Deployment {
             ));
         }
         if record.document.metadata.uid != document.metadata.uid
-            || record.document.spec.gateway.endpoint() != document.spec.gateway.endpoint()
             || std::mem::discriminant(&record.document.spec.gateway)
                 != std::mem::discriminant(&document.spec.gateway)
         {
@@ -284,22 +289,29 @@ impl Deployment {
                 "state is bound to a different deployment UID or gateway",
             ));
         }
+        // The target selects the engine or cluster, and the compute driver,
+        // that hold every resource this state binds.
+        if record.document.spec.gateway.compute_driver() != document.spec.gateway.compute_driver() {
+            return Err(Error::Conflict(
+                "state is bound to a different gateway target: the target stays as first planned; create a separate deployment to change it",
+            ));
+        }
         // Like the endpoint, what publishes the gateway selects the address
-        // clients dial and the names the gateway certificate covers.
+        // clients dial and the names the gateway certificate covers. Adding
+        // or removing expose also adds or removes the endpoint, so this
+        // check comes first.
         let exposure = |document: &Document| {
-            let expose = document
-                .spec
-                .gateway
-                .as_managed()?
-                .kubernetes
-                .as_ref()?
-                .expose
-                .as_ref()?;
+            let expose = document.spec.gateway.as_kubernetes()?.expose.as_ref()?;
             Some(expose.publisher())
         };
         if exposure(&record.document) != exposure(&document) {
             return Err(Error::Conflict(
-                "state is bound to a different gateway exposure: kubernetes.expose, its Service type, and whether a Route publishes the gateway stay as first planned; create a separate deployment to change them",
+                "state is bound to a different gateway exposure: expose, its Service type, and whether a Route publishes the gateway stay as first planned; create a separate deployment to change them",
+            ));
+        }
+        if record.document.spec.gateway.endpoint() != document.spec.gateway.endpoint() {
+            return Err(Error::Conflict(
+                "state is bound to a different gateway endpoint: the target's port, expose.endpoint, or an external gateway's endpoint stays as first planned; create a separate deployment to change it",
             ));
         }
         record.allocate_missing_generations(&document)?;
@@ -318,7 +330,7 @@ impl Deployment {
         record.reconcile_pending_creations(&bindings);
         record.validate_pending_intent(&document)?;
         let connection = Some(DeploymentConnection {
-            gateway_endpoint: document.spec.gateway.endpoint().into(),
+            gateway_endpoint: document.spec.gateway.endpoint(),
             workspace: document.workspace(),
         });
         let compiled =
@@ -429,8 +441,17 @@ impl Deployment {
             .await;
         let mutations_settled = applied.is_ok();
         if !mutations_settled {
-            let (started, unreported) = &*started.lock().expect("started creations");
-            if !unreported {
+            let (started, unreported) = &mut *started.lock().expect("started creations");
+            // A create the provider reports as having made nothing lost no ID,
+            // so it is forgotten like one that never started.
+            if let Err(Error::Execution {
+                uncreated: Some(uncreated),
+                ..
+            }) = &applied
+            {
+                started.retain(|address| !uncreated.contains(address));
+            }
+            if !*unreported {
                 record.forget_unstarted_creations(&earlier, started);
                 store.save(&record)?;
             }

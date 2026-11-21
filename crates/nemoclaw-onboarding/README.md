@@ -46,13 +46,13 @@ cargo run -p nemoclaw-onboarding -- examples/onboarding/openclaw.yaml --output m
 While you answer, `nemoclaw onboard` reads, without changing anything:
 
 - the Docker and Podman engines that answer on this machine, to suggest a runtime and target the gateway at its engine;
-- at the image question, the images on the gateway's engine whose label installs the chosen harness, to suggest the newest by digest, or else link the [build instructions](../../docs/build-deploy/build.md#build-agent-images);
+- at the image question, the images on the gateway's engine whose label installs the chosen harness, to suggest the newest by digest, or else link the [build instructions](../../docs/build-deploy/build.md#building-agent-images);
 - the selected agent image, to check that it provides the chosen harness;
 - the selected route's model catalog, to offer a vendor's recommended models the endpoint lists (or the endpoint's own models when the vendor has none) and to note a chosen model it does not list;
 - for a managed gateway, the engine's prerequisites.
 
 It needs no bundle, runs no OpenTofu, and neither pulls images nor starts containers.
-For an external gateway, set `spec.gateway.engine` in the template to an engine that holds the agent image; without it, the image stays unverified.
+For an external Docker or Podman gateway, set `spec.gateway.target.docker.engine` or `spec.gateway.target.podman.engine` in the template to an engine that holds the agent image; without it, the image stays unverified.
 
 A confirmed conflict, such as an image without the chosen harness, blocks saving until you change the answer.
 A read that fails or cannot run leaves the target unverified, and you can still save.
@@ -63,7 +63,7 @@ The [provider reference](../../docs/references/provider.md#engine-and-fabric-dis
 
 1. Review the saved YAML; the template's comments and formatting are not kept.
 2. Set the environment variables the YAML references, for example `export NVIDIA_API_KEY=...`. An interactive `nemoclaw plan` prompts for missing values; `--non-interactive` fails instead. Review reports an unset variable and, for a hosted provider, the page that issues its key.
-3. Plan and apply with a [verified native bundle and the CLI on `PATH`](../../docs/build-deploy/build.md#build-a-native-bundle), following the [deployment guide](../../docs/build-deploy/usage.md):
+3. Plan and apply with a [verified native bundle and the CLI on `PATH`](../../docs/build-deploy/build.md#building-a-native-bundle), following the [deployment guide](../../docs/build-deploy/usage.md):
 
    ```sh
    nemoclaw plan my-deployment.yaml

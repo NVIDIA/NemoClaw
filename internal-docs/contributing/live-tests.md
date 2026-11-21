@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Run Live Tests
+# Running Live Tests
 
 Live tests require explicit configuration and must touch only resources owned by the test.
 Use a dedicated deployment UID, state directory, and immutable bundle.
@@ -11,7 +11,7 @@ Do not run all ignored tests against a shared deployment.
 
 ## Kubernetes Gateway Without the Helm CLI
 
-On native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#build-agent-images), run the live tests with a fresh kind cluster:
+On native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#building-agent-images), run the live tests with a fresh kind cluster:
 
 ```sh
 cargo ci build
@@ -22,9 +22,10 @@ cargo ci live-kind
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 It then runs two [HCL E2E scenarios](#hcl-e2e-scenarios), one after the other, each in new namespaces.
 
-The `kind-kubernetes-development` scenario deploys one agent with the defaults: the `kubernetes` runtime profile and the `development` authentication profile, whose tokens the SDK issues.
+The `kind-kubernetes-development` scenario deploys one agent with the `kubernetes` target and the `development` authentication profile, whose tokens the SDK issues.
 Its CLI runs with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
 The agent must answer from its recorded runtime with the stub's reply.
+Its document names no gateway port, since each command forwards its own free port, and a plan of the applied deployment must report no changes.
 Its sandbox has an explicit policy, as the [GTC DC Kubernetes example](../../examples/kubernetes/hosted-nvidia.yaml) has, with one entry that gives `python3` the stub's `/health`; the managed inference grant gives the image's executables only the stub's `/v1/**` paths.
 The `tests/e2e/hcl/command` module then runs `python3` twice in the sandbox: a request to the stub's `/health` must get the stub's 404, where OpenShell's proxy would answer 403 without the entry, and a connection to the API server's Service at `10.96.0.1`, the first address of kind's Service network, must fail with `EACCES`, OpenShell's refusal, because no entry names it.
 The address is literal, so DNS can't cause the refusal.
@@ -44,18 +45,18 @@ The new digest makes the node fetch the index from the registry, although the no
 Before its first apply, the `tests/e2e/hcl/kind` module releases a chart twice with the bundled Helm provider, as a platform and an operator would prepare the cluster: once for the namespaces, the pull Secret, and the CA, and once for the stub model and the issuer, whose release waits until both are ready:
 
 - The deployment's namespace, which holds the registry's image pull Secret. For `kind-kubernetes-oidc`, it also has the UID-range annotations its test file supplies, as OpenShift prepares a project, and holds the CA of the existing issuer.
-- A stub model server in its own namespace: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000. It answers every `POST /v1/chat/completions` with the same streamed chat completion. The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../../docs/build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) describes.
+- A stub model server in its own namespace: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000. It answers every `POST /v1/chat/completions` with the same streamed chat completion. The inference profile names that Service by its cluster DNS name, without a key, as [Using a Model Server in the Cluster](../../docs/build-deploy/kubernetes.md#using-a-model-server-in-the-cluster) describes.
 - For `kind-kubernetes-oidc`, an existing OIDC issuer in its own namespace: the SDK's development issuer objects, without the NetworkPolicy that admits only a gateway in the issuer's namespace.
 
 `hcl_live::issuer` creates the issuer's key material and one token for the case's audience, which is the deployment UID; OpenTofu cannot sign a token.
 The token stays in a private credentials file in the run's `work` directory, which the `cli` and `verifier` modules export as the case's `token.env` variable.
 The gateway uses the `oidc` authentication profile, so the apply and the replies show that it accepts the issuer's tokens and that each sandbox pulled its image with the pull Secret.
-The chart's NodePort Service [publishes](../../docs/build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster) the gateway at the kind node's address.
+The chart's NodePort Service [publishes](../../docs/build-deploy/kubernetes.md#publishing-the-gateway-outside-the-cluster) the gateway at the kind node's address.
 NemoClaw's operations still reach the gateway through the SDK's port-forward; the probe instead dials the node's address with the gateway's client certificate and the token, as another client would, and checks that the gateway's certificate names it.
 Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage.
 The test runner then uninstalls both releases, which deletes their namespaces; it does not wait for Kubernetes to finish deleting them.
-`cargo ci live-kind` binds each case in `cases/` to the cluster's context, a fresh UID, gateway port, and namespace, and the image in the registry.
-A case whose NodePort Service publishes the gateway, as `kind-kubernetes-oidc`'s does, gets the node's address in its endpoint instead of a fresh port.
+`cargo ci live-kind` binds each case in `cases/` to the cluster's context, a fresh UID and namespace, and the image in the registry.
+A case whose NodePort Service publishes the gateway, as `kind-kubernetes-oidc`'s does, gets the node's address in its `expose.endpoint`; a case without `expose` names no endpoint.
 Its node port stays as the case sets it, in the range's lower band, which Kubernetes leaves for Services that name their port.
 It passes the kubeconfig as `TF_VAR_kubeconfig` and the registry's fixture login as `TF_VAR_pull_credentials`.
 The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell runs each sandbox as the range's first UID.
@@ -70,7 +71,7 @@ The `chart` [contract module](integration-tests.md#openshell-provider-contract) 
 ## OpenShift Gateway
 
 No CI job has an OpenShift cluster, and kind can't stand in for one: a managed `openshift` gateway gets its `fsGroup` only from OpenShift.
-The `openshift-oidc` scenario deploys the agents of `kind-kubernetes-oidc` with the `openshift` runtime profile, and runs by hand, for example on OpenShift Local.
+The `openshift-oidc` scenario deploys the agents of `kind-kubernetes-oidc` with the `openshift` target, and runs by hand, for example on OpenShift Local.
 OpenShift writes the namespace's UID range, so its test file supplies none, and `restricted-v2` admits the gateway as the range's first UID and group.
 The gateway can read its signing key only with that group, so the apply and the replies show that OpenShift assigned it.
 The chart's pass-through Route publishes the gateway at its endpoint; apply goes through the port-forward, and the probe dials the endpoint's host through the cluster's router, so each reply also shows that the Route reaches the gateway and that its certificate names the host.
@@ -126,9 +127,9 @@ Run blocks call these modules:
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
 | `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, and OpenClaw's and Hermes's terminal UIs through `openshell sandbox exec --tty`, on a stub model that requires the run's key, with replies that name the skills each harness offers from its mounted volumes, Hermes's dashboard opening a skill as its volume holds it, and Hermes's browser chat answering a prompt through `/api/pty`; no token from a token file in the deployment's state or apply's output; OpenClaw, and a second Hermes agent's API server, answering through an `anthropic` provider, which sends the key in `x-api-key`; in OpenClaw's sandbox and the first Hermes sandbox, a writable workspace, skill volumes that are writable or read-only as mounted, and no model key in the environment; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused. Then one change to the `claw` and `hermes` agents' instructions replaces both their sandboxes: each agent answers from its new runtime, `hermes-messages` keeps its binding, and each new sandbox keeps the caller's volumes and, for Hermes, its kept native home with the terminal UI's prompt ([Agent Interfaces](#agent-interfaces)). |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, a workspace file on a named volume that survives the destroy and redeploy, and sandbox requests that an external middleware allows, denies, fails on (blocked by the fail-closed binding), or, for an excluded destination, never sees. |
-| `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage, and its sandbox's explicit policy lets `python3` reach the stub's `/health` and refuses an undeclared in-cluster address. |
+| `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the `kubernetes` target and the development authentication profile [on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage, and its sandbox's explicit policy lets `python3` reach the stub's `/health` and refuses an undeclared in-cluster address. |
 | `kind-kubernetes-oidc` | `cargo ci live-kind` | Two agents [on kind](#kubernetes-gateway-without-the-helm-cli) in a namespace with OpenShift's UID range, from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens and that the chart's NodePort Service publishes at the node's address; apply goes through the port-forward, and each agent answers the stub's reply through the published address. |
-| `openshift-oidc` | By hand on OpenShift | The same two agents with the `openshift` runtime profile [on OpenShift](#openshift-gateway), whose `restricted-v2` constraint assigns the gateway its UID and `fsGroup`, behind the chart's pass-through Route; each answers with the stub's reply through the Route's host. |
+| `openshift-oidc` | By hand on OpenShift | The same two agents with the `openshift` target [on OpenShift](#openshift-gateway), whose `restricted-v2` constraint assigns the gateway its UID and `fsGroup`, behind the chart's pass-through Route; each answers with the stub's reply through the Route's host. |
 
 Every scenario checks the same successful path:
 
@@ -142,7 +143,7 @@ The hosted cases make real hosted inference requests, which may incur charges.
 
 The workflows destroy each deployment in a separate step after success, failure, or cancellation and upload outcome reports with the destroy receipt.
 Requests, replies, command output, and credentials stay in the run's private `work` directory.
-CI / Bundle runs the selected hosted cases from Linux AMD64's test archive, bundle, and live images, except on a fork's pull request, and adds the GPU cases through Live / HCL, from the same artifacts, on `v1` pushes and manual runs; each case's document decides [where it runs](testing.md#live-suites), and the plan [selects the cases](testing.md#live-suites) a pull request affects. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, which builds its own candidate from the dispatched branch, or run a case by hand as below.
+CI / Bundle runs the selected hosted cases from Linux AMD64's test archive, bundle, and live images, except on a fork's pull request, and adds the GPU cases through Live / HCL, from the same artifacts, on `v1` pushes and manual runs; each case's document decides [where it runs](testing.md#live-suites), and the plan [selects the cases](testing.md#live-suites) a pull request affects. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, run CI / Bundle by hand with `suite=hcl`, as [below](#dgx-station-and-spark-on-colossus), which builds the Linux bundle, test executables, and images and runs only the HCL cases, or run a case by hand as below.
 
 To run a case by hand on Linux with Docker, load the candidate images, bind the case's image templates and `uid` as the `Live / HCL` workflow does, and run from `crates/nemoclaw-e2e`:
 
@@ -157,30 +158,47 @@ NVIDIA_INFERENCE_API_KEY=... \
 Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deployment` with the same bundle, whether or not the scenario passed.
 
 
-### DGX Station on Colossus
+### DGX Station and Spark on Colossus
 
-**Live / V1 PR hardware** listens for `copy-pr-bot` pushes to `pull-request/<number>`. Like main, it uses the bot's trusted-author admission rather than a maintainer/admin-only actor gate. It verifies that the PR is open, non-draft, targets `v1`, and still has the copied head SHA, then uses `changes cases --base` to select affected GPU and Station cases. The Station example and scenario belong to the Station placement in the same case registry; shared changes select it through the existing dependency rules. Unqualified Spark hardware is excluded. A PR based on v1 before this workflow was introduced must pick up the workflow before its copied branch can trigger it.
+CI / Bundle also runs on `copy-pr-bot`'s pushes to `pull-request/<number>`, as its `hardware` suite. Like main, it uses the bot's trusted-author admission rather than a maintainer/admin-only actor gate. Its plan verifies that the PR is open, non-draft, targets `v1`, and still has the copied head SHA, then uses `changes cases --base` to select affected GPU and Station cases. It builds only the Linux platforms those cases need, Linux AMD64 for the GPU cases and Linux ARM64 for Station, without their unit, contract, integration, and live suites, and calls Live / HCL with their artifacts. The Station example and scenario belong to the Station placement in the same case registry; shared changes select it through the existing dependency rules. Spark remains manual-only and is excluded from this automatic selection. A PR based on v1 before this suite was introduced must pick up the workflow change before its copied branch can trigger it.
 
-These runs report failures in a separate workflow; they are not added as merge requirements. Running jobs are not automatically cancelled. Hardware jobs recheck PR eligibility after queueing and before deployment. GitLab/Colorunner continues to own leases and replacement; CI does not provision hosts.
+These runs report no `Test /` checks and are not merge requirements. Running jobs are not automatically cancelled. Hardware jobs recheck PR eligibility after queueing and before deployment. GitLab/Colorunner continues to own leases and replacement; CI does not provision hosts.
 
-The workflow refreshes one PR selection comment for the analyzed commit, including when no hardware case is selected. It explains automatic, non-gating execution and groups case IDs under fixed selection reasons. Execution links, outcomes, timing, artifacts, runner identities and raw diagnostics stay out of that comment; Actions evidence retains its existing visibility. Comment-write permission belongs to a separate job that neither checks out candidate code nor runs its executables.
+The hardware suite refreshes one PR selection comment for the analyzed commit, including when no hardware case is selected. It explains automatic, non-gating execution and groups case IDs under fixed selection reasons. Execution links, outcomes, timing, artifacts, runner identities and raw diagnostics stay out of that comment; Actions evidence retains its existing visibility. Comment-write permission belongs to a separate job that neither checks out candidate code nor runs its executables.
 
-Operators can dispatch **Live / HCL** on `v1`, or on a current, non-draft v1 PR's bot-admitted `pull-request/<number>` branch. The optional `jobs` input selects individual comma-separated case IDs on the target; unknown or misplaced IDs fail before hardware jobs queue. An empty input selects every case on that target:
+Operators can run the HCL cases by dispatching **CI / Bundle** with `suite=hcl` on `v1`, or on a current, non-draft v1 PR's bot-admitted `pull-request/<number>` branch. The run builds the target's Linux platform, Linux AMD64 for `rtx-pro-6000` and Linux ARM64 for Station and Spark, and Live / HCL runs its cases from those artifacts. The optional `hcl-jobs` input selects individual comma-separated case IDs on the target; unknown or misplaced IDs fail before hardware jobs queue. An empty input selects every case on that target:
 
 ```bash
-gh workflow run hcl-e2e.yml --ref v1 -f target=dgx-station -f hosted=false \
-  -f jobs=dgx-station-openclaw-nemotron
+gh workflow run rust.yml --ref v1 -f suite=hcl -f hcl-target=dgx-station -f hcl-hosted=false \
+  -f hcl-jobs=dgx-station-openclaw-nemotron
 ```
 
-For a reviewer-requested extra case, dispatch on the PR's current admitted `pull-request/<number>` branch with that case ID in `jobs`. This starts an additional selection and leaves automatic selections intact. To preview an additive selection locally, use `changes cases --base origin/v1 --add CASE`; reviewed additions do not require an Advisor service.
+Spark uses the same workflow and persistent-runner path, with the fixed `colossus-gb10` label. Like Station, dispatch on `v1` or the current PR's bot-admitted `pull-request/<number>` branch; dispatch from any other branch is rejected. For a PR candidate:
+
+```bash
+gh workflow run rust.yml --repo NVIDIA/NemoClaw --ref "pull-request/<number>" \
+  -f suite=hcl -f hcl-target=dgx-spark -f hcl-hosted=false -f hcl-jobs=dgx-spark-openclaw-nemotron
+```
+
+For a reviewer-requested extra case, dispatch CI / Bundle with `suite=hcl` on the PR's current admitted `pull-request/<number>` branch with that case ID in `hcl-jobs`. This starts an additional selection and leaves automatic selections intact. To preview an additive selection locally, use `changes cases --base origin/v1 --add CASE`; reviewed additions do not require an Advisor service.
 
 Build, inference, and cleanup failures fail the run visibly. An offline runner leaves its hardware job queued. A queued PR revision that becomes draft, closes, or is superseded cannot deploy when it reaches a runner.
 
-Colorunner must prepare Ubuntu 24.04 ARM64, GB300, Docker GPU access, and the containerd image store. CI does not provision the host or manage its lease.
-The shared HCL workflow binds the existing GTC Station example to its pinned Nemotron 3.5 model/runtime and candidate images, fresh UID, state, and nonoverlapping subnet. The scenario applies, requires OpenClaw to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup.
+Colorunner must prepare Ubuntu 24.04 ARM64, the intended GPU (GB300 for Station or GB10 for Spark), Docker/Buildx, NVIDIA Container Toolkit, container GPU access, and the containerd image store. CI does not provision the host or manage its lease.
+Before Spark dispatch, complete the capacity checks in [#13934](https://github.com/NVIDIA/NemoClaw/issues/13934): record the SSA owner, admitted lease window, limits and recovery procedure; verify host identity and GPU access; and qualify the persistent runner with a manual smoke on its unique label. Keep the exact smoke commit, runner ID and run URL. Smoke runs `true` and proves job delivery only; capacity, inference and cleanup need their own evidence.
+
+The shared HCL workflow downloads CI / Bundle's Linux ARM64 bundle, test executable, and images on the selected host, or pulls a v1 commit's pushed images when no image input changed since, and binds its existing GTC example to them, a fresh UID, state, and nonoverlapping subnet:
+
+| Target | Runner label | Example and model |
+|---|---|---|
+| Station | `colossus-gb300` | `openclaw-dgx-station.yaml`, with the existing Nemotron 3.5 Super VL override |
+| Spark | `colossus-gb10` | `openclaw-dgx-spark.yaml`, retaining its pinned Nemotron 3 Super NVFP4 model and Spark memory settings |
+
+Each scenario applies, requires OpenClaw to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup. Record the E2E commit, job URL, actual runner identity, and uploaded identity, inference and cleanup outcomes. A successful run establishes that case on that host; it does not establish renewal or replacement readiness. Leave #13934 open until its remaining capacity acceptance criteria have evidence.
 
 Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>/`. Published reports contain outcomes and candidate/UID/case identity only.
 Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
+The [Spark scenario](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-spark-openclaw-nemotron.tftest.hcl), including model download and load, must fit the existing 60-minute job budget with the downloads and cleanup; the model startup timeout does not extend that job budget. Do not reuse an existing deployment as evidence of a fresh run.
 To recover a failed run, set `run` to its retained directory and use the original executables:
 
 ```bash
@@ -192,7 +210,7 @@ NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
 ## Spark and Fabric
 
 The `docker-openclaw-vllm-shared` [HCL E2E scenario](#hcl-e2e-scenarios) covers several sandboxes served by one local model on the `Live / HCL` NVIDIA GPU runner.
-Spark hardware has no CI runner yet.
+Spark's manual Colossus case is described [above](#dgx-station-and-spark-on-colossus); host and runner qualification remain tracked in [#13934](https://github.com/NVIDIA/NemoClaw/issues/13934).
 
 The SDK's `runtime_compile::an_image_pin_or_gateway_port_change_reaches_only_replaceable_processes` test owns what changing only a model's image pin reaches: its container and image, not its storage.
 Storage retention and watchdog recovery have separate tests under [runtime boundaries](integration-tests.md#runtime-boundaries) and [generic models](#generic-models).
@@ -202,8 +220,8 @@ Rebuilding `dist` replaces development artifacts; keep the selected bundle uncha
 
 ## Bare Brev
 
-The `Live / Brev` workflow provisions an ordinary Brev CPU VM rather than a NemoClaw Launchable.
-Three jobs build the Linux AMD64 bundle and the `nemoclaw-e2e` `e2e` test executable, build the matching OpenClaw image, and provision the VM in parallel.
+CI / Bundle's `brev` suite runs `Live / Brev`, which provisions an ordinary Brev CPU VM rather than a NemoClaw Launchable.
+Linux AMD64's jobs build the bundle and the `nemoclaw-e2e` `e2e` test executable while Live / Brev host builds the matching OpenClaw image and provisions the VM, in parallel.
 Image transfer starts as soon as the image and VM are ready, overlapping any remaining bundle build.
 The image-loading job verifies the archive checksum and source revision, and requires Docker to retain the built image digest after loading.
 The lifecycle job waits for the bundle and loaded image, then transfers the bundle and runs the `docker-openclaw-v0-parity` [HCL E2E scenario](#hcl-e2e-scenarios) on the fresh VM.
@@ -211,7 +229,7 @@ Image compilation happens on the CI runner.
 A separate cleanup job runs after success, failure, or cancellation and requires two confirmed observations that its owned VM is absent.
 The check list shows bundle build, image build, preparation, image loading, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
 The workflow requires repository secrets named `BREV_API_KEY` and `NVIDIA_API_KEY`.
-Run it on `v1` with `gh workflow run brev.yml --ref v1`, or by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`; a dispatch from any other branch skips every job.
+Run it on `v1` with `gh workflow run rust.yml --ref v1 -f suite=brev`, or by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`; a dispatch from any other branch skips every job.
 GitHub's documentation requires a dispatched workflow on the default branch, but GitHub has accepted dispatches of this one on `v1`.
 
 The reviewed Brev startup script installs the required host packages, enables Docker, and waits on a readiness sentinel before candidate transfer.
@@ -275,14 +293,14 @@ It checks that the collected architecture matches the selected Docker daemon's r
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the dummy agent, agent interface, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the dummy agent, agent interface, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#running-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
 
 ## Dummy Agent Lifecycle
 
-The `docker-dummy` [HCL E2E scenario](#hcl-e2e-scenarios) deploys an image derived from the [reference dummy image](agent-image-maintenance.md#qualify-the-reference-contract-image) through a managed Docker gateway.
+The `docker-dummy` [HCL E2E scenario](#hcl-e2e-scenarios) deploys an image derived from the [reference dummy image](agent-image-maintenance.md#qualifying-the-reference-contract-image) through a managed Docker gateway.
 The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
-Its gateway allows driver configuration, and its sandbox mounts a named volume on `/sandbox/workspace`, as [Keep Agent Files on Mounted Volumes](../../docs/build-deploy/state.md#keep-agent-files-on-mounted-volumes) describes; the `tests/e2e/hcl/volume` module creates the volume before the first apply and gives it to the agent image's user, UID 10001.
+Its gateway allows driver configuration, and its sandbox mounts a named volume on `/sandbox/workspace`, as [Keeping Agent Files on Mounted Volumes](../../docs/build-deploy/state.md#keeping-agent-files-on-mounted-volumes) describes; the `tests/e2e/hcl/volume` module creates the volume before the first apply and gives it to the agent image's user, UID 10001.
 The agent must reply with the configured `reply` setting, and the `tests/e2e/hcl/command` module must write a marker file in the workspace as that user.
 The gateway registers an external middleware that `hcl_live::case` serves on the host, beside an HTTP recorder that counts the requests it receives; the sandbox's explicit policy permits the recorder at the gateway network's host address, which the middleware binding selects, and at the default Docker bridge's gateway, which the binding excludes.
 From the sandbox, a request the middleware allows must reach the recorder once, a request it denies must return 403 without reaching the recorder, a request on which the middleware returns a service error must also return 403 without reaching the recorder because the binding is `fail_closed`, and a request to the excluded address must reach the recorder without reaching the middleware.
@@ -296,15 +314,15 @@ To run the scenario by hand, bind the template the same way and follow [HCL E2E 
 
 ## Agent Interfaces
 
-The `docker-openclaw-hermes-interfaces` [HCL E2E scenario](#hcl-e2e-scenarios) deploys OpenClaw's Control UI and Hermes's API server, dashboard, and terminal interface through one managed Docker gateway, and reaches them as [Reach an Agent Interface](../../docs/agents-inference/interfaces.md#reach-an-agent-interface) describes.
+The `docker-openclaw-hermes-interfaces` [HCL E2E scenario](#hcl-e2e-scenarios) deploys OpenClaw's Control UI and Hermes's API server, dashboard, and terminal interface through one managed Docker gateway, and reaches them as [Reaching an Agent Interface](../../docs/agents-inference/interfaces.md#reaching-an-agent-interface) describes.
 `cargo ci live-docker` runs it: it installs the pinned OpenShell CLI by checksum, binds the case to a fresh UID, gateway port and subnet, stub address, and the run's OpenClaw and Hermes images, and passes a fresh model key as `NEMOCLAW_TEST_INTERFACES_MODEL_KEY` and `TF_VAR_model_key`.
 Before apply, the `tests/e2e/hcl/model` module runs a stub model with the bundled Docker provider: the pinned `nginx-unprivileged` image that the development issuer runs, on the host network at the port the case's `model` provider names.
-It lists one model and answers every OpenAI chat completion, and every Anthropic Messages request at `/anthropic/v1/messages`, as Anthropic-compatible gateways serve them, with the same reply, streamed when the request asks.
+It lists one model and answers every OpenAI chat completion, and every Anthropic Messages request at `/anthropic/v1/messages`, as Anthropic-compatible gateways serve them, or at `/custom/v1/messages`, with the same reply, streamed when the request asks.
 It refuses a Messages request without that key in `x-api-key`, where Anthropic's API takes it, and any other request without it as a bearer credential.
 Each skill's description is a marker, and the reply ends with the name of each skill whose marker the request holds.
 The `tests/e2e/hcl/volume` module also creates the workspace, artifacts, and two skills volumes for each of the `claw` and `hermes` sandboxes, named for the run's UID, and writes their skills, owned by the agent image's user.
 Each of those agents' `skills.directories` lists a writable folder of skills on one volume and one skill on another, and refuses duplicate names, as [Skills on a Mounted Volume](../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes; OpenClaw's skill volume is read-only and Hermes's writable, OpenClaw's folder holds two skills and a file that isn't one, and Hermes's folder is empty.
-A third sandbox, `hermes-messages`, runs a second Hermes agent without skills, whose route reaches the same stub through an `anthropic` provider at `/anthropic/v1`: Hermes uses an `anthropic` provider's endpoint only when its host is an Anthropic, Claude, or Azure host or its path ends in `/anthropic` or `/anthropic/v1`, and calls `https://api.anthropic.com` otherwise.
+A third sandbox, `hermes-messages`, runs a second Hermes agent without skills, whose route reaches the same stub through an `anthropic` provider at `/custom/v1`: Hermes itself treats an `anthropic` endpoint as Anthropic's only for an Anthropic, Claude, or Azure host or a path ending in `/anthropic` or `/anthropic/v1`, so its answers show that Fabric configures Hermes to call the endpoint whatever its path.
 Apply must start the three agents, and report each interface's port, sign-in, and token file.
 A harness offers the model the skills it finds, so each reply below must name the skills on that agent's volumes: `notes` for Hermes, and `digest`, `review`, and `translate` for OpenClaw.
 Whether the agent loads and follows a skill is not checked live; Fabric's tests check what each harness loads.
@@ -347,7 +365,7 @@ The stub also names a marker in the changed instructions, so each changed agent'
 In each new sandbox, the workspace and artifacts markers and the skills' hashes must be as before, and for Hermes, its kept native home, `/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/hermes`, must still hold the request that its first runtime answered and the prompt typed in its terminal UI, which shows that the terminal UI's turn ran on the runtime's Hermes home.
 `openshell sandbox list --ids` must list each new sandbox and not the old one, whose runtime ran in it.
 `tofu test` removes the caller's volumes after the case; `docker-dummy` checks that destroy keeps a caller's volume.
-Conversation continuity after a replacement is out of scope ([#14495](https://github.com/NVIDIA/NemoClaw/issues/14495)), and Fabric's [Hermes E2E test](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/tests/e2e/test_hermes_e2e.py#L450), not this case, checks that the next runtime loads a skill Hermes created with its own tools ([#14289](https://github.com/NVIDIA/NemoClaw/issues/14289)).
+Conversation continuity after a replacement is out of scope ([#14495](https://github.com/NVIDIA/NemoClaw/issues/14495)), and Fabric's [Hermes E2E test](https://github.com/NVIDIA/NeMo-Fabric/blob/76bde16c40747062001bd6ea5f5d13cadab3d706/tests/e2e/test_hermes_e2e.py#L450), not this case, checks that the next runtime loads a skill Hermes created with its own tools ([#14289](https://github.com/NVIDIA/NemoClaw/issues/14289)).
 The SDK, contract, and integration suites own the rest: which changes replace a sandbox, plan and apply agreement, the order in which the old runtime stops and the new one starts, and an unchanged apply after a replacement ([#14290](https://github.com/NVIDIA/NemoClaw/issues/14290)).
 
 ## Docker Gateway Isolation
@@ -366,7 +384,7 @@ Successful completion removes both owned sandboxes and gateway processes, but re
 The test calls the provider and SDK directly and creates no OpenTofu state directory.
 Keep the input documents to identify the retained resources.
 Another run requires fresh deployment UUIDs, ports, and subnets; the test refuses the previous run's retained resources.
-After a successful run, remove each document's `gateway storage` objects with [Remove Retained Resources](../../docs/build-deploy/usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
+After a successful run, remove each document's `gateway storage` objects with [Removing Retained Resources](../../docs/build-deploy/usage.md#removing-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
 
 From the repository root, with absolute document paths and the local sandbox image's actual digest:
 
@@ -398,7 +416,7 @@ A successful run deletes the sandbox, provider registrations, profiles, and gate
 Retained gateway storage contains signing and encryption keys.
 The test creates no OpenTofu state; keep the input document to identify its resources, and use fresh inputs for another run.
 Failures retain resources for diagnosis; inspect only the printed owned gateway and its sandbox before cleanup.
-After a successful run, remove the document's `gateway storage` objects with [Remove Retained Resources](../../docs/build-deploy/usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
+After a successful run, remove the document's `gateway storage` objects with [Removing Retained Resources](../../docs/build-deploy/usage.md#removing-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
 
 From the repository root, with an absolute document path and the local sandbox image's actual digest:
 

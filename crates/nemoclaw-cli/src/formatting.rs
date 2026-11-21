@@ -358,7 +358,10 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     if let Some(connection) = &result.connection {
         output.push_str(&format!(
             "\nOpenShell gateway: {}\nOpenShell workspace: {}\n",
-            terminal_text(&connection.gateway_endpoint),
+            connection
+                .gateway_endpoint
+                .as_deref()
+                .map_or_else(|| UNPUBLISHED_GATEWAY.to_owned(), terminal_text),
             terminal_text(&connection.workspace),
         ));
     }
@@ -570,12 +573,20 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     output
 }
 
+/// What a managed cluster gateway without `expose` has instead of an address:
+/// each NemoClaw command forwards its own free port, and other clients forward
+/// one themselves.
+const UNPUBLISHED_GATEWAY: &str = "not published; forward a local port to the gateway pod, as docs/build-deploy/kubernetes.md describes";
+
 /// The commands that select this deployment's gateway and workspace, as the
 /// interface guide describes.
 fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String {
     let mut output =
         String::from("  In each terminal, select this deployment's gateway and workspace:\n");
-    let endpoint = terminal_text(&connection.gateway_endpoint);
+    let endpoint = connection
+        .gateway_endpoint
+        .as_deref()
+        .map_or_else(|| "its port forward".to_owned(), terminal_text);
     if connection.plaintext_loopback() {
         output.push_str(&format!(
             "    unset OPENSHELL_GATEWAY\n    export OPENSHELL_GATEWAY_ENDPOINT={endpoint}\n"
@@ -770,6 +781,11 @@ pub(crate) fn render_error(
             "No runtime resources changed."
         }
         Some(Error::SandboxStartup { .. }) => "Resources retained; sandbox startup failed.",
+        Some(Error::Execution {
+            uncreated: Some(_), ..
+        }) if context.operation == "Apply" => {
+            "OpenShell rejected the failed sandbox creates as invalid, so they created nothing. Resources applied earlier remain in the saved state; correct the configuration and apply again, or run destroy."
+        }
         _ if matches!(context.operation, "Apply" | "Destroy") => {
             "Resource state is not confirmed. Changes may already have been made; preserve the deployment state directory."
         }
@@ -783,7 +799,7 @@ pub(crate) fn render_error(
             "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
         )),
         Some(Error::DockerModelUpdateRefused { service }) => Some(Cow::Owned(format!(
-            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/agents-inference/inference.md#set-container-limits-and-update-policy."
+            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/agents-inference/inference.md#setting-container-limits-and-update-policy."
         ))),
         _ => None,
     };
@@ -1044,6 +1060,34 @@ mod tests {
             !text.contains("export OPENSHELL_GATEWAY_ENDPOINT"),
             "{text}"
         );
+    }
+
+    /// A managed cluster gateway without `expose` has no address: clients
+    /// reach it through a port forward of their own, and JSON results leave
+    /// the endpoint out.
+    #[test]
+    fn an_unpublished_cluster_gateway_points_to_a_port_forward() {
+        let connection = json!({"workspace": "nc-1234567890abcdef"});
+        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection, "interfaces": interfaces()});
+        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result.clone());
+        assert!(
+            text.contains("OpenShell gateway: not published; forward a local port to the gateway pod, as docs/build-deploy/kubernetes.md describes\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME  # your profile for its port forward\n"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("export OPENSHELL_GATEWAY_ENDPOINT"),
+            "{text}"
+        );
+        let machine: Value = serde_json::from_str(&render(
+            &["nemoclaw", "apply", "deployment.yaml", "-o", "json"],
+            result,
+        ))
+        .unwrap();
+        assert_eq!(machine["connection"], connection);
     }
 
     fn agents() -> Value {
@@ -1550,7 +1594,7 @@ mod tests {
             let help = json["help"].as_str().unwrap();
             for expected in [
                 "spec.services.qwen.updatePolicy: Recreate",
-                "docs/agents-inference/inference.md#set-container-limits-and-update-policy",
+                "docs/agents-inference/inference.md#setting-container-limits-and-update-policy",
             ] {
                 assert!(help.contains(expected), "missing {expected}: {help}");
             }
@@ -1567,6 +1611,7 @@ mod tests {
             operation: "apply".into(),
             diagnostic: "sandbox/coder start failed (pi_model_unknown); agent runtime is unavailable; resources retained".into(),
             postcondition_failures: None,
+            uncreated: None,
         };
         for mutated in [false, true] {
             let cli =
@@ -1683,6 +1728,7 @@ mod tests {
             operation: "apply".into(),
             diagnostic: "first line\nnext line\u{1b}[2J".into(),
             postcondition_failures: None,
+            uncreated: None,
         };
         let text = render_error(&error, OutputFormat::Text, &RenderContext::new(&cli));
         assert!(text.contains("first line\nnext line"));

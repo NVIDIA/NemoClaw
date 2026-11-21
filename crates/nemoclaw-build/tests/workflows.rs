@@ -432,8 +432,7 @@ mod recommendations {
     impl Fixture {
         fn new() -> Self {
             let workflow: Value = serde_saphyr::from_str(
-                &fs::read_to_string(repository().join(".github/workflows/pr-self-hosted.yml"))
-                    .unwrap(),
+                &fs::read_to_string(repository().join(".github/workflows/rust.yml")).unwrap(),
             )
             .unwrap();
             let script = workflow["jobs"]["recommendations"]["steps"]
@@ -696,6 +695,277 @@ fi
                 .unwrap_err();
             assert!(writes.is_empty());
             assert!(!String::from_utf8_lossy(&output.stderr).contains("PRIVATE-SENTINEL"));
+        }
+    }
+}
+
+/// Execute the plan's suite selection against a GitHub fixture: only
+/// copy-pr-bot's push of an open, non-draft v1 PR's current head runs the
+/// hardware cases, only NVIDIA/NemoClaw runs Live / Brev, and a manual run of
+/// the HCL cases starts only from v1 or a copied pull request branch.
+#[cfg(unix)]
+#[test]
+fn the_plan_runs_hardware_brev_and_hcl_suites_only_for_admitted_events() {
+    use std::{os::unix::fs::PermissionsExt, process::Command};
+
+    let workflow: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/validation-plan.yml")).unwrap(),
+    )
+    .unwrap();
+    let script = workflow["jobs"]["plan"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["name"] == "Select the run's suite")
+        .expect("the plan selects the run's suite")["run"]
+        .as_str()
+        .unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let gh = fixture.path().join("gh");
+    fs::write(
+        &gh,
+        "#!/bin/bash\n[[ \"$2\" == repos/NVIDIA/NemoClaw/pulls/42 ]] || exit 2\nprintf '%s\\n' \"$PR\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).unwrap();
+    let path = std::env::join_paths(
+        [fixture.path().to_path_buf()]
+            .into_iter()
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let sha = "a".repeat(40);
+    let base = "b".repeat(40);
+    let pr = |state: &str, draft: bool, base_ref: &str, head: &str| {
+        serde_json::json!({
+            "state": state, "draft": draft,
+            "base": {"ref": base_ref, "sha": base}, "head": {"sha": head}
+        })
+        .to_string()
+    };
+    let current = pr("open", false, "v1", &sha);
+    let draft = pr("open", true, "v1", &sha);
+    let closed = pr("closed", false, "v1", &sha);
+    let other_base = pr("open", false, "main", &sha);
+    let moved = pr("open", false, "v1", "newer-head");
+    let upstream = "NVIDIA/NemoClaw";
+    let bot = "copy-pr-bot[bot]";
+    // (event, requested suite, repository, ref, actor, pull request, suite or None for a refusal)
+    let cases = [
+        (
+            "pull_request",
+            "",
+            upstream,
+            "refs/pull/42/merge",
+            "author",
+            "",
+            Some("ci"),
+        ),
+        (
+            "push",
+            "",
+            upstream,
+            "refs/heads/v1",
+            "maintainer",
+            "",
+            Some("ci"),
+        ),
+        (
+            "push",
+            "",
+            upstream,
+            "refs/tags/v0.1.0",
+            "maintainer",
+            "",
+            Some("ci"),
+        ),
+        (
+            "workflow_dispatch",
+            "ci",
+            upstream,
+            "refs/heads/v1",
+            "operator",
+            "",
+            Some("ci"),
+        ),
+        (
+            "push",
+            "",
+            upstream,
+            "refs/heads/pull-request/42",
+            bot,
+            current.as_str(),
+            Some("hardware"),
+        ),
+        (
+            "push",
+            "",
+            upstream,
+            "refs/heads/pull-request/42",
+            "another-writer",
+            current.as_str(),
+            Some("none"),
+        ),
+        (
+            "push",
+            "",
+            "fork/NemoClaw",
+            "refs/heads/pull-request/42",
+            bot,
+            current.as_str(),
+            Some("none"),
+        ),
+        (
+            "push",
+            "",
+            upstream,
+            "refs/heads/pull-request/42",
+            bot,
+            draft.as_str(),
+            Some("none"),
+        ),
+        (
+            "push",
+            "",
+            upstream,
+            "refs/heads/pull-request/42",
+            bot,
+            closed.as_str(),
+            Some("none"),
+        ),
+        (
+            "push",
+            "",
+            upstream,
+            "refs/heads/pull-request/42",
+            bot,
+            other_base.as_str(),
+            Some("none"),
+        ),
+        (
+            "push",
+            "",
+            upstream,
+            "refs/heads/pull-request/42",
+            bot,
+            moved.as_str(),
+            Some("none"),
+        ),
+        (
+            "push",
+            "",
+            upstream,
+            "refs/heads/run-brev-v1-e2e/candidate",
+            "maintainer",
+            "",
+            Some("brev"),
+        ),
+        (
+            "push",
+            "",
+            "fork/NemoClaw",
+            "refs/heads/run-brev-v1-e2e/candidate",
+            "author",
+            "",
+            Some("none"),
+        ),
+        (
+            "workflow_dispatch",
+            "brev",
+            upstream,
+            "refs/heads/v1",
+            "operator",
+            "",
+            Some("brev"),
+        ),
+        (
+            "workflow_dispatch",
+            "brev",
+            upstream,
+            "refs/heads/feature",
+            "operator",
+            "",
+            Some("none"),
+        ),
+        (
+            "workflow_dispatch",
+            "hcl",
+            upstream,
+            "refs/heads/v1",
+            "operator",
+            "",
+            Some("hcl"),
+        ),
+        (
+            "workflow_dispatch",
+            "hcl",
+            upstream,
+            "refs/heads/pull-request/42",
+            "operator",
+            "",
+            Some("hcl"),
+        ),
+        (
+            "workflow_dispatch",
+            "hcl",
+            upstream,
+            "refs/heads/feature",
+            "operator",
+            "",
+            None,
+        ),
+    ];
+    for (event, requested, repository, reference, actor, pull_request, expected) in cases {
+        let output_file = fixture.path().join("output");
+        fs::write(&output_file, "").unwrap();
+        let output = Command::new("bash")
+            .args([
+                "--noprofile",
+                "--norc",
+                "-e",
+                "-o",
+                "pipefail",
+                "-c",
+                script,
+            ])
+            .env("PATH", &path)
+            .env("EVENT", event)
+            .env("REQUESTED", requested)
+            .env("GITHUB_REPOSITORY", repository)
+            .env("GITHUB_REF", reference)
+            .env(
+                "GITHUB_REF_NAME",
+                reference.trim_start_matches("refs/heads/"),
+            )
+            .env("GITHUB_SHA", &sha)
+            .env("GITHUB_ACTOR", actor)
+            .env("GITHUB_OUTPUT", &output_file)
+            .env("GITHUB_STEP_SUMMARY", fixture.path().join("summary"))
+            .env("PR", pull_request)
+            .output()
+            .unwrap();
+        let outputs = fs::read_to_string(&output_file).unwrap();
+        let case = format!("{event} {requested} of {reference} in {repository} by {actor}");
+        let Some(expected) = expected else {
+            assert!(!output.status.success(), "{case} is refused");
+            continue;
+        };
+        assert!(
+            output.status.success(),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            outputs
+                .lines()
+                .any(|line| line == format!("suite={expected}")),
+            "{case} selects {expected}: {outputs}"
+        );
+        if expected == "hardware" {
+            assert!(
+                outputs.lines().any(|line| line == format!("base={base}")),
+                "{case} compares with the pull request's base: {outputs}"
+            );
         }
     }
 }

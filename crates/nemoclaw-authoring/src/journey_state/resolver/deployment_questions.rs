@@ -16,13 +16,14 @@ impl QuestionResolver<'_> {
             .contains(&JourneyScope::DeploymentFields)
         {
             let active_routes = routes_path(inspect_values);
+            let known_engine = self.known_engine();
             for field in crate::deployment::deployment_questions_for_values(
                 inspect_values,
                 active_routes.as_deref(),
             )? {
                 if self.decisions.accepted.contains(&field.path)
                     || questions.iter().any(|question| question.id == field.path)
-                    || (field.path == GATEWAY_ENGINE_PATH && self.engine_known())
+                    || known_engine.as_ref() == Some(&field.path)
                 {
                     continue;
                 }
@@ -50,25 +51,27 @@ impl QuestionResolver<'_> {
         Ok(())
     }
 
-    /// Whether the managed gateway's engine is the one socket that answered on
-    /// this machine for the chosen runtime, so there is nothing to ask.
-    fn engine_known(&self) -> bool {
-        let Some(answered) = self.answered_engines else {
-            return false;
-        };
+    /// The managed gateway's engine path, when its engine is the one socket
+    /// that answered on this machine for the chosen target, so there is
+    /// nothing to ask.
+    fn known_engine(&self) -> Option<String> {
+        let answered = self.answered_engines?;
         let values = &self.authored.values;
-        let runtime = values.pointer(RUNTIME_PROVIDER).and_then(Value::as_str);
-        let mut engines = answered
-            .iter()
-            .filter(|engine| Some(engine.compute_driver.as_str()) == runtime);
-        let (Some(only), None) = (engines.next(), engines.next()) else {
-            return false;
-        };
-        values
+        if values
             .pointer("/spec/gateway/management")
             .and_then(Value::as_str)
-            == Some("managed")
-            && values.pointer(GATEWAY_ENGINE_PATH).and_then(Value::as_str)
-                == Some(only.engine.as_str())
+            != Some("managed")
+        {
+            return None;
+        }
+        let (target, path) = gateway_engine(values)?;
+        let mut engines = answered
+            .iter()
+            .filter(|engine| engine.compute_driver.as_str() == target);
+        let (Some(only), None) = (engines.next(), engines.next()) else {
+            return None;
+        };
+        (values.pointer(&path).and_then(Value::as_str) == Some(only.engine.as_str()))
+            .then_some(path)
     }
 }

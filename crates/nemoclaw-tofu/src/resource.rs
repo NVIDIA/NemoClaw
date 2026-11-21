@@ -3,7 +3,9 @@
 
 use crate::{Backend, Definition, Mutation, Protection, Row, State, plan_update};
 use async_trait::async_trait;
-use nemoclaw_backend::{Binding, Bound, Observation, ObservationError, refresh};
+use nemoclaw_backend::{
+    Binding, Bound, CREATED_NOTHING_SUMMARY, Observation, ObservationError, refresh,
+};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -270,9 +272,13 @@ impl ResourceAdapter {
             {
                 continue;
             }
+            // Nor carried ones, which hold the configuration as written: an
+            // empty one, such as the endpoint of a managed Kubernetes gateway
+            // that nothing publishes, leaves nothing unobserved.
+            let carried = self.definition.carried.contains(&field);
             if observed
                 .get(field)
-                .is_none_or(|value| value.is_empty() && !self.optional(field))
+                .is_none_or(|value| value.is_empty() && !self.optional(field) && !carried)
             {
                 return Err(ObservationError::Incomplete);
             }
@@ -321,8 +327,20 @@ impl ResourceAdapter {
     ) -> Option<State> {
         let (state, error) = mutation.into_parts();
         if let Some(error) = error {
+            // OpenShell validates a sandbox create before it stores anything,
+            // and reports a failure after that with another code, so this
+            // rejection lost no sandbox ID. The live gateway isolation test
+            // checks that order against the pinned OpenShell.
+            let summary = match &error {
+                ObservationError::Rejected {
+                    operation: "CreateSandbox",
+                    code: "InvalidArgument",
+                    ..
+                } if state.is_none() => CREATED_NOTHING_SUMMARY,
+                _ => "Apply incomplete",
+            };
             diags.root_error(
-                "Apply incomplete",
+                summary,
                 self.message(observation_message(error, sandbox_name(desired)), desired),
             );
         }
@@ -661,8 +679,16 @@ mod tests {
         }
     }
 
+    /// Also when one is empty, as a managed Kubernetes gateway's endpoint is
+    /// when nothing publishes it.
     #[tokio::test]
     async fn carried_fields_survive_refresh_and_apply_without_being_observed() {
+        for endpoint in ["https://gateway.example", ""] {
+            carried_field_survives_refresh_and_apply(endpoint).await;
+        }
+    }
+
+    async fn carried_field_survives_refresh_and_apply(endpoint: &str) {
         let observed: Row = [("id", "workspace/1"), ("name", "team")]
             .map(|(key, value)| (key.into(), value.into()))
             .into();
@@ -676,7 +702,7 @@ mod tests {
         let state: State = [
             ("id", "workspace/1"),
             ("name", "team"),
-            ("gateway_endpoint", "https://gateway.example"),
+            ("gateway_endpoint", endpoint),
         ]
         .map(|(key, value)| (key.into(), Value::Value(value.into())))
         .into();

@@ -33,7 +33,7 @@ fn omitted_or_empty_image_is_rejected_on_every_runtime() {
                 error.contains("spec.sandboxes.assistant")
                     && error
                         .contains("image.ref must name an agent image pinned by a SHA-256 digest")
-                    && error.contains("docs/build-deploy/build.md#build-agent-images"),
+                    && error.contains("docs/build-deploy/build.md#building-agent-images"),
                 "{name}: {error}"
             );
         }
@@ -77,8 +77,8 @@ fn application_references_do_not_enable_yaml_anchors_aliases_or_merges() {
 #[test]
 fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     let mut omitted = input("../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml");
-    for key in ["endpoint", "engine", "networkCIDR"] {
-        omitted["spec"]["gateway"]
+    for key in ["port", "engine", "networkCIDR"] {
+        omitted["spec"]["gateway"]["target"]["docker"]
             .as_object_mut()
             .unwrap()
             .remove(key);
@@ -97,10 +97,10 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     }
     let expected = parse(&omitted).unwrap();
     let mut explicit = omitted.clone();
-    for key in ["endpoint", "engine", "networkCIDR"] {
-        explicit["spec"]["gateway"][key] = json!("");
+    for key in ["engine", "networkCIDR"] {
+        explicit["spec"]["gateway"]["target"]["docker"][key] = json!("");
     }
-    explicit["spec"]["gateway"]["runtime"] = json!({"provider": "docker"});
+    explicit["spec"]["gateway"]["target"]["docker"]["port"] = json!(0);
     explicit["spec"]["sandboxes"]["assistant"]["network"] = json!({"tier": ""});
     explicit["spec"]["services"]["qwen"]["serving"] = json!({
         "port": 0, "contextTokens": 0, "maxSequences": 0, "batchTokens": 0,
@@ -115,7 +115,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     assert_eq!(parse(&explicit).unwrap(), expected);
     assert_eq!(parse(&explicit).unwrap().digest(), expected.digest());
     for path in [
-        "/spec/gateway/endpoint",
+        "/spec/gateway/target/docker/port",
         "/spec/sandboxes/assistant/image",
         "/spec/services/qwen/serving/port",
     ] {

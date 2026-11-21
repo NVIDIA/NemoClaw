@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use std::borrow::Cow;
 
 impl QuestionResolver<'_> {
     pub(super) fn collect_sdk_questions(
@@ -72,9 +73,28 @@ impl QuestionResolver<'_> {
             else {
                 continue;
             };
-            let schema = policy.sdk_schema(field, schema);
-            let value = self.authored.values.pointer(field);
-            let valid = value.is_some_and(|value| schema_accepts(&schema, value) == Some(true));
+            let supplied = self.authored.values.pointer(field);
+            let target = if field == GATEWAY_TARGET {
+                target_schema(&self.authored.values, &schema)
+            } else {
+                None
+            };
+            // The target is answered by the key that names it.
+            let (schema, value) = match target {
+                Some(target) => (
+                    target,
+                    gateway_target(&self.authored.values)
+                        .map(|key| Cow::Owned(Value::String(key.into())))
+                        .or(supplied.map(Cow::Borrowed)),
+                ),
+                None => (
+                    policy.sdk_schema(field, schema),
+                    supplied.map(Cow::Borrowed),
+                ),
+            };
+            let valid = value
+                .as_deref()
+                .is_some_and(|value| schema_accepts(&schema, value) == Some(true));
             if value.is_none() || !valid || !self.decisions.accepted.contains(field) {
                 questions.push(JourneyQuestion {
                     target: QuestionTarget::sdk(field.clone()),
@@ -91,7 +111,9 @@ impl QuestionResolver<'_> {
                     },
                     required,
                     choices: finite_choices(&schema),
-                    suggestion: value.cloned().or_else(|| schema.get("default").cloned()),
+                    suggestion: value
+                        .map(Cow::into_owned)
+                        .or_else(|| schema.get("default").cloned()),
                     schema,
                     title: None,
                     description: None,
@@ -166,6 +188,28 @@ impl QuestionResolver<'_> {
             });
         }
     }
+}
+
+/// The target question's schema: a choice of the target's keys, defaulting
+/// to the key of the SDK's default target, which an omitted target selects.
+/// Omitting the question would choose that default too, so it offers no
+/// separate omission.
+fn target_schema(values: &Value, union: &Value) -> Option<Value> {
+    let mut schema = sdk_variant_choice(union)?;
+    let default = if values
+        .pointer("/spec/gateway/management")
+        .and_then(Value::as_str)
+        == Some("external")
+    {
+        serde_json::to_value(ExternalTarget::default())
+    } else {
+        serde_json::to_value(ManagedTarget::default())
+    }
+    .ok()?;
+    if let Some(key) = default.as_object().and_then(|target| target.keys().next()) {
+        schema["default"] = Value::String(key.clone());
+    }
+    Some(schema)
 }
 
 /// A name for a deployment that has none, from its agent's harness: the last

@@ -1,15 +1,38 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# Every bundle and test executable that CI runs builds here, once per run: the
+# plan selects a suite, and the live workflows run from this run's artifacts.
 name: CI / Bundle
 on:
   # A version tag's run builds bundles that report the tag as their version,
-  # which Release / Stage attaches to the tag's release.
+  # which Release / Stage attaches to the tag's release. copy-pr-bot's
+  # pull-request/NUMBER pushes run the pull request's affected GPU and DGX
+  # Station cases, and run-brev-v1-e2e/ pushes run Live / Brev.
   push:
-    branches: [v1]
+    branches: [v1, "pull-request/[0-9]+", run-brev-v1-e2e/**]
     tags: ["v0.1.*"]
   # Stacked v1 PRs target feature branches, so do not filter by base branch.
   pull_request:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: ci runs every platform's checks; brev runs Live / Brev on v1; hcl runs the HCL cases on one target.
+        type: choice
+        options: [ci, brev, hcl]
+        default: ci
+      hcl-target:
+        description: With hcl, the hardware target; Station and Spark require a prepared Colossus runner.
+        type: choice
+        options: [rtx-pro-6000, dgx-station, dgx-spark]
+        default: rtx-pro-6000
+      hcl-hosted:
+        description: With hcl, also run the cases that use NVIDIA hosted inference.
+        type: boolean
+        default: true
+      hcl-jobs:
+        description: With hcl, comma-separated case IDs on the target; empty selects every case on the target.
+        type: string
+        default: ""
 # The planner and the Linux live suites read the per-commit image package for
 # images to reuse. GitHub checks a reusable workflow's job permissions for every
 # caller, including platforms whose live jobs never run, so grant it here.
@@ -20,15 +43,23 @@ permissions:
 # push has its own group, so it starts at once and finishes: a group per branch
 # held pushes pending behind the previous run and let a newer push replace a
 # pending one, whose commit then went untested. Only v1 pushes save the shared
-# Rust caches, which a cancelled push would leave unwritten.
+# Rust caches, which a cancelled push would leave unwritten. A push to another
+# branch and each manual run, such as Live / Brev's, which owns a VM until it
+# finishes, have their own groups too.
 concurrency:
-  group: ci-bundle-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  group: >-
+    ci-bundle-${{ github.event_name }}-${{
+    github.event_name == 'workflow_dispatch' && github.run_id ||
+    github.event_name == 'push' && (github.ref == 'refs/heads/v1' || startsWith(github.ref, 'refs/tags/')) && github.sha ||
+    github.event_name == 'push' && format('{0}-{1}', github.ref, github.sha) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   plan:
     uses: ./.github/workflows/validation-plan.yml
     with:
       full: ${{ github.event_name != 'pull_request' }}
+      suite: ${{ inputs.suite || '' }}
+      hcl-target: ${{ inputs.hcl-target || 'rtx-pro-6000' }}
   # Each platform runs its test layers: Unit, Contract, and Integration, and, on
   # Linux when the plan selects the live suites, E2E. Linux AMD64 also runs
   # the HCL E2E cases that need a model; they use the inference secret, so a
@@ -37,8 +68,11 @@ jobs:
   # Ubuntu 22.04 is the oldest supported Linux: its runners build the Linux
   # bundles and test executables, and the bundle job checks that none needs a
   # newer glibc. Test jobs run on the newer runners, which run them too.
+  # Another suite runs only the Linux platforms its live cases need, without
+  # their unit, contract, integration, and live suites.
   linux_arm64:
     needs: plan
+    if: needs.plan.outputs.suite == 'ci' || needs.plan.outputs.arm64 == 'true'
     uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: ubuntu-24.04-arm
@@ -47,11 +81,20 @@ jobs:
       platform: linux_arm64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
+      unit: ${{ needs.plan.outputs.suite == 'ci' }}
       e2e: ${{ needs.plan.outputs.live == 'true' }}
+      live-suites: ${{ needs.plan.outputs.suite == 'ci' }}
       live-images-commit: ${{ needs.plan.outputs.live_images }}
       hcl-cases: ${{ needs.plan.outputs.hcl_cases }}
+      # The DGX Station and Spark cases, through Live / HCL.
+      hcl-gpu: ${{ needs.plan.outputs.suite != 'ci' }}
+      hcl-target: ${{ needs.plan.outputs.arm64_target }}
+      hcl-hosted: false
+      hcl-jobs: ${{ inputs.hcl-jobs || '' }}
+    secrets: inherit
   linux_amd64:
     needs: plan
+    if: needs.plan.outputs.suite == 'ci' || needs.plan.outputs.amd64 == 'true'
     uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: ubuntu-24.04
@@ -60,14 +103,21 @@ jobs:
       platform: linux_amd64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
+      unit: ${{ needs.plan.outputs.suite == 'ci' }}
       e2e: ${{ needs.plan.outputs.live == 'true' }}
+      live-suites: ${{ needs.plan.outputs.suite == 'ci' }}
       live-images-commit: ${{ needs.plan.outputs.live_images }}
       hcl-cases: ${{ needs.plan.outputs.hcl_cases }}
-      hcl: ${{ needs.plan.outputs.live == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-      hcl-gpu: ${{ needs.plan.outputs.live == 'true' && github.event_name != 'pull_request' }}
+      hcl: ${{ needs.plan.outputs.suite == 'ci' && needs.plan.outputs.live == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      hcl-gpu: >-
+        ${{ needs.plan.outputs.suite == 'ci' && needs.plan.outputs.live == 'true' && github.event_name != 'pull_request' ||
+        needs.plan.outputs.gpu == 'true' }}
+      hcl-hosted: ${{ needs.plan.outputs.suite == 'hcl' && inputs.hcl-hosted == true }}
+      hcl-jobs: ${{ inputs.hcl-jobs || '' }}
     secrets: inherit
   darwin_arm64:
     needs: plan
+    if: needs.plan.outputs.suite == 'ci'
     uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: macos-15
@@ -76,6 +126,7 @@ jobs:
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
   windows_amd64:
     needs: plan
+    if: needs.plan.outputs.suite == 'ci'
     uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: windows-2025
@@ -93,6 +144,97 @@ jobs:
         {"layer": "integration", "shard": 1, "shards": 3},
         {"layer": "integration", "shard": 2, "shards": 3},
         {"layer": "integration", "shard": 3, "shards": 3}]
+  # A copied pull request's selected hardware cases, in one comment on the
+  # pull request; only this job may write to pull requests.
+  recommendations:
+    needs: plan
+    # The plan selects the hardware suite only for copy-pr-bot's push of an open,
+    # non-draft v1 pull request's current head.
+    if: needs.plan.result == 'success' && needs.plan.outputs.suite == 'hardware'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: v1-e2e-recommendations-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      pull-requests: write
+    steps:
+      # The publisher consumes data only, with no candidate checkout or executable.
+      - name: Post public E2E recommendations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOMMENDATIONS: ${{ needs.plan.outputs.recommendations }}
+        shell: bash
+        run: |
+          [[ $GITHUB_REF_NAME =~ ^pull-request/([1-9][0-9]*)$ ]] || exit 1
+          number=${BASH_REMATCH[1]}
+          [[ $GITHUB_SHA =~ ^[a-f0-9]{40}$ ]] || exit 1
+          is_current_pr() {
+            jq -e --arg sha "$GITHUB_SHA" '
+              .state == "open" and .draft == false and .base.ref == "v1" and .head.sha == $sha
+            ' > /dev/null
+          }
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+          is_current_pr <<< "$pr" || exit 0
+
+          # Raw reasons can contain diagnostics. Only fixed reason text is public.
+          jq -er --arg sha "$GITHUB_SHA" '
+            def public_reason:
+              if startswith("could not analyze changes") then "Conservative selection: impact analysis could not narrow the cases."
+              elif startswith("every case runs:") then "Shared code or test infrastructure changed."
+              elif . == "every case selected with --all" then "All cases were requested."
+              elif . == "requested with --add" then "An operator requested this additional case."
+              elif endswith(", an input of a runtime image this case runs") then "This test’s model runtime image changed."
+              elif endswith(" changed") then "This test’s deployment or scenario changed."
+              else "Selected by changed-file rules." end;
+            if .commit == $sha and (.cases | type) == "object" and
+              (.runners.gpu | type) == "array" and (.runners["dgx-station"] | type) == "array"
+            then . else error("Invalid recommendation plan") end |
+            . as $plan | (.runners.gpu + .runners["dgx-station"] | unique | sort) as $ids |
+            if all($ids[]; if type == "string" then test("^[a-z0-9-]+$") else false end) and
+              all($ids[]; $plan.cases[.].run == true and ($plan.cases[.].reason | type) == "string")
+            then ["<!-- nemoclaw-v1-e2e-recommendations -->", "## Selected hardware E2Es", "", "Commit: `\($sha)`", "",
+              (if $ids == [] then "No hardware E2Es selected by changed-file rules."
+               else "Selected cases run automatically; results do not gate merging.",
+                 ($ids | map({id: ., reason: ($plan.cases[.].reason | public_reason)}) | group_by(.reason)[] |
+                   "", .[0].reason, (.[] | "- `\(.id)`")) end)] | join("\n")
+            else error("Invalid recommendation cases") end
+          ' <<< "$RECOMMENDATIONS" > "$RUNNER_TEMP/recommendations.md"
+          jq -n --rawfile body "$RUNNER_TEMP/recommendations.md" '{body: $body}' > "$RUNNER_TEMP/recommendations.json"
+
+          id=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$number/comments?per_page=100" |
+            jq -r '[.[][] | select(.user.login == "github-actions[bot]" and .user.type == "Bot") |
+              select((.body // "") | startswith("<!-- nemoclaw-v1-e2e-recommendations -->"))] |
+              if length > 1 then error("Multiple recommendation comments require reconciliation")
+              else .[0].id // empty end')
+          # Selection and comment pagination take time; bind the write to the head again.
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+          is_current_pr <<< "$pr" || exit 0
+          if [[ -n $id ]]; then
+            [[ $id =~ ^[1-9][0-9]*$ ]] || exit 1
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" --input "$RUNNER_TEMP/recommendations.json" > /dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$number/comments" --input "$RUNNER_TEMP/recommendations.json" > /dev/null
+          fi
+  # Live / Brev prepares its VM and image while Linux AMD64 builds the bundle
+  # and the e2e test executable, which its lifecycle then runs.
+  brev-host:
+    needs: plan
+    if: needs.plan.outputs.suite == 'brev'
+    uses: ./.github/workflows/brev-host.yml
+    secrets: inherit
+  brev:
+    needs: [plan, linux_amd64, brev-host]
+    # Deletes the VM whenever the host workflow named one, including after a
+    # failure or a cancellation.
+    if: always() && needs.plan.outputs.suite == 'brev' && needs.brev-host.outputs.instance != ''
+    uses: ./.github/workflows/brev.yml
+    with:
+      instance: ${{ needs.brev-host.outputs.instance }}
+      ready: ${{ needs.brev-host.result == 'success' && needs.linux_amd64.result == 'success' }}
+      tests: ${{ needs.linux_amd64.outputs.lifecycle-artifact }}
+      bundle: ${{ needs.linux_amd64.outputs.bundle-artifact }}
+    secrets: inherit
   # macOS and Windows only report the binary budgets, so their whole-suite
   # timing reports run here, outside the Test checks and the macOS and Windows
   # runner queues, with the Linux build tool. The tool enforces budgets when
@@ -100,7 +242,7 @@ jobs:
   timing:
     name: ${{ matrix.platform }} / ${{ matrix.layer == 'contract' && 'Contract' || 'Integration' }} timing report
     needs: [plan, linux_amd64, darwin_arm64, windows_amd64]
-    if: ${{ !cancelled() && needs.plan.outputs.lifecycle == 'true' && needs.linux_amd64.outputs.lifecycle-artifact != '' }}
+    if: ${{ !cancelled() && needs.plan.outputs.suite == 'ci' && needs.plan.outputs.lifecycle == 'true' && needs.linux_amd64.outputs.lifecycle-artifact != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -143,8 +285,11 @@ jobs:
     # Unlike always(), this reports a cancelled run's gates as cancelled, not failed;
     # neither counts as a passing required check. Without a condition, a failed
     # platform would skip the gate, and GitHub counts a skipped check as passing.
-    if: ${{ !cancelled() }}
-    needs: [linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
+    # Another suite's run, such as a copied pull request head's, reports no
+    # Test checks: a skipped matrix job keeps its unexpanded name, so it can't
+    # stand in for the pull request's own. A failed plan fails them.
+    if: ${{ !cancelled() && (needs.plan.result != 'success' || needs.plan.outputs.suite == 'ci') }}
+    needs: [plan, linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
     strategy:
       fail-fast: false
       matrix:

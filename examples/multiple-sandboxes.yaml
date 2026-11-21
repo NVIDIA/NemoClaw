@@ -10,8 +10,8 @@ metadata:
 spec:
   gateway:
     management: external
-    runtime:
-      provider: docker
+    target:
+      docker: {}
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
     local:
@@ -20,7 +20,7 @@ spec:
   sandboxes:
     alice:
       image:
-        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#build-agent-images.
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#building-agent-images.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
@@ -31,7 +31,7 @@ spec:
         inferenceRef: chat
     bob:
       image:
-        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#build-agent-images.
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#building-agent-images.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated

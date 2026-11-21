@@ -3,7 +3,7 @@
 
 # Change a Service Exposure
 
-Adding, changing, or removing one of a sandbox's `serviceExposures` updates the running sandbox's endpoints in place, as [usage.md](../../../../docs/build-deploy/usage.md#choose-the-change-path)'s change-path table states.
+Adding, changing, or removing one of a sandbox's `serviceExposures` updates the running sandbox's endpoints in place, as [usage.md](../../../../docs/build-deploy/usage.md#choosing-the-change-path)'s change-path table states.
 The plan says so before apply, the gateway records the exposure after it, and the agent answers in the same sandbox under the same runtime.
 
 ## Sub-features

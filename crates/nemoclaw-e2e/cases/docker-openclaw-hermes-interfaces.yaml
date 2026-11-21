@@ -7,7 +7,8 @@
 # markers the request holds, and refuses any request without the run's key.
 # The OpenClaw agent, in claw, and a second Hermes agent, in hermes-messages,
 # reach the stub through an anthropic provider: they call the Messages API,
-# and the provider places the key in x-api-key. Apply reports each interface; a person reaches it with
+# and the provider places the key in x-api-key. hermes-messages's provider
+# serves the Messages API at a path that isn't Anthropic's. Apply reports each interface; a person reaches it with
 # the pinned OpenShell CLI's forward and the token apply names. cargo ci
 # live-docker gives each run a fresh identity, gateway port and subnet, stub
 # address, volume names, and agent images. Only claw grants python3 the
@@ -26,11 +27,11 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: docker
-    engine: unix:///var/run/docker.sock
-    endpoint: http://127.0.0.1:17698
-    networkCIDR: 172.30.123.0/24
+    target:
+      docker:
+        engine: unix:///var/run/docker.sock
+        port: 17698
+        networkCIDR: 172.30.123.0/24
     config:
       openshell.drivers.docker:
         allow_driver_config: true
@@ -43,14 +44,21 @@ spec:
       credential:
         env: NEMOCLAW_TEST_INTERFACES_MODEL_KEY
     # The stub serves the Messages API under /anthropic, as Anthropic-compatible
-    # gateways do. Hermes calls https://api.anthropic.com instead of an
-    # anthropic provider's endpoint unless the endpoint's host is an
-    # Anthropic, Claude, or Azure host or its path ends in /anthropic or
-    # /anthropic/v1.
+    # gateways do, and under /custom.
     messages:
       provider: anthropic
       api: anthropic-messages
       endpoint: http://172.30.123.1:17699/anthropic/v1
+      credential:
+        env: NEMOCLAW_TEST_INTERFACES_MODEL_KEY
+    # Hermes itself treats an anthropic endpoint as Anthropic's only for an
+    # Anthropic, Claude, or Azure host or a path ending in /anthropic or
+    # /anthropic/v1, and otherwise calls https://api.anthropic.com; Fabric
+    # configures it to call this endpoint (NVIDIA/NeMo-Fabric#666).
+    custom-messages:
+      provider: anthropic
+      api: anthropic-messages
+      endpoint: http://172.30.123.1:17699/custom/v1
       credential:
         env: NEMOCLAW_TEST_INTERFACES_MODEL_KEY
   sandboxes:
@@ -178,6 +186,6 @@ spec:
         inference:
           routes:
             - name: primary
-              providerRef: messages
+              providerRef: custom-messages
               overrides:
                 model: fixture-model

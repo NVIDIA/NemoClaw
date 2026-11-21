@@ -9,8 +9,8 @@ use nemoclaw_sdk::config::ComputeDriver;
 use serde_json::{Value, json};
 
 const API: &str = "/spec/inferenceProviders/nvidia-prod/api";
-const ENGINE: &str = "/spec/gateway/engine";
-const RUNTIME: &str = "/spec/gateway/runtime/provider";
+const ENGINE: &str = "/spec/gateway/target/docker/engine";
+const TARGET: &str = "/spec/gateway/target";
 const HARNESS: &str = "/spec/sandboxes/assistant/harness/kind";
 const TIER: &str = "/spec/sandboxes/assistant/network/tier";
 const ROUTE: &str = "/spec/sandboxes/assistant/agent/inference/routes/0";
@@ -114,7 +114,7 @@ fn an_edited_vendor_endpoint_asks_the_api_again() {
     );
 }
 
-/// A journey that reviews deployment fields after choosing the runtime, on a
+/// A journey that reviews deployment fields after choosing Docker, on a
 /// machine where `engines` answered.
 fn engine_journey(
     values: &Value,
@@ -125,13 +125,13 @@ fn engine_journey(
 ) {
     let capabilities = Capabilities::available();
     let mut state = JourneyDefinition::new("engine", base(values))
-        .ask([RUNTIME])
+        .ask([TARGET])
         .ask([JourneyScope::DeploymentFields])
         .start(&capabilities)
         .unwrap();
     let observations = crate::support::found_local_engines(&mut state, engines);
     state
-        .answer(&capabilities, RUNTIME, Some(json!("docker")))
+        .answer(&capabilities, TARGET, Some(json!("docker")))
         .unwrap();
     (state, observations)
 }
@@ -166,7 +166,7 @@ fn the_engine_is_asked_when_several_or_none_answered_or_the_template_differs() {
         ),
     ];
     let mut other = example();
-    other["spec"]["gateway"]["engine"] = json!("unix:///srv/owned/docker.sock");
+    other["spec"]["gateway"]["target"]["docker"]["engine"] = json!("unix:///srv/owned/docker.sock");
     for (name, values, engines) in [
         ("several", example(), several.as_slice()),
         ("none", example(), &[][..]),
@@ -256,18 +256,18 @@ fn omitting_a_native_model_setting_leaves_no_empty_settings() {
 fn an_optional_choice_whose_default_is_offered_cannot_also_be_omitted() {
     let capabilities = Capabilities::available();
     let mut state = JourneyDefinition::new("omit", base(&example()))
-        .ask([RUNTIME])
+        .ask([TARGET])
         .start(&capabilities)
         .unwrap();
-    let runtime = state
+    let target = state
         .resolve(&capabilities)
         .unwrap()
-        .question(RUNTIME)
+        .question(TARGET)
         .cloned()
         .unwrap();
-    assert!(!runtime.required());
-    assert!(!runtime.omittable());
-    assert!(state.answer(&capabilities, RUNTIME, None).is_err());
+    assert!(!target.required());
+    assert!(!target.omittable());
+    assert!(state.answer(&capabilities, TARGET, None).is_err());
 
     let native = JourneyDefinition::new("omit", base(&example()))
         .ask(["model:/supports_usage_in_streaming"])

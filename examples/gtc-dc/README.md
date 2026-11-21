@@ -36,7 +36,7 @@ KV and SSM cache dtypes use runtime defaults; model output accuracy and tool cal
 
 Ubuntu 24.04 is the assumed Linux environment, including the WSL2 distribution.
 Use [the build prerequisites](../../docs/build-deploy/build.md), Docker with NVIDIA GPU access and the containerd image store, and driver major 580 or newer.
-Each model container must see exactly one NVIDIA GPU; on a host with more, set the service's [`container.gpuDevices`](../../docs/agents-inference/inference.md#set-container-limits-and-update-policy) to the target GPU.
+Each model container must see exactly one NVIDIA GPU; on a host with more, set the service's [`container.gpuDevices`](../../docs/agents-inference/inference.md#setting-container-limits-and-update-policy) to the target GPU.
 These configurations provide neither CPU offloading nor multi-GPU serving.
 
 | Target | Hardware requirement | Memory accounting |
@@ -54,7 +54,7 @@ The 88 GiB budget and 28 GiB reserve require at least 116 GiB total memory obser
 A WSL2 memory limit that passes these checks leaves at most 12 GiB of the 128 GB configuration for firmware, Windows, and other applications.
 Whether memory observed inside WSL2 accounts for GPU allocations made through the Windows driver is untested; measure both inside WSL2 and in Windows while the model loads.
 Model loading and GPU access through WSL2 still require validation on the selected machine.
-See [hardware admission and memory checks](../../docs/agents-inference/models.md#choose-a-hardware-profile) and [platform limits](../../docs/resources/limits.md#platforms-models-and-placement).
+See [hardware admission and memory checks](../../docs/agents-inference/models.md#choosing-a-hardware-profile) and [platform limits](../../docs/resources/limits.md#platforms-models-and-placement).
 
 On the Station, DGX Spark, or inside the RTX Spark's ARM64 WSL2 distribution, run from the repository root:
 
@@ -90,7 +90,7 @@ dist/linux_arm64/bin/nemoclaw plan --state-dir .local/gtc-dc/state .local/gtc-dc
 For a Windows target, copy its corresponding `*-windows-wsl2-rtx-spark.yaml` file instead and run the same Linux ARM64 command inside WSL2.
 
 Plan observes the selected environment without creating deployment resources or requesting inference.
-Follow [the deployment workflow](../../docs/build-deploy/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/agents-inference/inference.md#verify-the-result) separately.
+Follow [the deployment workflow](../../docs/build-deploy/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/agents-inference/inference.md#verifying-the-result) separately.
 
 ## AMD64 Kubernetes with NVIDIA Cloud Inference
 
@@ -121,10 +121,10 @@ Set `NEMOCLAW_CLUSTER_KUBECONFIG` to the kubeconfig file for that context.
 NemoClaw installs the gateway and creates development authentication material; its providers use command-scoped loopback tunnels, so no `GATEWAY_*` credentials are required.
 The YAML enables PVC driver configuration through `spec.gateway.config`; the HCL sets the same Helm `gatewayConfig` value.
 Both paths install the gateway with the permissions needed to inspect PVCs.
-The [development authentication profile](../../docs/build-deploy/kubernetes.md#deploy-with-a-managed-gateway) is for development clusters; use the documented OIDC profile for an existing issuer.
+The [development authentication profile](../../docs/build-deploy/kubernetes.md#deploying-with-a-managed-gateway) is for development clusters; use the documented OIDC profile for an existing issuer.
 
 Before applying either configuration, the platform operator must create `gtc-dc-openclaw-data` and `gtc-dc-hermes-data` in the sandbox namespace.
-Use `spec.gateway.kubernetes.namespace` for YAML or `var.namespace` for HCL; create that namespace before provisioning the claims if it does not exist.
+Use `spec.gateway.target.kubernetes.namespace` for YAML or `var.namespace` for HCL; create that namespace before provisioning the claims if it does not exist.
 Prepare `workspace/` and `artifacts/` on each claim, writable by UID/GID `10001:10001`, and add these PVC labels:
 
 ```yaml
@@ -137,7 +137,7 @@ metadata:
 For YAML, use the OpenShell workspace printed by `nemoclaw plan`; for HCL, use `var.workspace`.
 The workspace label is not the Kubernetes namespace; an operator-configured admission label map replaces these defaults.
 Both configurations mount each claim's subdirectories at `/sandbox/workspace` and `/sandbox/artifacts`.
-See [mounted-volume preparation and retention](../../docs/build-deploy/state.md#keep-agent-files-on-mounted-volumes) before adding mounts to an existing deployment; adding mounts replaces the sandbox and does not migrate its files.
+See [mounted-volume preparation and retention](../../docs/build-deploy/state.md#keeping-agent-files-on-mounted-volumes) before adding mounts to an existing deployment; adding mounts replaces the sandbox and does not migrate its files.
 Retaining files does not resume conversations.
 Follow the [deployment workflow](../../docs/build-deploy/usage.md) for apply and retained teardown.
 
@@ -159,7 +159,7 @@ Run the bundle's `libexec/tofu` to initialize, validate, plan, and apply that di
 For HCL workload teardown, remove the workspace's `prevent_destroy` protection, then run `tofu destroy -var destroy=true -target=openshell_kubernetes_auth.platform` to remove authentication and its dependent gateway and agents.
 Keep the `openshell_kubernetes_storage.platform` resource and its `prevent_destroy` protection; the namespace, key Secret, and gateway storage remain for recovery.
 Choose one authoring path per deployment, with its own workspace and state; applying both configurations does not adopt the other path's resources.
-Verify an [agent response](../../docs/agents-inference/inference.md#verify-the-result) from each sandbox separately.
+Verify an [agent response](../../docs/agents-inference/inference.md#verifying-the-result) from each sandbox separately.
 
 ## Sources and Adaptation
 

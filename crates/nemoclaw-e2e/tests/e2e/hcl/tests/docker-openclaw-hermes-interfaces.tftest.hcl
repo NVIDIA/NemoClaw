@@ -19,6 +19,8 @@
 # the stub's reply too; the stub accepts a Messages request's key only in
 # x-api-key, so OpenClaw's and Hermes's replies show that each called
 # Anthropic's Messages API with the key where the provider places it.
+# hermes-messages's provider endpoint ends in /custom/v1, not /anthropic/v1,
+# so its replies also show that Hermes called the configured endpoint.
 # In claw and hermes,
 # the agent's user can write and read a file in the agent's workspace, and
 # the key is not in the environment a command sees. In claw, python3 reaches
@@ -377,7 +379,7 @@ run "commands" {
           except urllib.error.HTTPError as error: print(error.status)
           except urllib.error.URLError as error: print(errno.errorcode.get(error.reason.errno, error.reason))
         EOT
-        , "http://${cidrhost(yamldecode(file(jsondecode(var.context).config)).spec.gateway.networkCIDR, 2)}${regex(":[0-9]+$", run.apply.result.connection.gatewayEndpoint)}/"]
+        , "http://${cidrhost(yamldecode(file(jsondecode(var.context).config)).spec.gateway.target.docker.networkCIDR, 2)}${regex(":[0-9]+$", run.apply.result.connection.gatewayEndpoint)}/"]
         contains = "EACCES\n"
       }
     }

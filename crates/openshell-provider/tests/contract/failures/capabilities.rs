@@ -168,7 +168,7 @@ async fn gateway_capabilities_gate_plans_and_saved_plan_applies() {
         assert!(
             normalized.contains(if failure == "driver" {
                 "Gateway is incompatible with this configuration: gateway compute driver is \
-                 podman, but spec.gateway.runtime.provider is docker."
+                 podman, but spec.gateway.target selects docker."
             } else {
                 "Gateway capability observation failed"
             }),

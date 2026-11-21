@@ -107,7 +107,7 @@ cp "$EXAMPLE" "$RUN_DIR/deployment.yaml"
 ```
 
 1. `metadata.uid` → `$UID_`; `metadata.name` → `verify-$AGENT-$TARGET`.
-2. `spec.gateway.endpoint` → `http://127.0.0.1:$GATEWAY_PORT`; `spec.gateway.networkCIDR` → `$SUBNET`.
+2. `spec.gateway.target.docker.port` → `$GATEWAY_PORT`; `spec.gateway.target.docker.networkCIDR` → `$SUBNET`.
 3. Every `image.ref` and service `image` with a zero digest → the built references (`$IMAGE` for the sandbox).
 4. The inference source's edits from the target file, such as replacing `services` and `inferenceProviders`.
 5. The agent file's edits, such as `serviceExposures` and `harness.settings`.
@@ -201,7 +201,7 @@ When destroy fails, keep the state directory and the bundle: they are the only r
 Run destroy and the removal below in one sequence, never concurrently: removing the state or bundle mid-destroy fails it and strands the deployment.
 
 Destroy retains the gateway's storage and, for a managed model service, its model data.
-Remove what this run created with [Remove Retained Resources](../../../docs/build-deploy/usage.md#remove-retained-resources), selecting by this run's UID only:
+Remove what this run created with [Removing Retained Resources](../../../docs/build-deploy/usage.md#removing-retained-resources), selecting by this run's UID only:
 
 ```sh
 owner_label="label=nemoclaw.nvidia.com/uid=$UID_"
@@ -222,7 +222,7 @@ docker network ls --quiet --filter "$owner_label" | xargs -r docker network rm
 docker ps --all --format '{{.Names}}' | grep -c "^openshell-$WORKSPACE--" || true
 ```
 
-Both counts must be 0; otherwise keep the state directory and the bundle, as [Remove Retained Resources](../../../docs/build-deploy/usage.md#remove-retained-resources) requires.
+Both counts must be 0; otherwise keep the state directory and the bundle, as [Removing Retained Resources](../../../docs/build-deploy/usage.md#removing-retained-resources) requires.
 Then remove them and check that the evidence still lists:
 
 ```sh

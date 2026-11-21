@@ -18,8 +18,8 @@ Empty or zero selects a default only where stated.
 ## Validation Beyond the Schema
 
 - Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
-- The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
-- Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without kubernetes.expose, its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path; with it, the endpoint names a lowercase DNS name or IPv4 address and an explicit port. kubernetes.expose.service has the chart's NodePort Service publish that port, which Kubernetes checks against the cluster's node-port range; kubernetes.expose.route, only with gateway.runtime.provider openshift, has the chart's pass-through Route publish the host, which must be a DNS name, at the port the cluster's router serves. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.
+- The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
+- A managed kubernetes or openshift target requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without expose, the document names no endpoint: each command forwards a free local port to the gateway pod. With it, expose.endpoint names a lowercase DNS name or IPv4 address and an explicit port. expose.service has the chart's NodePort Service publish that port, which Kubernetes checks against the cluster's node-port range; expose.route, only on the openshift target, has the chart's pass-through Route publish the host, which must be a DNS name, at the port the cluster's router serves. Managed inference services are excluded. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.
 - The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.
@@ -90,7 +90,7 @@ Paths:
 
 Who registers APF with the gateway as its interceptor and provider-profile source.
 
-Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+Guide: [Letting APF author sandbox policy](../build-deploy/usage.md#letting-apf-author-sandbox-policy).
 
 Paths:
 
@@ -152,7 +152,7 @@ Constraints: `"api-key"`.
 
 OpenShell's service authorization modes.
 
-Guide: [Agent interfaces](../agents-inference/interfaces.md#expose-a-service-through-the-gateway).
+Guide: [Agent interfaces](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway).
 
 Paths:
 
@@ -277,6 +277,23 @@ Paths:
 | `minDriverMajor` | integer | Yes | — | Minimum installed NVIDIA driver major version. Constraints: minimum 1; maximum 9999. |
 | `minGpuMemoryBytes` | integer | Yes | — | Minimum total dedicated memory of each selected GPU in bytes. Host RAM is measured separately. Constraints: minimum 4294967296; maximum 4398046511104. |
 
+## DockerTarget
+
+A managed gateway container on a local Docker engine.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.target.docker`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `engine` | string | No | `"unix:///var/run/docker.sock"` | The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket. Constraints: `""` or pattern `^(unix:///\|npipe:////\./pipe/)`. Omitted or empty selects Docker's default socket. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before local container creation: IfNotPresent, the default, or Never. Constraints: `"IfNotPresent"` or `"Never"`. |
+| `networkCIDR` | string | No | — | Canonical private IPv4 /24 of the network the gateway and its sandboxes share. Constraints: `""` or pattern `/24$`. Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
+| `port` | integer | No | `17681` | Loopback TCP port the gateway listens on, from 1024 through 65535. NemoClaw and the OpenShell CLI reach the gateway at `http://127.0.0.1:PORT`. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
+
 ## ExplicitPolicy
 
 Credential-free OpenShell policy. Validation and protocol conversion use the pinned OpenShell policy library.
@@ -319,7 +336,7 @@ Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-an
 
 Paths:
 
-- `spec.gateway.kubernetes.expose.route`
+- `spec.gateway.target.openshift.expose.route`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -327,23 +344,52 @@ Paths:
 
 ## ExposureService
 
-The Service that publishes a managed Kubernetes gateway.
+The Service that publishes a managed cluster gateway.
 
 Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
-- `spec.gateway.kubernetes.expose.service`
+- `spec.gateway.target.kubernetes.expose.service`
+- `spec.gateway.target.openshift.expose.service`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `type` | string | Yes | — | `NodePort` listens on the endpoint's port on every node; the port must be in the cluster's node-port range, 30000 through 32767 by default. Constraints: `"NodePort"`. |
 
+## ExternalCluster
+
+No settings: each sandbox's image.metadata stands in for an engine NemoClaw could inspect.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.target.kubernetes`
+- `spec.gateway.target.openshift`
+
+Accepted input: object.
+
+## ExternalEngine
+
+The engine holding an existing gateway's sandbox images.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.target.docker`
+- `spec.gateway.target.podman`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `engine` | string | No | — | Engine containing the sandbox images, used only for image metadata inspection. Required for deployment planning; omission permits retained-state teardown. |
+
 ## ExternalOllama
 
 External Ollama daemon observed by the managed proxy installer.
 
-Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy).
+Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy).
 
 Paths:
 
@@ -358,7 +404,7 @@ Paths:
 
 Existing Ollama model installation, independently owned outside the deployment.
 
-Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy).
+Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy).
 
 Paths:
 
@@ -368,6 +414,54 @@ Paths:
 |---|---|---|---|---|
 | `digest` | string | Yes | — | Lowercase 64-character model digest reported by Ollama's /api/tags API. Constraints: pattern `^[a-f0-9]{64}$`. |
 | `name` | string | Yes | — | Installed Ollama model name including its tag. Constraints: pattern `^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$`. |
+
+## ExternalTarget
+
+Where an existing gateway runs its sandboxes: exactly one of docker, podman, kubernetes, and openshift.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.target`
+
+Accepted input: object.
+
+### Alternative 1
+
+A gateway that runs sandboxes on a Docker engine.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `docker` | [ExternalEngine](#externalengine) | Yes | — | A gateway that runs sandboxes on a Docker engine. |
+
+### Alternative 2
+
+A gateway that runs sandboxes on a Podman engine.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `podman` | [ExternalEngine](#externalengine) | Yes | — | A gateway that runs sandboxes on a Podman engine. |
+
+### Alternative 3
+
+A gateway that runs sandboxes on a Kubernetes cluster.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `kubernetes` | [ExternalCluster](#externalcluster) | Yes | — | A gateway that runs sandboxes on a Kubernetes cluster. |
+
+### Alternative 4
+
+A gateway that runs sandboxes on an OpenShift cluster.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `openshift` | [ExternalCluster](#externalcluster) | Yes | — | A gateway that runs sandboxes on an OpenShift cluster. |
 
 ## File
 
@@ -393,8 +487,9 @@ Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-an
 
 Paths:
 
-- `spec.gateway.kubernetes.kubeconfig`
 - `spec.gateway.policyAuthority.apf.tls.ca`
+- `spec.gateway.target.kubernetes.kubeconfig`
+- `spec.gateway.target.openshift.kubeconfig`
 - `spec.gateway.tls.ca`
 - `spec.gateway.tls.certificate`
 - `spec.gateway.tls.key`
@@ -406,7 +501,7 @@ Paths:
 
 ## Gateway
 
-Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.
+Install a gateway on a local engine or an existing cluster, or connect to an existing gateway.
 
 Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
@@ -419,20 +514,14 @@ Accepted input: object.
 ### Alternative 1
 
 A gateway installed and managed by this deployment. The SDK pins its image.
-Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
 
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `config` | any JSON value | No | — | OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets. |
-| `endpoint` | string | No | `"http://127.0.0.1:17681"` | Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://HOST:PORT` with an explicit nonzero port and no trailing slash. Providers forward free local ports of their own to the owned gateway. Without `kubernetes.expose`, the host is `127.0.0.1` and this port is not bound. With it, the endpoint is the lowercase DNS name or IPv4 address and port other clients dial, and the gateway certificate names its host. Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS endpoint and port: 127.0.0.1 without kubernetes.expose, or the address clients dial with it. |
-| `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed local gateway engine: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket. Excluded by kubernetes. With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes. |
-| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes. |
-| `kubernetes` | [ManagedKubernetes](#managedkubernetes) | No | — | Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services. |
+| `config` | any JSON value | No | — | OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes and OpenShift pass it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
-| `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes. Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes. |
 | `policyAuthority` | [PolicyAuthority](#policyauthority) | No | — | Who authors sandbox policy on this gateway; omission means NemoClaw does. |
-| `runtime` | [Runtime](#runtime) | No | — | Compute driver the gateway runs every sandbox with; omission selects Docker. |
+| `target` | [ManagedTarget](#managedtarget) | No | — | Where NemoClaw installs the gateway, which also selects the compute driver it runs every sandbox with. Omission selects Docker with its defaults. |
 
 ### Alternative 2
 
@@ -443,10 +532,9 @@ An existing gateway managed outside this deployment.
 |---|---|---|---|---|
 | `credential` | [SecretRef](#secretref) | No | — | Optional bearer credential reference for an external HTTPS gateway. |
 | `endpoint` | string | Yes | — | Gateway HTTP(S) origin, without a path. Constraints: pattern `^https?://`. |
-| `engine` | string | No | — | Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
 | `policyAuthority` | [PolicyAuthority](#policyauthority) | No | — | Who authors sandbox policy on this gateway; omission means NemoClaw does. |
-| `runtime` | [Runtime](#runtime) | No | — | Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports. |
+| `target` | [ExternalTarget](#externaltarget) | No | — | Where the existing gateway runs its sandboxes; omission selects Docker. Planning checks it against the compute driver the gateway reports. |
 | `tls` | [TLS](#tls) | No | — | Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS. |
 
 ## GgufModel
@@ -532,7 +620,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `metadata` | [FileRef](#fileref) | No | — | Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead. |
-| `ref` | string | Yes | — | Immutable image reference, pinned by SHA-256 digest. Required on every runtime; build one as described in the agent image build instructions. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `ref` | string | Yes | — | Immutable image reference, pinned by SHA-256 digest. Required on every gateway target; build one as described in the agent image build instructions. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 
 ## ImagePullPolicy
 
@@ -542,7 +630,8 @@ Guide: [Container image downloads](../build-deploy/usage.md#control-container-im
 
 Paths:
 
-- `spec.gateway.imagePullPolicy`
+- `spec.gateway.target.docker.imagePullPolicy`
+- `spec.gateway.target.podman.imagePullPolicy`
 - `spec.services.{key}.imagePullPolicy`
 
 Accepted input: string.
@@ -691,7 +780,7 @@ A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
 
 TLS file reference for a service the gateway dials.
 
-Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+Guide: [Letting APF author sandbox policy](../build-deploy/usage.md#letting-apf-author-sandbox-policy).
 
 Paths:
 
@@ -703,13 +792,14 @@ Paths:
 
 ## KubernetesAuthentication
 
-Authentication provisioned for a managed Kubernetes gateway.
+Authentication provisioned for a managed cluster gateway.
 
 Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
-- `spec.gateway.kubernetes.authentication`
+- `spec.gateway.target.kubernetes.authentication`
+- `spec.gateway.target.openshift.authentication`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -719,18 +809,18 @@ Paths:
 
 ## KubernetesExpose
 
-Publication of a managed Kubernetes gateway's endpoint, through exactly one of `service` and `route`.
+Publication of a managed Kubernetes gateway's endpoint through the chart's Service.
 
 Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
-- `spec.gateway.kubernetes.expose`
+- `spec.gateway.target.kubernetes.expose`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `route` | [ExposureRoute](#exposureroute) | No | — | The gateway chart's own OpenShift Route, which publishes the endpoint's host through the cluster's router and passes TLS through to the gateway by SNI, so TLS and client certificates reach the gateway unchanged. The endpoint's host is a DNS name, since clients send no SNI host name for an IP address, and its port is the one the router serves. Requires `runtime.provider: openshift`. |
-| `service` | [ExposureService](#exposureservice) | No | — | The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged. |
+| `endpoint` | string | Yes | — | The address clients outside the cluster dial: `https://HOST:PORT`, with a lowercase DNS name or IPv4 address and an explicit nonzero port, and no path. The gateway certificate names its host. Constraints: pattern `^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*:(?:[1-9][0-9]{0,3}\|[1-5][0-9]{4}\|6[0-4][0-9]{3}\|65[0-4][0-9]{2}\|655[0-2][0-9]\|6553[0-5])$`. |
+| `service` | [ExposureService](#exposureservice) | Yes | — | The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged. |
 
 ## LlamaCppServing
 
@@ -754,23 +844,89 @@ Paths:
 
 ## ManagedKubernetes
 
-Existing-cluster target for a managed development gateway: an explicit kubeconfig and context, or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. `runtime.provider: openshift` selects the OpenShift profile.
+An existing cluster for a managed gateway, reached with an explicit kubeconfig and context or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. Without expose, NemoClaw reaches the gateway through a port forward on a free local port for each command, so the document names no port.
 
 Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
-- `spec.gateway.kubernetes`
+- `spec.gateway.target.kubernetes`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `authentication` | [KubernetesAuthentication](#kubernetesauthentication) | Yes | — | How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer. |
 | `context` | string | No | — | Exact kubeconfig context used for every cluster operation. Requires kubeconfig. Constraints: pattern `^[^\x00-\x20\x7f]+$`; minimum characters 1; maximum characters 253. |
 | `environment` | array of string | No | — | Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Requires kubeconfig. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state. Constraints: maximum items 32; items: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
-| `expose` | [KubernetesExpose](#kubernetesexpose) | No | — | How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host. NemoClaw's own commands still forward a free local port to the gateway pod. Whether a Service or a Route publishes the gateway, and the Service's type, are fixed after the first successful plan. |
-| `imagePullSecrets` | array of string | No | — | Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them in the namespace before the first apply, or after the SDK creates it, before its pods need to pull images. Constraints: maximum items 32; items: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$`; minimum characters 1; maximum characters 253. |
+| `expose` | [KubernetesExpose](#kubernetesexpose) | No | — | How clients outside the cluster reach the gateway: the endpoint they dial, and the Service or Route that publishes it. The gateway certificate names the endpoint's host. NemoClaw's own commands still forward a free local port to the gateway pod. The endpoint, whether a Service or a Route publishes the gateway, and the Service's type are fixed after the first plan. |
 | `kubeconfig` | [FileRef](#fileref) | No | — | Environment reference whose value is the local kubeconfig file path. Requires context; omit both to use the pod's service account. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
 | `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. An existing namespace is bound by UID and never changed; a missing one is created. A namespace another NemoClaw deployment created is refused. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`; minimum characters 1; maximum characters 63. |
+
+## ManagedOpenShift
+
+An existing OpenShift cluster for a managed gateway, with the fields of a kubernetes target. The namespace assigns the gateway's user and group IDs, and expose may also take a Route.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.target.openshift`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `authentication` | [KubernetesAuthentication](#kubernetesauthentication) | Yes | — | How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer. |
+| `context` | string | No | — | Exact kubeconfig context used for every cluster operation. Requires kubeconfig. Constraints: pattern `^[^\x00-\x20\x7f]+$`; minimum characters 1; maximum characters 253. |
+| `environment` | array of string | No | — | Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Requires kubeconfig. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state. Constraints: maximum items 32; items: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
+| `expose` | [OpenShiftExpose](#openshiftexpose) | No | — | How clients outside the cluster reach the gateway: the endpoint they dial, and the Service or Route that publishes it. The gateway certificate names the endpoint's host. NemoClaw's own commands still forward a free local port to the gateway pod. The endpoint, whether a Service or a Route publishes the gateway, and the Service's type are fixed after the first plan. |
+| `kubeconfig` | [FileRef](#fileref) | No | — | Environment reference whose value is the local kubeconfig file path. Requires context; omit both to use the pod's service account. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
+| `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. An existing namespace is bound by UID and never changed; a missing one is created. A namespace another NemoClaw deployment created is refused. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`; minimum characters 1; maximum characters 63. |
+
+## ManagedTarget
+
+Where NemoClaw installs a managed gateway: exactly one of docker, podman, kubernetes, and openshift. Each holds only the settings NemoClaw uses to install the gateway there; OpenShell's own settings stay in config and each sandbox's driverConfig.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.target`
+
+Accepted input: object.
+
+### Alternative 1
+
+A gateway container on a local Docker engine, which runs every sandbox on that engine.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `docker` | [DockerTarget](#dockertarget) | Yes | — | A gateway container on a local Docker engine, which runs every sandbox on that engine. |
+
+### Alternative 2
+
+A gateway container on a local rootless Linux Podman engine, which runs every sandbox on that engine. Rootful, remote, and other platforms are unqualified.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `podman` | [PodmanTarget](#podmantarget) | Yes | — | A gateway container on a local rootless Linux Podman engine, which runs every sandbox on that engine. Rootful, remote, and other platforms are unqualified. |
+
+### Alternative 3
+
+OpenShell's gateway chart on an existing Kubernetes cluster, which schedules every sandbox.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `kubernetes` | [ManagedKubernetes](#managedkubernetes) | Yes | — | OpenShell's gateway chart on an existing Kubernetes cluster, which schedules every sandbox. |
+
+### Alternative 4
+
+OpenShell's gateway chart on an existing OpenShift cluster, which schedules every sandbox. The namespace assigns the gateway's user and group IDs, and only this target publishes the gateway through a Route.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `openshift` | [ManagedOpenShift](#managedopenshift) | Yes | — | OpenShell's gateway chart on an existing OpenShift cluster, which schedules every sandbox. The namespace assigns the gateway's user and group IDs, and only this target publishes the gateway through a Route. |
 
 ## Manifest
 
@@ -926,7 +1082,7 @@ Paths:
 
 Ollama GPU budget and host memory protection.
 
-Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
+Guide: [Managed Ollama](../agents-inference/inference.md#running-managed-ollama).
 
 Paths:
 
@@ -946,7 +1102,7 @@ Paths:
 
 One immutable Ollama registry model installation.
 
-Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
+Guide: [Managed Ollama](../agents-inference/inference.md#running-managed-ollama).
 
 Paths:
 
@@ -961,7 +1117,7 @@ Paths:
 
 Native Ollama serving controls supported by the managed installer.
 
-Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
+Guide: [Managed Ollama](../agents-inference/inference.md#running-managed-ollama).
 
 Paths:
 
@@ -973,6 +1129,22 @@ Paths:
 | `maxSequences` | integer | No | `1` | Maximum concurrent sequences. Constraints: `0` or minimum 1; maximum 2. Omitted or zero selects the default. |
 | `port` | integer | No | `18888` | Inference listening port. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
 | `startupTimeoutSeconds` | integer | No | `1800` | Seconds allowed for model loading and readiness. Constraints: `0` or minimum 60; maximum 3600. Omitted or zero selects the default. |
+
+## OpenShiftExpose
+
+Publication of a managed OpenShift gateway's endpoint, through exactly one of service and route.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.target.openshift.expose`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `endpoint` | string | Yes | — | The address clients outside the cluster dial: `https://HOST:PORT`, with a lowercase DNS name or IPv4 address and an explicit nonzero port, and no path. The gateway certificate names its host. Constraints: pattern `^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*:(?:[1-9][0-9]{0,3}\|[1-5][0-9]{4}\|6[0-4][0-9]{3}\|65[0-4][0-9]{2}\|655[0-2][0-9]\|6553[0-5])$`. |
+| `route` | [ExposureRoute](#exposureroute) | No | — | The gateway chart's own OpenShift Route, which publishes the endpoint's host through the cluster's router and passes TLS through to the gateway by SNI, so TLS and client certificates reach the gateway unchanged. The endpoint's host is a DNS name, since clients send no SNI host name for an IP address, and its port is the one the router serves. Only the openshift target takes it. |
+| `service` | [ExposureService](#exposureservice) | No | — | The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged. |
 
 ## Overrides
 
@@ -990,11 +1162,28 @@ Paths:
 |---|---|---|---|---|
 | `extensions` | object | No | — | Model fields the selected adapter declares as extensions, such as Pi's context_window; Fabric validates them. |
 | `harnessProvider` | string | No | — | Fabric model provider the harness uses, such as custom. Defaults to the inference provider's API family. |
-| `maxTokens` | integer | No | — | Maximum output tokens requested from the native adapter. Planning rejects this field when the bundled adapter does not accept it. Constraints: minimum 1; maximum 4294967295. |
+| `maxTokens` | integer | No | — | Maximum output tokens requested from the native adapter. Planning rejects this field when the image's adapter does not accept it. Constraints: minimum 1; maximum 4294967295. |
 | `model` | string | Yes | — | Model identifier. For a managed service, match its served model: vLLM's recipe serving.modelName, serving.modelName, or model.repository; Ollama's model.name; an Ollama proxy's upstream.model.name. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
 | `settings` | object | No | — | Opaque native model settings validated by Fabric's selected model schema. |
-| `temperature` | number | No | — | Sampling temperature, passed to Fabric's temperature. Planning checks bundled adapter field support; Fabric validates the range. |
-| `topP` | number | No | — | Nucleus sampling probability, passed to Fabric's top_p. Planning checks bundled adapter field support; Fabric validates the range. |
+| `temperature` | number | No | — | Sampling temperature, passed to Fabric's temperature. Planning rejects this field when the image's adapter does not accept it; Fabric validates the range. |
+| `topP` | number | No | — | Nucleus sampling probability, passed to Fabric's top_p. Planning rejects this field when the image's adapter does not accept it; Fabric validates the range. |
+
+## PodmanTarget
+
+A managed gateway container on a local rootless Linux Podman engine. Podman's socket depends on the user, so engine has no default.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.target.podman`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `engine` | string | Yes | — | The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket. Constraints: pattern `^(unix:///\|npipe:////\./pipe/)`; minimum characters 1. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before local container creation: IfNotPresent, the default, Never, or Always, which contacts the registry before creation or restart. |
+| `networkCIDR` | string | No | — | Canonical private IPv4 /24 of the network the gateway and its sandboxes share. Constraints: `""` or pattern `/24$`. Omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). |
+| `port` | integer | No | `17681` | Loopback TCP port the gateway listens on, from 1024 through 65535. NemoClaw and the OpenShell CLI reach the gateway at `http://127.0.0.1:PORT`. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
 
 ## PolicyAllowRule
 
@@ -1046,7 +1235,7 @@ Paths:
 
 The component that authors every sandbox's policy on a gateway, instead of NemoClaw.
 
-Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+Guide: [Letting APF author sandbox policy](../build-deploy/usage.md#letting-apf-author-sandbox-policy).
 
 Paths:
 
@@ -1360,20 +1549,6 @@ Paths:
 | `provider` | [InlineInferenceProvider](#inlineinferenceprovider) | No | — | Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition. |
 | `providerRef` | string | No | — | Name of an enclosing inference provider. Exactly one of providerRef or provider is required. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
-## Runtime
-
-The compute driver an OpenShell gateway runs sandboxes with. One gateway runs one driver.
-
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
-
-Paths:
-
-- `spec.gateway.runtime`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `provider` | string | No | `"docker"` | Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target, and external inference endpoints. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement. Constraints: `"docker"` or `"podman"` or `"kubernetes"` or `"openshift"`. |
-
 ## Sandbox
 
 The gateway owns sandbox creation and dependency placement.
@@ -1424,7 +1599,8 @@ Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-an
 Paths:
 
 - `spec.gateway.credential`
-- `spec.gateway.kubernetes.authentication.token`
+- `spec.gateway.target.kubernetes.authentication.token`
+- `spec.gateway.target.openshift.authentication.token`
 - `spec.inferenceProviders.{key}.credential`
 - `spec.inferences.{key}.routes[].provider.credential`
 - `spec.integrations.{key}.credential`
@@ -1442,7 +1618,7 @@ Paths:
 
 Bearer authentication for a managed inference service.
 
-Guide: [Managed vLLM authentication](../agents-inference/inference.md#authenticate-a-managed-vllm-service).
+Guide: [Managed vLLM authentication](../agents-inference/inference.md#authenticating-a-managed-vllm-service).
 
 Paths:
 
@@ -1456,7 +1632,7 @@ Constraints: `"bearer"`.
 
 Managed inference CPU and memory limits, GPU selection, IPC, and shared-memory settings.
 
-Guide: [Container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy).
+Guide: [Container limits and update policy](../agents-inference/inference.md#setting-container-limits-and-update-policy).
 
 Paths:
 
@@ -1602,7 +1778,7 @@ Image-owned container with explicit launch settings and bounded readiness.
 
 One OpenShell service exposure: a loopback port the gateway makes reachable.
 
-Guide: [Agent interfaces](../agents-inference/interfaces.md#expose-a-service-through-the-gateway).
+Guide: [Agent interfaces](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway).
 
 Paths:
 
@@ -1684,7 +1860,7 @@ Paths:
 
 Whether updates may stop an existing model service before its replacement is ready.
 
-Guide: [Container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy).
+Guide: [Container limits and update policy](../agents-inference/inference.md#setting-container-limits-and-update-policy).
 
 Paths:
 
@@ -1803,7 +1979,7 @@ Paths:
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `policies` | map of [ExplicitPolicy](#explicitpolicy) | No | — | Named complete OpenShell sandbox policies available to sandbox networks through policyRef. Unselected policies are validated but apply to no sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `registries` | array of [Registry](#registry) | No | — | Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store. Constraints: maximum items 32. |
-| `sandboxes` | map of [Sandbox](#sandbox) | Yes | — | Named sandboxes: one to 256 with a kubernetes or openshift gateway runtime, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent. Constraints: minimum entries 1; keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `sandboxes` | map of [Sandbox](#sandbox) | Yes | — | Named sandboxes: one to 256 with a kubernetes or openshift gateway target, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent. Constraints: minimum entries 1; keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## TLS
