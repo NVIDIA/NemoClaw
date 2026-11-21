@@ -305,6 +305,27 @@ function reportFinalGatewayLeftRunning(
   );
 }
 
+function reportGatewayCleanupNotApplied(
+  gatewayName: string,
+  remainingSandboxNames: readonly string[],
+): void {
+  // --cleanup-gateway was explicitly requested, but this destroy was not the
+  // gateway's last sandbox, so the cleanup step never runs. Keeping the gateway
+  // is correct; reporting nothing and exiting 0 was not (#14426).
+  const cause =
+    remainingSandboxNames.length === 0
+      ? "the local sandbox registry still lists sandboxes on this gateway"
+      : remainingSandboxNames.length === 1
+        ? `sandbox '${remainingSandboxNames[0]}' still uses it`
+        : `sandboxes ${remainingSandboxNames.map((name) => `'${name}'`).join(", ")} still use it`;
+  console.warn(
+    `  ${YW}⚠${R} Shared NemoClaw gateway kept: --cleanup-gateway was not applied because ${cause}.`,
+  );
+  console.warn(
+    `  ${YW}⚠${R} Destroy the remaining sandbox${remainingSandboxNames.length === 1 ? "" : "es"} first, or run 'openshell gateway remove ${gatewayName}' once no sandbox remains.`,
+  );
+}
+
 export async function cleanupSandboxServices(
   sandboxName: string,
   {
@@ -1555,6 +1576,20 @@ async function destroySandboxUnlocked(
       );
       if (normalized.cleanupGateway === true) requestSandboxDestroyExit(1);
     }
+  } else if (
+    normalized.cleanupGateway === true &&
+    deleteSucceededOrAlreadyGone &&
+    registryEntryAbsent
+  ) {
+    // --cleanup-gateway was requested but applies to nothing: another sandbox
+    // still keeps the gateway alive. Preserving the gateway is the correct
+    // action, but a caller checking the exit status must not read it as an
+    // applied cleanup, so this is a refusal rather than a success (#14426).
+    reportGatewayCleanupNotApplied(
+      cleanupGatewayName,
+      listCleanupGatewaySandboxes().sandboxes.map((entry) => entry.name),
+    );
+    requestSandboxDestroyExit(1);
   }
   if (alreadyGone) {
     console.log(`  Sandbox '${sandboxName}' was already absent from the live gateway.`);
