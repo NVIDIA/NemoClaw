@@ -70,6 +70,12 @@ live-docker:
 # all, in two v1 runs. With v0.1.8, whose sandbox deletion no longer waits out
 # the pods' grace period, they took 108.3 s and 69.6 s on linux_arm64 and
 # 98.2 s and 62.0 s on linux_amd64, so 177.9 s and 160.2 s in all (#14480).
+# By November 21, the development case took 109.9-140.6 s on linux_amd64 and
+# 117.7-126.5 s on linux_arm64 in eight runs, and 140.6 s exceeded the limit.
+# Its first apply pulled the pinned OpenShell and issuer images, about 12 s on
+# a fast network; the node now pulls them while the cluster is prepared. On
+# an arm64 workstation the case went from 103-126 s to 92-94 s, and from
+# 158.4 s to 128.6 s with 60 busy processes on its 20 cores.
 live-kind:
   wall_seconds: 240
   test_seconds: 140
