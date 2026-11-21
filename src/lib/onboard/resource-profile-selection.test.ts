@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as docker from "../adapters/docker/exec";
 import type { ResourceProfileSelectionDeps } from "./resource-profile-selection";
 import {
   appendResourceFlagsForProfile,
@@ -163,6 +164,35 @@ describe("selectResourceProfileForSandbox", () => {
     });
 
     expect(deps.prompt).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses Docker engine capacity in custom profile preview when Kubernetes is unavailable", async () => {
+    const responses: Record<string, ReturnType<typeof docker.dockerSpawnSync>> = {
+      info: {
+        status: 0,
+        stdout: JSON.stringify({ NCPU: 4, MemTotal: 12 * 1024 ** 3 }),
+        stderr: "",
+        pid: 1,
+        output: [],
+        signal: null,
+      },
+      exec: { status: 1, stdout: "", stderr: "no k8s", pid: 1, output: [], signal: null },
+    };
+    vi.spyOn(docker, "dockerSpawnSync").mockImplementation((args) => responses[args[0]]);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const deps = makeDeps({
+      promptOrDefault: vi.fn().mockResolvedValue("5"),
+      prompt: vi.fn().mockResolvedValueOnce("75%").mockResolvedValueOnce("75%"),
+    });
+
+    await expect(selectResourceProfileForSandbox(deps)).resolves.toEqual({
+      cpu: "75%",
+      memory: "75%",
+    });
+
+    expect(logSpy).toHaveBeenCalledWith("  Available: 4 CPU cores, 12288 MB RAM");
+    expect(logSpy).toHaveBeenCalledWith("  Resolved: CPU=3, RAM=9Gi");
   });
 
   it("exits when custom profile validation fails", async () => {

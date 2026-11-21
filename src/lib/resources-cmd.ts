@@ -58,6 +58,7 @@ export interface ResourceProfile {
 export interface HardwareResources {
   cpu: { cores: number; model: string; allocatable?: string };
   memory: { totalMB: number; swapMB: number; allocatableMB?: number };
+  docker?: { cpuCores: number; memoryMB: number };
   gpu: { type: string; name: string; count: number; vramMB: number } | null;
   profiles: Record<string, ResourceProfile> | null;
 }
@@ -198,6 +199,39 @@ export function getHardwareResources(): HardwareResources {
     // Gateway not running — skip k8s allocatable
   }
 
+  // Docker engine capacity (best-effort — handles smaller Colima/VM engines)
+  let dockerCapacity: HardwareResources["docker"];
+  try {
+    const dockerResult = dockerSpawnSync(["info", "--format", "{{json .}}"], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    if (dockerResult.status === 0 && dockerResult.stdout) {
+      const info = JSON.parse(String(dockerResult.stdout)) as {
+        NCPU?: unknown;
+        MemTotal?: unknown;
+      };
+      const ncpu = info.NCPU;
+      const memTotalBytes = info.MemTotal;
+      if (
+        typeof ncpu === "number" &&
+        Number.isFinite(ncpu) &&
+        ncpu > 0 &&
+        typeof memTotalBytes === "number" &&
+        Number.isFinite(memTotalBytes) &&
+        memTotalBytes > 0
+      ) {
+        const memoryMB = Math.round(memTotalBytes / 1024 / 1024);
+        if (memoryMB > 0) {
+          dockerCapacity = { cpuCores: ncpu, memoryMB };
+        }
+      }
+    }
+  } catch {
+    // Docker engine unavailable or info unparseable
+  }
+
   // GPU detection via nvidia-smi
   let gpu: HardwareResources["gpu"] = null;
   try {
@@ -231,6 +265,7 @@ export function getHardwareResources(): HardwareResources {
   return {
     cpu: { cores: cpus.length, model: cpuModel, allocatable: allocatableCpu },
     memory: { totalMB, swapMB, allocatableMB: allocatableMemMB },
+    ...(dockerCapacity ? { docker: dockerCapacity } : {}),
     gpu,
     profiles,
   };
@@ -253,9 +288,15 @@ export function printHardwareResources(json: boolean): HardwareResources {
   if (hw.cpu.allocatable) {
     console.log(`             k8s allocatable: ${hw.cpu.allocatable}`);
   }
+  if (hw.docker) {
+    console.log(`             docker engine: ${hw.docker.cpuCores} cores`);
+  }
   console.log(`  RAM:       ${hw.memory.totalMB} MB + ${hw.memory.swapMB} MB swap`);
   if (hw.memory.allocatableMB) {
     console.log(`             k8s allocatable: ${hw.memory.allocatableMB} MB`);
+  }
+  if (hw.docker) {
+    console.log(`             docker engine: ${hw.docker.memoryMB} MB`);
   }
   if (hw.gpu) {
     console.log(`  GPU:       ${hw.gpu.name}`);
@@ -333,18 +374,30 @@ function parseCpuQuantity(value: string): number | null {
 }
 
 /**
+ * Resolve the effective CPU and memory capacity for percentage profiles:
+ * Kubernetes allocatable capacity -> selected Docker engine capacity -> host totals.
+ */
+export function resolveProfileCapacity(hw: HardwareResources): {
+  cpuCores: number;
+  memoryMB: number;
+} {
+  const cpuCores = hw.cpu.allocatable
+    ? (parseCpuQuantity(hw.cpu.allocatable) ?? hw.docker?.cpuCores ?? hw.cpu.cores)
+    : (hw.docker?.cpuCores ?? hw.cpu.cores);
+  const memoryMB = hw.memory.allocatableMB ?? hw.docker?.memoryMB ?? hw.memory.totalMB;
+  return { cpuCores, memoryMB };
+}
+
+/**
  * Resolve profile percentages to absolutes. Prefers k8s allocatable capacity
- * when available (accounts for kubelet/system reservations); falls back to
- * host totals when gateway is not running.
+ * when available (accounts for kubelet/system reservations), then Docker engine
+ * capacity, falling back to host totals when neither is available.
  */
 export function resolveProfile(profile: ResourceProfile, hw: HardwareResources): ResourceProfile {
-  const cpuTotal = hw.cpu.allocatable
-    ? (parseCpuQuantity(hw.cpu.allocatable) ?? hw.cpu.cores)
-    : hw.cpu.cores;
-  const memTotalMB = hw.memory.allocatableMB ?? hw.memory.totalMB;
+  const { cpuCores, memoryMB } = resolveProfileCapacity(hw);
   return {
-    cpu: resolveResourceValue(profile.cpu, cpuTotal, "cpu"),
-    memory: resolveResourceValue(profile.memory, memTotalMB, "memory"),
+    cpu: resolveResourceValue(profile.cpu, cpuCores, "cpu"),
+    memory: resolveResourceValue(profile.memory, memoryMB, "memory"),
   };
 }
 
