@@ -313,6 +313,7 @@ describe("runLiveVitestCommand (#6961)", () => {
 
 it.each([
   ["spark-express-vllm", "^spark-express-vllm:"],
+  ["spark-vllm-extra-arguments", "^spark-vllm-extra-arguments:"],
   ["dgx-station-express", "^dgx-station-express:"],
 ])("runs only the selected %s case from the shared DGX file", (target, selector) => {
   let spawned: Parameters<LiveVitestSpawner> | undefined;
@@ -334,9 +335,11 @@ it.each([
 it.each([
   ["dgx-station-express", []],
   ["spark-express-vllm", []],
+  ["spark-vllm-extra-arguments", []],
   [undefined, ["--selector", "^dgx-station-express:"]],
   ["unknown", ["--selector", "^dgx-station-express:"]],
   ["spark-express-vllm", ["--selector", "^dgx-station-express:"]],
+  ["spark-vllm-extra-arguments", ["--selector", "^spark-express-vllm:"]],
   ["dgx-station-express", ["--selector", "^spark-express-vllm:"]],
   ["dgx-station-express", ["--selector", "^dgx"]],
 ] as const)("rejects a DGX selector mismatch before spawning: %s / %j", (target, selectorArgs) => {
@@ -355,6 +358,7 @@ it.each([
 
 it.each([
   ["spark-express-vllm", "^spark-express-vllm:"],
+  ["spark-vllm-extra-arguments", "^spark-vllm-extra-arguments:"],
   ["dgx-station-express", "^dgx-station-express:"],
 ])(
   "collects exactly the %s live case without loading hardware runtime modules",

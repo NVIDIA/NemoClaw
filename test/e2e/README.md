@@ -2473,12 +2473,14 @@ its existing platform-specific qualification.
 ### DGX Spark Express vLLM
 
 `dgx-express.test.ts` contains separate physical-host cases for Spark and Station Express.
-The Spark case qualifies the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.
+The Spark cases have separate selectors: `spark-express-vllm` keeps the second Express option with its catalog-backed fixed profile; `spark-vllm-extra-arguments` owns automatic managed installation with extra serve arguments.
+The second case requires the physical host to report at least 60 GB and less than 64 GB of memory; it does not override detected memory or mock Docker.
 The canonical runner requires an explicit selector matching `E2E_TARGET_ID`; it rejects missing, unknown, or mismatched selections before starting Vitest.
 The Spark case requires a qualified NVIDIA DGX Spark with Docker, NVIDIA Container Toolkit, OpenShell prerequisites, enough storage for the pinned image and model, and no unrelated `nemoclaw-vllm` container.
 The target accepts only a local Docker socket and the default Docker context, rejects remote selectors, and treats Docker inspection errors as preflight failures instead of absent resources.
-The target sources `scripts/install.sh` from the candidate checkout, calls the Express option-selection functions with option 2, and invokes the candidate CLI directly for onboarding.
-It does not run the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
+`spark-express-vllm` sources `scripts/install.sh` from the candidate checkout, selects Express option 2, and invokes the candidate CLI for onboarding.
+`spark-vllm-extra-arguments` directly runs non-interactive candidate onboarding with `NEMOCLAW_PROVIDER=install-vllm` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--max-num-seqs","2"]'`.
+Neither case runs the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
 Separate installer tests own those earlier boundaries.
 The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` container.
 It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
@@ -2488,14 +2490,46 @@ After onboarding, both physical-host cases request vLLM health on loopback and t
 Each case also checks connection refusal on every discovered unintended IPv4 and IPv6 address.
 Spark and Station retain their own probe targets and request results.
 
-Run the target from a clean candidate checkout on the Spark host:
+Before either standalone Spark command, select independently verified managed-image authority.
+Set `verified_image_revision` to the publication's 40-character source commit and `verified_cohort_receipt_file` to its complete cohort receipt JSON file.
+Do not derive the expected authority from the sandbox under test.
+Export the revision and receipt contents in the shell that runs the target:
+
+```bash
+export E2E_MANAGED_IMAGE_REVISION="$verified_image_revision"
+export E2E_MANAGED_IMAGE_COHORT_RECEIPT="$(cat "$verified_cohort_receipt_file")"
+```
+
+A trusted candidate catalog is an alternative in the GitHub Actions live-E2E context, where `GITHUB_ACTIONS=true` and `NEMOCLAW_RUN_LIVE_E2E=1`.
+Clear `E2E_MANAGED_IMAGE_REVISION` and `E2E_MANAGED_IMAGE_COHORT_RECEIPT` before selecting this alternative.
+For a file catalog, set `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG` to its filename and `NEMOCLAW_E2E_MANAGED_IMAGE_REVISION` to the verified publication source commit.
+For inline JSON, set `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON` to the catalog contents instead; do not set both catalog variables.
+Verify that the catalog source revision matches the requested managed-image revision.
+On a standalone host outside that Actions context, use the cohort receipt above.
+Both Spark variants require the durable sandbox workload receipt to match the selected authority before runtime and inference probes.
+
+Run the target from a clean candidate checkout on the Spark host with that authority exported:
 
 ```bash
 E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
 ```
 
-A passing Spark target establishes that option 2 selects the fixed vLLM preset and recipe.
-The managed container carries catalog provenance and the catalog-derived serve command.
+A passing `spark-express-vllm` target establishes that option 2 selects the fixed vLLM preset and recipe.
+The extra-arguments case compares the real container command with the bounded recipe and appended sequence override.
+Fast installer tests own the selected-profile output, 32,768-token context and argument-order assertions.
+Each case keeps the existing 65-minute test deadline and identity-bound cleanup.
+Both Spark variants are standalone hardware tests.
+The workflow and planner do not select `spark-vllm-extra-arguments`.
+The command below runs the extra-arguments case directly on a physical Spark reporting at least 60 GB and less than 64 GB.
+A standalone result does not establish hosted qualification.
+Keep the independently verified image authority exported before running this standalone command:
+
+```bash
+E2E_JOB=1 E2E_TARGET_ID=spark-vllm-extra-arguments NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-vllm-extra-arguments:'
+```
+
+The fixed-profile container carries catalog provenance labels and the catalog-derived serve command.
+The extra-arguments recipe has no catalog receipt; both cases require the managed-vLLM ownership label.
 Health requests succeed on loopback and the private OpenShell bridge; connections to every other discovered host address are refused.
 The target also requires a chat response through `inference.local` and an HTTP `403` response for unrelated sandbox egress.
 

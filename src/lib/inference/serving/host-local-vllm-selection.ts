@@ -78,6 +78,7 @@ export function materializeHostLocalVllmModel(
     maxModelLen: positiveIntegerArgument(recipe, "--max-model-len"),
     revision: recipe.spec.model.revision,
     reviewedCode: recipe.spec.model.reviewedCode,
+    trustRemoteCode: false,
     servedModelId: recipe.spec.model.servedName,
     modelArgs: hostLocalVllmModelArguments(recipe),
     gated: recipe.spec.model.gated,
@@ -199,14 +200,13 @@ export function resolveHostLocalVllmSelection(
       reason: `NEMOCLAW_SERVING_PRESET conflicts with ${VLLM_EXTRA_ARGS_ENV}`,
     };
   }
-  // Operator-owned serve arguments are intentionally outside the declarative
-  // catalog contract. Let the established single-host installer parse and
-  // apply them when no preset was requested; a fixed catalog recipe still
-  // rejects them after materialization. This also preserves the documented
-  // model-plus-extra-arguments path for non-fixed recipes.
-  if (String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
-    return { kind: "not-selected" };
-  }
+  // Operator-owned serve arguments are appended to a catalog recipe's
+  // arguments, so they must not hide the recipe the host would otherwise get
+  // (#14016). A fixed recipe cannot take them, and a host the catalog cannot
+  // match never could, so those cases keep using the established installer.
+  const operatorServeArguments = Boolean(String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim());
+  const rejectUnlessOperatorOwned = (reason: string): HostLocalVllmSelectionResult =>
+    operatorServeArguments ? { kind: "not-selected" } : { kind: "rejected", reason };
   const readinessReports =
     options.readinessReports ??
     ([
@@ -236,24 +236,21 @@ export function resolveHostLocalVllmSelection(
             .map(({ id, value }) => sanitizeReadinessText(`${id}=${String(value)}`, 256))
             .join(", ")
         : undefined;
-    return {
-      kind: "rejected",
-      reason: hostFacts
+    return rejectUnlessOperatorOwned(
+      hostFacts
         ? `${resolution.message} Host: ${hostFacts}. Choose another inference provider or an explicitly compatible serving profile.`
         : resolution.message,
-    };
+    );
   }
   if ("topologyQualification" in resolution) {
-    return {
-      kind: "rejected",
-      reason: `Serving preset ${resolution.preset.metadata.id} requires a managed topology.`,
-    };
+    return rejectUnlessOperatorOwned(
+      `Serving preset ${resolution.preset.metadata.id} requires a managed topology.`,
+    );
   }
   if (!isHostLocalInferenceServingRecipe(resolution.recipe)) {
-    return {
-      kind: "rejected",
-      reason: `Serving preset ${resolution.preset.metadata.id} is not a host-local vLLM preset.`,
-    };
+    return rejectUnlessOperatorOwned(
+      `Serving preset ${resolution.preset.metadata.id} is not a host-local vLLM preset.`,
+    );
   }
   try {
     const vllmResolution: ResolvedHostLocalInferenceSelection = {
@@ -265,11 +262,12 @@ export function resolveHostLocalVllmSelection(
       preset: resolution.preset,
       recipe: resolution.recipe,
     };
-    return {
-      kind: "selected",
-      ...materializeHostLocalVllmSelection(vllmResolution, baseProfile),
-    };
+    const materialized = materializeHostLocalVllmSelection(vllmResolution, baseProfile);
+    if (operatorServeArguments && materialized.model.fixedServeCommand) {
+      return { kind: "not-selected" };
+    }
+    return { kind: "selected", ...materialized };
   } catch (error) {
-    return { kind: "rejected", reason: (error as Error).message };
+    return rejectUnlessOperatorOwned((error as Error).message);
   }
 }

@@ -138,7 +138,9 @@ export function resolveLiveSelector(
   if (testPath === DGX_EXPRESS_TEST_PATH) {
     const target = env.E2E_TARGET_ID;
     if (
-      (target !== "spark-express-vllm" && target !== "dgx-station-express") ||
+      (target !== "spark-express-vllm" &&
+        target !== "spark-vllm-extra-arguments" &&
+        target !== "dgx-station-express") ||
       validated !== `^${target}:`
     ) {
       throw new Error("DGX Express requires an explicit selector matching E2E_TARGET_ID");
