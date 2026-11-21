@@ -8,7 +8,33 @@ on:
         description: Run every expensive check without impact analysis.
         type: boolean
         default: false
+      suite:
+        description: A manual run's suite, ci, brev, or hcl; empty selects it from the event.
+        type: string
+        default: ""
+      hcl-target:
+        description: With the hcl suite, Live / HCL's hardware target.
+        type: string
+        default: rtx-pro-6000
     outputs:
+      suite:
+        description: >-
+          What the run builds and tests: ci, every platform's checks; hardware, a copied
+          pull request's affected GPU and DGX Station cases; brev, Live / Brev; hcl, a
+          manual run of the HCL cases on one target; or none.
+        value: ${{ jobs.plan.outputs.suite }}
+      amd64:
+        description: Outside the ci suite, whether the suite needs Linux AMD64's bundle and tests.
+        value: ${{ jobs.plan.outputs.amd64 }}
+      arm64:
+        description: Outside the ci suite, whether the suite needs Linux ARM64's bundle and tests.
+        value: ${{ jobs.plan.outputs.arm64 }}
+      gpu:
+        description: Outside the ci suite, whether Linux AMD64 runs HCL cases through Live / HCL.
+        value: ${{ jobs.plan.outputs.gpu }}
+      arm64_target:
+        description: With arm64, the Live / HCL target that runs on Linux ARM64.
+        value: ${{ jobs.plan.outputs.arm64_target }}
       bundle:
         value: ${{ jobs.plan.outputs.bundle }}
       lifecycle:
@@ -35,6 +61,11 @@ jobs:
       contents: read
       packages: read
     outputs:
+      suite: ${{ steps.suite.outputs.suite }}
+      amd64: ${{ steps.cases.outputs.amd64 }}
+      arm64: ${{ steps.cases.outputs.arm64 }}
+      gpu: ${{ steps.cases.outputs.gpu }}
+      arm64_target: ${{ steps.cases.outputs.arm64_target }}
       bundle: ${{ steps.plan.outputs.bundle }}
       lifecycle: ${{ steps.plan.outputs.lifecycle }}
       images: ${{ steps.plan.outputs.images }}
@@ -42,10 +73,56 @@ jobs:
       live_images: ${{ steps.live-images.outputs['live-images'] }}
       hcl_cases: ${{ steps.cases.outputs.hcl_cases }}
     steps:
+      # copy-pr-bot pushes a pull request's vetted head to pull-request/NUMBER,
+      # whose run may use NVIDIA's hardware runners and the inference secret.
+      # Its trusted-author policy is not a maintainer/admin-only permission
+      # check. Only its push of an open, non-draft v1 PR's current head runs the
+      # hardware cases, and Live / HCL checks that again before each case.
+      - name: Select the run's suite
+        id: suite
+        env:
+          EVENT: ${{ github.event_name }}
+          REQUESTED: ${{ inputs.suite }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          suite=ci
+          if [[ $EVENT == push && $GITHUB_REF == refs/heads/pull-request/* ]]; then
+            suite=none
+            if [[ $GITHUB_REPOSITORY == NVIDIA/NemoClaw && $GITHUB_ACTOR == 'copy-pr-bot[bot]' ]]; then
+              number=${GITHUB_REF_NAME#pull-request/}
+              [[ $number =~ ^[1-9][0-9]*$ ]] || exit 1
+              pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+              if jq -e --arg sha "$GITHUB_SHA" '
+                .state == "open" and .draft == false and .base.ref == "v1" and .head.sha == $sha
+              ' <<< "$pr" > /dev/null; then
+                suite=hardware
+                echo "base=$(jq -r '.base.sha' <<< "$pr")" >> "$GITHUB_OUTPUT"
+              else
+                echo 'The copied revision is not an open, non-draft v1 PR head; no hardware selected.' >> "$GITHUB_STEP_SUMMARY"
+              fi
+            fi
+          elif [[ $EVENT == push && $GITHUB_REF == refs/heads/run-brev-v1-e2e/* ]]; then
+            suite=none
+            if [[ $GITHUB_REPOSITORY == NVIDIA/NemoClaw ]]; then suite=brev; fi
+          elif [[ $EVENT == workflow_dispatch && $REQUESTED == brev ]]; then
+            # GitHub accepts this workflow's dispatches on v1, which isn't the default branch.
+            suite=none
+            if [[ $GITHUB_REPOSITORY == NVIDIA/NemoClaw && $GITHUB_REF == refs/heads/v1 ]]; then suite=brev; fi
+          elif [[ $EVENT == workflow_dispatch && $REQUESTED == hcl ]]; then
+            # Live / HCL admits v1 and a copied pull request's current head.
+            if [[ $GITHUB_REF != refs/heads/v1 && $GITHUB_REF != refs/heads/pull-request/* ]]; then
+              echo "::error::Run the HCL cases from v1 or a pull-request/NUMBER branch."
+              exit 1
+            fi
+            suite=hcl
+          fi
+          echo "suite=$suite" >> "$GITHUB_OUTPUT"
+          echo "- suite: $suite" >> "$GITHUB_STEP_SUMMARY"
+      # The hardware cases compare the copied head with its pull request's base.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 2
+          fetch-depth: ${{ steps.suite.outputs.suite == 'hardware' && '0' || '2' }}
       # The planner has no SDK dependency and needs no protoc or nextest.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -59,7 +136,15 @@ jobs:
           FULL: ${{ inputs.full }}
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
+          SUITE: ${{ steps.suite.outputs.suite }}
         run: |
+          # Another suite builds Linux bundles and test executables for its live cases only.
+          if [ "$SUITE" != ci ]; then
+            live=true
+            if [ "$SUITE" = none ]; then live=false; fi
+            printf 'bundle=%s\nlifecycle=false\nimages=false\nlive=%s\n' "$live" "$live" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "$FULL" = true ]; then
             for check in bundle lifecycle images live; do echo "$check=true" >> "$GITHUB_OUTPUT"; done
             echo 'All expensive checks selected for this event.' >> "$GITHUB_STEP_SUMMARY"
@@ -81,30 +166,55 @@ jobs:
           jq -r 'to_entries[] | "- \(.key): \(if .value.run then "run" else "skip" end) — \(.value.reason)"' \
             "$RUNNER_TEMP/validation-plan.json" >> "$GITHUB_STEP_SUMMARY"
       # The live HCL cases to run, and where: on a pull request, those its
-      # changes affect; otherwise every case.
+      # changes affect, and for the hardware cases, those the copied pull
+      # request's changes affect; otherwise every case. Outside the ci suite,
+      # which Linux platforms build the suite's bundle and test executables.
       - name: Select live HCL cases
         id: cases
         if: steps.plan.outputs.live == 'true'
         env:
           FULL: ${{ inputs.full }}
           BASE: ${{ steps.plan.outputs.base }}
+          SUITE: ${{ steps.suite.outputs.suite }}
+          HARDWARE_BASE: ${{ steps.suite.outputs.base }}
+          TARGET: ${{ inputs.hcl-target }}
         run: |
-          if [ "$FULL" = true ]; then selection=(--all); else selection=(--base "$BASE"); fi
+          if [ "$SUITE" = hardware ]; then selection=(--base "$HARDWARE_BASE")
+          elif [ "$FULL" = true ]; then selection=(--all)
+          else selection=(--base "$BASE"); fi
           cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
             changes cases "${selection[@]}" > "$RUNNER_TEMP/hcl-cases.json"
           echo "hcl_cases=$(jq -c '{runners, nvidia_key}' "$RUNNER_TEMP/hcl-cases.json")" >> "$GITHUB_OUTPUT"
           jq -r '.cases | to_entries[] | "- \(.key): \(if .value.run then "run" else "skip" end) — \(.value.reason)"' \
             "$RUNNER_TEMP/hcl-cases.json" >> "$GITHUB_STEP_SUMMARY"
+          amd64=false arm64=false gpu=false arm64_target=dgx-station
+          case "$SUITE" in
+            hardware)
+              gpu=$(jq '.runners.gpu | length > 0' "$RUNNER_TEMP/hcl-cases.json")
+              amd64=$gpu
+              arm64=$(jq '.runners["dgx-station"] | length > 0' "$RUNNER_TEMP/hcl-cases.json") ;;
+            brev) amd64=true ;;
+            hcl)
+              case "$TARGET" in
+                rtx-pro-6000) amd64=true gpu=true ;;
+                dgx-station | dgx-spark) arm64=true arm64_target=$TARGET ;;
+                *) echo "::error::Unknown HCL target: $TARGET"; exit 1 ;;
+              esac ;;
+          esac
+          printf 'amd64=%s\narm64=%s\ngpu=%s\narm64_target=%s\n' "$amd64" "$arm64" "$gpu" "$arm64_target" >> "$GITHUB_OUTPUT"
       # The live suites pull a v1 commit's pushed images when no image input
       # changed since that commit, instead of building and shipping their own.
       # Any failure here only leaves them to build.
       - name: Find live images to reuse
         id: live-images
-        if: steps.plan.outputs.live == 'true' && github.event_name == 'pull_request'
+        if: >-
+          steps.plan.outputs.live == 'true' &&
+          (github.event_name == 'pull_request' || steps.suite.outputs.suite == 'hardware')
         env:
           GH_TOKEN: ${{ github.token }}
+          HARDWARE_BASE: ${{ steps.suite.outputs.base }}
         run: |
-          base=$(git rev-parse HEAD^1)
+          base=${HARDWARE_BASE:-$(git rev-parse HEAD^1)}
           git fetch --no-tags --quiet --depth=40 origin "$base" || true
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin > /dev/null 2>&1 || true
           cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \

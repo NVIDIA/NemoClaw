@@ -1,171 +1,37 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# Live / Brev's lifecycle on the VM that Live / Brev host prepared, from CI /
+# Bundle's Linux AMD64 bundle and e2e test executable, then the VM's verified
+# deletion, which runs whenever the host workflow named a VM.
 name: Live / Brev
 
 on:
-  workflow_dispatch:
-  # Its jobs accept a dispatch only on v1, which GitHub has accepted although
-  # v1 isn't the default branch; pushes to run-brev-v1-e2e/** remain opt-in.
-  push:
-    branches: [run-brev-v1-e2e/**]
+  workflow_call:
+    inputs:
+      instance:
+        description: The VM that Live / Brev host named.
+        type: string
+        required: true
+      ready:
+        description: Whether the VM, its image, the bundle, and the test executable are ready.
+        type: boolean
+        required: true
+      tests:
+        description: Name prefix of CI / Bundle's Linux AMD64 test artifacts; the lifecycle downloads PREFIX-e2e.
+        type: string
+        default: ""
+      bundle:
+        description: CI / Bundle's Linux AMD64 bundle artifact.
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
-concurrency:
-  group: live-brev-${{ github.run_id }}-${{ github.run_attempt }}
-  cancel-in-progress: false
-
-env:
-  CARGO_INCREMENTAL: "0"
-
 jobs:
-  build:
-    name: Build
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
-       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/run-brev-v1-e2e/')))
-    runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    outputs:
-      artifact: ${{ steps.identity.outputs.artifact }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - id: identity
-        name: Identify candidate artifact
-        run: echo "artifact=brev-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/setup-rust
-        with:
-          platform: linux_amd64
-          cache-prefix: brev-deps-v1
-      - name: Build bundle
-        run: cargo run --locked -p nemoclaw-build -- bundle --platform linux_amd64
-      - name: Build live test executable
-        run: |
-          set -euo pipefail
-          cargo test --locked -p nemoclaw-e2e --test e2e --no-run --message-format=json \
-            | tee "${RUNNER_TEMP}/brev-build.json" >/dev/null
-          binary="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test == true) | .executable' "${RUNNER_TEMP}/brev-build.json" | tail -1)"
-          test -x "${binary}"
-          mkdir candidate
-          cp "${binary}" candidate/e2e
-          cp -a dist/linux_amd64 candidate/bundle
-          # Tar retains executable bits; no credential is present in this job.
-          tar -cf "${RUNNER_TEMP}/brev-candidate.tar" candidate
-      - name: Upload candidate
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ steps.identity.outputs.artifact }}
-          path: ${{ runner.temp }}/brev-candidate.tar
-          compression-level: 0
-          retention-days: 1
-          if-no-files-found: error
-
-  image:
-    name: Build image
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
-       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/run-brev-v1-e2e/')))
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    outputs:
-      artifact: ${{ steps.identity.outputs.artifact }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - id: identity
-        name: Identify candidate image
-        run: echo "artifact=brev-image-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-      # The image builds' pinned sources, as CI / Images saved them.
-      - name: Restore the verified image sources
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .build/downloads
-          key: image-sources-v1-${{ hashFiles('versions.json') }}
-      - name: Build candidate OCI archive
-        env:
-          AGENT_PLATFORM: linux/amd64
-        run: |
-          # Bake reads the pinned image sources from .build/image-sources.
-          cargo images fetch
-          mkdir candidate-image
-          docker buildx create --name brev --driver docker-container \
-            --driver-opt image=moby/buildkit@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb
-          docker buildx bake --builder brev openclaw \
-            --set 'openclaw.output=type=oci,dest=candidate-image/image.tar' \
-            --metadata-file candidate-image/metadata.json
-          python3 tools/ci/brev_image.py record candidate-image "$GITHUB_SHA"
-      - name: Upload candidate image
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ steps.identity.outputs.artifact }}
-          path: |
-            candidate-image/image.tar
-            candidate-image/candidate.json
-          compression-level: 0
-          retention-days: 1
-          if-no-files-found: error
-
-  prepare:
-    name: Prepare VM
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
-       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/run-brev-v1-e2e/')))
-    runs-on: ubuntu-22.04
-    timeout-minutes: 40
-    outputs:
-      instance: ${{ steps.identity.outputs.instance }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-brev
-        with:
-          api-key: ${{ secrets.BREV_API_KEY }}
-      # Publish ownership before create, including when create partially fails.
-      - id: identity
-        name: Identify owned VM
-        run: echo "instance=nclaw-v1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-      - name: Provision VM and check fresh host
-        env:
-          INSTANCE_NAME: ${{ steps.identity.outputs.instance }}
-        run: bash tools/e2e/brev-v1-host.sh prepare
-
-  load-image:
-    name: Load image
-    needs: [image, prepare]
-    # Runs only when the jobs it needs ran, as on v1 dispatch or a run-brev branch.
-    if: needs.image.result == 'success' && needs.prepare.result == 'success'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-brev
-        with:
-          api-key: ${{ secrets.BREV_API_KEY }}
-      - name: Download candidate image
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: ${{ needs.image.outputs.artifact }}
-          path: candidate-image
-      - name: Transfer and verify candidate image
-        env:
-          INSTANCE_NAME: ${{ needs.prepare.outputs.instance }}
-        run: bash tools/e2e/brev-v1-host.sh load-image
-
   qualify:
     name: Lifecycle
-    needs: [build, prepare, load-image]
-    # Runs only when the jobs it needs ran, as on v1 dispatch or a run-brev branch.
-    if: needs.build.result == 'success' && needs.prepare.result == 'success' && needs.load-image.result == 'success'
+    if: inputs.ready
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -175,16 +41,24 @@ jobs:
       - uses: ./.github/actions/setup-brev
         with:
           api-key: ${{ secrets.BREV_API_KEY }}
-      - name: Download candidate
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ needs.build.outputs.artifact }}
-          path: ${{ runner.temp }}/brev-candidate
-      - name: Extract candidate
-        run: tar -xf "${RUNNER_TEMP}/brev-candidate/brev-candidate.tar"
+          name: ${{ inputs.tests }}-e2e
+          path: .build/ci
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.bundle }}
+          path: .build/ci
+      - name: Assemble candidate
+        run: |
+          tar -xf .build/ci/bundle.tar
+          mkdir candidate
+          cp -a dist/linux_amd64 candidate/bundle
+          # Artifact transfer drops the executable bit.
+          install -m 755 .build/ci/e2e candidate/e2e
       - name: Transfer bundle and run lifecycle
         env:
-          INSTANCE_NAME: ${{ needs.prepare.outputs.instance }}
+          INSTANCE_NAME: ${{ inputs.instance }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: bash tools/e2e/brev-v1-host.sh qualify
       # The HCL scenario's outcome reports, the destroy receipt, and fresh-host checks.
@@ -199,8 +73,8 @@ jobs:
 
   cleanup:
     name: Delete VM
-    needs: [build, image, prepare, load-image, qualify]
-    if: always() && needs.prepare.outputs.instance != ''
+    needs: qualify
+    if: always()
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
@@ -212,5 +86,5 @@ jobs:
           api-key: ${{ secrets.BREV_API_KEY }}
       - name: Delete owned VM and verify absence
         env:
-          INSTANCE_NAME: ${{ needs.prepare.outputs.instance }}
+          INSTANCE_NAME: ${{ inputs.instance }}
         run: bash tools/e2e/brev-v1-host.sh cleanup
