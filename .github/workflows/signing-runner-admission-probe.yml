@@ -27,4 +27,5 @@ jobs:
       id-token: write
     steps:
       - name: Confirm admission-only access permits the reviewed job
+        if: always()
         run: echo 'ADMISSION_ACCEPTED_STEP_RAN'
