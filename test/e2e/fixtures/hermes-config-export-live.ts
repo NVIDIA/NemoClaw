@@ -106,6 +106,20 @@ function refusalCategories(diagnostic: string): string[] {
   return /^Config export failed \(([^)]+)\)\.$/u.exec(header)?.[1]?.split(", ").sort() ?? [];
 }
 
+function refusalFindings(diagnostic: string): Array<{ field: string; category: string } | null> {
+  return diagnostic
+    .split("\n")
+    .slice(1)
+    .map((line) => {
+      const finding = /^(\S+) \(([^)]+)\):(?: .*)?$/u.exec(line);
+      if (finding) return { field: finding[1]!, category: finding[2]! };
+      // The credential assignment redactor consumes the category token, not the field.
+      return line.startsWith("spec.inferenceProviders[].credential <REDACTED> ")
+        ? { field: "spec.inferenceProviders[].credential", category: "unsupported" }
+        : null;
+    });
+}
+
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
     .map((output) => output.replace(/\r\n?/g, "\n").trim())
@@ -183,6 +197,15 @@ function validateHermesConsumers(
     try {
       actual[alias] = validate(raw);
     } catch (error) {
+      const diagnostic = redactString(
+        error instanceof Error ? error.message : String(error),
+        input.redactionValues,
+      );
+      const diagnosticSafe = inspectConfigExportArtifactSafety(
+        diagnostic,
+        input.redactionValues,
+        diagnostic,
+      ).knownSecretsAbsent;
       return {
         expected,
         actual,
@@ -191,9 +214,9 @@ function validateHermesConsumers(
           alias,
           operation: "parse-export-with-pinned-v1",
           revision: V1ALPHA1_CHECKED_REVISION,
-          diagnostic: redactString(
-            error instanceof Error ? error.message : String(error),
-            input.redactionValues,
+          diagnostic: (diagnosticSafe
+            ? diagnostic
+            : "[REDACTED] Consumer diagnostic contained credential material."
           ).slice(0, 2000),
         },
       };
@@ -326,41 +349,56 @@ export async function verifyHermesConfigExportLive(
     if (expectsRefusal) {
       const diagnostics = [nemoclawDiagnostics, nemohermesDiagnostics];
       const categories = diagnostics.map(refusalCategories);
-      const allowedCategories = expectsMessagingRefusal
-        ? ["unsupported", "policy-not-representable"]
-        : ["unsupported"];
+      const findings = diagnostics.map(refusalFindings);
+      const findingSets = findings.map((values) =>
+        [
+          ...new Set(values.map((finding) => finding && `${finding.field} (${finding.category})`)),
+        ].sort(),
+      );
+      const allowedCategories = ["unsupported", "policy-not-representable"];
       const refusalCategoriesMatch = categories.every(
         (values, index) =>
           values.includes("unsupported") &&
           new Set(values).size === values.length &&
           values.every((category) => allowedCategories.includes(category)) &&
-          values.includes("policy-not-representable") ===
-            diagnostics[index]!.split("\n").some((line) =>
-              line.startsWith("spec.sandboxes[].network.policy (policy-not-representable): "),
-            ),
+          isDeepStrictEqual(
+            values,
+            [...new Set(findings[index]!.map((finding) => finding?.category))].sort(),
+          ),
       );
       const expectedFields = [
         ...(expectsCredentialHttpRefusal ? ["spec.inferenceProviders[].credential"] : []),
         ...(entry.openshellDriver === "podman" ? ["spec.sandboxes[].runtime.provider"] : []),
         ...(expectsMessagingRefusal ? ["spec.sandboxes[].integrations.messaging"] : []),
       ];
-      const refusalCausesMatch = diagnostics.every((diagnostic) =>
-        expectedFields.every((field) =>
-          diagnostic.split("\n").some(
-            (line) =>
-              line.startsWith(`${field} (unsupported): `) ||
-              // The credential assignment redactor consumes the category token, not the field.
-              (field === "spec.inferenceProviders[].credential" &&
-                line.startsWith(`${field} <REDACTED> `)),
+      const allowedFields = [
+        ...expectedFields,
+        ...(expectsMessagingRefusal
+          ? ["source.sandbox.providers", "source.workload.startupProfile"]
+          : []),
+      ];
+      const refusalCausesMatch = findings.every(
+        (values) =>
+          expectedFields.every((field) =>
+            values.some(
+              (finding) => finding?.field === field && finding.category === "unsupported",
+            ),
+          ) &&
+          values.every(
+            (finding) =>
+              finding !== null &&
+              ((finding.category === "unsupported" && allowedFields.includes(finding.field)) ||
+                (finding.category === "policy-not-representable" &&
+                  finding.field === "spec.sandboxes[].network.policy")),
           ),
-        ),
       );
       const evidence: HermesConfigExportExpectedRefusalEvidence = {
         outcome: "expected-refusal",
         aliasesEquivalent:
           nemoclaw.exitCode === 2 &&
           nemohermes.exitCode === 2 &&
-          isDeepStrictEqual(categories[0], categories[1]),
+          isDeepStrictEqual(categories[0], categories[1]) &&
+          isDeepStrictEqual(findingSets[0], findingSets[1]),
         checked: true,
         credentialValuesOmitted: !containsCredential,
         outputFilesAbsent: !fs.existsSync(nemoclawPath) && !fs.existsSync(nemohermesPath),

@@ -476,6 +476,105 @@ describe("Hermes config export live evidence", () => {
     await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
   });
 
+  it.each([
+    {
+      name: "HTTP",
+      driver: "docker",
+      endpoint: "http:",
+      messaging: undefined,
+      field: "spec.inferenceProviders[].credential",
+    },
+    {
+      name: "Podman",
+      driver: "podman",
+      endpoint: "https:",
+      messaging: undefined,
+      field: "spec.sandboxes[].runtime.provider",
+    },
+    {
+      name: "messaging",
+      driver: "docker",
+      endpoint: "https:",
+      messaging: { schemaVersion: 1, plan: { channels: [] } },
+      field: "spec.sandboxes[].integrations.messaging",
+    },
+  ])(
+    "rejects unrelated findings alongside the expected $name refusal",
+    async ({ driver, endpoint, messaging, field }) => {
+      Object.assign(mocks.load().sandboxes.hermes, {
+        openshellDriver: driver,
+        endpointUrl: `${endpoint}//host.openshell.internal:35271/v1`,
+        messaging,
+      });
+      mocks.command.mockResolvedValue({
+        exitCode: 2,
+        stdout: "",
+        stderr: redactString(
+          [
+            "Config export failed (unsupported).",
+            `${field} (unsupported): Expected cause.`,
+            "source.unrelated (unsupported): Unrelated cause.",
+          ].join("\n"),
+        ),
+      });
+      await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+    },
+  );
+
+  it.each([
+    {
+      name: "HTTP",
+      driver: "docker",
+      endpoint: "http:",
+      field: "spec.inferenceProviders[].credential",
+    },
+    {
+      name: "Podman",
+      driver: "podman",
+      endpoint: "https:",
+      field: "spec.sandboxes[].runtime.provider",
+    },
+  ])("accepts the existing policy refusal alongside $name", async ({ driver, endpoint, field }) => {
+    Object.assign(mocks.load().sandboxes.hermes, {
+      openshellDriver: driver,
+      endpointUrl: `${endpoint}//host.openshell.internal:35271/v1`,
+    });
+    mocks.command.mockResolvedValue({
+      exitCode: 2,
+      stdout: "",
+      stderr: redactString(
+        [
+          "Config export failed (unsupported, policy-not-representable).",
+          `${field} (unsupported): Expected cause.`,
+          "spec.sandboxes[].network.policy (policy-not-representable): Policy is not representable.",
+        ].join("\n"),
+      ),
+    });
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: true });
+  });
+
+  it("rejects different allowed refusal fields from the two aliases", async () => {
+    mocks.load().sandboxes.hermes.messaging = { schemaVersion: 1, plan: { channels: [] } };
+    const diagnostic =
+      "Config export failed (unsupported).\nspec.sandboxes[].integrations.messaging (unsupported): Messaging refusal.";
+    mocks.command
+      .mockResolvedValueOnce({ exitCode: 2, stdout: "", stderr: diagnostic })
+      .mockResolvedValueOnce({
+        exitCode: 2,
+        stdout: "",
+        stderr: `${diagnostic}\nsource.sandbox.providers (unsupported): Provider refusal.`,
+      });
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+    expect(mocks.writeJson).toHaveBeenCalledWith(
+      "hermes-config-export-live-evidence.json",
+      expect.objectContaining({
+        aliasesEquivalent: false,
+        refusalCategoriesMatch: true,
+        refusalCausesMatch: true,
+      }),
+    );
+  });
+
   it("rejects different category sets from the two aliases", async () => {
     mocks.load().sandboxes.hermes.messaging = { schemaVersion: 1, plan: { channels: [] } };
     mocks.command
@@ -816,7 +915,7 @@ describe("Hermes config export live evidence", () => {
     );
   });
 
-  it("rejects a credential-bearing HTTP refusal with extra diagnostic output", async () => {
+  it("rejects credential disclosure in a matching HTTP refusal diagnostic", async () => {
     mocks.load.mockReturnValue({
       sandboxes: {
         hermes: {
@@ -834,7 +933,7 @@ describe("Hermes config export live evidence", () => {
       .mockResolvedValueOnce({
         exitCode: 2,
         stdout: "",
-        stderr: `${refusal}\nunexpected diagnostic: secret-value\n`,
+        stderr: `${refusal} secret-value\n`,
       });
 
     await expect(runEnabledFixture(["secret-value"])).resolves.toEqual({
@@ -903,13 +1002,29 @@ describe("Hermes config export live evidence", () => {
     );
   });
 
-  it.each([
-    { alias: "nemoclaw", preceding: [] },
-    { alias: "nemohermes", preceding: [pinnedConsumerEvidence()] },
-  ] as const)(
-    "retains a bounded redacted consumer exception for $alias and removes private exports",
-    async ({ alias, preceding }) => {
-      const secret = "private-consumer-value";
+  it.each(
+    (
+      [
+        { alias: "nemoclaw", preceding: [] },
+        { alias: "nemohermes", preceding: [pinnedConsumerEvidence()] },
+      ] as const
+    ).flatMap((entry) => [
+      { ...entry, includeEncoded: false },
+      { ...entry, includeEncoded: true },
+    ]),
+  )(
+    "retains a bounded redacted consumer exception for $alias (encoded: $includeEncoded) and removes private exports",
+    async ({ alias, preceding, includeEncoded }) => {
+      const secret = "private-consumer-value+/=";
+      const encodedSecrets = [
+        Buffer.from(secret).toString("base64"),
+        Buffer.from(secret).toString("base64").replace(/=+$/u, ""),
+        Buffer.from(secret).toString("base64url"),
+        encodeURIComponent(secret),
+        [...secret]
+          .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
+          .join(""),
+      ];
       const writeExport = async (_command: string, args: string[]) => {
         fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, exportedHermesYaml());
         return { exitCode: 0, stderr: "", stdout: "" };
@@ -920,7 +1035,9 @@ describe("Hermes config export live evidence", () => {
         .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
       preceding.forEach((summary) => mocks.validateWithPinnedV1.mockReturnValueOnce(summary));
       mocks.validateWithPinnedV1.mockImplementationOnce(() => {
-        throw new Error(`consumer failed: ${secret} ${"details ".repeat(700)}`);
+        throw new Error(
+          `consumer failed: ${secret} ${includeEncoded ? encodedSecrets.join(" ") : ""} ${"details ".repeat(700)}`,
+        );
       });
 
       await expect(runEnabledFixture([secret])).resolves.toEqual({ checked: true, passed: false });
@@ -935,7 +1052,11 @@ describe("Hermes config export live evidence", () => {
         diagnostic: expect.stringContaining("[REDACTED]"),
       });
       expect(evidence.consumer.failure.diagnostic.length).toBeLessThanOrEqual(2000);
+      expect(evidence.consumer.failure.diagnostic).toContain(
+        includeEncoded ? "Consumer diagnostic contained credential material." : "details",
+      );
       expect(JSON.stringify(evidence)).not.toContain(secret);
+      encodedSecrets.forEach((encoded) => expect(JSON.stringify(evidence)).not.toContain(encoded));
       expect(evidence.consumer.actual).toEqual(
         alias === "nemohermes" ? { nemoclaw: pinnedConsumerEvidence() } : {},
       );
