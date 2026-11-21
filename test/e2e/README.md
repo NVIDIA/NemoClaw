@@ -2511,12 +2511,10 @@ A passing `spark-express-vllm` target establishes that option 2 selects the fixe
 The extra-arguments case compares the real container command with the bounded recipe and appended sequence override.
 Fast installer tests own the selected-profile output, 32,768-token context and argument-order assertions.
 Each case keeps the existing 65-minute test deadline and identity-bound cleanup.
-The Spark controller must land independently on trusted `main`, and its receiver must pass deployment acceptance before hosted qualification.
-Then select `spark-vllm-extra-arguments` by itself through the trusted workflow's `jobs` or `targets` input.
-Pass the candidate commit as `checkout_sha` and `NVIDIA/NemoClaw` as `checkout_repository`.
-Its controller sends the candidate commit and managed-image revision to a dedicated Spark backend and uploads its receipt and archive.
-See [Spark dispatch prerequisites](docs/dgx-station-dispatch.md#dgx-spark-extra-arguments-dispatch) before dispatching.
-The fixed-profile `spark-express-vllm` case remains standalone.
+Both Spark variants are standalone hardware tests.
+The workflow and planner do not select `spark-vllm-extra-arguments` while its receiver deployment remains unverified.
+Hosted qualification still requires an independently reviewed trusted-main controller and accepted receiver implementation.
+See [Spark dispatch prerequisites](docs/dgx-station-dispatch.md#dgx-spark-extra-arguments-dispatch).
 The command below also runs the extra-arguments case directly on a physical Spark reporting at least 60 GB and less than 64 GB.
 A standalone result does not qualify the GitHub dispatch path.
 Keep the [independently verified image authority](docs/dgx-station-dispatch.md#select-managed-image-authority) exported before running this standalone command:

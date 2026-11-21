@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  validateDgxStationDispatchBoundary,
-  validateDgxSparkDispatchBoundary,
-} from "./dgx-station-workflow-boundary.mts";
+import { validateDgxStationDispatchBoundary } from "./dgx-station-workflow-boundary.mts";
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
@@ -207,7 +204,6 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "llama-cpp-dgx-spark-qualification",
   "dgx-station-express",
-  "spark-vllm-extra-arguments",
   "hermes-e2e",
   "hermes-gpu-startup",
   "jetson-nvmap-gpu",
@@ -222,7 +218,6 @@ const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
 const NO_IMAGE_E2E_JOBS = new Set([
   "llama-cpp-dgx-spark-qualification",
   "dgx-station-express",
-  "spark-vllm-extra-arguments",
   "external-gateway-health",
   "staging-brev-launchable",
   "staging-brev-launchable-identity",
@@ -3180,7 +3175,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   errors.push(...validateJetsonDispatchBoundary(workflow));
   errors.push(...validateDgxStationDispatchBoundary(workflow));
-  errors.push(...validateDgxSparkDispatchBoundary(workflow));
   const { errors: inventoryErrors, inventory: freeStandingInventory } =
     deriveFreeStandingJobsInventoryFromJobs(jobs);
   errors.push(...inventoryErrors);
