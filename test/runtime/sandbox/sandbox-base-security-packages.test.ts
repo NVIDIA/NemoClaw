@@ -302,10 +302,11 @@ function baseAptSecurityFunctionsWithLibeventVersion(
 
 function baseAptSecurityFunctionsForPublishedHermes(
   architecture: (typeof ARCHITECTURES)[number],
+  glibcVersion: string,
 ): string[] {
   return baseAptSecurityFunctions(architecture).map((definition) =>
     definition
-      .replaceAll("2.41-12+deb13u5", "2.41-12+deb13u4")
+      .replaceAll("2.41-12+deb13u5", glibcVersion)
       .replace(
         'nemoclaw-python3.13-htmlparser-fix) printf "3.13.5-2+deb13u5+nemoclaw1"',
         'nemoclaw-python3.13-htmlparser-fix) printf "3.13.5-2+deb13u4+nemoclaw1"',
@@ -562,7 +563,7 @@ describe("sandbox base security packages", () => {
   );
 
   it.each(ARCHITECTURES)(
-    "rejects the published Hermes inventory with superseded glibc on %s",
+    "rejects Hermes inventory with superseded glibc and pinned Python on %s",
     (architecture) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-published-security-"));
       const hermes = SECURITY_IMAGES.find((image) => image.name === "Hermes")!;
@@ -587,7 +588,7 @@ describe("sandbox base security packages", () => {
               "}",
             ].join("\n"),
             ...useRealPatchedParser(
-              baseAptSecurityFunctionsForPublishedHermes(architecture),
+              baseAptSecurityFunctionsForPublishedHermes(architecture, "2.41-12+deb13u4"),
               prepared.pythonShim,
             ),
           ],
@@ -595,6 +596,51 @@ describe("sandbox base security packages", () => {
         );
         expect(result.status).not.toBe(0);
         expect(result.stdout).not.toContain("nemoclaw-security-inventory-ok");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(ARCHITECTURES)(
+    "accepts Hermes inventory with refreshed glibc and pinned Python on %s",
+    (architecture) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-published-security-"));
+      const hermes = SECURITY_IMAGES.find((image) => image.name === "Hermes")!;
+      const prepared = completedImageSecurityCommand(
+        hermes,
+        tmp,
+        architecture,
+        PUBLISHED_HERMES_SECURITY_PACKAGE_INVENTORY.map((spec) =>
+          spec.replace("2.41-12+deb13u4", "2.41-12+deb13u5"),
+        ),
+      );
+
+      try {
+        const { result } = runLoggedDockerShell(
+          prepared.command,
+          tmp,
+          [
+            "perl_base_installed=1",
+            "perl_installed=1",
+            [
+              "stat() {",
+              `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
+              '  printf "0:0:444\\n"',
+              "}",
+            ].join("\n"),
+            ...useRealPatchedParser(
+              baseAptSecurityFunctionsForPublishedHermes(architecture, "2.41-12+deb13u5"),
+              prepared.pythonShim,
+            ),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect({ status: result.status, stderr: result.stderr }).toEqual({
+          status: 0,
+          stderr: "",
+        });
+        expect(result.stdout).toContain("nemoclaw-security-inventory-ok");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
