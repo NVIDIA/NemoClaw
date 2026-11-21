@@ -227,4 +227,52 @@ describe("resources-cmd", () => {
     );
     expect(args).toEqual(["sandbox", "create"]);
   });
+
+  it("uses Docker engine capacity when Kubernetes allocatable capacity is unavailable", () => {
+    vi.spyOn(docker, "dockerSpawnSync").mockImplementation((args) => {
+      if (args[0] === "info") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ NCPU: 4, MemTotal: 12 * 1024 ** 3 }),
+          stderr: "",
+          pid: 1,
+          output: [],
+          signal: null,
+        };
+      }
+      return { status: 1, stdout: "", stderr: "no k8s", pid: 1, output: [], signal: null };
+    });
+
+    const hw = getHardwareResources();
+    expect(hw.cpu.cores).toBe(os.cpus().length);
+    expect(hw.docker).toEqual({ cpuCores: 4, memoryMB: 12288 });
+
+    const openshell = makeExecutable("#!/usr/bin/env sh\necho '--cpu --memory'\n");
+    const args = ["sandbox", "create"];
+    expect(appendResourceFlags(args, { cpu: "75%", memory: "75%" }, openshell)).toBe(true);
+    expect(args).toEqual(["sandbox", "create", "--cpu", "3", "--memory", "9Gi"]);
+  });
+
+  it("falls back to host capacity when Docker engine info is invalid", () => {
+    vi.spyOn(docker, "dockerSpawnSync").mockImplementation((args) => {
+      if (args[0] === "info") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ NCPU: 0, MemTotal: -1 }),
+          stderr: "",
+          pid: 1,
+          output: [],
+          signal: null,
+        };
+      }
+      return { status: 1, stdout: "", stderr: "no k8s", pid: 1, output: [], signal: null };
+    });
+
+    const hw = getHardwareResources();
+    expect(hw.docker).toBeUndefined();
+    expect(resolveProfile({ cpu: "50%", memory: "1Gi" }, hw)).toEqual({
+      cpu: resolveResourceValue("50%", hw.cpu.cores, "cpu"),
+      memory: "1Gi",
+    });
+  });
 });

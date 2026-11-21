@@ -5,6 +5,7 @@ import {
   appendResourceFlags,
   getHardwareResources,
   loadResourceProfiles,
+  resolveProfileCapacity,
   resolveResourceValue,
   type ResourceProfile,
   validateResourceValue,
@@ -109,8 +110,9 @@ export async function selectResourceProfileForSandbox(
       selectedProfile = { ...availableProfiles[profileNames[idx]] };
       console.log(`  Using profile: ${profileNames[idx]}`);
     } else if (idx === profileNames.length) {
+      const capacity = resolveProfileCapacity(hw);
       console.log("");
-      console.log(`  Available: ${hw.cpu.cores} CPU cores, ${hw.memory.totalMB} MB RAM`);
+      console.log(`  Available: ${capacity.cpuCores} CPU cores, ${capacity.memoryMB} MB RAM`);
       console.log("  Enter values as percentages (e.g. 25%) or absolutes (e.g. 4, 8Gi)");
       console.log("");
       const cpu = (await deps.prompt(`  CPU [25%]: `)).trim() || "25%";
@@ -120,7 +122,7 @@ export async function selectResourceProfileForSandbox(
         memory,
       };
       try {
-        printResolvedResourceProfile(selectedProfile, hw.cpu.cores, hw.memory.totalMB);
+        printResolvedResourceProfile(selectedProfile, capacity.cpuCores, capacity.memoryMB);
       } catch (e: unknown) {
         exitWithResourceProfileError((e as Error).message);
       }
