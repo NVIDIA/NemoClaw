@@ -45,8 +45,8 @@ Fern displays each `docs/changelog/YYYY-MM-DD.md` file as a searchable entry.
 Use the version as its heading, for example `## v0.1.0`.
 Keep changes between release candidates in the [maintainer notes](release-candidates.md).
 
-The first entry uses the date its draft was written.
-When 0.1.0 ships, update that entry with the published changes and rename the file to match the release date.
+The 0.1.0 entry uses the draft date for the PR preview.
+Before publishing it, verify the changes against the release tag and rename the file to match the release date.
 If the filename changes, redirect the draft entry URL to the published entry in `fern/docs.yml`.
 Use the published release date for each subsequent entry.
 

@@ -3,5 +3,5 @@
 
 # Release Notes
 
-Browse the [v1 changelog files](./) for NVIDIA NemoClaw Agent Configs.
-[Issue #12638](https://github.com/NVIDIA/NemoClaw/issues/12638) tracks the first release.
+These release notes cover the v1 series of NVIDIA NemoClaw Agent Configs.
+You can also browse the [release notes by date on GitHub](./).
