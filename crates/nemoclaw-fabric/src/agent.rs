@@ -98,7 +98,15 @@ pub const SECTIONS: [(&str, &str); 13] = [
 ];
 
 /// The typed inputs of an agent, shaped by Fabric's own configuration schema.
+/// Compiling and reading every agent takes them, so they are derived from the
+/// schema once.
 pub fn structured_inputs() -> Vec<Structured> {
+    static INPUTS: std::sync::LazyLock<Vec<Structured>> =
+        std::sync::LazyLock::new(agent_structured_inputs);
+    INPUTS.clone()
+}
+
+fn agent_structured_inputs() -> Vec<Structured> {
     let mut schema = nemo_fabric_core::generate_schema(nemo_fabric_core::SchemaName::Agent)
         .expect("Fabric publishes its agent configuration schema");
     // Other sections are not inputs, and some have no OpenTofu type.

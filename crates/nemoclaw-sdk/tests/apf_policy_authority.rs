@@ -82,19 +82,38 @@ fn either_gateway_mode_accepts_apf_as_the_policy_authority() {
 #[test]
 fn apf_serves_every_credential_profile_on_a_governed_gateway() {
     let source = include_str!("../../../examples/travel-team.yaml");
-    let kinds = ["inference", "web_search", "api"];
+    // The travel team registers inference, the booking API, and web search,
+    // which is an API credential too.
+    let credentials = |document: &Document| {
+        let generations: Generations = ["workspace", "provider", "sandbox"]
+            .map(|k| (k.into(), format!("{k}-generation")))
+            .into();
+        let credentials: Vec<_> = targets(document, &generations)
+            .unwrap()
+            .into_iter()
+            .filter(|row| ["inference", "api"].contains(&row.kind.as_str()))
+            .collect();
+        assert!(
+            credentials
+                .iter()
+                .any(|row| row.values["name"].starts_with("brave-search-"))
+        );
+        assert!(credentials.iter().filter(|row| row.kind == "api").count() >= 2);
+        credentials
+    };
     let mut value = governed(example(source));
     // APF's policy, not the sandbox, grants the buyer its bookings endpoint.
     value["spec"]["sandboxes"]["buyer"]["network"] = json!({"tier": "isolated"});
-    let document = parse(&value).unwrap();
-    for kind in kinds {
-        assert_eq!(values(&document, kind)["policy_authority"], "apf", "{kind}");
+    for row in credentials(&parse(&value).unwrap()) {
+        assert_eq!(row.values["policy_authority"], "apf", "{}", row.address);
+        // APF's profile sets the endpoint's rules, so the search sets none.
+        assert!(!row.values.contains_key("rest_json"), "{}", row.address);
     }
-    let document = parse(&example(source)).unwrap();
-    for kind in kinds {
+    for row in credentials(&parse(&example(source)).unwrap()) {
         assert!(
-            !values(&document, kind).contains_key("policy_authority"),
-            "{kind}"
+            !row.values.contains_key("policy_authority"),
+            "{}",
+            row.address
         );
     }
 }

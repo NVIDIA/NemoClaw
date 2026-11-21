@@ -10,16 +10,12 @@ use std::{
 
 use nemoclaw_sdk::config::{
     Document, parse_yaml_value,
-    schema::{input_schema_ref, select_variant},
+    schema::{input_schema_ref, input_validator, select_variant},
 };
 use serde_json::Value;
 
 use crate::{Diagnostics, diagnostics::diagnostic};
 use jsonschema::error::ValidationErrorKind as Kind;
-
-static INPUT_VALIDATOR: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
-    jsonschema::validator_for(input_schema_ref()).expect("SDK input schema must compile")
-});
 
 /// Authored values before SDK defaults or required-field validation.
 #[derive(Clone, Debug, PartialEq)]
@@ -113,7 +109,7 @@ impl PartialDocument {
     }
 
     fn assess_text(&self, text: &str) -> PartialAssessment {
-        let issues = schema_issues(input_schema_ref(), &INPUT_VALIDATOR, &self.supplied);
+        let issues = schema_issues(input_schema_ref(), input_validator(), &self.supplied);
         if !issues.is_empty() {
             return PartialAssessment {
                 issues,

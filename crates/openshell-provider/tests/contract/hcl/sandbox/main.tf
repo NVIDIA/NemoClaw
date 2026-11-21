@@ -50,11 +50,11 @@ resource "openshell_workspace" "example" {
   owner      = "team-owner"
   generation = "workspace-generation"
 }
-resource "openshell_web_search" "brave" {
+resource "openshell_api" "search" {
   gateway        = local.gateway
   workspace      = openshell_workspace.example.ref
-  name           = "brave"
-  provider_type  = "brave"
+  name           = "search"
+  endpoints      = ["https://api.search.brave.com"]
   credential_env = "NEMOCLAW_TEST_BRAVE_KEY"
   binaries       = ["/usr/bin/agent"]
 }
@@ -67,7 +67,7 @@ resource "openshell_sandbox" "agent" {
   image       = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   launch_json = local.launch_json
   gpu_count   = 1
-  providers   = [openshell_web_search.brave.ref]
+  providers   = [openshell_api.search.ref]
   driver_config = jsonencode({
     docker = {
       mounts      = [{ type = "volume", source = "skills", target = var.target }]

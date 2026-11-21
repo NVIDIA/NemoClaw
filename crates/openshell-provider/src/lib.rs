@@ -17,7 +17,7 @@ mod network;
 mod profile;
 mod provider;
 mod services;
-pub use nemoclaw_openshell::pairs::{inference_rows, web_search_rows};
+pub use nemoclaw_openshell::pairs::inference_rows;
 pub use nemoclaw_openshell::{policy::policy_json, profile::definition as inference_profile};
 mod inference;
 use inference::{PROVIDERS_ENV, inference_environment};
@@ -210,9 +210,6 @@ fn provider_row(
             ("credential_source".into(), String::new()),
         ]);
         return Ok(row);
-    }
-    if nemoclaw_openshell::search::SearchProvider::from_profile(&provider.r#type).is_some() {
-        return profile::provider_row(provider, name, removing);
     }
     if provider.r#type != format!("nemoclaw-inference-{name}")
         || provider
@@ -549,21 +546,9 @@ fn inference_sandbox_env(known: &Row, unknown: &[&str]) -> Option<String> {
     })
 }
 
-/// The registration a web search row registers, derived from the inputs that
-/// name it.
-fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
-    if ["name", "provider_type", "credential_env"]
-        .iter()
-        .any(|field| unknown.contains(field))
-    {
-        return None;
-    }
-    nemoclaw_openshell::registration_name(composite::WEB_SEARCH, known)
-}
-
 /// OpenShell objects and their planning rules.
-pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
-    use nemoclaw_openshell::api::MCP_POLICY;
+pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
+    use nemoclaw_openshell::api::{MCP_POLICY, REST_POLICY};
     use nemoclaw_tofu::Definition;
     [
         Definition::new("workspace", &["name", "owner", "generation"], &[]),
@@ -582,6 +567,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "sandbox_env",
                 POLICY_AUTHORITY,
                 MCP_POLICY,
+                REST_POLICY,
             ],
             &["credential_env", "binaries_json"],
         )
@@ -594,6 +580,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "sandbox_env",
             POLICY_AUTHORITY,
             MCP_POLICY,
+            REST_POLICY,
         ])
         // Omission selects the default, not the previous value.
         .reset_when_omitted(&[
@@ -608,49 +595,14 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
         .validate_inputs(composite::validate_api)
         .replaces(binaries_changes)
         .derived("registration", provider_registration),
-        // A web search provider's profile and registration, as one resource
-        // whose owner is its workspace's. Every input names them, so changes
-        // replace. `credential_env` and `binaries` are required by plans,
-        // not the schema: an observation reports them empty when their half
-        // of the pair is missing, which shows as drift.
-        Definition::new(
-            composite::WEB_SEARCH,
-            &[
-                "workspace",
-                "name",
-                "owner",
-                "generation",
-                "provider_type",
-                "credential_env",
-                "sandbox_env",
-                "binaries_json",
-                POLICY_AUTHORITY,
-            ],
-            &["binaries_json"],
-        )
-        .optional(&[
-            "credential_env",
-            "sandbox_env",
-            "binaries_json",
-            POLICY_AUTHORITY,
-        ])
-        // Omission selects the default, not the previous value.
-        .reset_when_omitted(&[
-            "credential_env",
-            "sandbox_env",
-            "binaries_json",
-            POLICY_AUTHORITY,
-        ])
-        .replaces(binaries_changes)
-        .derived("registration", web_search_registration),
         // An inference server's profile and registration, as one resource
         // whose owner is its workspace's and whose endpoint and credential
         // come from the server's ref. A rotated credential reference updates
         // in place, since OpenShell refuses to delete a registration a sandbox
         // attaches; adding or removing authentication, or any other change,
         // replaces them. The schema lists the server's fields and `binaries` as
-        // optional, and plans require them, for the same reason as web
-        // search's.
+        // optional, and plans require them: an observation reports them empty
+        // when their half of the pair is missing, which shows as drift.
         Definition::new(
             composite::INFERENCE,
             &[

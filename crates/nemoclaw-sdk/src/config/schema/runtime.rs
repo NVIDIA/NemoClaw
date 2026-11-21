@@ -14,6 +14,15 @@ static INPUT: LazyLock<jsonschema::Validator> =
     LazyLock::new(|| compile(super::input_schema_ref()));
 static NORMALIZED: LazyLock<Value> = LazyLock::new(|| super::build_schema(true));
 static DOCUMENT: LazyLock<jsonschema::Validator> = LazyLock::new(|| compile(&NORMALIZED));
+// Validators for one location reference the normalized schema in one prepared
+// registry, as jsonschema suggests for checking against one definition:
+// compiling each from a copy of the schema costs more than the checks it serves.
+static NORMALIZED_SCHEMA: LazyLock<jsonschema::Registry<'static>> = LazyLock::new(|| {
+    jsonschema::Registry::new()
+        .add(normalized_id(), NORMALIZED.clone())
+        .and_then(|registry| registry.prepare())
+        .expect("SDK configuration schema must register")
+});
 static DEFINITIONS: LazyLock<Mutex<BTreeMap<String, Arc<jsonschema::Validator>>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 static TUNING_SCHEMA: LazyLock<Value> =
@@ -37,6 +46,16 @@ static FIELDS: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
     collect(super::input_schema_ref(), &mut fields);
     fields
 });
+
+pub(super) fn input_validator() -> &'static jsonschema::Validator {
+    &INPUT
+}
+
+fn normalized_id() -> &'static str {
+    NORMALIZED["$id"]
+        .as_str()
+        .expect("SDK configuration schema has an $id")
+}
 
 fn compile(schema: &Value) -> jsonschema::Validator {
     jsonschema::validator_for(schema).expect("SDK configuration schema must compile")
@@ -286,11 +305,12 @@ fn validate_at(path: &str, object: &impl Serialize) -> Result<(), ConfigError> {
                     NORMALIZED.pointer(path).is_some(),
                     "unknown schema path: {path}"
                 );
-                Arc::new(compile(&json!({
-                    "$schema": NORMALIZED["$schema"],
-                    "$defs": NORMALIZED["$defs"],
-                    "$ref": format!("#{path}")
-                })))
+                Arc::new(
+                    jsonschema::options()
+                        .with_registry(&NORMALIZED_SCHEMA)
+                        .build(&json!({"$ref": format!("{}#{path}", normalized_id())}))
+                        .expect("SDK configuration schema must compile"),
+                )
             })
             .clone()
     };
