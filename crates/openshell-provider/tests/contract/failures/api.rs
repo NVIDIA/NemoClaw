@@ -153,8 +153,7 @@ async fn api_credentials_recover_after_either_create_readback_is_unavailable() {
         // Only the API, so the failed readback is its own.
         fs::write(
             root.path().join("terraform.tfvars.json"),
-            json!({"endpoint": fixture.endpoint, "sandbox": false, "web_search": false})
-                .to_string(),
+            json!({"endpoint": fixture.endpoint, "sandbox": false, "search": false}).to_string(),
         )
         .unwrap();
         fixture.state.lock().unwrap().fail_after_create = Some((kind, tonic::Code::Unavailable));

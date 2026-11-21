@@ -202,7 +202,7 @@ async fn failed_and_partial_observations_retain_protocol_state() {
     partial.remove("id");
     let mut foreign = row();
     foreign.insert("owner".into(), "someone-else".into());
-    for kind in ["workspace", "inference", "web_search", "sandbox", "agent"] {
+    for kind in ["workspace", "inference", "api", "sandbox", "agent"] {
         for observation in [
             Err(ObservationError::Transport),
             Ok(Some(partial.clone())),
@@ -225,7 +225,7 @@ async fn failed_and_partial_observations_retain_protocol_state() {
 
 #[tokio::test]
 async fn confirmed_absence_reconciles_reconstructible_objects_but_preserves_retained_bindings() {
-    for kind in ["workspace", "inference", "web_search", "sandbox", "agent"] {
+    for kind in ["workspace", "inference", "api", "sandbox", "agent"] {
         for destroying in [false, true] {
             let resource = ResourceAdapter::new(
                 support::definition(kind, &["name", "owner", "generation"], &[]),
@@ -240,7 +240,7 @@ async fn confirmed_absence_reconciles_reconstructible_objects_but_preserves_reta
                 .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
                 .await;
             // Explicit teardown accepts a confirmed-absent workspace.
-            if matches!(kind, "inference" | "web_search" | "sandbox" | "agent")
+            if matches!(kind, "inference" | "api" | "sandbox" | "agent")
                 || (destroying && kind == "workspace")
             {
                 assert!(result.is_none());
@@ -373,12 +373,26 @@ async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
 
 #[tokio::test]
 async fn reconstructible_resources_plan_replacement_and_deletion_without_teardown_mode() {
-    for kind in ["workspace", "inference", "web_search", "sandbox", "agent"] {
+    for kind in ["workspace", "inference", "api", "sandbox", "agent"] {
+        // An API credential plans only with the inputs it validates.
+        let inputs: &[(&'static str, &str)] = if kind == "api" {
+            &[
+                ("endpoints_json", r#"["https://api.example.com"]"#),
+                ("credential_env", "EXAMPLE_KEY"),
+                ("binaries_json", r#"["/usr/bin/curl"]"#),
+            ]
+        } else {
+            &[]
+        };
+        let mut fields = vec!["name", "owner", "generation"];
+        fields.extend(inputs.iter().map(|(field, _)| *field));
         let resource = ResourceAdapter::new(
-            support::definition(kind, &["name", "owner", "generation"], &[]),
+            support::definition(kind, &fields, &[]),
             Arc::new(Fixture(Ok(None))),
         );
-        let prior = state(row());
+        let mut prior = row();
+        prior.extend(inputs.iter().map(|(k, v)| ((*k).into(), (*v).into())));
+        let prior = state(prior);
         let mut changed = prior.clone();
         changed.insert("name".into(), Value::Value("replacement".into()));
         let mut diagnostics = Diagnostics::default();
@@ -392,7 +406,7 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
                 Value::Null,
             )
             .await;
-        let reconstructible = matches!(kind, "inference" | "web_search" | "sandbox" | "agent");
+        let reconstructible = matches!(kind, "inference" | "api" | "sandbox" | "agent");
         assert_eq!(result.is_some(), reconstructible, "{kind}");
         assert_eq!(diagnostics.errors.is_empty(), reconstructible, "{kind}");
         if let Some((_, _, replacements)) = result {
