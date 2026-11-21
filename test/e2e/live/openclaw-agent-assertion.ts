@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync } from "node:fs";
+import { isObjectRecord } from "../../../src/lib/core/json-types.ts";
 
 import {
   openClawFinalAgentResponse,
@@ -17,6 +18,7 @@ import { expect } from "../fixtures/e2e-test.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import {
+  WEATHER_RESPONSE_VALIDATION_PYTHON,
   buildOpenClawToolEvidenceReducerScript,
   classifyOpenClawAgentAssertion,
   isUnavailableSearchReply,
@@ -44,6 +46,7 @@ export interface OpenClawAgentAssertionOptions {
   apiKey: string;
   collectToolEvidenceOnFailure?: boolean;
   expected: string;
+  failureWeatherProofPath?: string;
   finalReplyContract?: "unavailable-search" | "exact-token";
   label: string;
   prompt: string;
@@ -288,6 +291,21 @@ export async function runOpenClawAgentAssertion(
       args.publicFetchExpectation.url,
     );
   }
+  if (args.failureWeatherProofPath) {
+    await captureWeatherProofFailureProbe(
+      sandbox,
+      artifacts,
+      args.sandboxName,
+      args.failureWeatherProofPath,
+    );
+    await capturePublicFetchFailureProbe(
+      sandbox,
+      artifacts,
+      args.sandboxName,
+      args.label,
+      "https://api.open-meteo.com/v1/forecast?latitude=37.7749&longitude=-122.4194&current=temperature_2m",
+    );
+  }
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
 }
 
@@ -320,7 +338,7 @@ export async function capturePublicFetchFailureProbe(
         "--",
         url,
       ],
-      { env: commandEnv(), persistArtifacts: false, timeoutMs: 20_000 },
+      { env: commandEnv(), persistArtifacts: false, captureLimitBytes: 1_024, timeoutMs: 20_000 },
     );
     await artifacts.writeJson(`actions/${label}-separate-http-probe.json`, {
       schemaVersion: 1,
@@ -344,5 +362,82 @@ export async function capturePublicFetchFailureProbe(
     } catch {
       // Preserve the original assertion when diagnostics cannot be saved.
     }
+  }
+}
+
+/** Inspect public weather proof without accepting a failed agent turn or retaining response text. */
+export async function captureWeatherProofFailureProbe(
+  sandbox: SandboxClient,
+  artifacts: ArtifactSink,
+  sandboxName: string,
+  proofPath: string,
+): Promise<void> {
+  const script = [
+    "import hashlib,json,os,stat,sys",
+    'receipt={"schemaVersion":1,"state":"unreadable","sha256":None}',
+    "try:",
+    "    fd=os.open(sys.argv[1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)",
+    '    with os.fdopen(fd,"rb") as stream:',
+    "        info=os.fstat(stream.fileno())",
+    "        if not stat.S_ISREG(info.st_mode):",
+    '            receipt["state"]="non-regular"',
+    "        elif info.st_size>65536:",
+    '            receipt["state"]="oversized"',
+    "        else:",
+    "            body=stream.read(65537)",
+    "            if len(body)>65536:",
+    '                receipt["state"]="oversized"',
+    "            else:",
+    '                receipt["state"]="invalid"',
+    `                exec(${JSON.stringify(WEATHER_RESPONSE_VALIDATION_PYTHON.replace("d=json.load(open(sys.argv[1]))", "d=json.loads(body)"))})`,
+    '                receipt.update(state="valid",sha256=hashlib.sha256(body).hexdigest())',
+    "except FileNotFoundError:",
+    '    receipt["state"]="absent"',
+    "except Exception:",
+    "    pass",
+    "print(json.dumps(receipt))",
+  ].join("\n");
+  let diagnostic: { schemaVersion: 1; state: string; sha256: string | null } = {
+    schemaVersion: 1,
+    state: "unavailable",
+    sha256: null,
+  };
+  try {
+    const result = await sandbox.exec(sandboxName, ["python3", "-c", script, proofPath], {
+      env: commandEnv(),
+      persistArtifacts: false,
+      captureLimitBytes: 1_024,
+      timeoutMs: 10_000,
+    });
+    const value: unknown = JSON.parse(result.stdout);
+    if (
+      result.exitCode === 0 &&
+      isObjectRecord(value) &&
+      value.schemaVersion === 1 &&
+      typeof value.state === "string" &&
+      ["absent", "unreadable", "non-regular", "oversized", "invalid", "valid"].includes(
+        value.state,
+      ) &&
+      (value.state !== "valid" ||
+        (typeof value.sha256 === "string" && /^[a-f0-9]{64}$/.test(value.sha256)))
+    ) {
+      diagnostic = {
+        schemaVersion: 1,
+        state: value.state,
+        sha256:
+          value.state === "valid" &&
+          typeof value.sha256 === "string" &&
+          /^[a-f0-9]{64}$/.test(value.sha256)
+            ? value.sha256
+            : null,
+      };
+    }
+  } catch {
+    // An unavailable diagnostic cannot replace the failed agent turn.
+  }
+  try {
+    await artifacts.writeJson("actions/c1-weather-failed-turn-proof.json", diagnostic);
+  } catch {
+    // Preserve the original assertion when the artifact sink is unavailable.
   }
 }

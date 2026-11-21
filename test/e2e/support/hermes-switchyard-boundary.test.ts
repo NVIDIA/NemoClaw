@@ -117,6 +117,7 @@ sys.modules['agent'] = agent
       passthrough: false,
       answer: SWITCHYARD_BOUNDARY_ANSWER,
       callback_status: null,
+      callback_errno: null,
       failure_category: null,
     });
     const payload = JSON.parse(Buffer.from(args[4]!, "base64").toString());
@@ -153,6 +154,13 @@ def urlopen(request, **kwargs):
     if fault == 'proxy':
         raise urllib.error.URLError(OSError('Tunnel connection failed: 403 Forbidden ' + canary))
     if fault == 'transport': raise urllib.error.URLError(OSError(canary))
+    errnos = {'permission': 13, 'refused': 111, 'timed-out': 110,
+        'negative-errno': -1, 'oversized-errno': 4096, 'boolean-errno': True,
+        'string-errno': canary}
+    if fault in errnos:
+        reason = OSError(canary)
+        reason.errno = errnos[fault]
+        raise urllib.error.URLError(reason)
     return Response()
 urllib.request.urlopen = urlopen
 async def execute(capability, request, continuation):
@@ -197,6 +205,7 @@ test.each(["unmanaged", "unmatched"] as const)(
       passthrough: true,
       answer: SWITCHYARD_BOUNDARY_ANSWER,
       callback_status: 200,
+      callback_errno: null,
       failure_category: null,
     });
   },
@@ -264,4 +273,28 @@ test("unexpected content is withheld and shutdown failure cannot satisfy a denia
   expect(stopped.status).toBe(1);
   expect(stopped.stderr).toContain("Native Switchyard shutdown failed");
   expect(stopped.stdout).toBe("");
+});
+
+test.each(
+  (["unmanaged", "unmatched"] as const).flatMap((mode) =>
+    (
+      [
+        ["permission", 13],
+        ["refused", 111],
+        ["timed-out", 110],
+        ["negative-errno", null],
+        ["oversized-errno", null],
+        ["boolean-errno", null],
+        ["string-errno", null],
+      ] as const
+    ).map(([fault, errno]) => [mode, fault, errno] as const),
+  ),
+)("%s callback %s retains only a bounded numeric errno", (mode, fault, errno) => {
+  expect(continuationProbe(mode, fault)).toMatchObject({
+    failed: true,
+    callback_status: null,
+    callback_errno: errno,
+    failure_category: "transport_error",
+    answer: null,
+  });
 });

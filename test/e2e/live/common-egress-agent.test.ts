@@ -717,6 +717,7 @@ describe.sequential("common-egress agent live targets", () => {
         apiKey,
         collectToolEvidenceOnFailure: true,
         expected: "WEATHER_AGENT_OK",
+        failureWeatherProofPath: weatherProofPath,
         finalReplyContract: "exact-token",
         label: "c1-agent-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,

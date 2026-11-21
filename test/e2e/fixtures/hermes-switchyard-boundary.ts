@@ -204,7 +204,7 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
         os.environ[key] = os.environ[payload['credentialEnv']]
     runtime = relay_runtime.RelayRuntime()
     outcome = {'active': False, 'failed': False, 'passthrough': False, 'answer': None,
-        'callback_status': None, 'failure_category': None}
+        'callback_status': None, 'callback_errno': None, 'failure_category': None}
     try:
         outcome['active'] = runtime.managed_execution_enabled()
         if not outcome['active'] and payload['mode'] != 'unmanaged':
@@ -232,6 +232,8 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
                 outcome['failure_category'] = 'http_error'
                 raise RuntimeError('Provider callback failed') from None
             except urllib.error.URLError as error:
+                errno = getattr(error.reason, 'errno', None)
+                outcome['callback_errno'] = errno if type(errno) is int and 0 <= errno <= 4095 else None
                 if 'tunnel connection failed: 403' in str(error.reason).lower():
                     outcome['callback_status'] = 403
                     outcome['failure_category'] = 'proxy_connect_denied'
