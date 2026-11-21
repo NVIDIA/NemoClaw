@@ -237,10 +237,9 @@ jobs:
 
   # The unit tests' second partition, on its own runner. The suite keeps the
   # hosted runners' few vCPUs busy, so each partition takes about half its
-  # time: each stays within its budget on slower runners, and the build job,
-  # whose archives the contract and integration tests wait for, finishes
-  # sooner. This job compiles the test executables from the same dependency
-  # cache as the build job, without that job's format and lint checks.
+  # time and stays within its budget on slower runners. This job compiles the
+  # test executables from the same dependency cache as the build job, without
+  # that job's format and lint checks, so it finishes before the build job.
   unit:
     name: Unit tests 2 of 2
     if: inputs.unit
