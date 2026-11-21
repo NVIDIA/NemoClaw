@@ -120,9 +120,12 @@ USER node
 FROM base AS codex-sources
 ARG TARGETARCH
 COPY --from=sources /codex-source.tar.gz /codex-libcap-source.tar.xz /sources/
+COPY --from=sources /codex-v8-source.tar.gz /sources/codex-v8-source.tar.gz
 COPY --from=sources /codex-rust-notices.tar.xz /codex-rg-arm64-rust-notices.tar.xz /codex-rg-amd64-rust-notices.tar.xz /tmp/
+COPY --from=sources /codex-icu-LICENSE.base64 /codex-libcxx-LICENSE.base64 /codex-libcxxabi-LICENSE.base64 /codex-llvm-libc-LICENSE.base64 /tmp/
 # Extract notices only; the compiler distributions stay in this build stage.
 RUN python3 - <<'PY'
+import base64
 import os
 import tarfile
 from pathlib import Path
@@ -131,19 +134,26 @@ rg_version = {"arm64": "1.97.0", "amd64": "nightly"}[os.environ["TARGETARCH"]]
 inputs = [
     ("/sources/codex-source.tar.gz", "codex-6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/vendor/bubblewrap/COPYING", "codex-bubblewrap-COPYING"),
     ("/sources/codex-libcap-source.tar.xz", "libcap-2.75/License", "codex-libcap-License"),
+    ("/sources/codex-v8-source.tar.gz", "v8-15.0.245.2/LICENSE", "codex-v8-LICENSE"),
     ("/tmp/codex-rust-notices.tar.xz", "rustc-1.95.0-x86_64-unknown-linux-gnu/rustc/share/doc/rust/COPYRIGHT-library.html", "codex-rust-COPYRIGHT-library.html"),
     (f"/tmp/codex-rg-{os.environ['TARGETARCH']}-rust-notices.tar.xz", f"rustc-{rg_version}-x86_64-unknown-linux-gnu/rustc/share/doc/rust/COPYRIGHT-library.html", "codex-rg-rust-COPYRIGHT-library.html"),
 ]
 for archive, member, output in inputs:
     with tarfile.open(archive) as source:
         Path("/sources", output).write_bytes(source.extractfile(member).read())
+for component in ("icu", "libcxx", "libcxxabi", "llvm-libc"):
+    encoded = Path(f"/tmp/codex-{component}-LICENSE.base64").read_bytes()
+    Path("/sources", f"codex-{component}-LICENSE").write_bytes(base64.b64decode(b"".join(encoded.split()), validate=True))
 PY
 
 FROM generic AS codex
 # The locked Codex wheels omit these project-specific license and notice files.
 COPY --from=sources --chmod=0644 /codex-LICENSE /codex-NOTICE /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /codex-rg-LICENSE-MIT /codex-zsh-LICENCE /opt/nemoclaw/source/
+COPY --from=sources --chmod=0644 /codex-rusty-v8-LICENSE /opt/nemoclaw/source/
 COPY --from=codex-sources --chmod=0644 /sources/codex-source.tar.gz /sources/codex-libcap-source.tar.xz /sources/codex-bubblewrap-COPYING /sources/codex-libcap-License /sources/codex-rust-COPYRIGHT-library.html /sources/codex-rg-rust-COPYRIGHT-library.html /opt/nemoclaw/source/
+COPY --from=codex-sources --chmod=0644 /sources/codex-v8-source.tar.gz /sources/codex-v8-LICENSE /opt/nemoclaw/source/
+COPY --from=codex-sources --chmod=0644 /sources/codex-icu-LICENSE /sources/codex-libcxx-LICENSE /sources/codex-libcxxabi-LICENSE /sources/codex-llvm-libc-LICENSE /opt/nemoclaw/source/
 COPY image/fabric/CODEX-SOURCES.md /opt/nemoclaw/source/codex/README.md
 
 FROM generic AS deepagents

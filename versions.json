@@ -255,6 +255,30 @@
       "codex-libcap-source.tar.xz": {
         "url": "https://mirrors.edge.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.75.tar.xz",
         "sha256": "de4e7e064c9ba451d5234dd46e897d7c71c96a9ebf9a0c445bc04f4742d83632"
+      },
+      "codex-v8-source.tar.gz": {
+        "url": "https://github.com/v8/v8/archive/refs/tags/15.0.245.2.tar.gz",
+        "sha256": "164f3d3e0a8b4c02a386d3a88d1b1133d37e5c20be0239fecdcdde414a4340d5"
+      },
+      "codex-rusty-v8-LICENSE": {
+        "url": "https://raw.githubusercontent.com/denoland/rusty_v8/5c15a6995c9bb4bacd3e341b59fff32c909c80bf/LICENSE",
+        "sha256": "1c6356fb751d45f0c53093ebf8a7f5e580e802f51999178e19d60f3ec39e147d"
+      },
+      "codex-icu-LICENSE.base64": {
+        "url": "https://chromium.googlesource.com/chromium/deps/icu/+/a86a32e67b8d1384b33f8fa48c83a6079b86f8cd/LICENSE?format=TEXT",
+        "sha256": "c5a4698576c4195d3b5869d409cb3d4be7fca00201a5f15ecb5b03aae07b2e2e"
+      },
+      "codex-libcxx-LICENSE.base64": {
+        "url": "https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libcxx.git/+/5abc7f839700f0f17338434e1c1c6a8c87c00c11/LICENSE.TXT?format=TEXT",
+        "sha256": "2df883eed85d488ef641ac22f3ce8afb495508b6f87c38847af95ddbf94aea70"
+      },
+      "codex-libcxxabi-LICENSE.base64": {
+        "url": "https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libcxxabi.git/+/8f11bb1d4438d0239d0dfc1bd9456a9f31629dda/LICENSE.TXT?format=TEXT",
+        "sha256": "8d3456e92a31955fdaea9c32634e2e2d5abf87e32e862ca28f40b979e68ea612"
+      },
+      "codex-llvm-libc-LICENSE.base64": {
+        "url": "https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libc.git/+/9309c117ebae84dd2f9df1ef99de4782162527d5/LICENSE.TXT?format=TEXT",
+        "sha256": "0cced642a3b6d411a42ad6e8ebd7942b4768a530c6e063fa41455a3600a82887"
       }
     },
     "ollama": {
