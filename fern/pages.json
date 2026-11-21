@@ -56,7 +56,7 @@
       "title": "Building and Deploying",
       "pages": [
         {
-          "title": "Building Local Artifacts",
+          "title": "Building NemoClaw From Source",
           "source": "docs/build-deploy/build.md",
           "slug": "build"
         },
@@ -69,6 +69,11 @@
           "title": "Using Desired State",
           "source": "docs/build-deploy/usage.md",
           "slug": "usage"
+        },
+        {
+          "title": "Using the Providers From Your Own OpenTofu Project",
+          "source": "docs/build-deploy/opentofu-project.md",
+          "slug": "opentofu-project"
         },
         {
           "title": "Deploying to Kubernetes or OpenShift",

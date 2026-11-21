@@ -219,8 +219,10 @@ impl Scenario {
 // Every runtime plan, apply, export, or destroy after the service network
 // exists reads it, and the Docker provider waits 2 s before each read. Each
 // scenario therefore creates one runtime and runs every check that needs it,
-// unless those checks would exceed the lifecycle per-test limit in
-// .config/test-budgets.yaml.
+// unless those checks would exceed the integration per-test limit in
+// .config/test-budgets.yaml. An operation takes about 3.5 s on an idle host
+// and took 4.2 to 6.1 s on the linux_amd64 runners, so the Ollama replacement
+// checks, 15 operations in one scenario, run in two.
 //
 // vLLM recovery runs in the bearer scenario below. The runtime-independent
 // checks run once each: the readiness gate, pull policy reapply, and probes
@@ -257,13 +259,19 @@ async fn remote_ollama_recovers_reapplies_and_stops_on_observation_failure_keepi
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
-async fn remote_ollama_preserve_refuses_image_cpu_memory_and_gpu_changes_and_recreate_replaces_gpu()
-{
+async fn remote_ollama_preserve_refuses_image_and_cpu_changes() {
     let s = Scenario::new("nvidia.fabric.openclaw", false, "ollama").await;
     let stable = s.apply().await;
     let state = s.runtime_state();
     image_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
     cpu_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
+async fn remote_ollama_preserve_refuses_memory_and_gpu_changes_and_recreate_replaces_gpu() {
+    let s = Scenario::new("nvidia.fabric.openclaw", false, "ollama").await;
+    let stable = s.apply().await;
+    let state = s.runtime_state();
     memory_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
     gpu_change_replaces_the_container_with_one_device(&s, &stable, &state).await;
 }

@@ -18,6 +18,27 @@ The vendor trees can include build dependencies and dependencies for other platf
 Their presence does not mean every package is linked into the executable.
 The images separately retain the Rust standard-library notices; the standard-library source and toolchain are not included in these archives.
 
+## Deep Agents' orjson Extension
+
+The Deep Agents image retains orjson 3.11.9's original source distribution at `/opt/nemoclaw/source/deepagents/orjson-source.tar.gz`.
+It includes the extension's Rust and C sources, build metadata, and original Apache, MIT, and MPL license texts.
+The installed wheel separately retains these notices in its `orjson-3.11.9.dist-info/licenses/` directory.
+Extract the archive and build a wheel with Python 3.10 or newer, Rust 1.95 or newer, and a C compiler:
+
+```sh
+tar -xzf orjson-source.tar.gz
+python -m pip wheel --no-deps ./orjson-3.11.9
+```
+
+The Python build backend and toolchains are prerequisites; the archive is not an offline build environment.
+
+## mini-swe-agent's hf_xet Extension
+
+The mini-swe-agent image retains `colored-source.crate` (3.1.1) and `option-ext-source.crate` (0.2.0) under `/opt/nemoclaw/source/hf-xet/`.
+These original registry archives include their MPL-2.0 license text and source files; their checksums match the dependency records in the installed hf_xet 1.5.1 wheel's SBOM.
+Extract them with `tar -xzf ARCHIVE`.
+They supplement the wheel's own Apache license and cover these named dependencies, not the entire extension's transitive source closure or an offline rebuild environment.
+
 ## Rebuilding Fabric's Native Library
 
 Use Rust 1.100.0, Python 3.11 or newer, and a C toolchain on Linux.

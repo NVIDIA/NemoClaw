@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_build::{bundle_version, extract_tofu, source_version};
+use nemoclaw_build::{Run, build_kind, extract_tofu, source_version, stamped_version};
 use std::io::{Cursor, Write};
 use std::path::Path;
 fn git(repository: &Path, args: &[&str]) {
@@ -23,37 +23,243 @@ fn git(repository: &Path, args: &[&str]) {
         .unwrap();
     assert!(status.success(), "git {args:?}");
 }
-#[test]
-fn bundle_reports_the_tag_of_a_clean_tagged_checkout_and_its_sources_otherwise() {
+const HASH: &str = "0123456789abcdef";
+
+fn upstream(git_ref: &str, number: &str, attempt: &str) -> Run {
+    Run {
+        repository: "NVIDIA/NemoClaw".into(),
+        workflow_ref: format!("NVIDIA/NemoClaw/.github/workflows/rust.yml@{git_ref}"),
+        event: "push".into(),
+        git_ref: git_ref.into(),
+        number: number.into(),
+        attempt: attempt.into(),
+    }
+}
+/// An attempt of CI / Bundle's run for a v1 push.
+fn ci(number: &str, attempt: &str) -> Run {
+    upstream("refs/heads/v1", number, attempt)
+}
+/// An attempt of CI / Bundle's run for a tag's push.
+fn tag_push(tag: &str, number: &str, attempt: &str) -> Run {
+    upstream(&format!("refs/tags/{tag}"), number, attempt)
+}
+fn repository() -> tempfile::TempDir {
     let repository = tempfile::tempdir().unwrap();
-    let repository = repository.path();
-    let dev = "0.1.0-dev.0123456789abcdef";
-    git(repository, &["init", "--quiet"]);
-    std::fs::write(repository.join("Cargo.toml"), "first").unwrap();
+    git(repository.path(), &["init", "--quiet"]);
+    commit(repository.path(), "first");
+    repository
+}
+fn commit(repository: &Path, contents: &str) {
+    std::fs::write(repository.join("Cargo.toml"), contents).unwrap();
     git(repository, &["add", "Cargo.toml"]);
-    git(repository, &["commit", "--quiet", "--message", "first"]);
-    assert_eq!(bundle_version(repository, dev), dev, "untagged commit");
-    git(repository, &["tag", "v0.1.0-rc12"]);
+    git(repository, &["commit", "--quiet", "--message", contents]);
+}
+fn version(repository: &Path, run: &Run) -> String {
+    stamped_version(repository, "0.1.0", HASH, run).unwrap()
+}
+
+#[test]
+fn each_build_reports_its_version_form_and_the_forms_sort_in_release_order() {
+    let repository = repository();
+    let repository = repository.path();
+    let local = Run::default();
+    let mut versions = vec![
+        version(repository, &ci("8700", "1")),
+        version(repository, &ci("10000", "1")),
+        version(repository, &local),
+    ];
+    git(repository, &["tag", "v0.1.0-rc.1"]);
+    versions.push(version(repository, &tag_push("v0.1.0-rc.1", "8705", "1")));
+    commit(repository, "after rc.1");
+    versions.push(version(repository, &ci("8710", "1")));
+    git(repository, &["tag", "v0.1.0-rc.12"]);
+    versions.push(version(repository, &tag_push("v0.1.0-rc.12", "8860", "1")));
+    commit(repository, "after rc.12");
+    versions.push(version(repository, &ci("8870", "1")));
+    versions.push(version(repository, &ci("8870", "2")));
+    versions.push(version(repository, &ci("8871", "1")));
+    commit(repository, "rc.13");
+    git(repository, &["tag", "v0.1.0-rc.13"]);
+    versions.push(version(repository, &tag_push("v0.1.0-rc.13", "8875", "1")));
+    commit(repository, "release");
+    git(repository, &["tag", "v0.1.0"]);
+    versions.push(version(repository, &tag_push("v0.1.0", "8790", "1")));
+    commit(repository, "after the release");
+    versions.push(version(repository, &ci("8800", "1")));
+    versions.push(version(repository, &local));
+    git(repository, &["tag", "v0.1.1-rc.1"]);
+    versions.push(version(repository, &tag_push("v0.1.1-rc.1", "8805", "1")));
+    commit(repository, "next release");
+    git(repository, &["tag", "v0.1.1"]);
+    versions.push(version(repository, &tag_push("v0.1.1", "8810", "1")));
+
     assert_eq!(
-        bundle_version(repository, dev),
-        "0.1.0-rc12",
-        "release candidate tag"
+        versions,
+        [
+            "0.1.0-8700",
+            "0.1.0-10000",
+            "0.1.0-dev.0123456789abcdef",
+            "0.1.0-rc.1",
+            "0.1.0-rc.1.8710",
+            "0.1.0-rc.12",
+            "0.1.0-rc.12.8870",
+            "0.1.0-rc.12.8870.2",
+            "0.1.0-rc.12.8871",
+            "0.1.0-rc.13",
+            "0.1.0",
+            "0.1.1-8800",
+            "0.1.1-dev.0123456789abcdef",
+            "0.1.1-rc.1",
+            "0.1.1",
+        ]
     );
+    let parsed: Vec<_> = versions
+        .iter()
+        .map(|version| semver::Version::parse(version).unwrap())
+        .collect();
+    for pair in parsed.windows(2) {
+        assert!(pair[0] < pair[1], "{} sorts before {}", pair[0], pair[1]);
+    }
+    for version in &versions {
+        let expected = if version.contains('-') {
+            "dev"
+        } else {
+            "release"
+        };
+        assert_eq!(build_kind(version), expected, "{version}");
+    }
+}
+
+#[test]
+fn ci_builds_of_one_commit_differ_and_attempts_of_a_tag_push_report_the_tag() {
+    let repository = repository();
+    let repository = repository.path();
+    let brev = Run {
+        workflow_ref: "NVIDIA/NemoClaw/.github/workflows/brev.yml@refs/heads/v1".into(),
+        ..ci("55", "1")
+    };
+    let fork = Run {
+        repository: "fork/NemoClaw".into(),
+        workflow_ref: "fork/NemoClaw/.github/workflows/rust.yml@refs/heads/v1".into(),
+        ..ci("55", "1")
+    };
+    // Two attempts, two runs, and two workflows of one commit.
+    let builds = [ci("55", "1"), ci("55", "2"), ci("56", "1"), brev];
+    let versions: std::collections::BTreeSet<_> =
+        builds.iter().map(|run| version(repository, run)).collect();
+    assert_eq!(versions.len(), builds.len(), "{versions:?}");
+    assert_eq!(
+        version(repository, &fork),
+        "0.1.0-dev.0123456789abcdef",
+        "a fork's run numbers name nothing"
+    );
+
+    git(repository, &["tag", "v0.1.0-rc.1"]);
+    for attempt in ["1", "2", "3"] {
+        assert_eq!(
+            version(repository, &tag_push("v0.1.0-rc.1", "60", attempt)),
+            "0.1.0-rc.1",
+            "attempt {attempt} of the tag's run"
+        );
+    }
+    assert_eq!(
+        version(repository, &ci("61", "1")),
+        "0.1.0-rc.1.61",
+        "a branch's run at the tagged commit"
+    );
+    let fork_tag = Run {
+        repository: "fork/NemoClaw".into(),
+        workflow_ref: "fork/NemoClaw/.github/workflows/rust.yml@refs/tags/v0.1.0-rc.1".into(),
+        ..tag_push("v0.1.0-rc.1", "3", "1")
+    };
+    assert_eq!(version(repository, &fork_tag), "0.1.0-dev.0123456789abcdef");
     std::fs::write(repository.join("Cargo.toml"), "changed").unwrap();
-    assert_eq!(bundle_version(repository, dev), dev, "uncommitted change");
+    assert_eq!(
+        version(repository, &tag_push("v0.1.0-rc.1", "62", "1")),
+        "0.1.0-rc.1.62",
+        "a tag's run with changed files"
+    );
+    git(repository, &["checkout", "--quiet", "Cargo.toml"]);
+    git(repository, &["tag", "v0.1.0-rc2"]);
+    assert_eq!(
+        version(repository, &tag_push("v0.1.0-rc2", "63", "1")),
+        "0.1.0-rc.1.63",
+        "only rc.N candidate tags count"
+    );
+}
+
+#[test]
+fn the_next_version_is_the_workspace_version_or_the_patch_after_the_highest_release() {
+    let repository = repository();
+    let repository = repository.path();
+    git(repository, &["tag", "v0.1.5"]);
+    git(repository, &["tag", "v0.1.3"]);
+    git(repository, &["tag", "v0.1.6-rc.4"]);
+    git(repository, &["tag", "v0.2.0-rc.2"]);
+    let run = ci("7", "1");
+    assert_eq!(
+        stamped_version(repository, "0.1.0", HASH, &run).unwrap(),
+        "0.1.6-rc.4.7"
+    );
+    assert_eq!(
+        stamped_version(repository, "0.2.0", HASH, &run).unwrap(),
+        "0.2.0-rc.2.7",
+        "a raised workspace version plans the next minor release"
+    );
+    assert_eq!(
+        stamped_version(repository, "1.0.0", HASH, &run).unwrap(),
+        "1.0.0-7"
+    );
     git(
         repository,
-        &["commit", "--quiet", "--all", "--message", "second"],
+        &["checkout", "--quiet", "--orphan", "unrelated"],
     );
-    git(repository, &["tag", "v0.1.0"]);
-    assert_eq!(bundle_version(repository, dev), "0.1.0", "release tag");
-    git(repository, &["tag", "--delete", "v0.1.0"]);
-    git(repository, &["tag", "nightly"]);
-    assert_eq!(bundle_version(repository, dev), dev, "other tag");
+    commit(repository, "unrelated");
     assert_eq!(
-        bundle_version(&repository.join("missing"), dev),
-        dev,
-        "no repository"
+        stamped_version(repository, "0.1.0", HASH, &run).unwrap(),
+        "0.1.0-7",
+        "tags that HEAD can't reach"
+    );
+}
+
+#[test]
+fn versions_stay_valid_semver_when_the_hash_is_all_digits() {
+    let missing = tempfile::tempdir().unwrap();
+    let missing = missing.path().join("missing");
+    for (hash, expected) in [
+        ("0123456789012345", "0.1.0-dev.123456789012345"),
+        ("0000000000000000", "0.1.0-dev.0"),
+        ("1234567890123456", "0.1.0-dev.1234567890123456"),
+    ] {
+        let version = stamped_version(&missing, "0.1.0", hash, &Run::default()).unwrap();
+        assert_eq!(version, expected);
+        semver::Version::parse(&version).unwrap();
+    }
+}
+
+#[test]
+fn a_ci_build_needs_the_history_and_a_local_build_does_not() {
+    let repository = repository();
+    git(repository.path(), &["tag", "v0.1.0"]);
+    commit(repository.path(), "second");
+    let shallow = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", repository.path().display());
+    git(
+        shallow.path(),
+        &["clone", "--quiet", "--depth", "1", &url, "checkout"],
+    );
+    let shallow = shallow.path().join("checkout");
+    assert!(stamped_version(&shallow, "0.1.0", HASH, &ci("9", "1")).is_err());
+    assert!(stamped_version(&shallow.join("missing"), "0.1.0", HASH, &ci("9", "1")).is_err());
+    assert_eq!(
+        stamped_version(&shallow.join("missing"), "0.1.0", HASH, &Run::default()).unwrap(),
+        "0.1.0-dev.0123456789abcdef",
+        "a local build without git"
+    );
+    assert_eq!(
+        version(repository.path(), &Run::default()),
+        "0.1.1-dev.0123456789abcdef",
+        "a local build with the history"
     );
 }
 #[test]

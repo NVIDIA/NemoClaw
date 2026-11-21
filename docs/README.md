@@ -3,7 +3,7 @@
 
 # Documentation Index
 
-These guides describe NemoClaw Agent Configs, a release candidate built from the `v1` branch. Use a bundle, example, and image built from the implementation revision you operate. The [first-deployment tutorial](get-started/first-deployment.md) is an exception: it pins `1636069b91f402242a35714fde1011042c3f1f70`, the `v0.1.0-rc12` tag's commit, and OpenShell 0.1.9. Follow that worktree's build instructions and generated schema for the exercise, not this checkout's newer build guide.
+These guides describe NemoClaw Agent Configs, a release candidate built from the `v1` branch. Use a bundle, example, and image built from the implementation revision you operate. The [first-deployment tutorial](get-started/first-deployment.md) is an exception: it pins `1636069b91f402242a35714fde1011042c3f1f70` and OpenShell 0.1.9. Follow that worktree's build instructions and generated schema for the exercise, not this checkout's newer build guide.
 
 The [field reference](reference/configuration.md) and JSON Schema are generated from this checkout's SDK, not from the tutorial's pinned worktree. [Current Limits](resources/limits.md) lists unimplemented or untested paths. Do not treat contracts from different revisions as interchangeable.
 
@@ -38,6 +38,7 @@ Choose the guide for the artifact or deployment operation you need to perform.
 | Build a matched bundle and runtime image | [Build local artifacts](build-deploy/build.md) |
 | Extend an agent image with your own tools | [Derived agent images](build-deploy/derived-images.md) |
 | Configure, apply, export, recover, and destroy | [Use desired state](build-deploy/usage.md) |
+| Run the providers from your own OpenTofu project and pipelines | [Your own OpenTofu project](build-deploy/opentofu-project.md) |
 | Deploy on Kubernetes or OpenShift | [Cluster deployment](build-deploy/kubernetes.md) |
 | Share or inline definitions | [Definitions and references](build-deploy/configuration-references.md) |
 | Retain data and clean up safely | [Deployment state](build-deploy/state.md) |

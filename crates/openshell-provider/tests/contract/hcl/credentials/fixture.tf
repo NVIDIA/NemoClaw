@@ -7,7 +7,7 @@
 variable "fixture" { default = null }
 data "fixture_state" "gateway" {
   declare    = var.fixture == null ? null : jsonencode(var.fixture)
-  depends_on = [openshell_workspace.example, openshell_web_search.brave, openshell_api.booking, openshell_sandbox.buyer]
+  depends_on = [openshell_workspace.example, openshell_api.search, openshell_api.booking, openshell_sandbox.buyer]
 }
 locals {
   openshell = jsondecode(data.fixture_state.gateway.observations).openshell

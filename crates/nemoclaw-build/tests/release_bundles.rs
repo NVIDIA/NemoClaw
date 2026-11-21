@@ -398,7 +398,7 @@ fn assert_checksums_verify(archives: &Path) {
 }
 
 #[test]
-fn each_platform_archive_holds_the_bundle_from_the_latest_ci_run_at_the_tag() {
+fn each_platform_archive_holds_the_bundle_from_the_ci_run_for_the_tags_push() {
     let mut github = Github::new();
     github.run(11, "push", "v1", "success", &bundles("untagged", 1));
     github.run(
@@ -415,8 +415,16 @@ fn each_platform_archive_holds_the_bundle_from_the_latest_ci_run_at_the_tag() {
         format!("bundle-part-windows_amd64-{COMMIT}-2-cli"),
         "part".into(),
     ));
-    github.run(14, "workflow_dispatch", VERSION, "success", &passing);
+    github.run(14, "push", VERSION, "success", &passing);
     github.run(15, "push", "v1", "success", &bundles("untagged rerun", 1));
+    // Only the tag's push run reports the tag; a manual run at it numbers its bundles.
+    github.run(
+        16,
+        "workflow_dispatch",
+        VERSION,
+        "success",
+        &bundles("manual run", 1),
+    );
 
     let output = github.stage();
     assert!(output.status.success(), "{}", report(&output));
@@ -427,7 +435,7 @@ fn each_platform_archive_holds_the_bundle_from_the_latest_ci_run_at_the_tag() {
         assert_eq!(
             contents,
             format!("rerun {platform}"),
-            "{platform}'s archive holds the latest run's latest bundle"
+            "{platform}'s archive holds the push run's latest bundle"
         );
         assert_eq!(
             mode & 0o111,
@@ -499,15 +507,15 @@ fn staging_fails_when_ci_has_not_run_at_the_tag() {
 }
 
 #[test]
-fn staging_fails_when_the_latest_ci_run_at_the_tag_failed() {
+fn staging_fails_when_the_ci_run_for_the_tags_push_failed() {
     let mut github = Github::new();
-    github.run(11, "push", VERSION, "success", &bundles("earlier run", 1));
+    github.run(12, "push", VERSION, "failure", &bundles("failed run", 1));
     github.run(
-        12,
+        13,
         "workflow_dispatch",
         VERSION,
-        "failure",
-        &bundles("failed run", 1),
+        "success",
+        &bundles("manual run", 1),
     );
 
     let output = github.stage();
@@ -543,6 +551,10 @@ fn staging_fails_naming_each_platform_whose_checked_bundle_expired() {
     assert!(
         !error.contains("linux_arm64"),
         "only the missing platform: {error}"
+    );
+    assert!(
+        error.contains("gh run rerun 13") && !error.contains("gh workflow run"),
+        "a new attempt of the tag's push run reports the tag, and a manual run doesn't: {error}"
     );
 }
 

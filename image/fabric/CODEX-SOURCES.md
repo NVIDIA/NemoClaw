@@ -21,8 +21,13 @@ On Linux, building the wrapper requires the Rust version in the archived `rust-t
 
 ```sh
 cd codex-source/codex-rs
+cargo update --workspace
 cargo build --locked --release -p codex-bwrap
 ```
+
+The archived manifests use workspace version `0.154.0`, while the lockfile's local workspace entries use `0.0.0`.
+The workspace-only update normalizes those local entries before the locked build; it does not update existing external dependency pins.
+It can access the registry and Git sources when they are not already cached.
 
 `codex-libcap-source.tar.xz` and `codex-libcap-License` retain libcap 2.75's source and license, matching the version and checksum in Codex's `.github/scripts/install-musl-build-tools.sh`.
 That archived script records its musl build flags and pkg-config configuration.
@@ -45,3 +50,16 @@ Gitiles serves these files encoded; the build decodes them without changing thei
 `codex-rusty-v8-LICENSE` retains the MIT notice from the source revision recorded by the locked `v8` 150.4.0 crate.
 The crate records a dirty working tree, so that revision does not establish an exact source match.
 Remaining compiled dependencies and complete per-binary notice/source coverage still need reconciliation in [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524).
+
+## Additional MPL Sources
+
+The `codex/` source directory also retains these original sources and their included MPL-2.0 notices:
+
+- `codex-symphonia-source.tar.gz`: Symphonia at `980bf5830a90e069fd64641d9c38f067ab772a24`, matching the Rust sources and notices of all nine locked Symphonia 0.6.0 crates.
+- `codex-nucleo-source.tar.gz`: Nucleo at `4253de9faabb4e5c6d81d946a5e35a90f87347ee`, including the locked `nucleo` 0.5.0 and `nucleo-matcher` 0.3.1 sources.
+- `option-ext-source.crate`: the original `option-ext` 0.2.0 registry archive identified by the target-specific dependency trees.
+
+Extract these gzip-compressed archives with `tar -xzf ARCHIVE` to inspect or modify their sources.
+For a Cargo rebuild using modified sources, add entries for their extracted directories under `[patch.crates-io]` in the Codex workspace manifest; Nucleo uses `[patch."https://github.com/helix-editor/nucleo.git"]` instead.
+Update the affected lock entries before building with `--locked` again.
+The unmodified build continues to use the original source pins; these archives do not supply every transitive dependency or an offline build environment.

@@ -30,6 +30,12 @@ on:
         description: Run contract and integration tests when their inputs are affected.
         type: boolean
         default: true
+      unit:
+        description: >-
+          Check formatting, lints, and the schema, and run the unit tests; a run that
+          builds the bundle and test executables only for live cases skips them.
+        type: boolean
+        default: true
       partitions:
         description: JSON list of the contract and integration partitions, each {layer, shard, shards}.
         type: string
@@ -38,9 +44,15 @@ on:
           {"layer": "integration", "shard": 1, "shards": 2},
           {"layer": "integration", "shard": 2, "shards": 2}]
       e2e:
-        description: Run the Docker and Kubernetes live suites, which need a Linux runner.
+        description: >-
+          Archive the live test executables and run the selected live suites and HCL
+          cases, which need a Linux runner.
         type: boolean
         default: false
+      live-suites:
+        description: With e2e, run the Docker and Kubernetes live suites.
+        type: boolean
+        default: true
       live-images-commit:
         description: A v1 commit whose pushed images the live suites pull instead of building, or empty to build them.
         type: string
@@ -57,10 +69,18 @@ on:
         description: The validation plan's live HCL case selection, by where each case runs; required with e2e.
         type: string
         default: ""
-      save-cache:
-        description: Write the shared Rust caches on v1; a self-hosted runner's experiment only reads them.
+      hcl-target:
+        description: With hcl-gpu, Live / HCL's hardware target, which runs on this platform.
+        type: string
+        default: rtx-pro-6000
+      hcl-hosted:
+        description: With hcl-gpu, also run the hosted cases in Live / HCL.
         type: boolean
-        default: true
+        default: false
+      hcl-jobs:
+        description: With hcl-gpu, comma-separated case IDs on the target, or empty for every selected case.
+        type: string
+        default: ""
       split-bundle:
         description: >-
           Compile the bundle's executables in three parts on separate runners, and
@@ -73,6 +93,9 @@ on:
       lifecycle-artifact:
         description: The lifecycle artifacts' common name prefix, or empty when the build job uploaded none.
         value: ${{ jobs.build.outputs.artifact }}
+      bundle-artifact:
+        description: The bundle artifact's name, or empty when the bundle job uploaded none.
+        value: ${{ jobs.bundle.outputs.artifact }}
       partitions:
         description: The contract and integration partitions, as given.
         value: ${{ inputs.partitions }}
@@ -87,8 +110,8 @@ env:
   TEST_PLATFORM: ${{ inputs.platform }}
   CARGO_INCREMENTAL: "0"
 # Each job's name starts with its test layer: Unit, Contract, Integration, or
-# E2E. Unit build and test, Build bundle, and on Linux E2E build images run in
-# parallel on separate runners; the contract, integration, and live jobs start
+# E2E. Unit build and test, Unit tests 2 of 2, Build bundle, and on Linux E2E
+# build images run in parallel on separate runners; the contract, integration, and live jobs start
 # when the ones they read have uploaded their artifacts. With split-bundle, the
 # other Build bundle jobs compile the bundle's executables in parallel, and
 # Build bundle assembles them. Artifact names carry the run attempt, and consumers
@@ -109,10 +132,11 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ inputs.platform }}
-          save-cache: ${{ inputs.save-cache }}
       - name: Check formatting
+        if: inputs.unit
         run: cargo ci fmt
       - name: Lint Rust
+        if: inputs.unit
         run: cargo ci clippy
       - name: Clear cached build timings
         id: timings
@@ -132,19 +156,23 @@ jobs:
       # that took up to 5.5 s on some hosted runners. Reading them here keeps
       # that out of the tests' time limits. Without Docker, the tests skip.
       - name: Load Docker Buildx from disk
-        if: runner.os == 'Linux'
+        if: inputs.unit && runner.os == 'Linux'
         run: docker buildx version || true
+      # The unit tests' first partition, with the doctests; Unit tests 2 of 2
+      # runs the other.
       - name: Run tests
-        run: cargo ci test
+        if: inputs.unit
+        run: cargo ci test --partition slice:1/2
       - name: Upload test timings
-        if: always()
+        if: always() && inputs.unit
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: test-${{ inputs.platform }}-${{ github.run_attempt }}
+          name: test-${{ inputs.platform }}-1-${{ github.run_attempt }}
           path: target/nextest/ci/test.xml
           if-no-files-found: ignore
           retention-days: 14
       - name: Check generated configuration schema and reference
+        if: inputs.unit
         run: cargo ci schema
       - name: Archive lifecycle executables and inputs
         if: inputs.lifecycle || inputs.e2e
@@ -207,6 +235,38 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  # The unit tests' second partition, on its own runner. The suite keeps the
+  # hosted runners' few vCPUs busy, so each partition takes about half its
+  # time and stays within its budget on slower runners. This job compiles the
+  # test executables from the same dependency cache as the build job, without
+  # that job's format and lint checks, so it finishes before the build job.
+  unit:
+    name: Unit tests 2 of 2
+    if: inputs.unit
+    runs-on: ${{ inputs.build-runner || inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: ${{ inputs.platform }}
+      # As in the build job: keep reading Docker from disk out of the tests' time.
+      - name: Load Docker Buildx from disk
+        if: runner.os == 'Linux'
+        run: docker buildx version || true
+      - name: Run tests
+        run: cargo ci test --partition slice:2/2
+      - name: Upload test timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-${{ inputs.platform }}-2-${{ github.run_attempt }}
+          path: target/nextest/ci/test.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Each part compiles some of the bundle's release executables, with the
   # features of the whole bundle, so every part reuses the bundle cache. Every
   # part compiles the SDK, but the parts' dependency chains then take about as
@@ -238,11 +298,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The bundle's version names the version tags that HEAD reaches,
+          # which need the commits but not their trees.
+          fetch-depth: 0
+          filter: tree:0
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ inputs.platform }}
           cache-prefix: native-bundle-v4
-          save-cache: ${{ inputs.save-cache }}
       - name: Clear cached build timings
         id: timings
         run: rm -rf target/cargo-timings
@@ -276,7 +339,8 @@ jobs:
           for name in ${EXECUTABLES//,/ }; do
             files+=(target/*/release/"$name$extension")
           done
-          if [ "$PART" = cli ]; then files+=("target/debug/nemoclaw-build$extension"); fi
+          # The CLI's part also brings the build tool and the version compiled into the CLI.
+          if [ "$PART" = cli ]; then files+=("target/debug/nemoclaw-build$extension" target/bundle-version); fi
           mkdir -p .build/ci
           tar -cf ".build/ci/bundle-$PART.tar" "${files[@]}"
       # Every part writes the same name prefix, which the bundle job reads.
@@ -308,6 +372,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The bundle's version names the version tags that HEAD reaches,
+          # which need the commits but not their trees.
+          fetch-depth: 0
+          filter: tree:0
       # A separate cache: the bundle's release dependencies and the debug build
       # tool that assembles it, which the test job's cache does not hold together.
       - uses: ./.github/actions/setup-rust
@@ -315,7 +383,6 @@ jobs:
         with:
           platform: ${{ inputs.platform }}
           cache-prefix: native-bundle-v4
-          save-cache: ${{ inputs.save-cache }}
       - name: Clear cached build timings
         if: ${{ !inputs.split-bundle }}
         id: timings
@@ -501,7 +568,8 @@ jobs:
   # last build saved to the Actions cache for unchanged image inputs.
   live-images:
     name: E2E build images
-    if: inputs.e2e && inputs.live-images-commit == ''
+    # Only the live suites and HCL cases load them.
+    if: inputs.e2e && inputs.live-images-commit == '' && (inputs.live-suites || inputs.hcl || inputs.hcl-gpu)
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
@@ -569,7 +637,8 @@ jobs:
     name: E2E
     needs: [build, bundle, live-images]
     if: >-
-      ${{ !cancelled() && inputs.e2e && needs.build.result == 'success' && needs.bundle.result == 'success' &&
+      ${{ !cancelled() && inputs.e2e && (inputs.live-suites || inputs.hcl || inputs.hcl-gpu) &&
+      needs.build.result == 'success' && needs.bundle.result == 'success' &&
       (needs.live-images.result == 'success' ||
       (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
     uses: ./.github/workflows/e2e-platform.yml
@@ -583,5 +652,9 @@ jobs:
       hcl: ${{ inputs.hcl }}
       hcl-gpu: ${{ inputs.hcl-gpu }}
       hcl-cases: ${{ inputs.hcl-cases }}
+      live-suites: ${{ inputs.live-suites }}
+      hcl-target: ${{ inputs.hcl-target }}
+      hcl-hosted: ${{ inputs.hcl-hosted }}
+      hcl-jobs: ${{ inputs.hcl-jobs }}
     # The HCL cases read NVIDIA_API_KEY.
     secrets: inherit

@@ -8,6 +8,8 @@ As of this documentation revision, v1 has no published release.
 The release records list draft release candidates, not a published final release.
 Issue [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) tracks the first one.
 The workspace package version alone doesn't establish that a release has been published.
+Release candidates are tagged `v0.1.0-rc.<N>`, starting with `v0.1.0-rc.1`, so that their versions sort in release order.
+The earlier `v0.1.0-rc1` through `v0.1.0-rc12` tags and their draft releases were removed; the sections below that name them record what each contained.
 
 ## Product Changes
 
@@ -16,7 +18,14 @@ Refer to [the overview](../../docs/about/overview.md) for implemented boundaries
 
 ### Changes Since v0.1.0-rc12
 
-These changes reached `v1` after the `v0.1.0-rc12` tag.
+These changes reached `v1` after `1636069b91`, the commit that `v0.1.0-rc12` tagged.
+
+Bundles:
+
+- No two bundles that CI builds report the same version, and versions sort in release order ([#14738](https://github.com/NVIDIA/NemoClaw/issues/14738)): CI / Bundle's run for a tag's push reports the tag, its other runs report `0.1.0-<run>` or `0.1.0-rc.<N>.<run>`, with `.<attempt>` from a second attempt, and a local or fork build reports `0.1.0-dev.<hash>`.
+  See [CLI bundles](releases.md#cli-bundles).
+  Only release candidate tags of the form `v0.1.0-rc.<N>` count, and only the tag push's run reports the tag: a clean local checkout of the tag now reports `0.1.0-dev.<hash>`.
+  Before, every bundle but a clean checkout of a tag reported `0.1.0-dev.<hash>` of its source files, so CI builds of the same sources shared a version.
 
 Agents:
 
@@ -339,7 +348,7 @@ See [migration](../../docs/get-started/migration.md) for where each earlier task
 
 ### Breaking Changes Since v0.1.0-rc12
 
-No change since the `v0.1.0-rc12` tag affects existing deployments or documents yet.
+No change since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affects existing deployments or documents yet.
 
 ### Breaking Changes in v0.1.0-rc12
 

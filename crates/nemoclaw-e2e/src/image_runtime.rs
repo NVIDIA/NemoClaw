@@ -28,7 +28,7 @@ pub fn targets(
 ) -> Result<Vec<Target>, nemoclaw_sdk::config::ConfigError> {
     let mut targets = nemoclaw_sdk::compile::targets(document, generations)?;
     for target in &mut targets {
-        if target.kind == "provider_profile" || target.kind == "web_search" {
+        if target.kind == "provider_profile" || target.kind == "api" {
             target.values.insert(
                 "binaries_json".into(),
                 serde_json::json!(["/usr/local/bin/python3.99"]).to_string(),

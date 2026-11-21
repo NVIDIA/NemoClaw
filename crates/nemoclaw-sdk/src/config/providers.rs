@@ -246,14 +246,7 @@ impl Document {
             .map(|provider| provider.key)
             .collect::<Vec<_>>();
         if let Some(search) = self.web_search(sandbox)? {
-            names.push(
-                nemoclaw_openshell::search::web_search_names(
-                    search.provider,
-                    &search.credential.env,
-                    &image_scope,
-                )
-                .1,
-            );
+            names.push(search.registration(&image_scope));
         }
         for api in self.apis(sandbox)? {
             names.push(api.registration(&image_scope));

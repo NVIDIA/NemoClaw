@@ -5,10 +5,11 @@
 //!
 //! The pinned kind executable is downloaded by checksum. The cluster gets
 //! the pinned Agent Sandbox release, as a platform would provide it; the
-//! SDK under test installs nothing cluster-wide. The tests verify the native
-//! bundle and run its OpenTofu and providers without a Helm executable. The
-//! kind case pulls its agent image from a registry this run owns, with a
-//! login, so it needs the pull Secret the case creates.
+//! SDK under test installs nothing cluster-wide. While the cluster is
+//! prepared, the node pulls the pinned images that the cases' pods run. The
+//! tests verify the native bundle and run its OpenTofu and providers without
+//! a Helm executable. The kind case pulls its agent image from a registry
+//! this run owns, with a login, so it needs the pull Secret the case creates.
 
 use super::*;
 use nemoclaw_build::ci::live;
@@ -113,13 +114,17 @@ pub(super) async fn run_live_kind(
         ])
         .arg("--kubeconfig")
         .arg(&kubeconfig))?;
+    // The pinned images the cases' pods run, pulled into the node while the
+    // rest of the cluster is prepared, so no case waits on a registry.
+    let node_container = format!("{name}-control-plane");
+    let pulls = Pulls::start(pins, &node_container)?;
+
     // Install Agent Sandbox with the node's own kubectl, as cluster setup.
     let manifest = download(&Artifact {
         url: AGENT_SANDBOX_URL.into(),
         sha256: AGENT_SANDBOX_SHA256.into(),
     })
     .await?;
-    let node_container = format!("{name}-control-plane");
     let kubectl = |args: &[&str]| -> Command {
         let mut command = Command::new("docker");
         command
@@ -223,6 +228,7 @@ pub(super) async fn run_live_kind(
     let junit = Path::new("target").join("nextest").join(profile).join(file);
     let mut reports = Vec::new();
     let mut result = Ok(());
+    pulls.wait()?;
     for case_name in &cases {
         let case = inputs.path().join(format!("{case_name}.yaml"));
         let mut namespace = [0u8; 6];
@@ -441,6 +447,62 @@ fn load_archived_agent(kind: &Path, name: &str, images: &Path, inputs: &Path) ->
         .args(["load", "image-archive", "--name", name])
         .arg(&archive))?;
     Ok(digest)
+}
+
+/// The pinned images that every kind case's pods run: the gateway, the
+/// sandbox supervisor and runtime, and the development issuer, which the
+/// kind module's stub model also runs. Pulled by the first case, they took
+/// 12 s or more of its time.
+const PULLED: [&str; 4] = [
+    "gateway",
+    "supervisor",
+    "sandboxRuntime",
+    "developmentIssuer",
+];
+
+/// Pulls of the pinned images into the node, each its own process, so they run
+/// beside the rest of the cluster setup. The node's kubelet then finds each
+/// image present, as a sandbox finds the agent image. A pull still running when
+/// dropped is stopped.
+struct Pulls(Vec<(String, std::process::Child)>);
+
+impl Pulls {
+    fn start(pins: &Pins, node: &str) -> Result<Self> {
+        let mut pulls = Self(Vec::new());
+        for name in PULLED {
+            let image = pins
+                .images
+                .get(name)
+                .ok_or_else(|| format!("versions.json has no {name} image"))?;
+            let child = Command::new("docker")
+                .args(["exec", node, "crictl", "pull", image])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .spawn()?;
+            pulls.0.push((image.clone(), child));
+        }
+        Ok(pulls)
+    }
+
+    /// Wait for every pull, failing on the first that failed.
+    fn wait(mut self) -> Result<()> {
+        while !self.0.is_empty() {
+            let (image, mut child) = self.0.remove(0);
+            if !child.wait()?.success() {
+                return Err(format!("cannot pull {image} into the kind node").into());
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Pulls {
+    fn drop(&mut self) {
+        for (_, child) in &mut self.0 {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 /// Removes the agent image this run built.
