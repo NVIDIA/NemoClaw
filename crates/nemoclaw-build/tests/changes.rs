@@ -183,6 +183,16 @@ fn template() -> std::path::PathBuf {
         .collect();
     let root = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let template = root.join(format!("changes-fixture-{key}"));
+    // Nothing changes or removes a complete template, so a test can copy one
+    // without waiting.
+    if complete(&template) {
+        return template;
+    }
+    // Each test runs in its own process. Only the lock's holder checks,
+    // removes or replaces the template, so no test removes a template that
+    // another just built and is copying; the others wait and reuse it.
+    let lock = fs::File::create(root.join(format!("changes-fixture-{key}.lock"))).unwrap();
+    lock.lock().unwrap();
     if complete(&template) {
         return template;
     }
@@ -199,15 +209,11 @@ fn template() -> std::path::PathBuf {
     succeed(building.path(), "git", &["add", "-A"]);
     succeed(building.path(), "git", &["commit", "-q", "-m", "base"]);
     fs::write(building.path().join(".git").join(COMPLETE), "").unwrap();
-    // A cache can restore an incomplete template; replace it. A concurrent
-    // test may finish first; the copies are equivalent.
-    if template.exists() && !complete(&template) {
-        let _ = fs::remove_dir_all(&template);
+    // A cache can restore an incomplete template; replace it.
+    if template.exists() {
+        fs::remove_dir_all(&template).unwrap();
     }
-    let building = building.keep();
-    if fs::rename(&building, &template).is_err() {
-        let _ = fs::remove_dir_all(&building);
-    }
+    fs::rename(building.keep(), &template).unwrap();
     assert!(
         complete(&template),
         "the changes fixture template is incomplete"
