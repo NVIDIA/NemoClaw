@@ -6,7 +6,6 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
 import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { DEFAULT_HOSTED_INFERENCE_BASE_URL } from "../fixtures/hosted-inference.ts";
@@ -594,7 +593,7 @@ test(
       publicApiKey &&
       (await startPublicMcpHttpsTunnel({
         cleanup,
-        cloudflaredBin: await resolveVerifiedCloudflaredBinary(cleanup, host),
+        cloudflaredBin: "/usr/bin/cloudflared",
         label: "Hermes custom hosted rebuild",
         progress,
         server: {

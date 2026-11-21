@@ -159,9 +159,9 @@ describe("Hermes Discord rebuild evidence", () => {
     // The inherited reservation includes the healthy rebuild and original phases.
     // The custom helper's command sum is checked by hermes-custom-rebuild-contract.
     const customRebuildTimeout = 13 * 60_000;
-    // Six verified-package commands allow two minutes each. Three tunnel attempts,
+    // The workflow provisions cloudflared before the test. Three tunnel attempts,
     // including readiness probes, retry delays and graceful shutdown, fit three minutes.
-    const customFixtureSetupTimeout = (6 * 2 + 3) * 60_000;
+    const customFixtureSetupTimeout = 3 * 60_000;
     expect(timeout).toBeGreaterThanOrEqual(
       45 * 60_000 + damagedTimeout + customFixtureSetupTimeout + customRebuildTimeout,
     );

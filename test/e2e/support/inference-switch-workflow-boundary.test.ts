@@ -38,11 +38,11 @@ describe("inference-switch catalogue boundary", () => {
       Object.values(plan.catalogueMatrices)
         .flat()
         .filter((row) => row.id === "hermes-inference-switch")
-        .map((row) => row.execution_id)
-        .sort(),
+        .map((row) => ({ executionId: row.execution_id, cloudflared: row.cloudflared }))
+        .sort((left, right) => left.executionId.localeCompare(right.executionId)),
     ).toEqual([
-      "hermes-inference-switch-native-nvidia-docker",
-      "hermes-inference-switch-native-nvidia-podman",
+      { executionId: "hermes-inference-switch-native-nvidia-docker", cloudflared: true },
+      { executionId: "hermes-inference-switch-native-nvidia-podman", cloudflared: true },
     ]);
   });
 
@@ -125,6 +125,7 @@ describe("inference-switch catalogue boundary", () => {
       const hermes = catalogueTarget("hermes-inference-switch");
       expect(hermes).toMatchObject({
         profile: "nvidia-api",
+        cloudflared: true,
         testFile: "test/e2e/live/hermes-inference-switch.test.ts",
         hostPreparation: "hermes-swap",
         runnerComparison: true,

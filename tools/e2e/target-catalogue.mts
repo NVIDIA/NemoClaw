@@ -992,6 +992,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installNonInteractive: true,
     restoreCli: true,
     exposeCliBin: true,
+    cloudflared: true,
     runnerKey: "hermes-inference-switch",
     hostPreparation: "hermes-swap",
     runnerComparison: true,

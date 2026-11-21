@@ -534,15 +534,17 @@ The endpoint fixture owns the synthetic credential; OpenShell retains the provid
 The test does not contact an additional hosted provider.
 Archive and route source tests own reference preservation and rejection.
 This live check owns the replacement process's use of the archived custom reference.
+The workflow installs the reviewed Cloudflare Tunnel binary before this target starts.
+The custom fixture uses `/usr/bin/cloudflared` without downloading another package during the test.
 The existing `hermes-inference-switch` selector runs it when the archive sanitizer or managed route writer changes; no new target or matrix entry is added.
 In the native NVIDIA branch, each of the two native-local probes and two custom hosted probes makes one attempt.
 After verified tunnel setup, the custom sequence permits 30 seconds for deletion, 150 seconds for onboarding, five minutes for rebuild, and 150 seconds per turn.
 Those command limits total 13 minutes, checked by `support/hermes-custom-rebuild-contract.test.ts`.
-Verified binary preparation adds six two-minute command allowances; three minutes cover the existing bounded tunnel attempts.
-The native NVIDIA target reserves those 28 added minutes alongside the inherited 75-minute flow budget, for a 103-minute test and 113-minute workflow.
+Three minutes cover the existing bounded tunnel attempts; binary installation belongs to workflow setup.
+The native NVIDIA target retains its 103-minute test and 113-minute workflow reservations.
 `support/hermes-discord-rebuild-contract.test.ts` checks that the original 45-minute reservation, 25.5-minute damaged-state allowance and complete custom fixture allowance fit, with ten minutes outside the test for workflow setup, diagnostics, cleanup and artifact upload.
 Manual PR runs build their matrix from the trusted workflow revision, including its catalogue job timeout.
-That revision must contain the 113-minute reservation before it can qualify this expanded scenario; changing the candidate catalogue alone is insufficient.
+That revision must contain the 113-minute reservation and the Cloudflare Tunnel prerequisite before it can qualify this expanded scenario; changing the candidate catalogue alone is insufficient.
 The expanded candidate still requires its own passing phase, cleanup and workflow receipts after publication.
 
 ### Hermes NVIDIA Stripped-State Recovery
