@@ -93,7 +93,7 @@ interface HermesConfigExportExpectedRefusalEvidence {
   readonly checked: true;
   readonly credentialValuesOmitted: boolean;
   readonly outputFilesAbsent: boolean;
-  readonly refusalCategory: "unsupported" | null;
+  readonly refusalCausesMatch: boolean;
   readonly refusalCategoriesMatch: boolean;
 }
 
@@ -122,7 +122,7 @@ export function passesHermesConfigExportLiveEvidence(
       evidence.aliasesEquivalent &&
       evidence.credentialValuesOmitted &&
       evidence.outputFilesAbsent &&
-      evidence.refusalCategory === "unsupported" &&
+      evidence.refusalCausesMatch &&
       evidence.refusalCategoriesMatch
     );
   }
@@ -334,7 +334,22 @@ export async function verifyHermesConfigExportLive(
           new Set(values).size === values.length &&
           values.every((category) => allowedCategories.includes(category)),
       );
-      const refusalCategory = refusalCategoriesMatch ? "unsupported" : null;
+      const expectedFields = [
+        ...(expectsCredentialHttpRefusal ? ["spec.inferenceProviders[].credential"] : []),
+        ...(entry.openshellDriver === "podman" ? ["spec.sandboxes[].runtime.provider"] : []),
+        ...(expectsMessagingRefusal ? ["spec.sandboxes[].integrations.messaging"] : []),
+      ];
+      const refusalCausesMatch = [nemoclawDiagnostics, nemohermesDiagnostics].every((diagnostic) =>
+        expectedFields.every((field) =>
+          diagnostic.split("\n").some(
+            (line) =>
+              line.startsWith(`${field} (unsupported): `) ||
+              // The credential assignment redactor consumes the category token, not the field.
+              (field === "spec.inferenceProviders[].credential" &&
+                line.startsWith(`${field} <REDACTED> `)),
+          ),
+        ),
+      );
       const evidence: HermesConfigExportExpectedRefusalEvidence = {
         outcome: "expected-refusal",
         aliasesEquivalent:
@@ -344,7 +359,7 @@ export async function verifyHermesConfigExportLive(
         checked: true,
         credentialValuesOmitted: !containsCredential,
         outputFilesAbsent: !fs.existsSync(nemoclawPath) && !fs.existsSync(nemohermesPath),
-        refusalCategory,
+        refusalCausesMatch,
         refusalCategoriesMatch,
       };
       await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);

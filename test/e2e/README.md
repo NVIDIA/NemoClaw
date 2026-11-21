@@ -1063,8 +1063,10 @@ launchers to fail without publishing a file before restoring the registry. The a
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
 The shared Hermes export fixture checks refusal exit status 2, matching expected category sets,
-absence of output files, and omission of credential values. Refusal detail wording is incidental
-and can change during redaction. Domain config-export tests own the field-specific refusal reasons.
+a matching field for each active refusal cause, absence of output files, and omission of credential
+values. Refusal detail wording is incidental and can change during redaction. The credential field
+may retain a redaction marker in place of its category token. Domain config-export tests own the
+exact refusal messages; live evidence confirms the configured source caused the refusal.
 A pinned-V1 consumer exception still fails validation. Its evidence records the launcher alias,
 pinned revision, operation, and a redacted diagnostic limited to 2,000 characters, while preserving
 any earlier successful launcher result. Support tests cover exceptions from each alias, redaction,
