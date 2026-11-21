@@ -145,6 +145,26 @@ type SetupPolicyPresetSupportOptions = {
 };
 
 /**
+ * Read `preset.name` and `preset.description` as YAML values, so quotes and
+ * trailing comments are not part of them. `--from-file` reads `preset.name`
+ * the same way.
+ */
+function readCatalogPresetHeader(content: string): { name: string; description: string } {
+  let parsed: PolicyValue;
+  try {
+    parsed = YAML.parse(content);
+  } catch {
+    return { name: "", description: "" };
+  }
+  const preset = isPolicyDocument(parsed) ? parsed.preset : undefined;
+  if (!preset || !isPolicyObject(preset)) return { name: "", description: "" };
+  return {
+    name: typeof preset.name === "string" ? preset.name.trim() : "",
+    description: typeof preset.description === "string" ? preset.description.trim() : "",
+  };
+}
+
+/**
  * Enumerate every built-in preset and return `{ file, name, description }`
  * triples parsed from each file's `preset:` header. Non-messaging presets live
  * under `nemoclaw-blueprint/policies/presets/`; messaging channel presets live
@@ -165,12 +185,11 @@ function listPresets(options: PresetListOptions = {}): PresetInfo[] {
     .filter((f: string) => f.endsWith(".yaml"))
     .map((f: string) => {
       const content = fs.readFileSync(path.join(PRESETS_DIR, f), "utf-8");
-      const nameMatch = content.match(/^\s*name:\s*(.+)$/m);
-      const descMatch = content.match(/^\s*description:\s*"?([^\n"]*)"?$/m);
+      const header = readCatalogPresetHeader(content);
       return {
         file: f,
-        name: nameMatch ? nameMatch[1].trim() : f.replace(".yaml", ""),
-        description: descMatch ? descMatch[1].trim() : "",
+        name: header.name || f.replace(".yaml", ""),
+        description: header.description,
       };
     })
     .filter((preset: PresetInfo) => !channelPresetNames.has(preset.name));
