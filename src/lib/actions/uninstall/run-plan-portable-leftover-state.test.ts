@@ -575,6 +575,10 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
         void ((session.checkpoint as Record<string, unknown>).machineState = "preflight"),
     ],
     [
+      "the session record does not load as a completed onboarding session",
+      (session) => void (session.compatibleEndpointReasoningEffort = "extreme"),
+    ],
+    [
       'field "checkpoint.sandboxIdentity" does not match "sandboxName" and "agent"',
       (session) => {
         const checkpoint = session.checkpoint as Record<string, Record<string, unknown>>;
@@ -603,7 +607,7 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
       expect(result.exitCode).toBe(1);
       expect(error).toHaveBeenCalledWith(
         expect.stringContaining(
-          `Portable lifecycle state is unsafe: Completed onboarding session authority is incomplete: ${defect}. Restore the onboarding session from trusted completed-onboarding state, then rerun the command.`,
+          `Portable lifecycle state is unsafe: Completed onboarding session authority is incomplete: ${defect}. Keep onboard-session.json unchanged and report this message in a NemoClaw GitHub issue for recovery guidance.`,
         ),
       );
       expect(host.runModelCleanup).not.toHaveBeenCalled();

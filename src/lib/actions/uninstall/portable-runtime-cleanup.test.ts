@@ -821,6 +821,18 @@ describe("portable runtime uninstall cleanup", () => {
     expect(hasPortableRetirementRecord(scope.test.homeDir)).toBe(true);
   });
 
+  it("names a completed onboarding profile mismatch before supersession (#14352)", async () => {
+    const { authority, test } = retiredOnboardAuthority(false);
+    await expect(
+      supersedePortableRetirementAfterCompletedOnboard(
+        authority.boundary,
+        "portable",
+        authority.deps,
+      ),
+    ).rejects.toThrow('authority is incomplete: field "checkpoint.profile" is not "portable".');
+    expect(hasPortableRetirementRecord(test.homeDir)).toBe(true);
+  });
+
   it.each([
     [
       "state",

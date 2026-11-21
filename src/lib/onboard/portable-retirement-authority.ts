@@ -92,7 +92,7 @@ function strictJson(bytes: Buffer, description: string): Record<string, unknown>
 
 function incompleteSession(defect: string): never {
   throw new Error(
-    `Completed onboarding session authority is incomplete: ${defect}. Restore the onboarding session from trusted completed-onboarding state, then rerun the command.`,
+    `Completed onboarding session authority is incomplete: ${defect}. Keep onboard-session.json unchanged and report this message in a NemoClaw GitHub issue for recovery guidance.`,
   );
 }
 
@@ -109,8 +109,6 @@ function completedSession(bytes: Buffer, expected?: Profile) {
     incompleteSession('field "sandboxName" is missing');
   if (raw.agent !== null && typeof raw.agent !== "string")
     incompleteSession('field "agent" is not a string or null');
-  if (raw.status !== "complete") incompleteSession('field "status" is not "complete"');
-  if (raw.resumable !== false) incompleteSession('field "resumable" is not false');
   if (
     !rawMachine ||
     typeof rawMachine !== "object" ||
@@ -130,28 +128,24 @@ function completedSession(bytes: Buffer, expected?: Profile) {
     (rawCheckpoint as Record<string, unknown>).machineState !== "complete"
   )
     incompleteSession('field "checkpoint" is not a complete schema 4 checkpoint for this session');
+  const checkpoint = session?.checkpoint;
   if (
+    raw.status !== "complete" ||
+    raw.resumable !== false ||
     !session ||
     session.sessionId !== raw.sessionId ||
     session.status !== "complete" ||
     session.resumable !== false ||
     session.machine.state !== "complete" ||
     session.machine.revision !== (rawMachine as Record<string, unknown>).revision ||
-    session.sandboxName !== raw.sandboxName
-  )
-    incompleteSession("the session record does not load as a completed onboarding session");
-  const checkpoint = session.checkpoint;
-  if (
+    session.sandboxName !== raw.sandboxName ||
     !checkpoint ||
     checkpoint.machineState !== "complete" ||
-    checkpoint.sessionId !== session.sessionId
-  )
-    incompleteSession('field "checkpoint" does not load as a valid checkpoint');
-  if (
+    checkpoint.sessionId !== session.sessionId ||
     checkpoint.profile.kind !== "selected" ||
     (checkpoint.profile.value !== "default" && checkpoint.profile.value !== "portable")
   )
-    incompleteSession('field "checkpoint.profile" is not a selected default or portable profile');
+    incompleteSession("the session record does not load as a completed onboarding session");
   if (expected !== undefined && checkpoint.profile.value !== expected)
     incompleteSession(`field "checkpoint.profile" is not "${expected}"`);
   if (
