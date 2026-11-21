@@ -88,7 +88,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Install the reviewed libexpat, jq, and Vim packages with exact versions
 # and hashes matching the OpenClaw base: Expat from the 20260811T082421Z
-# Debian Snapshot archive, and jq and Vim from the official Debian pool.
+# Debian Snapshot archive, vim-tiny from the Debian Snapshot file service,
+# and jq and vim-common from the official Debian pool.
 # hadolint ignore=DL3001,DL4006
 RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,target=/tmp/nemoclaw-security/scripts/security/security-package-inventory.mts \
     --mount=type=bind,source=src/lib/sandbox-base-image/security-package-specs.ts,target=/tmp/nemoclaw-security/src/lib/sandbox-base-image/security-package-specs.ts \
