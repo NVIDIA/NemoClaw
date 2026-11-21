@@ -22,6 +22,11 @@ fn required(name: &str) -> Result<String> {
 }
 // Capture output: service error responses and CLI diagnostics can contain credentials.
 fn capture(cmd: &mut Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
+    let program = Path::new(cmd.get_program())
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("tool")
+        .to_owned();
     let mut child = cmd
         .stdin(if input.is_some() {
             Stdio::piped()
@@ -44,7 +49,10 @@ fn capture(cmd: &mut Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
         .wait_with_output()
         .map_err(|_| "Could not wait for required tool")?;
     if !output.status.success() {
-        return Err("Required tool failed; no release output is approved".into());
+        return Err(format!(
+            "Required tool {program} failed ({}); no release output is approved",
+            output.status
+        ));
     }
     Ok(output.stdout)
 }
@@ -291,6 +299,8 @@ fn sign(bundle: &Path) -> Result<()> {
                 .args([
                     "3s",
                     "submit",
+                    "--description",
+                    "NemoClaw macOS release signing",
                     "--job_type",
                     "MACOS",
                     "--scope",
@@ -472,5 +482,21 @@ mod tests {
     fn inventory_cannot_escape_bundle() {
         assert!(safe_program(Path::new("."), "../outside").is_err());
         assert!(safe_program(Path::new("."), "/tmp/outside").is_err());
+    }
+
+    #[test]
+    fn failed_tools_identify_the_program_and_status_without_disclosing_output() {
+        let error = capture(
+            Command::new("sh").args([
+                "-c",
+                "printf stdout-sensitive; printf stderr-sensitive >&2; exit 7",
+            ]),
+            None,
+        )
+        .unwrap_err();
+        assert!(error.contains("sh"), "{error}");
+        assert!(error.contains('7'), "{error}");
+        assert!(!error.contains("stdout-sensitive"));
+        assert!(!error.contains("stderr-sensitive"));
     }
 }
