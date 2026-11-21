@@ -12,6 +12,7 @@ Helm installs the managed Kubernetes gateway chart.
 OpenShell installs Podman gateway processes, Kubernetes gateway prerequisites, initialization, and retained gateway bridges.
 NemoClaw manages durable data bindings for inference services.
 Use [the SDK](sdk.md) or [CLI](cli.md) for the documented deployment workflow.
+To run the providers from your own OpenTofu configuration instead, refer to [Using the Providers From Your Own OpenTofu Project](../build-deploy/opentofu-project.md).
 
 ## Resource and State Ownership
 
@@ -1061,6 +1062,7 @@ The Docker and Helm providers have fixed release versions and checksum-pinned na
 
 The providers are not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Refer to [compatibility](compatibility.md) for the supported examples, import, adoption, state backends, and what each release guarantees.
+[Using the Providers From Your Own OpenTofu Project](../build-deploy/opentofu-project.md) covers installation, state, pipelines, credentials, and what the CLI and SDK add.
 
 Every resource and data source takes inputs that can be written in HCL.
 [`examples/hcl/travel`](../../examples/hcl/travel/main.tf) is a complete hand-written configuration: a Pi agent in an OpenShell sandbox, answering with a local Ollama server placed with Docker, and allowed only HTTPS `GET` requests to one site.
@@ -1068,7 +1070,7 @@ An integration test applies it unchanged against the bundle's providers.
 [`examples/hcl/travel-team`](../../examples/hcl/travel-team/README.md) scales the same pattern to a team of six agents with their own sandboxes, models, and grants.
 Writing one by hand:
 
-- Install the providers from a bundle: name its `providers` directory as a filesystem mirror, and pin each NVIDIA provider to the bundle's version. Development bundles carry pre-release versions, which OpenTofu selects only when pinned exactly.
+- Install the providers from a bundle, as [Installing the Providers From a Bundle](../build-deploy/opentofu-project.md#installing-the-providers-from-a-bundle) describes.
 - Place model servers with any platform from `vllm_runtime` or `ollama_runtime`'s [`launch` and `requirements`](#vllm-runtime-contract), confirm them with [endpoint readiness](#runtime-capacity-and-readiness), and register them with [`openshell_inference`](#inference-providers), passing the readiness read's `ref` as `server`.
 - Inference registrations take any well-formed HTTP or HTTPS endpoint. OpenShell decides which destinations sandboxes can reach, including its gateway-host alias `host.openshell.internal`.
 - Register web search with [`openshell_web_search`](#web-search), which owns its profile.
