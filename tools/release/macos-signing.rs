@@ -268,6 +268,18 @@ fn inventory(bundle: &Path) -> Result<Vec<String>> {
     }
     Ok(names)
 }
+fn prepare_executable(source: &Path, destination: &Path) -> Result<()> {
+    fs::copy(source, destination).map_err(|_| "Could not copy executable")?;
+    // The private runner extracts under umask 077; 3S must receive a normal
+    // executable rather than inheriting those private scratch permissions.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(destination, fs::Permissions::from_mode(0o755))
+            .map_err(|_| "Could not set signing payload permissions")?;
+    }
+    Ok(())
+}
 fn sign(bundle: &Path) -> Result<()> {
     if required("MACOS_THIRD_PARTY_SIGNING_APPROVED")? != "true" {
         return Err("Product Security approval is required".into());
@@ -280,7 +292,7 @@ fn sign(bundle: &Path) -> Result<()> {
         let input = scratch.0.join("payload.command");
         let archive = scratch.0.join("input.zip");
         let signed = scratch.0.join("signed.zip");
-        fs::copy(bundle.join(&name), &input).map_err(|_| "Could not copy executable")?;
+        prepare_executable(&bundle.join(&name), &input)?;
         capture(
             Command::new("zip")
                 .current_dir(&scratch.0)
@@ -498,5 +510,22 @@ mod tests {
         assert!(error.contains('7'), "{error}");
         assert!(!error.contains("stdout-sensitive"));
         assert!(!error.contains("stderr-sensitive"));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn signing_payload_is_executable_by_the_signing_service() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("nemoclaw-mode-test-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let source = root.join("source");
+        let payload = root.join("payload.command");
+        fs::write(&source, b"executable fixture").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o700)).unwrap();
+        prepare_executable(&source, &payload).unwrap();
+        let mode = fs::metadata(&payload).unwrap().permissions().mode() & 0o777;
+        let contents = fs::read(&payload).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(mode, 0o755);
+        assert_eq!(contents, b"executable fixture");
     }
 }
