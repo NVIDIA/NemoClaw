@@ -355,14 +355,14 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
     expect((error as Error).message).toContain("backup retains the previous config");
     expect((error as Error).message).toContain("record the current default");
     expect((error as Error).message).toContain(
-      "onboard --agent dcode --name <sandbox-name> --fresh --recreate-sandbox",
+      "onboard --agent dcode --name dcode-sb --fresh --recreate-sandbox",
     );
     expect((error as Error).message).toContain("After any onboarding attempt");
     expect((error as Error).message).toContain("use <previous-default-sandbox-name>");
     expect((error as Error).message).toContain("After successful onboarding");
-    expect((error as Error).message).toContain("<sandbox-name> status");
-    expect((error as Error).message).toContain("<sandbox-name> inference get");
-    expect((error as Error).message).toContain("use <sandbox-name>");
+    expect((error as Error).message).toContain("dcode-sb status");
+    expect((error as Error).message).toContain("dcode-sb inference get");
+    expect((error as Error).message).toContain("use dcode-sb");
     expectNoInferenceMutation(deps.calls);
   });
 
@@ -390,9 +390,8 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
       deps,
     );
 
-    await expect(attempt).rejects.toThrow("--name <sandbox-name> --fresh --recreate-sandbox");
-    await expect(attempt).rejects.not.toThrow(`--name ${shellQuote(name)}`);
-    await expect(attempt).rejects.not.toThrow(`--name ${name}`);
+    await expect(attempt).rejects.toThrow(`--name ${name} --fresh --recreate-sandbox`);
+    await expect(attempt).rejects.not.toThrow("<sandbox-name>");
     expectNoInferenceMutation(deps.calls);
   });
 

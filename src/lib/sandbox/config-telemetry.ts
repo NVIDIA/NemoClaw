@@ -100,6 +100,7 @@ export function retireNativeConfigurationTelemetry(sandboxName: string, gatewayN
 
 /** Enforce the existing host config-mutation surface before any write or receipt. */
 export function configSetUnsupportedAgentMessage(
+  sandboxName: string,
   target: AgentConfigTarget,
   configKey: string,
   quote: (value: string) => string,
@@ -110,7 +111,7 @@ export function configSetUnsupportedAgentMessage(
       `  Connect to the sandbox and use the native command instead: openclaw config set ${quote(configKey)} <value>`,
     ];
   if (target.agentName !== "hermes" && target.format === "toml")
-    return `  config set is not available for '${target.agentName}'. ${dcodeSelectionChangeGuidance()}`;
+    return `  config set is not available for '${target.agentName}'. ${dcodeSelectionChangeGuidance(sandboxName)}`;
   return target.agentName === "hermes"
     ? null
     : `  config set is available only for Hermes; '${target.agentName}' config was not changed. Use the agent's native configuration command.`;

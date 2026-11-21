@@ -325,7 +325,7 @@ set -e
 [ "$config_set_status" -ne 0 ] || fail "config set unexpectedly mutated native DCode config"
 printf '%s\n' "$config_set_output" | grep -Fq "backup retains the previous config for manual recovery" || fail "config set rejection did not explain backup recovery"
 printf '%s\n' "$config_set_output" | grep -Fq "recreate the named sandbox" || fail "config set rejection did not provide named recreation guidance"
-printf '%s\n' "$config_set_output" | grep -Fq -- "--name <sandbox-name> --fresh --recreate-sandbox" || fail "config set rejection did not provide the named recreation command"
+printf '%s\n' "$config_set_output" | grep -Fq -- "--name $SANDBOX_NAME --fresh --recreate-sandbox" || fail "config set rejection did not provide the named recreation command"
 config_sha_after="$(sandbox_exec "sha256sum /sandbox/.deepagents/config.toml | awk '{print \$1}'")" || fail "could not hash DCode config after rejected mutation"
 [ "$config_sha_after" = "$config_sha_before" ] || fail "rejected config set changed native DCode config"
 pass "config set rejects host-side DCode mutation without changing the file"

@@ -363,15 +363,14 @@ describe("configGet parsing for manifest-declared formats (#6548)", () => {
     expect((error as Error).message).toContain("backup retains the previous config");
     expect((error as Error).message).toContain("record the current default");
     expect((error as Error).message).toContain(
-      "onboard --agent dcode --name <sandbox-name> --fresh --recreate-sandbox",
+      "onboard --agent dcode --name dcode-sb --fresh --recreate-sandbox",
     );
     expect((error as Error).message).toContain("After any onboarding attempt");
     expect((error as Error).message).toContain("use <previous-default-sandbox-name>");
     expect((error as Error).message).toContain("After successful onboarding");
-    expect((error as Error).message).toContain("<sandbox-name> status");
-    expect((error as Error).message).toContain("<sandbox-name> inference get");
-    expect((error as Error).message).toContain("use <sandbox-name>");
-    expect((error as Error).message).not.toContain("--name 'dcode-sb'");
+    expect((error as Error).message).toContain("dcode-sb status");
+    expect((error as Error).message).toContain("dcode-sb inference get");
+    expect((error as Error).message).toContain("use dcode-sb");
     expect(capture).not.toHaveBeenCalled();
   });
 

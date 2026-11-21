@@ -1271,7 +1271,7 @@ async function runInferenceSetWithoutHostLock(
   if (agentName !== "openclaw" && agentName !== "hermes") {
     const dcodeHint =
       agentName === "langchain-deepagents-code"
-        ? ` Deep Agents Code has no runtime inference-set path. ${dcodeSelectionChangeGuidance()}`
+        ? ` Deep Agents Code has no runtime inference-set path. ${dcodeSelectionChangeGuidance(sandboxName)}`
         : "";
     throw new InferenceSetError(
       `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.${dcodeHint}`,
