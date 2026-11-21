@@ -264,6 +264,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The bundle's version names the version tags that HEAD reaches,
+          # which need the commits but not their trees.
+          fetch-depth: 0
+          filter: tree:0
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ inputs.platform }}
@@ -301,7 +305,8 @@ jobs:
           for name in ${EXECUTABLES//,/ }; do
             files+=(target/*/release/"$name$extension")
           done
-          if [ "$PART" = cli ]; then files+=("target/debug/nemoclaw-build$extension"); fi
+          # The CLI's part also brings the build tool and the version compiled into the CLI.
+          if [ "$PART" = cli ]; then files+=("target/debug/nemoclaw-build$extension" target/bundle-version); fi
           mkdir -p .build/ci
           tar -cf ".build/ci/bundle-$PART.tar" "${files[@]}"
       # Every part writes the same name prefix, which the bundle job reads.
@@ -333,6 +338,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The bundle's version names the version tags that HEAD reaches,
+          # which need the commits but not their trees.
+          fetch-depth: 0
+          filter: tree:0
       # A separate cache: the bundle's release dependencies and the debug build
       # tool that assembles it, which the test job's cache does not hold together.
       - uses: ./.github/actions/setup-rust

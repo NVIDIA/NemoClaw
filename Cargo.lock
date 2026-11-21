@@ -3039,6 +3039,7 @@ dependencies = [
  "pulldown-cmark-to-cmark 23.0.1",
  "quick-junit",
  "reqwest 0.13.5",
+ "semver",
  "serde",
  "serde-saphyr 1.3.0",
  "serde_json",

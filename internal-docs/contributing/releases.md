@@ -52,8 +52,15 @@ CI / Images still builds, checks, and pushes it to `v1-ci` with the other agent 
 Pushing the tag also starts [CI / Bundle](../../.github/workflows/rust.yml) at the tag, and staging waits for it.
 Staging attaches each platform's bundle as the latest push or manual run of CI / Bundle at the tag built and checked it, without rebuilding: `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, `darwin_arm64`, and `windows_amd64`, which extracts to `dist/<platform>`.
 `SHA256SUMS` lists their SHA-256 checksums.
-A bundle built from a clean checkout of a version tag reports the tag without its `v` as its version, in `nemoclaw --version` and its `manifest.json`, so the bundles of a run at the same commit without the tag don't count.
-Any other bundle reports `0.1.0-dev.<hash>`, where the hash names its source files.
+Each bundle reports its version in `nemoclaw --version` and its `manifest.json`:
+
+- Every attempt of CI / Bundle's run for the push of a tag `vX.Y.Z` or `vX.Y.Z-rc.N`, at a clean checkout of the tag, reports the tag without its `v`.
+- Any other CI / Bundle run in NVIDIA/NemoClaw reports `X.Y.Z-<run>`, or `X.Y.Z-rc.N.<run>` after `vX.Y.Z-rc.N`, with `.<attempt>` from its second attempt, so no two of its builds share a version.
+- A local build, or a fork's, reports `X.Y.Z-dev.<hash>`, where the hash names its source files.
+
+`X.Y.Z` is the higher of the `Cargo.toml` workspace version and the patch after the highest release tag that the commit reaches; raise `Cargo.toml` to plan a minor or major release.
+Only `rc.N` release candidate tags count, not tags such as `v0.1.0-rc12`.
+Under semver comparison, a version's run-numbered builds sort before its source builds, which sort before its release candidates, and each candidate's builds sort after it.
 Until [signing](#signing) is configured, the executables are neither signed nor notarized ([#14621](https://github.com/NVIDIA/NemoClaw/issues/14621)).
 
 If CI / Bundle fails at the tag, staging fails before it pushes release images or drafts the release; rerun the failed jobs, then the staging workflow.
