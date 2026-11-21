@@ -22,7 +22,7 @@ type SanitizedCaptureOptions = Readonly<{
 }>;
 
 type SanitizedAsyncCaptureOptions = Omit<SanitizedCaptureOptions, "maxBuffer" | "env"> &
-  Readonly<{ outputLimitBytes: number }> &
+  Readonly<{ outputLimitBytes: number; forceKillOnInterrupt?: boolean }> &
   (
     | Readonly<{ openshellBinary?: never; env?: Record<string, string> }>
     | Readonly<{ openshellBinary: string; env: NodeJS.ProcessEnv }>
