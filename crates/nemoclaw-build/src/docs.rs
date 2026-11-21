@@ -34,6 +34,8 @@ struct Page {
     title: String,
     source: String,
     slug: String,
+    #[serde(default)]
+    changelog: bool,
 }
 
 /// The Markdown extensions the pages use; the writer must know them to round-trip.
@@ -123,10 +125,50 @@ fn local_path(root: &Path, path: &Path) -> Result<PathBuf> {
     Ok(resolved)
 }
 
+fn changelog_entries(overview: &Path, slug: &str) -> Result<Vec<(PathBuf, String)>> {
+    if overview.file_name().and_then(|name| name.to_str()) != Some("overview.md") {
+        return Err("a changelog must start with overview.md".into());
+    }
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(overview.parent().unwrap())? {
+        let entry = entry?;
+        let path = entry.path();
+        if path == overview || path.extension().is_none_or(|ext| ext != "md") {
+            continue;
+        }
+        let name = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let date = time::Date::parse(name, &time::format_description::well_known::Iso8601::DATE)
+            .map_err(|_| {
+                format!(
+                    "expected a YYYY-MM-DD.md changelog entry: {}",
+                    path.display()
+                )
+            })?;
+        if !entry.file_type()?.is_file() || date.to_string() != name {
+            return Err(format!(
+                "expected a YYYY-MM-DD.md changelog entry: {}",
+                path.display()
+            )
+            .into());
+        }
+        let route = format!(
+            "{slug}/{}/{}/{}",
+            date.year(),
+            u8::from(date.month()),
+            date.day()
+        );
+        entries.push((path, route));
+    }
+    Ok(entries)
+}
+
 struct Renderer<'a> {
     root: &'a Path,
     revision: &'a str,
-    routes: BTreeMap<PathBuf, &'a str>,
+    routes: BTreeMap<PathBuf, String>,
 }
 impl Renderer<'_> {
     fn link(&self, source: &Path, destination: &str, image: bool) -> Result<String> {
@@ -312,40 +354,49 @@ pub fn generate(root: &Path, check: bool, revision: Option<&str>) -> Result<()> 
         routes: BTreeMap::new(),
     };
     let mut slugs = BTreeSet::new();
-    for page in navigation.sections.iter().flat_map(|s| &s.pages) {
-        if page.slug.is_empty()
-            || !page.slug.split('/').all(|part| {
-                !part.is_empty()
-                    && part
-                        .bytes()
-                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
-            })
-            || !slugs.insert(&page.slug)
-        {
-            return Err(format!("invalid or duplicate route: {}", page.slug).into());
-        }
-        if !page.source.starts_with("docs/") || !page.source.ends_with(".md") {
-            return Err("pages must be docs/*.md sources".into());
-        }
-        let source = local_path(&root, &root.join(&page.source))?;
-        if renderer.routes.insert(source, &page.slug).is_some() {
-            return Err(format!("duplicate page: {}", page.source).into());
-        }
-    }
-    let mut files = BTreeMap::new();
     let mut sections = Vec::new();
     for section in &navigation.sections {
         let mut contents = Vec::new();
         for page in &section.pages {
+            if page.slug.is_empty()
+                || !page.slug.split('/').all(|part| {
+                    !part.is_empty()
+                        && part
+                            .bytes()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+                })
+            {
+                return Err(format!("invalid route: {}", page.slug).into());
+            }
+            if !page.source.starts_with("docs/") || !page.source.ends_with(".md") {
+                return Err("pages must be docs/*.md sources".into());
+            }
             let source = local_path(&root, &root.join(&page.source))?;
-            let destination = Path::new("pages")
-                .join(source.strip_prefix(root.join("docs"))?)
-                .with_extension("mdx");
-            files.insert(destination.clone(), renderer.render(&source)?);
-            contents.push(json!({"page": page.title, "slug": page.slug,
-                "path": format!("./{}", destination.to_string_lossy().replace('\\', "/"))}));
+            let relative = source.strip_prefix(root.join("docs"))?;
+            let mut routes = vec![(source.clone(), page.slug.clone())];
+            let node = if page.changelog {
+                routes.extend(changelog_entries(&source, &page.slug)?);
+                json!({"changelog": format!("./pages/{}", relative.parent().unwrap().to_string_lossy().replace('\\', "/")),
+                    "title": page.title, "slug": page.slug})
+            } else {
+                json!({"page": page.title, "slug": page.slug,
+                    "path": format!("./pages/{}", relative.with_extension("mdx").to_string_lossy().replace('\\', "/"))})
+            };
+            for (file, route) in routes {
+                if !slugs.insert(route.clone()) || renderer.routes.insert(file, route).is_some() {
+                    return Err(format!("duplicate route or source for {}", page.source).into());
+                }
+            }
+            contents.push(node);
         }
         sections.push(json!({"section": section.title, "skip-slug": true, "contents": contents}));
+    }
+    let mut files = BTreeMap::new();
+    for source in renderer.routes.keys() {
+        let destination = Path::new("pages")
+            .join(source.strip_prefix(root.join("docs"))?)
+            .with_extension("mdx");
+        files.insert(destination, renderer.render(source)?);
     }
     files.insert(
         PathBuf::from("navigation.yml"),

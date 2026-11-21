@@ -172,3 +172,65 @@ fn malformed_yaml_examples_stop_documentation_generation() {
     );
     assert!(String::from_utf8_lossy(&result.stderr).contains("YAML"));
 }
+
+#[test]
+fn publishes_an_undated_changelog_overview_and_dated_entries_at_fern_routes() {
+    let root = fixture();
+    let dir = root.path().join("docs/changelog");
+    fs::create_dir(&dir).unwrap();
+    fs::write(
+        dir.join("overview.md"),
+        "# Release Notes\n\n## v0.1.0 (Unreleased)\n",
+    )
+    .unwrap();
+    let manifest = root.path().join("fern/pages.json");
+    let mut pages: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    pages["sections"][0]["pages"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "title": "Release Notes", "source": "docs/changelog/overview.md",
+            "slug": "release-notes", "changelog": true
+        }));
+    fs::write(manifest, serde_json::to_vec(&pages).unwrap()).unwrap();
+
+    assert_success(generate(root.path(), false));
+    let output = root.path().join("fern/_generated");
+    let nav: serde_json::Value =
+        serde_saphyr::from_str(&fs::read_to_string(output.join("navigation.yml")).unwrap())
+            .unwrap();
+    let folder = nav["navigation"][0]["contents"][2]["changelog"]
+        .as_str()
+        .unwrap();
+    let published = output.join(folder);
+    assert_eq!(fs::read_dir(&published).unwrap().count(), 1);
+    assert!(
+        fs::read_to_string(published.join("overview.mdx"))
+            .unwrap()
+            .contains("v0.1.0 (Unreleased)")
+    );
+
+    fs::write(
+        dir.join("2026-02-03.md"),
+        "## v0.1.0\n\nRefer to [state](../state.md#keep-data).\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("overview.md"),
+        "# Release Notes\n\n[First release](2026-02-03.md)\n",
+    )
+    .unwrap();
+    assert_success(generate(root.path(), false));
+    assert!(
+        fs::read_to_string(published.join("2026-02-03.mdx"))
+            .unwrap()
+            .contains("/nemoclaw/v1/state#keep-data")
+    );
+    assert!(
+        fs::read_to_string(published.join("overview.mdx"))
+            .unwrap()
+            .contains("/nemoclaw/v1/release-notes/2026/2/3")
+    );
+    assert_success(generate(root.path(), true));
+}

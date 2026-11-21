@@ -21,8 +21,14 @@
         },
         {
           "title": "Release Notes",
+          "source": "docs/changelog/overview.md",
+          "slug": "release-notes",
+          "changelog": true
+        },
+        {
+          "title": "Development Notes",
           "source": "docs/about/release-notes.md",
-          "slug": "release-notes"
+          "slug": "development-notes"
         }
       ]
     },

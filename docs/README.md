@@ -5,7 +5,7 @@
 
 These guides describe NemoClaw Agent Configs, a release candidate built from the `v1` branch. Use a bundle, example, and image built from the implementation revision you operate. The [first-deployment tutorial](get-started/first-deployment.md) is an exception: it pins `1636069b91f402242a35714fde1011042c3f1f70`, the `v0.1.0-rc12` tag's commit, and OpenShell 0.1.9. Follow that worktree's build instructions and generated schema for the exercise, not this checkout's newer build guide.
 
-The [field reference](reference/configuration.md) and JSON Schema are generated from this checkout's SDK, not from the tutorial's pinned worktree. [Release Notes](about/release-notes.md) describe changes in this checkout, including OpenShell 0.1.9. [Current Limits](resources/limits.md) lists unimplemented or untested paths. Do not treat contracts from different revisions as interchangeable.
+The [field reference](reference/configuration.md) and JSON Schema are generated from this checkout's SDK, not from the tutorial's pinned worktree. [Development Notes](about/release-notes.md) describe changes in this checkout, including OpenShell 0.1.9. [Current Limits](resources/limits.md) lists unimplemented or untested paths. Do not treat contracts from different revisions as interchangeable.
 
 ## About
 
@@ -16,7 +16,7 @@ Start with the product overview, then use the architecture and ecosystem guides 
 | Understand the product and choose an interface | [NemoClaw overview](about/overview.md) |
 | Follow the components and deployment flow | [Architecture overview](about/architecture-overview.md) |
 | Distinguish upstream responsibilities | [Ecosystem](about/ecosystem.md) |
-| Check v1 development status and changes | [Release Notes](about/release-notes.md) |
+| Check v1 development status and changes | [Development Notes](about/release-notes.md) |
 
 ## Getting Started
 
@@ -84,7 +84,7 @@ Use these sources to find help, development status, currently documented limits,
 | Reader goal | Guide |
 |---|---|
 | Find version-matched documentation and reporting channels | [Project resources](resources/resources.md) |
-| Check release status | [Release Notes](about/release-notes.md) |
+| Check release status | [Release Notes](changelog/overview.md) |
 | Find unimplemented or unqualified paths | [Current limits](resources/limits.md) |
 | Find what Agent Configs leaves to other components by design | [Out of Scope](resources/out-of-scope.md) |
 

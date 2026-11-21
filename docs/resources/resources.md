@@ -3,7 +3,7 @@
 
 # Documentation and Project Resources
 
-Use the [documentation index](../README.md) for the v1 development branch and [Release Notes](../about/release-notes.md) for its development changes and release boundary.
+Use the [documentation index](../README.md) for the v1 development branch and [Release Notes](../changelog/overview.md) for release status and [Development Notes](../about/release-notes.md) for changes between candidates.
 Keep the documentation, configuration schema, and runtime bundle matched to the source revision you use.
 
 ## Documentation for Coding Agents
