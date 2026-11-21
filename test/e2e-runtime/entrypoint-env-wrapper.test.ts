@@ -125,6 +125,17 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       ],
       message: "repeats variable 'NEMOCLAW_STARTUP_PROFILE_B64'",
     },
+    ...[
+      ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "0"],
+      ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "-1"],
+      ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", "Infinity"],
+      ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "Infinity"],
+      ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "9007199254740993"],
+    ].map(([name, value]) => ({
+      name: `rejects ${name}=${value}`,
+      argv: ["env", `${name}=${value}`, "nemoclaw-start", "/bin/true"],
+      message: `invalid value for '${name}'`,
+    })),
     {
       name: "rejects a startup profile handed to another command",
       argv: ["env", "NEMOCLAW_STARTUP_PROFILE_B64=profile", "/usr/bin/true"],
