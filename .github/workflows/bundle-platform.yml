@@ -160,6 +160,11 @@ jobs:
         run: docker buildx version || true
       # The unit tests' first partition, with the doctests; Unit tests 2 of 2
       # runs the other.
+      - name: Set up Python for image source-retention tests
+        if: inputs.unit && runner.os != 'Windows'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
       - name: Run tests
         if: inputs.unit
         run: cargo ci test --partition slice:1/2
@@ -256,6 +261,11 @@ jobs:
       - name: Load Docker Buildx from disk
         if: runner.os == 'Linux'
         run: docker buildx version || true
+      - name: Set up Python for image source-retention tests
+        if: runner.os != 'Windows'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
       - name: Run tests
         run: cargo ci test --partition slice:2/2
       - name: Upload test timings
