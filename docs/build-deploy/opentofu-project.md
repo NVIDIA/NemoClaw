@@ -25,7 +25,7 @@ They differ in who writes the configuration, where the state lives, and which ch
 | Lost creation replies | A create whose reply is lost can leave an object on the gateway that OpenTofu state does not record; nothing guards against it ([#14726](https://github.com/NVIDIA/NemoClaw/issues/14726)) | The SDK's pending-creation guard records the OpenShell and Fabric objects it might create before each apply, and keeps a lost reply's record until a later operation matches it with a saved binding; refer to [Recovering an Interrupted Operation](usage.md#recovering-an-interrupted-operation) |
 | Ownership generations | Each OpenShell, vLLM, and Ollama object the providers create carries an `owner` and a `generation` that identify it. When the HCL omits them, the provider generates them during apply; after a lost reply, the next apply generates new ones and stops at the object the lost reply created, as described for [credential storage](../references/provider.md#vllm-and-ollama-types) | The SDK chooses each object's `owner` and `generation` and records them before OpenTofu runs |
 | Plan checks | You review each plan; `prevent_destroy` protects a resource only while its declaration stays in the configuration | The SDK checks each plan against the deployment's scope, retained bindings, and recovery rules before applying it, and refuses to remove retained storage |
-| Destroy | `tofu destroy` deletes every object the configuration manages, including volumes such as model caches | `nemoclaw destroy` keeps model caches, credential volumes, and gateway storage, as [retained resources](state.md#understanding-the-retained-resources) describes |
+| Destroy | `tofu destroy` deletes every object the configuration manages, including volumes such as model caches. With a managed Kubernetes or OpenShift gateway, a plain `tofu destroy` fails at plan because the provider never deletes `openshell_kubernetes_storage`, so [teardown](#tearing-the-configuration-down) uses a targeted destroy that keeps it | `nemoclaw destroy` keeps model caches, credential volumes, and gateway storage, as [retained resources](state.md#understanding-the-retained-resources) describes |
 | Recovery and export | OpenTofu state is the only record, apart from the Kubernetes state directory that [Keeping State in Your Backend](#keeping-state-in-your-backend) describes | The SDK keeps the deployment's intent and operation progress beside OpenTofu state for recovery, and `nemoclaw export` writes the observed configuration back as YAML |
 | Graph | You write each resource, as the examples do | One document becomes the whole graph, including managed gateways and model services, image checks, readiness reads, and sandbox replacement |
 
@@ -207,8 +207,9 @@ resource "openshell_api" "bookings" {
 `var.bookings.credential_env` defaults to `BOOKINGS_API_KEY`, so the job sets that variable before `tofu apply`.
 In a pipeline, map it from your secret store into the job's environment.
 The gateway connection takes names the same way: `data.openshell_gateway` takes `credential_env` for the gateway's bearer credential, `tls_ca_env` for the variable naming its CA file, and `tls_certificate_env` and `tls_key_env` for mutual TLS.
-A managed Kubernetes gateway's resources take `kubeconfig_env`, the variable whose value is the kubeconfig file's path, and `environment`, the variables the kubeconfig's exec credential plugin needs.
+For a managed Kubernetes or OpenShift gateway, `openshell_kubernetes_storage`, `openshell_kubernetes_auth`, and `openshell_kubernetes_gateway` take `kubeconfig_env`, the variable whose value is the kubeconfig file's path, and `environment`, the variables the kubeconfig's exec credential plugin needs.
 Without `kubeconfig_env`, the provider uses the service account of the pod that runs OpenTofu, as [Managed Kubernetes Gateway](../references/provider.md#managed-kubernetes-gateway) describes.
+The Helm provider takes the same kubeconfig as `config_path` in its `kubernetes` attribute, and `data.openshell_gateway` names the variable in `settings.target.kubernetes.kubeconfig.env` of its `kubernetes` specification, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
 
 A model server's key reaches `openshell_inference` through its `server` object, and the provider reads the key during apply.
 For a server NemoClaw does not run, such as the travel team's hosted model in [`models.tf`](../../examples/hcl/travel-team/models.tf), the literal `inference_server` object names the key's variable in `credential_env`.
@@ -286,6 +287,10 @@ The [Fabric agent reference](../references/provider.md#fabric-agents) describes 
 `tofu destroy` deletes every object the configuration manages.
 For the travel example, that is the agent, its sandbox with the sandbox's files and conversation history, the inference registration, the OpenShell workspace, the Ollama container, and the model volume with its downloaded model.
 Upstream keys are not revoked.
+
+For HCL that installs a managed Kubernetes or OpenShift gateway, a plain `tofu destroy` fails at plan and deletes nothing.
+The provider never deletes `openshell_kubernetes_storage`, and a plan that would delete it fails with "This resource is retained and cannot be deleted", even with `destroy` set.
+Follow the [GTC DC example's teardown](../../examples/gtc-dc/README.md#amd64-kubernetes-with-nvidia-cloud-inference), which targets `openshell_kubernetes_auth` to remove authentication, the gateway, and the agents, and keeps the storage with its namespace, key Secret, and gateway storage.
 
 Set the providers' `destroy` setting, which the examples take from a variable:
 
