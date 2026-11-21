@@ -4,10 +4,23 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn, spawnSync } from "node:child_process";
 import type { FSWatcher } from "node:fs";
-import { existsSync, readdirSync, readFileSync, statSync, watch } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  readFileSync,
+  statSync,
+  watch,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildFernPreviewArgs, resolveFernPreviewInstance } from "./fern-preview-config.mts";
+import {
+  buildFernPreviewArgs,
+  prepareStagingProject,
+  resolveFernPreviewInstance,
+} from "./fern-preview-config.mts";
 
 type FernConfig = {
   version?: unknown;
@@ -18,7 +31,8 @@ type NodeError = Error & {
 };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const fernRoot = path.join(repoRoot, "fern");
+const stagingDirectory = mkdtempSync(path.join(tmpdir(), "nemoclaw-v0-preview-"));
+process.on("exit", () => rmSync(stagingDirectory, { recursive: true, force: true }));
 const watchRoots = ["docs", "fern"];
 const ignoredDirectoryNames = new Set([".fern-cache", ".git", "_build", "node_modules"]);
 const debounceMs = 500;
@@ -186,10 +200,12 @@ function runFernGenerate(reason: string): void {
     return;
   }
 
-  console.log(`cd fern && npx ${args.join(" ")}`);
+  rmSync(stagingDirectory, { recursive: true, force: true });
+  prepareStagingProject(repoRoot, stagingDirectory);
+  console.log(`Publishing the v0 staging preview: npx ${args.join(" ")}`);
 
   const child = spawn("npx", args, {
-    cwd: fernRoot,
+    cwd: path.join(stagingDirectory, "fern"),
     stdio: "inherit",
   });
   currentChild = child;
