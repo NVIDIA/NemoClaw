@@ -26,12 +26,12 @@ Until every package exists, `v1` pushes skip pushing images with a warning, and 
 
 ## Staging From a Tag
 
-Push a semver tag on a `v1` commit, starting with `v0.1.0-rc1`; the `v1` branch ships 0.1 releases.
+Push a semver tag on a `v1` commit, starting with `v0.1.0-rc.1`; the `v1` branch ships 0.1 releases.
 Version tags are permanent: a repository rule forbids deleting them.
 
 ```sh
-git tag v0.1.0-rc1 <commit>
-git push origin v0.1.0-rc1
+git tag v0.1.0-rc.1 <commit>
+git push origin v0.1.0-rc.1
 ```
 
 The [staging workflow](../../.github/workflows/release.yml):
@@ -59,7 +59,7 @@ Each bundle reports its version in `nemoclaw --version` and its `manifest.json`:
 - A local build, or a fork's, reports `X.Y.Z-dev.<hash>`, where the hash names its source files.
 
 `X.Y.Z` is the higher of the `Cargo.toml` workspace version and the patch after the highest release tag that the commit reaches; raise `Cargo.toml` to plan a minor or major release.
-Only `rc.N` release candidate tags count, not tags such as `v0.1.0-rc12`.
+Only `rc.N` release candidate tags count, not tags such as `v0.1.0-rc1`.
 Under semver comparison, a version's run-numbered builds sort before its source builds, which sort before its release candidates, and each candidate's builds sort after it.
 Until [signing](#signing) is configured, the executables are neither signed nor notarized ([#14621](https://github.com/NVIDIA/NemoClaw/issues/14621)).
 
