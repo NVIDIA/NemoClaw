@@ -81,10 +81,6 @@ on:
         description: With hcl-gpu, comma-separated case IDs on the target, or empty for every selected case.
         type: string
         default: ""
-      save-cache:
-        description: Write the shared Rust caches on v1; a self-hosted runner's experiment only reads them.
-        type: boolean
-        default: true
       split-bundle:
         description: >-
           Compile the bundle's executables in three parts on separate runners, and
@@ -136,7 +132,6 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ inputs.platform }}
-          save-cache: ${{ inputs.save-cache }}
       - name: Check formatting
         if: inputs.unit
         run: cargo ci fmt
@@ -273,7 +268,6 @@ jobs:
         with:
           platform: ${{ inputs.platform }}
           cache-prefix: native-bundle-v4
-          save-cache: ${{ inputs.save-cache }}
       - name: Clear cached build timings
         id: timings
         run: rm -rf target/cargo-timings
@@ -346,7 +340,6 @@ jobs:
         with:
           platform: ${{ inputs.platform }}
           cache-prefix: native-bundle-v4
-          save-cache: ${{ inputs.save-cache }}
       - name: Clear cached build timings
         if: ${{ !inputs.split-bundle }}
         id: timings
