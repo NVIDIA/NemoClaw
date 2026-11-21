@@ -2490,7 +2490,18 @@ After onboarding, both physical-host cases request vLLM health on loopback and t
 Each case also checks connection refusal on every discovered unintended IPv4 and IPv6 address.
 Spark and Station retain their own probe targets and request results.
 
-Run the target from a clean candidate checkout on the Spark host:
+Before either standalone Spark command, select independently verified managed-image authority.
+Set `verified_image_revision` to the publication's 40-character source commit and `verified_cohort_receipt_file` to its complete cohort receipt JSON file.
+Follow [managed-image authority selection](docs/dgx-station-dispatch.md#select-managed-image-authority) to verify the source and choose a cohort receipt or trusted candidate catalog.
+Do not derive the expected authority from the sandbox under test.
+Export the revision and receipt contents in the shell that runs the target:
+
+```bash
+export E2E_MANAGED_IMAGE_REVISION="$verified_image_revision"
+export E2E_MANAGED_IMAGE_COHORT_RECEIPT="$(cat "$verified_cohort_receipt_file")"
+```
+
+Run the target from a clean candidate checkout on the Spark host with that authority exported:
 
 ```bash
 E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
@@ -2508,6 +2519,7 @@ See [Spark dispatch prerequisites](docs/dgx-station-dispatch.md#dgx-spark-extra-
 The fixed-profile `spark-express-vllm` case remains standalone.
 The command below also runs the extra-arguments case directly on a physical Spark reporting at least 60 GB and less than 64 GB.
 A standalone result does not qualify the GitHub dispatch path.
+Keep the [independently verified image authority](docs/dgx-station-dispatch.md#select-managed-image-authority) exported before running this standalone command:
 
 ```bash
 E2E_JOB=1 E2E_TARGET_ID=spark-vllm-extra-arguments NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-vllm-extra-arguments:'

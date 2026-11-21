@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import "../live/dgx-express.test.ts";
+import "../../../src/lib/inference/vllm.ts";
 
 const capturedDgx = vi.hoisted(() => ({ run: undefined as unknown }));
 vi.mock("../fixtures/e2e-test.ts", async () => ({

@@ -51,18 +51,37 @@ The receiver must verify the OIDC audience and trusted main workflow identity, t
 It must prepare and build that candidate without exposing controller credentials to candidate code.
 Use a dedicated DGX Spark GB10 reporting at least 60 GB and less than 64 GB of unified memory.
 Prepare Docker, NVIDIA Container Toolkit, OpenShell, sufficient model storage, and a clean runner account with no unrelated sandbox or `nemoclaw-vllm` container.
-Run the candidate's canonical entrypoint with `E2E_TARGET_ID=spark-vllm-extra-arguments`:
+
+### Select managed-image authority
+
+Both Spark variants require independently verified managed-image authority before execution, including standalone runs.
+Set `verified_image_revision` to the publication's 40-character source commit and `verified_cohort_receipt_file` to its complete cohort receipt JSON file.
+For a dispatch request, this source commit must match `managedImageRevision`.
+Do not construct the expected authority from the sandbox under test.
+Export the selected revision and the receipt's JSON contents, not its filename:
+
+```bash
+export E2E_MANAGED_IMAGE_REVISION="$verified_image_revision"
+export E2E_MANAGED_IMAGE_COHORT_RECEIPT="$(cat "$verified_cohort_receipt_file")"
+```
+
+A trusted candidate catalog is an alternative in the GitHub Actions live-E2E context, where `GITHUB_ACTIONS=true` and `NEMOCLAW_RUN_LIVE_E2E=1`.
+Clear `E2E_MANAGED_IMAGE_REVISION` and `E2E_MANAGED_IMAGE_COHORT_RECEIPT` before selecting this alternative.
+For a file catalog, set `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG` to its filename and `NEMOCLAW_E2E_MANAGED_IMAGE_REVISION` to the verified publication source commit.
+For inline JSON, set `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON` to the catalog contents instead; do not set both catalog variables.
+Verify that the catalog source revision matches the requested managed-image revision.
+On a standalone host outside that Actions context, use the cohort receipt above.
+
+After successful onboarding and resource-identity capture, both Spark variants require the durable OpenClaw sandbox workload receipt to match the selected authority before runtime and inference probes.
+Missing authority, missing workload receipts, wrong revisions, and wrong image digests fail qualification.
+
+### Run the Spark scenario
+
+Run the candidate's canonical entrypoint with the selected authority exported and `E2E_TARGET_ID=spark-vllm-extra-arguments`:
 
 ```bash
 E2E_JOB=1 NEMOCLAW_RUN_LIVE_E2E=1 E2E_TARGET_ID=spark-vllm-extra-arguments npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-vllm-extra-arguments:'
 ```
-
-Before running the scenario, supply independently verified managed-image authority for the request's `managedImageRevision`.
-Set `E2E_MANAGED_IMAGE_REVISION` and the matching `E2E_MANAGED_IMAGE_COHORT_RECEIPT`, or supply the trusted candidate catalog through `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG` or `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON`.
-Verify that the catalog or cohort source revision matches the requested managed-image revision.
-Do not construct the expected authority from the sandbox under test.
-After successful onboarding and resource-identity capture, both Spark variants require the durable OpenClaw sandbox workload receipt to match that authority before runtime and inference probes.
-Missing authority, missing workload receipts, wrong revisions, and wrong image digests fail qualification.
 
 The receiver must retain the selected candidate and image identities, hardware identity, target completion, command artifacts, and cleanup result.
 The version 4 compatibility vector is `tools/e2e/contracts/v4/dgx-spark-dispatch.json`; Station's version 3 contract is unchanged.

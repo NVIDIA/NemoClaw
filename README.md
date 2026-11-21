@@ -9,6 +9,11 @@
 [![Security Policy](https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red)](https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md)
 [![Discord](https://img.shields.io/badge/Discord-Join-7289da)](https://discord.gg/XFpfPv9Uvx)
 
+> [!TIP]
+> :rocket: **New:** NemoClaw Agent Configs — the next evolution of NemoClaw, with a simpler, more flexible way to configure and run agents. All new development will focus on Agent Configs, and we recommend it for new projects. [Explore Agent Configs](https://github.com/NVIDIA/NemoClaw/tree/v1) and [follow the first-deployment tutorial](https://github.com/NVIDIA/NemoClaw/blob/v1/docs/get-started/first-deployment.md) to get started.
+>
+> Already using NemoClaw? [The existing experience](https://github.com/NVIDIA/NemoClaw/tree/main) remains available. Review the [migration guide](https://github.com/NVIDIA/NemoClaw/blob/v1/docs/get-started/migration.md) for compatibility details and instructions for moving your existing NemoClaw setup to Agent Configs.
+
 NVIDIA NemoClaw is an open source reference stack for running supported AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
 It provides guided onboarding, managed inference, network policy, managed integrations, OpenShell-backed state persistence, and lifecycle operations through the NemoClaw CLI and its agent-specific aliases.
 
