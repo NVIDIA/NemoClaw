@@ -38,6 +38,17 @@ Before a public release, select the main revision intended for publication; a ma
 The first build fetches the pinned commit if it is absent locally.
 To recover a damaged import, stop the preview server, remove only the generated `fern/_main/` directory, and rerun the build.
 
+## Release Notes
+
+The v1 [changelog overview](../../docs/changelog/overview.md) introduces the release series.
+Fern displays each `docs/changelog/YYYY-MM-DD.md` file as a searchable entry.
+Use the version as its heading, for example `## v0.1.0`.
+Keep changes between release candidates in the [maintainer notes](release-candidates.md).
+
+Before publishing the 0.1.0 entry, verify the changes against the release tag and confirm the date in the filename.
+If the filename changes, redirect the draft entry URL to the published entry in `fern/docs.yml`.
+Use the published release date for each subsequent entry.
+
 ## Validating Locally
 
 Complete the Rust and `protoc` prerequisites in [build.md](../../docs/build-deploy/build.md).
