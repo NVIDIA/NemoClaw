@@ -15,24 +15,30 @@ tar -xzf codex-source.tar.gz -C codex-source --strip-components=1
 ```
 
 The archive includes `codex-rs/vendor/bubblewrap`, Codex's Rust wrapper in `codex-rs/bwrap`, the Cargo lockfile, build scripts, and patches.
+`codex/codex-cargo-source.tar.gz` retains Cargo's dependency sources, original notices and source headers, plus supplemental upstream notices omitted from published crates.
+It also contains source-replacement configuration and the normalized lockfile; extract it into `codex-source/codex-rs` before building:
+
+```sh
+tar -xzf codex-cargo-source.tar.gz -C codex-source/codex-rs
+```
+
 `codex-bubblewrap-COPYING` separately retains Bubblewrap's LGPL-2.0-or-later license text.
 Its original copyright notices remain in the archived C sources.
 On Linux, building the wrapper requires the Rust version in the archived `rust-toolchain.toml`, a C toolchain, pkg-config, and libcap development files:
 
 ```sh
 cd codex-source/codex-rs
-cargo update --workspace
-cargo build --locked --release -p codex-bwrap
+cargo build --locked --offline --release -p codex-bwrap
 ```
 
 The archived manifests use workspace version `0.154.0`, while the lockfile's local workspace entries use `0.0.0`.
-The workspace-only update normalizes those local entries before the locked build; it does not update existing external dependency pins.
-It can access the registry and Git sources when they are not already cached.
+The retained dependency archive normalizes those local entries without changing existing external dependency pins.
+It includes build dependencies and dependencies for other platforms; their presence does not establish that every package is linked into the shipped binaries.
 
 `codex-libcap-source.tar.xz` and `codex-libcap-License` retain libcap 2.75's source and license, matching the version and checksum in Codex's `.github/scripts/install-musl-build-tools.sh`.
 That archived script records its musl build flags and pkg-config configuration.
-Cargo can download dependencies; they are not vendored in this archive.
-These inputs do not establish complete transitive-source or relinking delivery for the shipped executable.
+The dependency archive supports Cargo's offline source resolution; native build tools, the Rust toolchain, and libcap development files remain prerequisites.
+These inputs do not establish identical release binaries or complete non-Cargo native source/relinking delivery.
 
 `codex-rg-LICENSE-MIT` retains the MIT choice for the bundled ripgrep 15.2.0.
 `codex-zsh-LICENCE` retains Zsh's license from `77045ef899e53b9598bebc5a41db93a548a40ca6`, the revision named by the bundled shell's patch level.

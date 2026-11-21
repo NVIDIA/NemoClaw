@@ -18,6 +18,19 @@ The vendor trees can include build dependencies and dependencies for other platf
 Their presence does not mean every package is linked into the executable.
 The images separately retain the Rust standard-library notices; the standard-library source and toolchain are not included in these archives.
 
+## Native Python Dependency Sources
+
+Every Fabric image retains `/opt/nemoclaw/source/native-dependency-sources.tar.gz`.
+It contains the original Cargo registry archives and OpenSSL releases identified by installed wheels' embedded SBOMs, verified against their SHA-256 pins.
+The Deep Agents and mini-swe-agent archives additionally retain their pinned tiktoken, ormsgpack, fastuuid, or LiteLLM source distributions where installed, and the registry dependencies recorded by those distributions' Cargo locks.
+Hermes regenerates the archive after installing its additional wheels.
+
+Extract the outer archive with `tar -xzf native-dependency-sources.tar.gz`; extract individual `.crate` files with the same command to read their original sources, notices, and copyright headers.
+The original Python source distributions are under `python/`.
+The archive is a conservative source set: SBOMs and Cargo locks can include build, optional, and other-platform dependencies.
+It does not prove that every entry survives linking, supply every non-registry native dependency, or provide an offline build environment.
+Tiktoken 0.13.0's published source distribution has no Cargo lock; its exact transitive Rust versions remain unverified.
+
 ## Deep Agents' orjson Extension
 
 The Deep Agents image retains orjson 3.11.9's original source distribution at `/opt/nemoclaw/source/deepagents/orjson-source.tar.gz`.
