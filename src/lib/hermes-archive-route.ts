@@ -26,35 +26,44 @@ function hermesArchiveEndpoint(value: string): string {
 export function hermesRegisteredRoute(
   selection: Parameters<typeof customNativeProviderForSelection>[0],
 ): HermesRegisteredRoute {
-  const { provider } = selection;
+  const { provider, endpointUrl: logicalEndpointUrl } = selection;
   try {
-    const custom = customNativeProviderForSelection(selection);
+    const customDefinition = customNativeProviderForSelection(selection);
     const attachment = selection.nativeHostedProviderAttachment;
     // The binding owner checks the logical endpoint, API and credential name,
     // then supplies the agent projection (for example /team -> /team/v1).
     if (
-      custom &&
-      selection.endpointUrl &&
-      !nativeHostedAgentConfig(provider, selection.endpointUrl)
+      customDefinition &&
+      logicalEndpointUrl &&
+      !nativeHostedAgentConfig(provider, logicalEndpointUrl)
     )
       return { provider, endpointUrl: null };
     // Legacy selections have no custom binding. Compare their logical endpoint
     // through the same API projection that writes the agent configuration.
-    const agentEndpoint =
+    const legacyAgentEndpointUrl =
       provider === "compatible-anthropic-endpoint" &&
-      selection.endpointUrl &&
+      logicalEndpointUrl &&
       selection.preferredInferenceApi &&
       selection.preferredInferenceApi !== "anthropic-messages"
-        ? getCompatibleAnthropicOpenAiSurfaceBaseUrl(selection.endpointUrl)
-        : selection.endpointUrl;
-    const endpoints = (custom ? [custom.endpointUrl] : [agentEndpoint, attachment?.endpointUrl])
+        ? getCompatibleAnthropicOpenAiSurfaceBaseUrl(logicalEndpointUrl)
+        : logicalEndpointUrl;
+    // customDefinition.endpointUrl is the agent endpoint written to Hermes.
+    // customDefinition.custom.endpointUrl is the logical binding: Anthropic
+    // OpenAI APIs project /team to /team/v1 only in the agent endpoint.
+    const agentEndpoints = (
+      customDefinition
+        ? [customDefinition.endpointUrl]
+        : [legacyAgentEndpointUrl, attachment?.endpointUrl]
+    )
       .filter((endpoint): endpoint is string => endpoint !== null && endpoint !== undefined)
       .map(hermesArchiveEndpoint);
-    const endpointUrl = endpoints[0];
+    const agentEndpointUrl = agentEndpoints[0];
     return {
       provider,
       endpointUrl:
-        endpointUrl && endpoints.every((endpoint) => endpoint === endpointUrl) ? endpointUrl : null,
+        agentEndpointUrl && agentEndpoints.every((endpoint) => endpoint === agentEndpointUrl)
+          ? agentEndpointUrl
+          : null,
     };
   } catch {
     return { provider, endpointUrl: null };
