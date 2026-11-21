@@ -77,6 +77,9 @@ fn image_pull_policy_reaches_the_engine_without_changing_runtime_identity() {
         .gateway
         .as_managed_mut()
         .unwrap()
+        .target
+        .local_mut()
+        .unwrap()
         .image_pull_policy = Some(ImagePullPolicy::IfNotPresent);
     let nemoclaw_sdk::services::ServiceDefinition::Vllm(service) =
         document.spec.services.values_mut().next().unwrap()
@@ -144,10 +147,10 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     use serde_json::json;
     let mut document =
         Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
-    *document.spec.gateway.endpoint_mut() = "https://gateway.example.test".into();
     let nemoclaw_sdk::config::Gateway::External(gateway) = &mut document.spec.gateway else {
         panic!("expected external gateway");
     };
+    gateway.endpoint = "https://gateway.example.test".into();
     gateway.credential = Some(SecretRef {
         env: "GATEWAY_TOKEN".into(),
     });
@@ -341,18 +344,18 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
         // The engine's facts and the gateway's prerequisites are separate
         // reads: the facts serve every reader, and the openshell provider
         // judges whether the engine can host its gateway.
-        let selected = &document.spec.gateway.as_managed().unwrap().engine;
+        let selected = document.spec.gateway.as_managed().unwrap().engine();
         let engine = &graph["data"]["host_engine"]["current"];
-        assert_eq!(engine["engine"], *selected);
+        assert_eq!(engine["engine"], selected);
         assert!(engine.get("compute_driver").is_none());
         assert!(engine.get("lifecycle").is_none());
         let prerequisites = &graph["data"]["openshell_gateway_prerequisites"]["current"];
-        assert_eq!(prerequisites["engine"], *selected);
+        assert_eq!(prerequisites["engine"], selected);
         assert_eq!(prerequisites["compute_driver"], "docker");
         // The read checks that only this deployment's gateway holds the port.
         assert_eq!(
             prerequisites["endpoint"],
-            document.spec.gateway.as_managed().unwrap().endpoint
+            document.spec.gateway.endpoint().unwrap()
         );
         assert_eq!(
             prerequisites["name"],

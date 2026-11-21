@@ -6,7 +6,7 @@ pub(crate) mod constraints;
 #[doc(hidden)]
 pub use nemoclaw_openshell::credential_metadata;
 mod engine_endpoint;
-pub use constraints::{GATEWAY_ENGINE, GPU_DEVICE};
+pub use constraints::{GATEWAY_ENGINE, GATEWAY_PORT, GPU_DEVICE};
 pub use engine_endpoint::{engine_socket, validate_engine_endpoint};
 mod integrations;
 pub use integrations::*;
@@ -192,21 +192,25 @@ impl Document {
         // Owners, names, and the default subnet derive from the UUID, so one
         // deployment keeps one identity whatever case its UUID was written in.
         self.metadata.uid.make_ascii_lowercase();
-        let gateway = &mut self.spec.gateway;
-        if let Gateway::Managed(gateway) = gateway
-            && gateway.kubernetes.is_none()
-        {
-            default_string(&mut gateway.endpoint, constraints::GATEWAY_ENDPOINT);
-            if gateway.runtime.provider == ComputeDriver::Docker {
-                default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
+        if let Gateway::Managed(gateway) = &mut self.spec.gateway {
+            // Podman's socket depends on the host user, so only Docker's has
+            // a default.
+            if let ManagedTarget::Docker(local) = &mut gateway.target {
+                default_string(&mut local.engine, constraints::GATEWAY_ENGINE);
             }
-            default_string(
-                &mut gateway.network_cidr,
-                &format!(
-                    "172.30.{}.0/24",
-                    Sha256::digest(self.metadata.uid.as_bytes())[0]
-                ),
-            );
+            if let ManagedTarget::Docker(local) | ManagedTarget::Podman(local) = &mut gateway.target
+            {
+                if local.port == 0 {
+                    local.port = constraints::GATEWAY_PORT;
+                }
+                default_string(
+                    &mut local.network_cidr,
+                    &format!(
+                        "172.30.{}.0/24",
+                        Sha256::digest(self.metadata.uid.as_bytes())[0]
+                    ),
+                );
+            }
         }
         for service in self.spec.services.values_mut() {
             crate::services::defaults(service);
@@ -259,12 +263,114 @@ fn network_address(
         .ok_or_else(|| ConfigError::new(overflow))?;
     Ok(std::net::Ipv4Addr::from(address).to_string())
 }
+impl ManagedTarget {
+    /// The compute driver a gateway at this target runs every sandbox with.
+    pub fn compute_driver(&self) -> ComputeDriver {
+        match self {
+            Self::Docker(_) => ComputeDriver::Docker,
+            Self::Podman(_) => ComputeDriver::Podman,
+            Self::Kubernetes(_) => ComputeDriver::Kubernetes,
+            Self::OpenShift(_) => ComputeDriver::OpenShift,
+        }
+    }
+    /// The local engine settings of a Docker or Podman target.
+    pub fn local(&self) -> Option<&LocalTarget> {
+        match self {
+            Self::Docker(local) | Self::Podman(local) => Some(local),
+            Self::Kubernetes(_) | Self::OpenShift(_) => None,
+        }
+    }
+    /// Mutable local engine settings of a Docker or Podman target.
+    pub fn local_mut(&mut self) -> Option<&mut LocalTarget> {
+        match self {
+            Self::Docker(local) | Self::Podman(local) => Some(local),
+            Self::Kubernetes(_) | Self::OpenShift(_) => None,
+        }
+    }
+    /// The cluster settings of a Kubernetes or OpenShift target.
+    pub fn cluster(&self) -> Option<&ManagedKubernetes> {
+        match self {
+            Self::Kubernetes(cluster) | Self::OpenShift(cluster) => Some(cluster),
+            Self::Docker(_) | Self::Podman(_) => None,
+        }
+    }
+    /// Mutable cluster settings of a Kubernetes or OpenShift target.
+    pub fn cluster_mut(&mut self) -> Option<&mut ManagedKubernetes> {
+        match self {
+            Self::Kubernetes(cluster) | Self::OpenShift(cluster) => Some(cluster),
+            Self::Docker(_) | Self::Podman(_) => None,
+        }
+    }
+}
+impl LocalTarget {
+    /// The loopback origin the gateway serves at its port.
+    pub fn endpoint(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+}
+impl ExternalTarget {
+    /// The compute driver the existing gateway runs every sandbox with.
+    pub fn compute_driver(&self) -> ComputeDriver {
+        match self {
+            Self::Docker(_) => ComputeDriver::Docker,
+            Self::Podman(_) => ComputeDriver::Podman,
+            Self::Kubernetes(_) => ComputeDriver::Kubernetes,
+            Self::OpenShift(_) => ComputeDriver::OpenShift,
+        }
+    }
+    /// The engine holding a Docker or Podman gateway's sandbox images, empty
+    /// when the document names none.
+    pub fn engine(&self) -> &str {
+        match self {
+            Self::Docker(engine) | Self::Podman(engine) => &engine.engine,
+            Self::Kubernetes(_) | Self::OpenShift(_) => "",
+        }
+    }
+}
 impl ManagedGateway {
+    /// The compute driver this gateway runs every sandbox with.
+    pub fn compute_driver(&self) -> ComputeDriver {
+        self.target.compute_driver()
+    }
+    /// The local engine settings of a Docker or Podman gateway.
+    pub fn local(&self) -> Option<&LocalTarget> {
+        self.target.local()
+    }
+    /// The cluster settings of a Kubernetes or OpenShift gateway.
+    pub fn cluster(&self) -> Option<&ManagedKubernetes> {
+        self.target.cluster()
+    }
+    /// The local engine socket of a Docker or Podman gateway, empty on a cluster.
+    pub fn engine(&self) -> &str {
+        self.local().map_or("", |local| &local.engine)
+    }
+    /// The private network of a Docker or Podman gateway, empty on a cluster.
+    pub fn network_cidr(&self) -> &str {
+        self.local().map_or("", |local| &local.network_cidr)
+    }
+    /// The image acquisition policy of a Docker or Podman gateway.
+    pub fn image_pull_policy(&self) -> Option<ImagePullPolicy> {
+        self.local().and_then(|local| local.image_pull_policy)
+    }
+    /// The address clients dial: a Docker or Podman gateway's loopback port,
+    /// or a cluster gateway's published endpoint. A cluster gateway without
+    /// `expose` has none; NemoClaw reaches it through a port forward.
+    pub fn endpoint(&self) -> Option<String> {
+        match &self.target {
+            ManagedTarget::Docker(local) | ManagedTarget::Podman(local) => Some(local.endpoint()),
+            ManagedTarget::Kubernetes(cluster) | ManagedTarget::OpenShift(cluster) => cluster
+                .expose
+                .as_ref()
+                .map(|expose| expose.endpoint.clone()),
+        }
+    }
     /// These settings without the image acquisition policy, a mutable provider
     /// attribute rather than container identity.
     pub(crate) fn runtime_settings(&self) -> Self {
         let mut settings = self.clone();
-        settings.image_pull_policy = None;
+        if let Some(local) = settings.target.local_mut() {
+            local.image_pull_policy = None;
+        }
         settings
     }
     /// Resolve the first address after the configured network address.
@@ -272,12 +378,10 @@ impl ManagedGateway {
     /// # Errors
     /// Returns an error for malformed IPv4 CIDRs or an address overflow.
     pub fn bridge(&self) -> Result<String, ConfigError> {
-        if self.kubernetes.is_some() {
-            return Err(ConfigError::new(
-                "Kubernetes gateways have no local engine bridge",
-            ));
-        }
-        bridge_address(&self.network_cidr)
+        let local = self.local().ok_or(ConfigError::new(
+            "Kubernetes gateways have no local engine bridge",
+        ))?;
+        bridge_address(&local.network_cidr)
     }
 }
 fn hex(bytes: &[u8]) -> String {
@@ -286,17 +390,10 @@ fn hex(bytes: &[u8]) -> String {
 
 impl Gateway {
     /// The compute driver this gateway runs every sandbox with.
-    pub fn runtime(&self) -> &Runtime {
+    pub fn compute_driver(&self) -> ComputeDriver {
         match self {
-            Self::Managed(gateway) => &gateway.runtime,
-            Self::External(gateway) => &gateway.runtime,
-        }
-    }
-    /// The compute driver setting, for changing it.
-    pub fn runtime_mut(&mut self) -> &mut Runtime {
-        match self {
-            Self::Managed(gateway) => &mut gateway.runtime,
-            Self::External(gateway) => &mut gateway.runtime,
+            Self::Managed(gateway) => gateway.compute_driver(),
+            Self::External(gateway) => gateway.target.compute_driver(),
         }
     }
     /// Who authors sandbox policy on this gateway; `None` means NemoClaw does.
@@ -310,18 +407,23 @@ impl Gateway {
     pub fn managed_apf(&self) -> Option<&ManagedApf> {
         self.policy_authority()?.managed()
     }
-    /// The endpoint used to connect to either gateway configuration.
-    pub fn endpoint(&self) -> &str {
+    /// The address clients dial: an existing gateway's endpoint, a managed
+    /// Docker or Podman gateway's loopback port, or a managed cluster
+    /// gateway's published endpoint. A managed cluster gateway without
+    /// `expose` has none; NemoClaw reaches it through a port forward.
+    pub fn endpoint(&self) -> Option<String> {
         match self {
-            Self::Managed(gateway) => &gateway.endpoint,
-            Self::External(gateway) => &gateway.endpoint,
+            Self::Managed(gateway) => gateway.endpoint(),
+            Self::External(gateway) => Some(gateway.endpoint.clone()),
         }
     }
-    /// Change the connection endpoint without changing gateway management.
-    pub fn endpoint_mut(&mut self) -> &mut String {
+    /// The engine NemoClaw inspects sandbox images on: a managed Docker or
+    /// Podman gateway's, or the one an existing Docker or Podman gateway's
+    /// document names. Empty on a cluster or when none is named.
+    pub fn engine(&self) -> &str {
         match self {
-            Self::Managed(gateway) => &mut gateway.endpoint,
-            Self::External(gateway) => &mut gateway.endpoint,
+            Self::Managed(gateway) => gateway.engine(),
+            Self::External(gateway) => gateway.target.engine(),
         }
     }
     /// Installation settings, when this deployment manages the gateway.
@@ -331,15 +433,14 @@ impl Gateway {
             Self::External(_) => None,
         }
     }
-    /// Explicit existing-cluster settings for a managed Kubernetes gateway.
+    /// Existing-cluster settings for a managed Kubernetes or OpenShift gateway.
     pub fn as_kubernetes(&self) -> Option<&ManagedKubernetes> {
-        self.as_managed()
-            .and_then(|gateway| gateway.kubernetes.as_deref())
+        self.as_managed().and_then(ManagedGateway::cluster)
     }
-    /// Local Docker or Podman installation settings; excludes Kubernetes targets.
+    /// Local Docker or Podman installation settings; excludes cluster targets.
     pub fn as_local_managed(&self) -> Option<&ManagedGateway> {
         self.as_managed()
-            .filter(|gateway| gateway.kubernetes.is_none())
+            .filter(|gateway| gateway.local().is_some())
     }
     /// Mutable installation settings, when this deployment manages the gateway.
     pub fn as_managed_mut(&mut self) -> Option<&mut ManagedGateway> {
@@ -368,7 +469,7 @@ impl Gateway {
     /// Settings to reach this gateway's API.
     pub fn connection(&self) -> nemoclaw_openshell::Connection {
         nemoclaw_openshell::Connection {
-            endpoint: self.endpoint().into(),
+            endpoint: self.endpoint().unwrap_or_default(),
             credential_env: self.credential().map(|credential| credential.env.clone()),
             tls: self.tls().map(|tls| nemoclaw_openshell::TlsFiles {
                 ca_env: tls.ca.env.clone(),

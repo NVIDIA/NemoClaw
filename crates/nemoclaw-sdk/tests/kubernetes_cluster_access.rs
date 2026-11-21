@@ -23,7 +23,7 @@ fn in_a_pod() -> bool {
 
 fn pod_document() -> Document {
     let mut value = serde_json::to_value(kubernetes_document("local-agent", "agents")).unwrap();
-    let kubernetes = value["spec"]["gateway"]["kubernetes"]
+    let kubernetes = value["spec"]["gateway"]["target"]["kubernetes"]
         .as_object_mut()
         .unwrap();
     kubernetes.remove("kubeconfig");
@@ -49,7 +49,7 @@ async fn outside_a_pod_a_target_without_kubeconfig_stops_before_opentofu_plans()
     for named in [
         "KUBERNETES_SERVICE_HOST",
         "KUBERNETES_SERVICE_PORT",
-        "gateway.kubernetes.kubeconfig",
+        "the gateway target's kubeconfig",
     ] {
         assert!(error.contains(named), "{named}: {error}");
     }

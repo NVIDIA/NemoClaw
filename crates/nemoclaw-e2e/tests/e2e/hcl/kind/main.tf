@@ -55,8 +55,9 @@ variable "pull_credentials" {
 }
 
 locals {
-  document   = yamldecode(file(var.context.config))
-  kubernetes = local.document.spec.gateway.kubernetes
+  document = yamldecode(file(var.context.config))
+  # The case's kubernetes or openshift target.
+  kubernetes = values(local.document.spec.gateway.target)[0]
   # The stub's namespace, from the endpoint its Service gives the case.
   model = regex("^http://model\\.([a-z0-9-]+)\\.svc", local.document.spec.inferenceProviders.stub.endpoint)[0]
   # The development issuer's pinned image serves nginx unprivileged.
@@ -144,7 +145,7 @@ locals {
     image    = local.image
     stream   = local.stream
     pullSecret = {
-      name             = local.kubernetes.imagePullSecrets[0]
+      name             = local.document.spec.gateway.config["openshell.drivers.kubernetes"].image_pull_secrets[0]
       dockerconfigjson = local.pull_secret
     }
     issuer = local.oidc == null ? null : {

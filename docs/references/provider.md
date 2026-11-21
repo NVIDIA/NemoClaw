@@ -12,6 +12,7 @@ Helm installs the managed Kubernetes gateway chart.
 OpenShell installs Podman gateway processes, Kubernetes gateway prerequisites, initialization, and retained gateway bridges.
 NemoClaw manages durable data bindings for inference services.
 Use [the SDK](sdk.md) or [CLI](cli.md) for the documented deployment workflow.
+To run the providers from your own OpenTofu configuration instead, refer to [Using the Providers From Your Own OpenTofu Project](../build-deploy/opentofu-project.md).
 
 ## Resource and State Ownership
 
@@ -105,7 +106,8 @@ Each object names the gateway that holds it with `gateway`, the `ref` of `data.o
 That data source takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, and the `tls_ca_env` variable naming the CA file that verifies the gateway.
 For mutual TLS, it also takes the `tls_certificate_env` and `tls_key_env` variables, set together, naming a client certificate and key.
 Its `ref` carries those names, never their values.
-For a managed Kubernetes gateway, it takes `kubernetes`, the gateway's specification, instead of the credential and TLS variables.
+For a managed Kubernetes or OpenShift gateway, it takes `kubernetes`, the gateway's specification as JSON, instead of `endpoint` and the credential and TLS variables.
+The specification's `settings` hold the gateway's `target`, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
 Each provider that reaches such a gateway opens its own port forward on a free loopback port and keeps it open while OpenTofu runs.
 The forward uses the kubeconfig the specification names, or the service account of the pod it runs in when the specification names none, and the development credentials in the SDK's state directory.
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
@@ -618,6 +620,7 @@ Missing declarations remain unknown.
 An advertised setting does not prove that the selected inference model supports it.
 
 Optional `config_json` supplies the canonical public Fabric configuration, the same document a `fabric_agent`'s inputs compose.
+Optional `config_provenance_json` maps Fabric configuration paths to the paths where the user wrote them, so a rejection names the authored field.
 Optional `filesystem_read` lists the paths the sandbox policy grants for reading.
 Omitting it skips the filesystem check.
 A configuration without `harness.adapter_id` is rejected.
@@ -625,7 +628,12 @@ Optional `architecture` and `operating_system` supply the execution engine's pla
 The computed `compatibility_status` is `supported`, `unsupported`, or `unknown`, with details in `observation_json.compatibility`.
 The SDK checks image identity, source revision and platform, and that the image provides the selected adapter (the `fabric_adapter` check).
 An image without the adapter is unsupported. NemoClaw does not compare Fabric revisions: the image's own Fabric runtime reports an incompatibility when the agent starts.
-Fabric owns settings, model, extension and workflow validation, which it performs inside the sandbox when the agent is configured.
+With `config_json`, the data source also runs Fabric's own compatibility check of the configuration against the image's adapter descriptor.
+It reports each issue as an unsupported check (`fabric_configuration`).
+A workflow is checked only when the image's catalog describes its target.
+Otherwise Fabric checks it inside the sandbox when the agent starts.
+A check at plan time catches what the adapter declares it can't accept.
+It doesn't establish that the agent starts.
 Deployment postconditions name the sandbox and adapter and preserve unsupported check reasons in text and JSON errors.
 Onboarding uses the same assessment.
 Unknown error variants retain a generic rejection.
@@ -644,8 +652,9 @@ The runtime consumes the same canonical public configuration through Fabric.
 Refer to [discovered harness configuration](sdk.md#configuring-a-discovered-fabric-harness).
 
 Generated graphs observe each sandbox image independently of resource creation or image acquisition.
-Managed gateways use their configured engine.
-External gateways require `spec.gateway.engine` for image inspection and do not run managed-gateway prerequisite checks.
+Managed Docker and Podman gateways use their configured engine.
+External gateways require the `engine` of their `docker` or `podman` target for image inspection and do not run managed-gateway prerequisite checks.
+Kubernetes and OpenShift sandboxes use `image.metadata` instead.
 With `config_json`, image discovery also returns `runtime_json`, the selected adapter and advertised runtime layout, and `binaries_json`, its resolved executable list.
 The sandbox consumes `runtime_json`.
 Its `policy` block retains authored policy and managed endpoint inputs, resolved against that layout before creation.
@@ -1014,7 +1023,6 @@ The three NemoClaw resources take the same cluster target and identity:
 
 - `name`: `nc-`, 16 lowercase hexadecimal characters, and `-gateway`.
 - `compute_driver`: `kubernetes` or `openshift`.
-- `endpoint`: the gateway's `https://127.0.0.1:PORT` loopback endpoint.
 - Optional `kubeconfig_env`: the environment variable whose value is the kubeconfig file path. Omit it to use the service account of the pod that runs OpenTofu. The provider then finds the API server through `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`.
 - Optional `context`: the exact kubeconfig context, set exactly when `kubeconfig_env` is.
 - `namespace`: the namespace for the gateway.
@@ -1050,6 +1058,7 @@ The Docker and Helm providers have fixed release versions and checksum-pinned na
 
 The providers are not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Refer to [compatibility](compatibility.md) for the supported examples, import, adoption, state backends, and what each release guarantees.
+[Using the Providers From Your Own OpenTofu Project](../build-deploy/opentofu-project.md) covers installation, state, pipelines, credentials, and what the CLI and SDK add.
 
 Every resource and data source takes inputs that can be written in HCL.
 [`examples/hcl/travel`](../../examples/hcl/travel/main.tf) is a complete hand-written configuration: a Pi agent in an OpenShell sandbox, answering with a local Ollama server placed with Docker, and allowed only HTTPS `GET` requests to one site.
@@ -1057,7 +1066,7 @@ An integration test applies it unchanged against the bundle's providers.
 [`examples/hcl/travel-team`](../../examples/hcl/travel-team/README.md) scales the same pattern to a team of six agents with their own sandboxes, models, and grants.
 Writing one by hand:
 
-- Install the providers from a bundle: name its `providers` directory as a filesystem mirror, and pin each NVIDIA provider to the bundle's version. Development bundles carry pre-release versions, which OpenTofu selects only when pinned exactly.
+- Install the providers from a bundle, as [Installing the Providers From a Bundle](../build-deploy/opentofu-project.md#installing-the-providers-from-a-bundle) describes.
 - Place model servers with any platform from `vllm_runtime` or `ollama_runtime`'s [`launch` and `requirements`](#vllm-runtime-contract), confirm them with [endpoint readiness](#runtime-capacity-and-readiness), and register them with [`openshell_inference`](#inference-providers), passing the readiness read's `ref` as `server`.
 - Inference registrations take any well-formed HTTP or HTTPS endpoint. OpenShell decides which destinations sandboxes can reach, including its gateway-host alias `host.openshell.internal`.
 - Register a web search API with [`openshell_api`](#api-credentials), with the search service's host, its key header, and `rest` rules for the requests the agent makes.

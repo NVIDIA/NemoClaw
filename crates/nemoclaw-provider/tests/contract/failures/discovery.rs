@@ -131,7 +131,7 @@ async fn compiled_discovery_requires_the_image_runtime_metadata() {
         Some((200,serde_json::to_vec(&body).unwrap()))
     }).await;
     let mut value = serde_json::to_value(document).unwrap();
-    value["spec"]["gateway"]["engine"] = json!(fixture.endpoint);
+    value["spec"]["gateway"]["target"]["docker"]["engine"] = json!(fixture.endpoint);
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let generations = [
         "workspace",

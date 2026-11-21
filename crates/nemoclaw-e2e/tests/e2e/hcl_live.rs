@@ -76,10 +76,13 @@ async fn case() {
                 .map(str::to_owned),
             );
         }
-        document["spec"]["gateway"]["networkCIDR"] =
-            nemoclaw_build::ci::live::free_subnet(&occupied, &[])
-                .unwrap()
-                .into();
+        let target = document["spec"]["gateway"]["target"]
+            .as_object_mut()
+            .and_then(|target| target.values_mut().next())
+            .expect("a local case names its gateway target");
+        target["networkCIDR"] = nemoclaw_build::ci::live::free_subnet(&occupied, &[])
+            .unwrap()
+            .into();
         fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
         fs::write(reports.join("identity.json"), json!({"candidate":var("GITHUB_SHA").unwrap(),"uid":document["metadata"]["uid"],"case":case}).to_string()).unwrap();
     }
@@ -241,12 +244,13 @@ async fn probe() {
     let request: Value = serde_json::from_str(&input("REQUEST")).unwrap();
     // A managed Kubernetes gateway is reached through a port-forward that the
     // connection holds, as the SDK's providers reach it. A gateway published
-    // through kubernetes.expose is dialed at its endpoint instead, as another
-    // client would dial it, with the same client certificate and token.
-    let published = document.spec.gateway.as_managed().and_then(|gateway| {
-        gateway.kubernetes.as_ref()?.expose.as_ref()?;
-        Some(gateway.endpoint.clone())
-    });
+    // through expose is dialed at its endpoint instead, as another client
+    // would dial it, with the same client certificate and token.
+    let published = document
+        .spec
+        .gateway
+        .as_kubernetes()
+        .and_then(|cluster| Some(cluster.expose.as_ref()?.endpoint.clone()));
     let (_forward, client) = match kubernetes_operations(&document, &state).await {
         Some(operations) => {
             let (forward, client) =
@@ -617,7 +621,7 @@ async fn kubernetes_operations(
     document: &Document,
     state: &std::path::Path,
 ) -> Option<nemoclaw_sdk::kubernetes::operations::Operations> {
-    let kubernetes = document.spec.gateway.as_managed()?.kubernetes.as_deref()?;
+    let kubernetes = document.spec.gateway.as_kubernetes()?;
     let target = nemoclaw_sdk::kubernetes::ClusterTarget {
         kubeconfig: var(&kubernetes.kubeconfig.as_ref().unwrap().env)
             .unwrap()
@@ -902,8 +906,7 @@ async fn admission() {
     let kubernetes = document
         .spec
         .gateway
-        .as_managed()
-        .and_then(|gateway| gateway.kubernetes.as_deref())
+        .as_kubernetes()
         .expect("a kind case has a managed Kubernetes gateway");
     let target = nemoclaw_sdk::kubernetes::ClusterTarget {
         kubeconfig: var(&kubernetes.kubeconfig.as_ref().unwrap().env)

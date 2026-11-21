@@ -121,8 +121,7 @@ fn fixture_files() -> Vec<(String, String)> {
         ),
         (
             "crates/nemoclaw-e2e/cases/kind-two.yaml",
-            "kind: NemoClawConfig\nspec:\n  gateway:\n    runtime:\n      provider: kubernetes\n"
-                .into(),
+            "kind: NemoClawConfig\nspec:\n  gateway:\n    target:\n      kubernetes: {}\n".into(),
         ),
         (
             "crates/nemoclaw-e2e/tests/e2e/hcl/tests/kind-two.tftest.hcl",

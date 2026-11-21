@@ -39,7 +39,7 @@ pub async fn gateway_engine_info(
 
 /// Why a gateway can't take its endpoint's port. The first successful plan
 /// binds the endpoint in state, so only a deployment before then can change it.
-pub const GATEWAY_PORT_TAKEN: &str = "the gateway endpoint's port is in use by another container or process; free the port, or, before this deployment's first successful plan, set spec.gateway.endpoint to a free port";
+pub const GATEWAY_PORT_TAKEN: &str = "the gateway's port is in use by another container or process; free the port, or, before this deployment's first successful plan, set the gateway target's port to a free one";
 
 /// Check that only the deployment's own gateway, `name` labeled with `owner`,
 /// holds the endpoint's port: no other running container publishes it, and,

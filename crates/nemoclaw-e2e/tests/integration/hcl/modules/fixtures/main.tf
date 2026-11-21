@@ -38,8 +38,9 @@ locals {
   spec   = yamldecode(file(var.document)).spec
   owner  = yamldecode(file(var.document)).metadata.uid
   prefix = "nc-${substr(sha256(local.owner), 0, 16)}"
-  docker = try(local.spec.gateway.engine, "") != ""
-  driver = coalesce(var.compute_driver, local.spec.gateway.runtime.provider == "docker" ? "docker" : "kubernetes")
+  target = try(local.spec.gateway.target, { docker = {} })
+  docker = try(values(local.target)[0].engine, "") != ""
+  driver = coalesce(var.compute_driver, keys(local.target)[0] == "docker" ? "docker" : "kubernetes")
   sandbox_images = distinct([for sandbox in values(local.spec.sandboxes) : sandbox.image.ref])
   services = {
     for name in sort(keys(try(local.spec.services, {}))) : name => {

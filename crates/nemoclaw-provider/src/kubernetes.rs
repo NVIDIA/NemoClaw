@@ -235,9 +235,7 @@ mod tests {
             "layout": 1, "kind": kind, "name": "nc-0123456789abcdef-gateway",
             "owner": "11111111-1111-4111-8111-111111111111", "generation": "0123456789abcdef0123456789abcdef",
             "settings": {
-                "runtime": {"provider": "kubernetes"},
-                "endpoint": "https://127.0.0.1:17671",
-                "kubernetes": kubernetes
+                "target": {"kubernetes": kubernetes}
             }
         }))
         .unwrap();

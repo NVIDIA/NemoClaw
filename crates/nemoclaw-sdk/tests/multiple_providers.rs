@@ -261,7 +261,13 @@ fn managed_ollama_installs_while_an_external_provider_is_the_default() {
     )["depends_on"]
         .as_array()
         .unwrap();
-    assert_eq!(dependencies, &[json!("data.openshell_gateway.apply")]);
+    assert_eq!(
+        dependencies,
+        &[
+            json!("data.openshell_gateway.apply"),
+            json!("data.fabric_harnesses.sandbox_assistant_acquired")
+        ]
+    );
 }
 
 #[test]

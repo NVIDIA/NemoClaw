@@ -515,8 +515,8 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     let document =
         Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
     let mut value = serde_json::to_value(document).unwrap();
-    value["spec"]["gateway"] = json!({"management":"external","endpoint":"http://127.0.0.1:17670"});
-    value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
+    value["spec"]["gateway"] = json!({"management":"external","endpoint":"http://127.0.0.1:17670",
+        "target":{"podman":{}}});
     value["spec"]["services"]["qwen"]["placement"] =
         json!({"engine":"ssh://operator@gpu-box","networkCIDR":"172.30.119.0/24"});
     value["spec"]["services"]["qwen"]["publication"] =
@@ -550,7 +550,10 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
         "http://10.0.0.8:18888/v1"
     );
     let mut changed_gateway = document.clone();
-    *changed_gateway.spec.gateway.endpoint_mut() = "http://127.0.0.1:17999".into();
+    let nemoclaw_sdk::config::Gateway::External(gateway) = &mut changed_gateway.spec.gateway else {
+        panic!("expected an external gateway");
+    };
+    gateway.endpoint = "http://127.0.0.1:17999".into();
     let original_targets = runtime_targets(&document, &generations).unwrap();
     let changed_targets = runtime_targets(&changed_gateway, &generations).unwrap();
     let by_address = |targets: Vec<nemoclaw_sdk::compile::Target>| {
@@ -739,7 +742,7 @@ fn local_gateway_specifications_carry_the_sdk_image_pin() {
     .map(|(name, value)| (name.into(), value.into()))
     .collect();
     assert_eq!(values(managed::GATEWAY_KIND), &gateway);
-    let settings = r#""gateway":{"runtime":{"provider":"docker"},"endpoint":"http://127.0.0.1:17681","engine":"unix:///var/run/docker.sock","networkCIDR":"172.30.110.0/24"}"#;
+    let settings = r#""gateway":{"target":{"docker":{"engine":"unix:///var/run/docker.sock","port":17681,"networkCIDR":"172.30.110.0/24"}}}"#;
     let spec = managed::Spec::from_gateway_row(managed::GATEWAY_KIND, &gateway).unwrap();
     assert_eq!(
         spec.json().unwrap(),
@@ -911,8 +914,8 @@ fn an_image_pin_or_gateway_port_change_reaches_only_replaceable_processes() {
         json!(format!("fixture-runtime@sha256:{}", "c".repeat(64))),
     );
     let port = changed(
-        &["spec", "gateway", "endpoint"],
-        json!("http://127.0.0.1:17682"),
+        &["spec", "gateway", "target", "docker", "port"],
+        json!(17682),
     );
     let images = |graph: &Value| -> BTreeSet<String> {
         graph["resource"]["docker_image"]

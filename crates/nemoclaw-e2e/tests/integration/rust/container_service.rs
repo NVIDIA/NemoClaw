@@ -368,8 +368,9 @@ impl Scenario {
             "apiVersion":"nemoclaw.nvidia.com/v1alpha1","kind":"NemoClawConfig",
             "metadata":{"name":"container-lifecycle","uid":OWNER},
             "spec":{
-                "gateway":{"management":"managed","runtime":{"provider":"docker"},
-                    "endpoint":gateway.endpoint,"engine":engine.endpoint,"networkCIDR":"172.30.123.0/24"},
+                "gateway":{"management":"managed","target":{"docker":{
+                    "port":nemoclaw_e2e::loopback_port(&gateway.endpoint),
+                    "engine":engine.endpoint,"networkCIDR":"172.30.123.0/24"}}},
                 "inferenceProviders":{"hosted":{"provider":"openai","endpoint":"https://inference.example.test/v1"}},
                 "services":{
                     "web":{"kind":"container","image":application_image('a'),
@@ -923,7 +924,9 @@ async fn a_stopped_gateway_container_is_named_with_how_to_start_it() {
     s.apply().await.unwrap();
     let (containers, mutations) = (s.containers(), s.mutations());
     let name = format!("{}-gateway", s.prefix);
-    let engine = s.document["spec"]["gateway"]["engine"].as_str().unwrap();
+    let engine = s.document["spec"]["gateway"]["target"]["docker"]["engine"]
+        .as_str()
+        .unwrap();
     let start = format!("`docker --host {engine} start {name}`");
 
     // A gateway whose container runs fails a read with a transport error.

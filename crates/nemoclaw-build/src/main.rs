@@ -475,7 +475,22 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
     .await?;
     let source = nemoclaw_build::BUILDER_SOURCE_VERSION;
     nemoclaw_build::verify_source_version(source, &sources()?)?;
-    let version = nemoclaw_build::bundle_version(Path::new("."), source);
+    // Prebuilt parts carry the version compiled into their CLI, which a later
+    // attempt of the run that assembles them keeps.
+    let version = match fs::read_to_string(nemoclaw_build::BUNDLE_VERSION_FILE) {
+        Ok(recorded) if prebuilt => {
+            let recorded = recorded.trim().to_owned();
+            if recorded.is_empty()
+                || !recorded
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+            {
+                return Err(format!("invalid recorded bundle version {recorded:?}").into());
+            }
+            recorded
+        }
+        _ => nemoclaw_build::bundle_version(Path::new("."), source)?,
+    };
     let target = target(platform)?;
     if !prebuilt {
         build(&[], target, &version, &|_| {})?;

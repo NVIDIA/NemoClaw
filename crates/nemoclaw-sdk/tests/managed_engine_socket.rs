@@ -56,7 +56,7 @@ fn bound_socket(driver: &str, engine: &str) -> String {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric.yaml")).unwrap();
     value["spec"]["gateway"] =
-        json!({"management": "managed", "runtime": {"provider": driver}, "engine": engine});
+        json!({"management": "managed", "target": {driver: {"engine": engine}}});
     let document = parse(&value);
     if driver == "docker" {
         let graph = compile(&document, &generations(), "0.1.0").unwrap();
@@ -140,14 +140,14 @@ fn services_on_a_managed_gateway_on_a_named_pipe_use_its_engine() {
     // A managed inference service runs on the gateway's engine.
     let mut vllm: Value =
         serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
-    vllm["spec"]["gateway"]["engine"] = json!(DOCKER_DESKTOP);
+    vllm["spec"]["gateway"]["target"]["docker"]["engine"] = json!(DOCKER_DESKTOP);
     let document = parse(&vllm);
     let graph = compile(&document, &generations(), "0.1.0").unwrap();
     assert_eq!(graph["provider"]["docker"][0]["host"], DOCKER_DESKTOP);
 
     // An application container shares the gateway's engine.
     let mut application = crate::support::example("application-container.yaml");
-    application["spec"]["gateway"]["engine"] = json!(DOCKER_DESKTOP);
+    application["spec"]["gateway"]["target"]["docker"]["engine"] = json!(DOCKER_DESKTOP);
     parse(&application);
 
     // An Ollama proxy without an engine of its own uses the gateway's.
@@ -161,7 +161,7 @@ fn services_on_a_managed_gateway_on_a_named_pipe_use_its_engine() {
         "upstream": {"endpoint": "http://127.0.0.1:11434/v1",
             "model": {"name": "qwen3:0.6b", "digest": "a".repeat(64)}}
     }});
-    proxy["spec"]["gateway"]["engine"] = json!(DOCKER_DESKTOP);
+    proxy["spec"]["gateway"]["target"]["docker"]["engine"] = json!(DOCKER_DESKTOP);
     let graph = compile(&parse(&proxy), &generations(), "0.1.0").unwrap();
     assert_eq!(
         graph["resource"]["ollama_proxy_credential_storage"]["ollama-auth"]["engine"],
@@ -178,7 +178,8 @@ fn a_managed_gateway_refuses_an_engine_on_another_host() {
         "npipe:////remote/pipe/docker_engine",
         "tcp://127.0.0.1:2375",
     ] {
-        value["spec"]["gateway"] = json!({"management": "managed", "engine": engine});
+        value["spec"]["gateway"] =
+            json!({"management": "managed", "target": {"docker": {"engine": engine}}});
         assert!(
             Document::parse(value.to_string().as_bytes()).is_err(),
             "accepted {engine}"

@@ -362,7 +362,10 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     if let Some(connection) = &result.connection {
         output.push_str(&format!(
             "\nOpenShell gateway: {}\nOpenShell workspace: {}\n",
-            terminal_text(&connection.gateway_endpoint),
+            connection
+                .gateway_endpoint
+                .as_deref()
+                .map_or_else(|| UNPUBLISHED_GATEWAY.to_owned(), terminal_text),
             terminal_text(&connection.workspace),
         ));
     }
@@ -574,12 +577,20 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     output
 }
 
+/// What a managed cluster gateway without `expose` has instead of an address:
+/// each NemoClaw command forwards its own free port, and other clients forward
+/// one themselves.
+const UNPUBLISHED_GATEWAY: &str = "not published; forward a local port to the gateway pod, as docs/build-deploy/kubernetes.md describes";
+
 /// The commands that select this deployment's gateway and workspace, as the
 /// interface guide describes.
 fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String {
     let mut output =
         String::from("  In each terminal, select this deployment's gateway and workspace:\n");
-    let endpoint = terminal_text(&connection.gateway_endpoint);
+    let endpoint = connection
+        .gateway_endpoint
+        .as_deref()
+        .map_or_else(|| "its port forward".to_owned(), terminal_text);
     if connection.plaintext_loopback() {
         output.push_str(&format!(
             "    unset OPENSHELL_GATEWAY\n    export OPENSHELL_GATEWAY_ENDPOINT={endpoint}\n"
@@ -1053,6 +1064,34 @@ mod tests {
             !text.contains("export OPENSHELL_GATEWAY_ENDPOINT"),
             "{text}"
         );
+    }
+
+    /// A managed cluster gateway without `expose` has no address: clients
+    /// reach it through a port forward of their own, and JSON results leave
+    /// the endpoint out.
+    #[test]
+    fn an_unpublished_cluster_gateway_points_to_a_port_forward() {
+        let connection = json!({"workspace": "nc-1234567890abcdef"});
+        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection, "interfaces": interfaces()});
+        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result.clone());
+        assert!(
+            text.contains("OpenShell gateway: not published; forward a local port to the gateway pod, as docs/build-deploy/kubernetes.md describes\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME  # your profile for its port forward\n"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("export OPENSHELL_GATEWAY_ENDPOINT"),
+            "{text}"
+        );
+        let machine: Value = serde_json::from_str(&render(
+            &["nemoclaw", "apply", "deployment.yaml", "-o", "json"],
+            result,
+        ))
+        .unwrap();
+        assert_eq!(machine["connection"], connection);
     }
 
     fn agents() -> Value {

@@ -165,7 +165,20 @@ impl JourneyState {
                     None
                 };
                 let before = candidate.authored.values.clone();
-                candidate.authored.put_sdk_field(path, value.clone())?;
+                // The target question answers with a key. The same key keeps
+                // its settings; another key starts without the previous ones.
+                let written = match (role, &value) {
+                    (SdkFieldRole::GatewayTarget, Some(Value::String(key))) => {
+                        let settings = previous
+                            .as_ref()
+                            .and_then(|target| target.get(key))
+                            .cloned()
+                            .unwrap_or_else(|| Value::Object(Map::new()));
+                        Some(Value::Object(Map::from_iter([(key.clone(), settings)])))
+                    }
+                    _ => value.clone(),
+                };
+                candidate.authored.put_sdk_field(path, written)?;
                 if previous != candidate.authored.values.pointer(path).cloned() {
                     candidate.authored.remove_inactive_siblings(path, &before);
                     if let Some(provider) = provider_for_dependency {
@@ -177,9 +190,9 @@ impl JourneyState {
                 }
                 if matches!(
                     role,
-                    SdkFieldRole::RuntimeProvider | SdkFieldRole::GatewayManagement
+                    SdkFieldRole::GatewayTarget | SdkFieldRole::GatewayManagement
                 ) {
-                    candidate.authored.sync_gateway_engine_for_runtime(
+                    candidate.authored.sync_gateway_engine_for_target(
                         candidate.answered_engines.as_deref().unwrap_or_default(),
                     )?;
                 }
@@ -322,7 +335,7 @@ impl JourneyState {
                 previous.definition.ask.insert(id.into());
                 native_value(&previous.authored.values, Some(route), id).cloned()
             }
-            QuestionTarget::SdkField { path, .. }
+            QuestionTarget::SdkField { path, role }
                 if sdk_field_schema_for(&self.authored.values, path).is_some()
                     || (self
                         .definition
@@ -330,7 +343,11 @@ impl JourneyState {
                         .contains(&JourneyScope::DeploymentFields)
                         && self.authored.values.pointer(path).is_some()) =>
             {
-                previous.authored.values.pointer(path).cloned()
+                if *role == SdkFieldRole::GatewayTarget {
+                    gateway_target(&previous.authored.values).map(|key| Value::String(key.into()))
+                } else {
+                    previous.authored.values.pointer(path).cloned()
+                }
             }
             _ => {
                 return Err(diagnostic(

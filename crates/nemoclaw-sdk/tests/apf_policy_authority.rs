@@ -256,7 +256,8 @@ fn nemoclaw_registers_apf_only_where_it_owns_the_gateway_file() {
     assert!(parse(&value).is_err(), "missing endpoint");
     // Podman and Kubernetes gateways register APF in spec.gateway.config.
     let mut value = registered(false);
-    value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
+    let target = &mut value["spec"]["gateway"]["target"];
+    *target = json!({"podman": target["docker"].take()});
     rejected(&value, "podman");
 }
 

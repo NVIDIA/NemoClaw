@@ -159,6 +159,9 @@ pub async fn engine(document: &mut Document) -> transport::Fixture {
     let nemoclaw_sdk::config::Gateway::External(gateway) = &mut document.spec.gateway else {
         panic!("fixture requires an external gateway")
     };
-    gateway.engine = fixture.endpoint.clone();
+    gateway.target =
+        nemoclaw_sdk::config::ExternalTarget::Docker(nemoclaw_sdk::config::ExternalEngine {
+            engine: fixture.endpoint.clone(),
+        });
     fixture
 }

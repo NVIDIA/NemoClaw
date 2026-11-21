@@ -17,15 +17,13 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: kubernetes
-    endpoint: https://127.0.0.1:17671
-    kubernetes:
-      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
-      context: replace-with-explicit-context
-      namespace: nemoclaw-in-cluster-ollama
-      authentication:
-        profile: development
+    target:
+      kubernetes:
+        kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+        context: replace-with-explicit-context
+        namespace: nemoclaw-in-cluster-ollama
+        authentication:
+          profile: development
   inferenceProviders:
     ollama:
       provider: openai

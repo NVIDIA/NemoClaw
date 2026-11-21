@@ -3,7 +3,7 @@
 //! Helpers shared by the authoring tests.
 use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
-    config::{ComputeDriver, Document, Gateway},
+    config::{ComputeDriver, Document},
     discovery::{
         DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation,
         FabricObservation, ObservationStatus, plan_queries,
@@ -23,11 +23,8 @@ pub struct Target {
 pub fn target(document: &Document) -> Target {
     let sandbox = &document.spec.sandboxes["assistant"];
     Target {
-        engine: match &document.spec.gateway {
-            Gateway::Managed(gateway) => gateway.engine.clone(),
-            Gateway::External(gateway) => gateway.engine.clone(),
-        },
-        compute_driver: document.spec.gateway.runtime().provider,
+        engine: document.spec.gateway.engine().to_owned(),
+        compute_driver: document.spec.gateway.compute_driver(),
         image: sandbox.image.ref_.clone(),
     }
 }

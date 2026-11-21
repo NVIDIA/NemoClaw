@@ -11,10 +11,10 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: docker
-    endpoint: http://127.0.0.1:17803
-    networkCIDR: 172.30.163.0/24
+    target:
+      docker:
+        port: 17803
+        networkCIDR: 172.30.163.0/24
   services:
     shared:
       kind: vllm

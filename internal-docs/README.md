@@ -13,6 +13,7 @@ Use the [public guide](../docs/README.md) for deployment tasks. The pages here r
 | Exercise OpenTofu and bundles with local fixtures | [Integration tests](contributing/integration-tests.md) |
 | Test explicitly owned live resources | [Live tests](contributing/live-tests.md) |
 | Stage a private v1 release | [Release staging](contributing/releases.md) |
+| Track changes between release candidates | [Release candidate notes](contributing/release-candidates.md) |
 | Write and reorganize guides | [Documentation contribution](contributing/documentation.md) |
 | Validate, preview, or publish the site | [Documentation build](contributing/documentation-build.md) |
 | Maintain generated schema and field reference | [Schema maintenance](contributing/configuration-schema.md) |
@@ -32,6 +33,7 @@ Use the [public guide](../docs/README.md) for deployment tasks. The pages here r
 | Engine, network, and model placement | [Execution targets](design/execution-targets.md) |
 | Recipe artifacts | [Recipes](design/recipes.md) |
 | Generic container design | [Container contract](design/container-contract.md) |
+| Telemetry record and opt-out | [Telemetry](design/telemetry.md) |
 
 ## Source Notices and Fixtures
 

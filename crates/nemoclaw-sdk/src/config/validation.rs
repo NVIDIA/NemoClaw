@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use std::net::SocketAddr;
 
 /// Whether `name` is a web search's registration name, `<provider>-search-…`.
 /// Web search registers as an API credential, so other registrations must not
@@ -36,7 +35,7 @@ impl Document {
             // The oidc profile takes OpenShell's OIDC settings from the
             // authored gateway configuration; OpenShell validates them.
             let table = crate::managed::gateway_config::OIDC_TABLE;
-            if gateway.kubernetes.as_ref().is_some_and(|target| {
+            if gateway.cluster().is_some_and(|target| {
                 target.authentication.profile == super::KubernetesAuthenticationProfile::Oidc
             }) && !gateway
                 .config
@@ -49,11 +48,13 @@ impl Document {
             }
         }
         if let Gateway::External(gateway) = gateway
-            && !gateway.engine.is_empty()
+            && !gateway.target.engine().is_empty()
         {
-            super::validate_engine_endpoint(&gateway.engine)?;
+            super::validate_engine_endpoint(gateway.target.engine())?;
         }
-        validate_endpoint(gateway.endpoint(), true)?;
+        if let Some(endpoint) = gateway.endpoint() {
+            validate_endpoint(&endpoint, true)?;
+        }
         if let Some(apf) = gateway.managed_apf() {
             validate_managed_apf(gateway, apf)?;
         }
@@ -67,7 +68,7 @@ impl Document {
         }
         for sandbox in self.sandboxes() {
             require(
-                self.spec.gateway.runtime().provider.is_kubernetes()
+                self.spec.gateway.compute_driver().is_kubernetes()
                     || sandbox.image.metadata.is_none(),
                 "image.metadata is available only for Kubernetes and OpenShift; Docker and Podman use engine image inspection",
             )?;
@@ -131,7 +132,7 @@ impl Document {
                 crate::services::validate_route(
                     self,
                     provider,
-                    self.spec.gateway.runtime().provider,
+                    self.spec.gateway.compute_driver(),
                     &route.overrides.model,
                 )?;
             }
@@ -148,8 +149,8 @@ fn validate_managed_apf(gateway: &Gateway, apf: &super::ManagedApf) -> Result<()
         ));
     };
     require(
-        managed.kubernetes.is_none() && managed.runtime.provider == super::ComputeDriver::Docker,
-        "spec.gateway.policyAuthority.apf.registration managed requires a local Docker gateway; register APF in spec.gateway.config and set registration to external",
+        matches!(managed.target, super::ManagedTarget::Docker(_)),
+        "spec.gateway.policyAuthority.apf.registration managed requires the docker target; register APF in spec.gateway.config and set registration to external",
     )?;
     if let Some(key) = managed.config.as_ref().and_then(|config| {
         crate::managed::gateway_config::APF_KEYS
@@ -184,34 +185,28 @@ impl super::ManagedGateway {
     pub fn validate_managed(&self) -> Result<(), ConfigError> {
         schema::validate_definition("Gateway", &Gateway::Managed(self.clone()))?;
         if let Some(config) = &self.config {
-            let driver = if let Some(target) = &self.kubernetes {
+            let driver = if let Some(target) = self.cluster() {
                 match target.authentication.profile {
                     super::KubernetesAuthenticationProfile::Oidc => "kubernetes-oidc",
                     super::KubernetesAuthenticationProfile::Development => "kubernetes",
                 }
             } else {
-                self.runtime.provider.as_str()
+                self.compute_driver().as_str()
             };
             crate::managed::gateway_config::check(config, driver).map_err(ConfigError)?;
         }
-        if self.kubernetes.is_some() {
-            return validate_endpoint(&self.endpoint, true);
-        }
-        let authority = self
-            .endpoint
-            .strip_prefix("http://")
-            .unwrap_or("")
-            .split('/')
-            .next()
-            .unwrap_or("");
-        let bind = authority.parse::<SocketAddr>().ok();
+        let Some(local) = self.local() else {
+            return match self.endpoint() {
+                Some(endpoint) => validate_endpoint(&endpoint, true),
+                None => Ok(()),
+            };
+        };
         require(
-            bind.is_some_and(|a| a.port() >= 1024)
-                && crate::config::validate_engine_endpoint(&self.engine).is_ok(),
-            "managed gateway requires a local engine socket and an unprivileged loopback HTTP port without credentials",
+            local.port >= 1024 && crate::config::validate_engine_endpoint(&local.engine).is_ok(),
+            "managed gateway requires a local engine socket and an unprivileged loopback port",
         )?;
         require(
-            crate::config::private_network(&self.network_cidr).is_some(),
+            crate::config::private_network(&local.network_cidr).is_some(),
             "managed gateway requires a private IPv4 /24 network",
         )
     }

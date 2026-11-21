@@ -77,7 +77,7 @@ pub struct Spec {
     /// Named inference definitions available to sandbox routes through providerRef. Unselected definitions create no resources or credential requirements.
     pub inference_providers: std::collections::BTreeMap<String, InferenceProvider>,
     #[serde(rename = "sandboxes")]
-    /// Named sandboxes: one to 256 with a kubernetes or openshift gateway runtime, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent.
+    /// Named sandboxes: one to 256 with a kubernetes or openshift gateway target, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent.
     pub sandboxes: std::collections::BTreeMap<String, Sandbox>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(default, length(max = 32))]
@@ -138,10 +138,9 @@ pub struct TLS {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "management", rename_all = "lowercase")]
-/// Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.
+/// Install a gateway on a local engine or an existing cluster, or connect to an existing gateway.
 pub enum Gateway {
     /// A gateway installed and managed by this deployment. The SDK pins its image.
-    /// Managed Podman targets local rootless Linux; rootful, remote, and other platforms are unqualified.
     #[schemars(title = "Managed gateway")]
     Managed(ManagedGateway),
     /// An existing gateway managed outside this deployment.
@@ -158,44 +157,72 @@ impl Default for Gateway {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Installation settings for a managed gateway. Without kubernetes, use a local Docker or rootless Linux Podman engine. Kubernetes requires an explicit existing-cluster target and the development authentication profile.
+/// Installation settings for a managed gateway: where NemoClaw installs it, and OpenShell's own gateway settings.
 pub struct ManagedGateway {
-    #[serde(rename = "runtime")]
+    #[serde(rename = "target")]
     #[schemars(default)]
-    /// Compute driver the gateway runs every sandbox with; omission selects Docker.
-    pub runtime: Runtime,
-    #[serde(rename = "endpoint")]
-    #[schemars(default)]
-    /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://HOST:PORT` with an explicit nonzero port and no trailing slash. Providers forward free local ports of their own to the owned gateway. Without `kubernetes.expose`, the host is `127.0.0.1` and this port is not bound. With it, the endpoint is the lowercase DNS name or IPv4 address and port other clients dial, and the gateway certificate names its host.
-    pub endpoint: String,
+    /// Where NemoClaw installs the gateway, which also selects the compute driver it runs every sandbox with. Omission selects Docker with its defaults.
+    pub target: ManagedTarget,
+    #[serde(rename = "config", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, extend("additionalProperties" = {"anyOf": [{"type": "object"}, {"type": "array", "items": {"type": "object"}}]}))]
+    /// OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes and OpenShift pass it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets.
+    pub config: Option<crate::managed::gateway_config::GatewayConfig>,
+    #[serde(rename = "policyAuthority", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "PolicyAuthority")]
+    /// Who authors sandbox policy on this gateway; omission means NemoClaw does.
+    pub policy_authority: Option<PolicyAuthority>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+/// Where NemoClaw installs a managed gateway: exactly one of docker, podman, kubernetes, and openshift. Each holds only the settings NemoClaw uses to install the gateway there; OpenShell's own settings stay in config and each sandbox's driverConfig.
+pub enum ManagedTarget {
+    /// A gateway container on a local Docker engine, which runs every sandbox on that engine.
+    Docker(LocalTarget),
+    /// A gateway container on a local rootless Linux Podman engine, which runs every sandbox on that engine. Rootful, remote, and other platforms are unqualified.
+    Podman(LocalTarget),
+    /// OpenShell's gateway chart on an existing Kubernetes cluster, which schedules every sandbox.
+    Kubernetes(Box<super::ManagedKubernetes>),
+    /// OpenShell's gateway chart on an existing OpenShift cluster, which schedules every sandbox. The namespace assigns the gateway's user and group IDs, and only this target publishes the gateway through a Route.
+    #[serde(rename = "openshift")]
+    OpenShift(Box<super::ManagedKubernetes>),
+}
+
+impl Default for ManagedTarget {
+    fn default() -> Self {
+        Self::Docker(LocalTarget::default())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// A managed gateway container on a local engine.
+pub struct LocalTarget {
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
-    /// Managed local gateway engine: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket. Excluded by kubernetes.
+    /// The local engine's API service, which NemoClaw installs the gateway with and which runs every sandbox: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket.
     pub engine: String,
+    #[serde(rename = "port", skip_serializing_if = "is_zero_port")]
+    #[schemars(default)]
+    /// Loopback TCP port the gateway listens on, from 1024 through 65535. NemoClaw and the OpenShell CLI reach the gateway at `http://127.0.0.1:PORT`.
+    pub port: u16,
+    #[serde(rename = "networkCIDR", skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
+    /// Canonical private IPv4 /24 of the network the gateway and its sandboxes share.
+    pub network_cidr: String,
     #[serde(
         rename = "imagePullPolicy",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     #[schemars(default, with = "super::ImagePullPolicy")]
-    /// Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes.
+    /// Image acquisition before local container creation.
     pub image_pull_policy: Option<super::ImagePullPolicy>,
-    #[serde(rename = "networkCIDR", skip_serializing_if = "String::is_empty")]
-    #[schemars(default)]
-    /// Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes.
-    pub network_cidr: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::ManagedKubernetes")]
-    /// Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
-    pub kubernetes: Option<Box<super::ManagedKubernetes>>,
-    #[serde(rename = "config", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, extend("additionalProperties" = {"anyOf": [{"type": "object"}, {"type": "array", "items": {"type": "object"}}]}))]
-    /// OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets.
-    pub config: Option<crate::managed::gateway_config::GatewayConfig>,
-    #[serde(rename = "policyAuthority", skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "PolicyAuthority")]
-    /// Who authors sandbox policy on this gateway; omission means NemoClaw does.
-    pub policy_authority: Option<PolicyAuthority>,
+}
+
+fn is_zero_port(port: &u16) -> bool {
+    *port == 0
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -263,14 +290,10 @@ pub struct InterceptorTls {
 #[serde(default, deny_unknown_fields)]
 /// Connection settings for an existing gateway. Credentials and TLS require HTTPS.
 pub struct ExternalGateway {
-    #[serde(rename = "runtime")]
+    #[serde(rename = "target")]
     #[schemars(default)]
-    /// Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports.
-    pub runtime: Runtime,
-    /// Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    #[schemars(default)]
-    pub engine: String,
+    /// Where the existing gateway runs its sandboxes; omission selects Docker. Planning checks it against the compute driver the gateway reports.
+    pub target: ExternalTarget,
     /// Gateway HTTP(S) origin, without a path.
     pub endpoint: String,
     #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
@@ -286,6 +309,43 @@ pub struct ExternalGateway {
     /// Who authors sandbox policy on this gateway; omission means NemoClaw does.
     pub policy_authority: Option<PolicyAuthority>,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+/// Where an existing gateway runs its sandboxes: exactly one of docker, podman, kubernetes, and openshift.
+pub enum ExternalTarget {
+    /// A gateway that runs sandboxes on a Docker engine.
+    Docker(ExternalEngine),
+    /// A gateway that runs sandboxes on a Podman engine.
+    Podman(ExternalEngine),
+    /// A gateway that runs sandboxes on a Kubernetes cluster.
+    Kubernetes(ExternalCluster),
+    /// A gateway that runs sandboxes on an OpenShift cluster.
+    #[serde(rename = "openshift")]
+    OpenShift(ExternalCluster),
+}
+
+impl Default for ExternalTarget {
+    fn default() -> Self {
+        Self::Docker(ExternalEngine::default())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// The engine holding an existing gateway's sandbox images.
+pub struct ExternalEngine {
+    /// Engine containing the sandbox images, used only for image metadata inspection. Required for deployment planning; omission permits retained-state teardown.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(default)]
+    pub engine: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+/// No settings: each sandbox's image.metadata stands in for an engine NemoClaw could inspect.
+pub struct ExternalCluster {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -434,23 +494,12 @@ pub enum AuthorizationMode {
 pub struct Image {
     #[serde(rename = "ref")]
     #[schemars(default)]
-    /// Immutable image reference, pinned by SHA-256 digest. Required on every runtime; build one as described in the agent image build instructions.
+    /// Immutable image reference, pinned by SHA-256 digest. Required on every gateway target; build one as described in the agent image build instructions.
     pub ref_: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "FileRef")]
     /// Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead.
     pub metadata: Option<FileRef>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(!default)]
-#[serde(default, deny_unknown_fields)]
-/// The compute driver an OpenShell gateway runs sandboxes with. One gateway runs one driver.
-pub struct Runtime {
-    #[serde(rename = "provider")]
-    #[schemars(default)]
-    /// Docker, Podman, Kubernetes, or OpenShift profile. Kubernetes and OpenShift require an external gateway or an explicit managed cluster target, and external inference endpoints. OpenShift uses the upstream Kubernetes driver with namespace-assigned identities. A managed service with Podman requires explicit service placement.
-    pub provider: super::ComputeDriver,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

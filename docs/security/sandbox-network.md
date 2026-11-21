@@ -251,8 +251,8 @@ For a managed gateway, put the settings in the selected driver's table in [`spec
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: docker
+    target:
+      docker: {}
     config:
       openshell.drivers.docker:
         https_proxy: http://proxy.example.com:3128

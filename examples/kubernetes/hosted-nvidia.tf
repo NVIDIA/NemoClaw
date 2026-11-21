@@ -14,12 +14,6 @@ terraform {
   }
 }
 
-variable "gateway_endpoint" {
-  description = "Loopback HTTPS endpoint used by command-scoped Kubernetes tunnels."
-  type        = string
-  default     = "https://127.0.0.1:17671"
-}
-
 variable "CLUSTER_KUBECONFIG" {
   description = "Absolute kubeconfig path for Helm; set NEMOCLAW_CLUSTER_KUBECONFIG to the same file for the OpenShell provider."
   type        = string
@@ -106,13 +100,13 @@ locals {
     }
   }
   gateway_settings = {
-    runtime  = { provider = "kubernetes" }
-    endpoint = var.gateway_endpoint
-    kubernetes = {
-      kubeconfig     = { env = "NEMOCLAW_CLUSTER_KUBECONFIG" }
-      context        = var.context
-      namespace      = var.namespace
-      authentication = { profile = "development" }
+    target = {
+      kubernetes = {
+        kubeconfig     = { env = "NEMOCLAW_CLUSTER_KUBECONFIG" }
+        context        = var.context
+        namespace      = var.namespace
+        authentication = { profile = "development" }
+      }
     }
   }
 }
@@ -121,7 +115,6 @@ resource "openshell_kubernetes_storage" "platform" {
   name                   = local.gateway_name
   owner                  = var.deployment_uid
   compute_driver         = "kubernetes"
-  endpoint               = var.gateway_endpoint
   kubeconfig_env         = "NEMOCLAW_CLUSTER_KUBECONFIG"
   context                = var.context
   namespace              = var.namespace
@@ -139,7 +132,6 @@ resource "openshell_kubernetes_auth" "platform" {
   name                   = local.gateway_name
   owner                  = openshell_kubernetes_storage.platform.owner
   compute_driver         = "kubernetes"
-  endpoint               = var.gateway_endpoint
   kubeconfig_env         = "NEMOCLAW_CLUSTER_KUBECONFIG"
   context                = var.context
   namespace              = var.namespace
@@ -215,7 +207,6 @@ resource "openshell_kubernetes_gateway" "platform" {
   owner                  = openshell_kubernetes_storage.platform.owner
   generation             = openshell_kubernetes_auth.platform.generation
   compute_driver         = "kubernetes"
-  endpoint               = var.gateway_endpoint
   kubeconfig_env         = "NEMOCLAW_CLUSTER_KUBECONFIG"
   context                = var.context
   namespace              = var.namespace
@@ -230,7 +221,8 @@ resource "openshell_kubernetes_gateway" "platform" {
 
 data "openshell_gateway" "current" {
   depends_on = [openshell_kubernetes_gateway.platform]
-  endpoint   = var.gateway_endpoint
+  # The provider forwards a free local port to the gateway pod for each
+  # command, so the gateway has no endpoint here.
   kubernetes = jsonencode({
     layout     = 1
     kind       = "kubernetes_gateway"

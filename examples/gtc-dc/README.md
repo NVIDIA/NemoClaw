@@ -124,7 +124,7 @@ Both paths install the gateway with the permissions needed to inspect PVCs.
 The [development authentication profile](../../docs/build-deploy/kubernetes.md#deploying-with-a-managed-gateway) is for development clusters; use the documented OIDC profile for an existing issuer.
 
 Before applying either configuration, the platform operator must create `gtc-dc-openclaw-data` and `gtc-dc-hermes-data` in the sandbox namespace.
-Use `spec.gateway.kubernetes.namespace` for YAML or `var.namespace` for HCL; create that namespace before provisioning the claims if it does not exist.
+Use `spec.gateway.target.kubernetes.namespace` for YAML or `var.namespace` for HCL; create that namespace before provisioning the claims if it does not exist.
 Prepare `workspace/` and `artifacts/` on each claim, writable by UID/GID `10001:10001`, and add these PVC labels:
 
 ```yaml
