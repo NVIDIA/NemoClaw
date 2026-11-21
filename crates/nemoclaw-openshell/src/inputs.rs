@@ -23,6 +23,30 @@ fn policy_input() -> Shape {
     POLICY.clone()
 }
 
+/// Typed API MCP policy, derived from the schema once like the sandbox policy.
+fn mcp_input() -> Shape {
+    static MCP: std::sync::LazyLock<Shape> = std::sync::LazyLock::new(|| {
+        let schema = schemars::schema_for!(crate::api::McpPolicy).to_value();
+        Shape::Object(
+            nemoclaw_tofu::shape::fields(&schema, &[])
+                .expect("the API's MCP policy maps to OpenTofu"),
+        )
+    });
+    MCP.clone()
+}
+
+/// Typed API REST policy, derived from the schema once like the sandbox policy.
+fn rest_input() -> Shape {
+    static REST: std::sync::LazyLock<Shape> = std::sync::LazyLock::new(|| {
+        let schema = schemars::schema_for!(crate::api::RestPolicy).to_value();
+        Shape::Object(
+            nemoclaw_tofu::shape::fields(&schema, &[])
+                .expect("the API's REST policy maps to OpenTofu"),
+        )
+    });
+    REST.clone()
+}
+
 /// One sandbox service endpoint, in OpenShell's terms.
 fn service_input() -> nemoclaw_tofu::shape::Fields {
     use nemoclaw_tofu::shape::Field;
@@ -68,30 +92,12 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
         shape,
     };
     match kind {
-        "api" => {
-            let mcp = schemars::schema_for!(crate::api::McpPolicy).to_value();
-            let rest = schemars::schema_for!(crate::api::RestPolicy).to_value();
-            vec![
-                input("binaries", "binaries_json", strings()),
-                input("endpoints", "endpoints_json", strings()),
-                input(
-                    "mcp",
-                    crate::api::MCP_POLICY,
-                    Shape::Object(
-                        nemoclaw_tofu::shape::fields(&mcp, &[])
-                            .expect("the API's MCP policy maps to OpenTofu"),
-                    ),
-                ),
-                input(
-                    "rest",
-                    crate::api::REST_POLICY,
-                    Shape::Object(
-                        nemoclaw_tofu::shape::fields(&rest, &[])
-                            .expect("the API's REST policy maps to OpenTofu"),
-                    ),
-                ),
-            ]
-        }
+        "api" => vec![
+            input("binaries", "binaries_json", strings()),
+            input("endpoints", "endpoints_json", strings()),
+            input("mcp", crate::api::MCP_POLICY, mcp_input()),
+            input("rest", crate::api::REST_POLICY, rest_input()),
+        ],
         "inference" => {
             vec![input("binaries", "binaries_json", strings())]
         }
