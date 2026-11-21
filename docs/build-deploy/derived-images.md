@@ -22,6 +22,25 @@ Until it does, [build them](build.md) and push them to your registry.
 A local image ID such as `name@sha256:<id>` can't be used in `FROM`.
 Use a registry digest or a local tag.
 
+## Harnesses Without a Published Image
+
+Check the [harness matrix](../references/fabric-harnesses.md) and the build targets in [`docker-bake.hcl`](../../docker-bake.hcl) before choosing a base image.
+
+| What Is Available | What to Build |
+| --- | --- |
+| A build target, but no published image | Build that target on a native Linux host using [Building Agent Images](build.md#building-agent-images). For example, `cargo images build --platform linux/amd64 claude` builds Claude locally on AMD64. Local use does not grant permission to redistribute its proprietary CLI. |
+| A Fabric adapter, but no NemoClaw image target | Use your own image build to install a compatible Fabric runtime, the adapter, and the harness version that adapter supports. Publish the installed adapter's canonical descriptor and runtime metadata in the image catalog, following the [image contract](../../internal-docs/design/fabric-management.md). |
+| No Fabric adapter for the harness | Add the integration in Fabric first. Installing an executable or changing `harness.kind` alone does not provide an adapter. |
+
+When adding or replacing an adapter, regenerate the image catalog from what you installed; a derived image's inherited label still describes its base image.
+The [catalog maintenance guide](../../internal-docs/contributing/agent-image-maintenance.md) explains the descriptors and build inputs.
+Keep the adapter's required executables and files available to its runtime and sandbox policy.
+Your build owns the harness dependency pins, license notices, required sources, and redistribution permissions.
+
+After building, reference the image by digest and select its advertised adapter ID as `harness.kind`.
+For Kubernetes or OpenShift, export the image metadata as [Building Agent Images](build.md#building-agent-images) describes.
+Run [one agent request](../agents-inference/agents.md#running-one-agent-request) to check the harness and model together; successful planning or apply does not establish a working model response.
+
 ## Keeping What NemoClaw Relies On
 
 NemoClaw reads a small set of the base image's properties.
