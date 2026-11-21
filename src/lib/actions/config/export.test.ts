@@ -31,11 +31,11 @@ const teamDocumentName = parseNemoClawConfigDocumentName("team");
 const documentUid = parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-426614174000");
 
 function dependencies(): ConfigExportDependencies {
-  // The source port differs from the config endpoint so the header's source is observable.
+  // The source port differs from the config port so the header's source is observable.
   const observation = { sandboxName: "alpha", gateway: { port: 18080 } } as never;
   const config = {
     kind: "NemoClawConfig",
-    spec: { gateway: { endpoint: "http://127.0.0.1:19090" } },
+    spec: { gateway: { target: { docker: { port: 19090 } } } },
   } as never;
   mocks.exportOmissions.mockReset().mockReturnValue([]);
   mocks.buildExportConfig.mockReset().mockReturnValue(config);
@@ -53,7 +53,7 @@ function dependencies(): ConfigExportDependencies {
 }
 
 describe("runConfigExport", () => {
-  it("reports the gateway endpoint written in the exported config", async () => {
+  it("reports the gateway port written in the exported config", async () => {
     const deps = dependencies();
     await runConfigExport(
       { sandboxName: "alpha", documentName: alphaDocumentName, target: { kind: "stdout" } },

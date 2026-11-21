@@ -5,6 +5,7 @@ import fs from "node:fs";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { V1_IMAGE_REF_PLACEHOLDER } from "../../../src/lib/domain/config/export-document.ts";
+import { V1ALPHA1_CHECKED_REVISION } from "../../../src/lib/domain/config/v1alpha1-checked-revision.ts";
 import { MessagingSetupApplier } from "../../../src/lib/messaging/applier/setup-applier.ts";
 import { compactSandboxMessagingPlanForPersistence } from "../../../src/lib/messaging/persistence.ts";
 import type { V1ParseSummary } from "../../support/v1-parse-consumer.ts";
@@ -51,8 +52,7 @@ function exportedHermesDocument() {
     spec: {
       gateway: {
         management: "managed",
-        runtime: { provider: "docker" },
-        endpoint: "http://127.0.0.1:8080",
+        target: { docker: { port: 8080 } },
       },
       inferenceProviders: {
         "hosted-compatible-endpoint": {
@@ -97,6 +97,7 @@ beforeEach(() => {
         credentialEnv: "NVIDIA_API_KEY",
         endpointUrl: "https://integrate.api.nvidia.com/v1",
         gatewayName: "nemoclaw",
+        gatewayPort: 8080,
         workload: { kind: "managed-image", reference: IMAGE_REF },
       },
     },
@@ -118,6 +119,7 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
     },
     credentialReferenceMatches: true,
     credentialValuesOmitted: true,
+    gatewayPortMatches: true,
     identityDriftPreventedPublication: true,
     identityDriftReported: true,
     managedImageIsPlaceholder: true,
@@ -132,7 +134,7 @@ function passingEvidence(): Extract<HermesConfigExportLiveEvidence, { outcome: "
 
 function pinnedConsumerEvidence(): V1ParseSummary {
   return {
-    revision: "d1d0c87e535f9c757f47dde6ee157e9859dd91fd",
+    revision: V1ALPHA1_CHECKED_REVISION,
     sandboxes: {
       hermes: {
         harnessKind: "nvidia.fabric.hermes",
@@ -253,6 +255,7 @@ describe("Hermes config export live evidence", () => {
     "aliasesEquivalent",
     "credentialReferenceMatches",
     "credentialValuesOmitted",
+    "gatewayPortMatches",
     "identityDriftPreventedPublication",
     "identityDriftReported",
     "managedImageIsPlaceholder",
@@ -849,6 +852,29 @@ describe("Hermes config export live evidence", () => {
     expect(mocks.writeJson).toHaveBeenCalledWith(
       "hermes-config-export-live-evidence.json",
       expect.objectContaining({ consumer: expect.objectContaining({ passed: false }) }),
+    );
+    expect(mocks.writeText).not.toHaveBeenCalled();
+  });
+
+  it("withholds YAML when the exported Docker port differs from the registry gateway port (#14696)", async () => {
+    const exported = exportedHermesDocument();
+    exported.spec.gateway.target.docker.port = 18_081;
+    const writeExport = async (_command: string, args: string[]) => {
+      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, JSON.stringify(exported));
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+    mocks.command
+      .mockImplementationOnce(writeExport)
+      .mockImplementationOnce(writeExport)
+      .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+    expect(mocks.writeJson).toHaveBeenCalledWith(
+      "hermes-config-export-live-evidence.json",
+      expect.objectContaining({
+        gatewayPortMatches: false,
+        consumer: expect.objectContaining({ passed: true }),
+      }),
     );
     expect(mocks.writeText).not.toHaveBeenCalled();
   });

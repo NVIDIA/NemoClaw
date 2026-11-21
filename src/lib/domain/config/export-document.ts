@@ -263,8 +263,7 @@ export function buildExportConfig(
     spec: {
       gateway: {
         management: "managed",
-        runtime: { provider: "docker" },
-        endpoint: `http://127.0.0.1:${source.gateway.port}`,
+        target: { docker: { port: source.gateway.port } },
       },
       ...(services ? { services } : {}),
       inferenceProviders: { [providerName]: inferenceProvider(source) },
