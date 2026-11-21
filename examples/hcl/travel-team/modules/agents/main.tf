@@ -1,41 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# The agents layer: each role's sandbox and agent, on the gateway layer's
+# workspace and registrations. The root configures the providers and pins
+# their versions.
+terraform {
+  required_providers {
+    openshell = { source = "registry.opentofu.org/nvidia/openshell" }
+    fabric    = { source = "registry.opentofu.org/nvidia/fabric" }
+  }
+}
+
 locals {
-  gateway = data.openshell_gateway.current.ref
-
-  # What each researcher looks into. A key names the researcher's sandbox and
-  # agent.
-  researchers = {
-    flights     = "flights for each leg of the trip: nonstop and one-stop options, fares, fare rules, and baggage allowances"
-    stays       = "places to stay near each stop's points of interest: hotels and apartments, nightly rates, cancellation terms, and reviews"
-    transport   = "getting around: airport transfers, transit passes, trains between cities, and car rental where transit is poor"
-    attractions = "things to do at each stop: attractions, opening hours, ticket prices, advance booking requirements, and seasonal closures"
-  }
-
-  harnesses = {
-    hermes = { adapter_id = "nvidia.fabric.hermes", image = var.images.hermes }
-  }
-
-  # Every agent's sandbox, from one table: its harness, its model, and whether
-  # it searches the web. Agent configurations follow below, one per role.
-  roles = merge(
-    { for topic in keys(local.researchers) : topic => { harness = "hermes", model = "local", search = true } },
-    {
-      scheduler = { harness = "hermes", model = "frontier", search = false }
-      buyer     = { harness = "hermes", model = "frontier", search = false }
-    },
-  )
-
-  # Each role's harness executables, which its grants and registrations allow.
-  binaries = { for role, harness in data.fabric_harness.agent : role => jsondecode(harness.launch_json).binaries }
-  model_binaries = {
-    for model in ["local", "frontier"] : model => sort(distinct(flatten([
-      for role, settings in local.roles : local.binaries[role] if settings.model == model
-    ])))
-  }
-  search_binaries = sort(distinct(flatten([for role, settings in local.roles : local.binaries[role] if settings.search])))
-
   # Where the optional skills volume appears in researchers' sandboxes.
   skills_path = "/sandbox/skills"
 
@@ -52,7 +28,7 @@ locals {
   instructions = {
     for role, text in merge(
       {
-        for topic, focus in local.researchers : topic => templatefile("${path.module}/instructions/researcher.md.tftpl", {
+        for topic, focus in var.researchers : topic => templatefile("${path.module}/instructions/researcher.md.tftpl", {
           topic  = topic
           focus  = focus
           trip   = local.schemas["trip-request"]
@@ -61,7 +37,7 @@ locals {
       },
       {
         scheduler = templatefile("${path.module}/instructions/scheduler.md.tftpl", {
-          topics    = keys(local.researchers)
+          topics    = keys(var.researchers)
           trip      = local.schemas["trip-request"]
           result    = local.schemas["research-result"]
           itinerary = local.schemas["itinerary"]
@@ -88,25 +64,25 @@ locals {
       # Ollama; it sends the reasoning_effort that turns reasoning off, as
       # Fabric's Hermes adapter asks by default.
       provider    = "custom"
-      model       = var.local_model.name
-      base_url    = coalesce(var.sandbox_model_endpoint, var.model_endpoint)
+      model       = var.models.local.name
+      base_url    = var.models.local.endpoint
       api_key_env = "NEMOCLAW_ANONYMOUS_API_KEY"
     }
     frontier = {
       # As for the local model: the custom profile sends the hosted endpoint
       # the reasoning_effort that turns reasoning off.
       provider = "custom"
-      model    = var.frontier.model
-      base_url = var.frontier.endpoint
+      model    = var.models.frontier.name
+      base_url = var.models.frontier.endpoint
       # Sandboxes see the key in the registration's variable, not in
       # credential_env, which names it on this machine.
-      api_key_env = openshell_inference.frontier.sandbox_env
+      api_key_env = var.frontier_key_env
     }
   }
 
   behavior = merge(
     {
-      for topic, focus in local.researchers : topic => {
+      for topic, focus in var.researchers : topic => {
         description = "Researches ${focus}."
         temperature = 0.2
         max_tokens  = 2048
@@ -130,7 +106,7 @@ locals {
   )
 
   agent_configs = {
-    for role, settings in local.roles : role => merge(
+    for role, settings in var.roles : role => merge(
       local.behavior[role], local.models[settings.model],
       {
         instructions = local.instructions[role]
@@ -148,19 +124,19 @@ locals {
         booking_mcp = {
           url     = var.bookings.url
           headers = { Authorization = "Bearer $${NEMOCLAW_API_BOOKINGS_KEY}" }
-          rules   = local.booking_rules
+          rules   = var.booking_rules
         }
       } : {},
     )
   }
-}
 
-data "fabric_harness" "agent" {
-  for_each   = local.roles
-  image      = local.harnesses[each.value.harness].image
-  adapter_id = local.harnesses[each.value.harness].adapter_id
-  agent_name = each.key
-  engine     = var.image_engine
+  # Research sources supplement the endpoint rules attached by the providers.
+  # The booking provider owns both the credential and the MCP rules.
+  grants = {
+    for role in keys(var.roles) : role => {
+      for host in lookup(var.research_sources, role, []) : "${role}-${replace(host, ".", "-")}" => host
+    }
+  }
 }
 
 # Holds each agent's configuration so that a change replaces its sandbox.
@@ -170,17 +146,17 @@ resource "terraform_data" "agent_config" {
 }
 
 resource "openshell_sandbox" "agent" {
-  for_each    = local.roles
-  gateway     = local.gateway
-  workspace   = openshell_workspace.team.ref
-  owner       = openshell_workspace.team.owner
+  for_each    = var.roles
+  gateway     = var.gateway
+  workspace   = var.workspace
+  owner       = var.workspace.owner
   name        = each.key
-  image       = local.harnesses[each.value.harness].image
-  launch_json = data.fabric_harness.agent[each.key].launch_json
+  image       = var.harnesses[each.key].image
+  launch_json = var.harnesses[each.key].launch_json
   providers = concat(
-    [each.value.model == "local" ? openshell_inference.local.ref : openshell_inference.frontier.ref],
-    each.value.search ? [openshell_web_search.research.ref] : [],
-    each.key == "buyer" ? [openshell_api.bookings.ref] : [],
+    [var.registrations[each.value.model]],
+    each.value.search ? [var.registrations.search] : [],
+    each.key == "buyer" ? [var.registrations.bookings] : [],
   )
   # The skills volume, for researchers, mounted with OpenShell's defaults.
   driver_config = each.value.search && var.skills_volume != null ? jsonencode({
@@ -192,7 +168,7 @@ resource "openshell_sandbox" "agent" {
       content {
         name = managed.key
         dynamic "binaries" {
-          for_each = local.binaries[each.key]
+          for_each = var.harnesses[each.key].binaries
           content {
             path = binaries.value
           }
@@ -219,9 +195,9 @@ resource "openshell_sandbox" "agent" {
 
 resource "fabric_agent" "agent" {
   for_each    = local.agent_configs
-  gateway     = local.gateway
+  gateway     = var.gateway
   sandbox     = openshell_sandbox.agent[each.key].ref
-  harness     = data.fabric_harness.agent[each.key].ref
+  harness     = var.harnesses[each.key].ref
   name        = each.key
   description = each.value.description
   instructions {

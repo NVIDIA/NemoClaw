@@ -1,6 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# The inference layer: where the team's models run. The root configures the
+# providers and pins their versions.
+terraform {
+  required_providers {
+    docker = { source = "registry.opentofu.org/kreuzwerker/docker" }
+    ollama = { source = "registry.opentofu.org/nvidia/ollama" }
+  }
+}
+
 # The researchers' model: local and fast. Ollama's runtime contract, placed
 # with Docker; a Kubernetes, Podman, or other resource can take the same launch
 # and requirements instead.
@@ -17,15 +26,16 @@ data "ollama_runtime" "local" {
   }
   serving {
     port = 11434
-    # The researchers share this model and work at the same time; NemoClaw's
+    # The agents that share this model work at the same time; NemoClaw's
     # Ollama runtime serves at most two sequences at once.
-    max_sequences = min(length(local.researchers), 2)
+    max_sequences = min(var.local_model_agents, 2)
   }
 }
 
 locals {
   ollama_launch       = data.ollama_runtime.local.launch
   ollama_requirements = data.ollama_runtime.local.requirements
+  sandbox_endpoint    = coalesce(var.sandbox_model_endpoint, var.model_endpoint)
 }
 
 resource "docker_volume" "models" {
@@ -65,29 +75,6 @@ resource "docker_container" "ollama" {
 data "ollama_readiness" "local" {
   contract         = data.ollama_runtime.local.spec
   endpoint         = var.model_endpoint
-  sandbox_endpoint = coalesce(var.sandbox_model_endpoint, var.model_endpoint)
+  sandbox_endpoint = local.sandbox_endpoint
   read_trigger     = docker_container.ollama.id != ""
-}
-
-# The scheduler's and buyer's model: hosted, for the parts that need the most
-# reasoning. NemoClaw doesn't run it, so its server is a literal object rather
-# than a readiness read's ref. OpenShell reads the key from credential_env
-# during apply; the key never enters OpenTofu state.
-locals {
-  # The local model's server, from the address sandboxes use. Its readiness
-  # read reports the same values only during apply when the server changes;
-  # a registration taking that ref would be replaced, which OpenShell refuses
-  # while sandboxes attach it. The registration waits for the read instead.
-  local_server = {
-    type              = "inference_server"
-    endpoint          = coalesce(var.sandbox_model_endpoint, var.model_endpoint)
-    credential_env    = ""
-    credential_source = ""
-  }
-  frontier_server = {
-    type              = "inference_server"
-    endpoint          = var.frontier.endpoint
-    credential_env    = var.frontier.credential_env
-    credential_source = ""
-  }
 }

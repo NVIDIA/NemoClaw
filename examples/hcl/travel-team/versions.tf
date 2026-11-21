@@ -9,6 +9,7 @@ terraform {
   required_version = "~> 1.12"
   # Pin the NVIDIA providers to your bundle's version, for example
   # version = "0.1.0", and install them from the bundle's providers directory.
+  # The modules use these versions and the provider settings below.
   required_providers {
     docker    = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.7.0" }
     ollama    = { source = "registry.opentofu.org/nvidia/ollama" }

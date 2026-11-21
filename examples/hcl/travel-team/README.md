@@ -16,21 +16,36 @@ For a single agent, see [the travel example](../travel/).
 Each sandbox's policy grants exactly what its role needs, from the executables of its harness; OpenShell denies everything else.
 The researchers use a fast local model, and the scheduler and buyer use a hosted model for the parts that need the most reasoning.
 
+## Layers
+
+The root describes the team and calls three local modules, one for each layer it runs on:
+
+| Module | Owns | Gives the next layer |
+|---|---|---|
+| `inference` | The local Ollama server, checked by its readiness read, and the hosted model's address | Each model's server and the address sandboxes reach it at |
+| `gateway` | A check of the existing OpenShell gateway, and on it the workspace, the model and web search registrations, and the booking credential and tool rules | The gateway's and workspace's refs, each registration's ref, the variable sandboxes find the hosted model's key in, and the booking rules |
+| `agents` | Each role's instructions, sandbox, network grants, and agent | What invoking each agent needs |
+
+Values flow one way, from inference through the gateway to the agents, as typed module inputs and outputs.
+The root reads each role's harness, because the gateway's registrations allow the harness's executables and the agents' sandboxes launch it.
+To place a layer differently, for example to run the model on Kubernetes, change that module and keep its inputs and outputs.
+The modules live in this example rather than being published, as [#13149](https://github.com/NVIDIA/NemoClaw/issues/13149) decided.
+
 ## Files
 
 [WALKTHROUGH.md](WALKTHROUGH.md) walks through the HCL file by file.
 
 | File | Contents |
 |---|---|
-| `versions.tf` | OpenTofu and provider requirements |
+| `versions.tf` | OpenTofu and provider requirements, and the provider settings the modules use |
 | `variables.tf` | Gateway, images, models, web search, sources, and the booking service |
-| `models.tf` | The local Ollama server, checked by its readiness read, and the hosted model |
-| `registrations.tf` | The workspace, inference and web search registrations, and the booking credential and tool rules |
-| `policies.tf` | Network grants for research sources |
-| `agents.tf` | Each role's sandbox and agent, from one table of roles |
+| `main.tf` | The team's roles, each role's harness, and the three module calls |
 | `outputs.tf` | What invoking each agent needs |
-| `instructions/` | Each role's instructions, which embed the JSON Schemas of its input and reply |
-| `schemas/` | JSON Schemas of the trip request, research results, itinerary, and booking |
+| `modules/inference/` | The local Ollama server and the hosted model |
+| `modules/gateway/` | The gateway check, workspace, and registrations |
+| `modules/agents/` | Each role's sandbox and agent, with its network grants |
+| `modules/agents/instructions/` | Each role's instructions, which embed the JSON Schemas of its input and reply |
+| `modules/agents/schemas/` | JSON Schemas of the trip request, research results, itinerary, and booking |
 
 ## Run It
 
@@ -44,7 +59,7 @@ The researchers use a fast local model, and the scheduler and buyer use a hosted
 Hosted providers retire model names over time. If the scheduler or buyer fails with HTTP 404 or 410 from the hosted model, list the models your endpoint and key can use (`GET /v1/models`, then try one) and set `frontier.model`.
 
 An agent's configuration is fixed when its sandbox starts: Fabric runs one agent per sandbox.
-Changing any of an agent's settings, such as its instructions or model, therefore replaces its sandbox, and the plan shows `openshell_sandbox.agent["<role>"] must be replaced`.
+Changing any of an agent's settings, such as its instructions or model, therefore replaces its sandbox, and the plan shows `module.agents.openshell_sandbox.agent["<role>"] will be replaced`.
 Replacing a sandbox deletes its files; to keep files across replacements, mount a volume with `driver_config`, as `skills_volume` does for researchers.
 
 To tear everything down, run `tofu destroy -var destroy=true`.
@@ -70,7 +85,7 @@ Check `result.status` for that, and read the agent's reply from `result.output`:
 
 A trip then takes four steps:
 
-1. Give each researcher the trip request, which matches `schemas/trip-request.json`, and keep each reply's `result.output`.
+1. Give each researcher the trip request, which matches `modules/agents/schemas/trip-request.json`, and keep each reply's `result.output`.
 2. Give the scheduler one message with the request and all four results.
    It replies with an itinerary, and lists in `problems` any constraint it can't meet and any option it left out.
 3. Review the itinerary yourself; nothing is booked without your approval.

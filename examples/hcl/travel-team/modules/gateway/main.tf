@@ -1,9 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# The gateway layer: an existing OpenShell gateway, and on it the team's
+# workspace and the registrations its sandboxes attach. The root configures
+# the provider and pins its version.
+terraform {
+  required_providers {
+    openshell = { source = "registry.opentofu.org/nvidia/openshell" }
+  }
+}
+
 data "openshell_gateway" "current" {
-  endpoint                 = var.gateway_endpoint
+  endpoint                 = var.endpoint
   required_compute_drivers = ["docker"]
+}
+
+locals {
+  gateway = data.openshell_gateway.current.ref
 }
 
 # Tear the configuration down with tofu destroy -var destroy=true. To keep the
@@ -20,20 +33,20 @@ resource "openshell_inference" "local" {
   gateway   = local.gateway
   workspace = openshell_workspace.team.ref
   name      = "local"
-  server    = local.local_server
-  api       = "openai-completions"
-  binaries  = local.model_binaries.local
-  # Registered once the model is ready.
-  depends_on = [data.ollama_readiness.local]
+  # Depends on the model's readiness read, so this is registered once the
+  # model is ready.
+  server   = var.local_server
+  api      = "openai-completions"
+  binaries = var.binaries.local
 }
 
 resource "openshell_inference" "frontier" {
   gateway   = local.gateway
   workspace = openshell_workspace.team.ref
   name      = "frontier"
-  server    = local.frontier_server
+  server    = var.frontier_server
   api       = "openai-completions"
-  binaries  = local.model_binaries.frontier
+  binaries  = var.binaries.frontier
 }
 
 # Web search, attached to researchers only.
@@ -46,7 +59,7 @@ resource "openshell_web_search" "research" {
   # The researchers run Hermes, whose Brave plugin reads its key from
   # BRAVE_SEARCH_API_KEY rather than the default BRAVE_API_KEY.
   sandbox_env = var.search.provider == "brave" ? "BRAVE_SEARCH_API_KEY" : null
-  binaries    = local.search_binaries
+  binaries    = var.binaries.search
 }
 
 locals {
@@ -63,7 +76,7 @@ resource "openshell_api" "bookings" {
   name           = "bookings"
   endpoints      = [var.bookings.url]
   credential_env = var.bookings.credential_env
-  binaries       = local.binaries.buyer
+  binaries       = var.binaries.bookings
 
   mcp {
     dynamic "rules" {
