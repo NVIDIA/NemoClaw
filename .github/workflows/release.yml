@@ -345,7 +345,10 @@ jobs:
   sign-macos:
     name: Sign the macOS CLI
     needs: [sign-macos-3s, security-controller]
-    if: contains(vars.RELEASE_SIGNING, 'darwin_arm64')
+    if: >-
+      !cancelled() && needs.sign-macos-3s.result == 'success' &&
+      needs.security-controller.result == 'success' &&
+      contains(vars.RELEASE_SIGNING, 'darwin_arm64')
     runs-on: macos-15
     timeout-minutes: 30
     permissions:
@@ -377,7 +380,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/dist"
           tar -xf "$RUNNER_TEMP/ci/macos-3s.tar" -C "$RUNNER_TEMP/dist"
+      # Enable after Apple credentials are configured. Signing works independently.
       - name: Notarize the signed executables
+        if: vars.MACOS_NOTARIZATION == 'true'
         env:
           APPLE_NOTARY_ID: ${{ secrets.APPLE_NOTARY_ID }}
           APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
@@ -401,9 +406,12 @@ jobs:
       - name: Verify every signature
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          MACOS_NOTARIZATION: ${{ vars.MACOS_NOTARIZATION }}
         run: |
           set -o pipefail
-          bash .github/scripts/verify-macos-signatures.sh "$RUNNER_TEMP/dist/darwin_arm64" "$APPLE_TEAM_ID" 2>&1 |
+          mode=signatures-only
+          if [ "$MACOS_NOTARIZATION" = true ]; then mode=notarized; fi
+          bash .github/scripts/verify-macos-signatures.sh "$RUNNER_TEMP/dist/darwin_arm64" "$APPLE_TEAM_ID" "$mode" 2>&1 |
             tee "$RUNNER_TEMP/darwin_arm64.verification.txt"
       - name: Upload the signed bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
