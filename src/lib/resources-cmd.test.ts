@@ -250,6 +250,10 @@ describe("resources-cmd", () => {
     const args = ["sandbox", "create"];
     expect(appendResourceFlags(args, { cpu: "75%", memory: "75%" }, openshell)).toBe(true);
     expect(args).toEqual(["sandbox", "create", "--cpu", "3", "--memory", "9Gi"]);
+
+    const absoluteArgs = ["sandbox", "create"];
+    expect(appendResourceFlags(absoluteArgs, { cpu: "2", memory: "4Gi" }, openshell)).toBe(true);
+    expect(absoluteArgs).toEqual(["sandbox", "create", "--cpu", "2", "--memory", "4Gi"]);
   });
 
   it("prefers Kubernetes allocatable capacity over Docker engine capacity", () => {
