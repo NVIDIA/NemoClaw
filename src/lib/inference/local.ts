@@ -1485,6 +1485,16 @@ export function probeOllamaAuthProxyHealth(
         `re-run \`nemoclaw <sandbox> connect\` to restart it. (${result.message})`,
     };
   }
+  if (result.httpStatus >= 500) {
+    return {
+      ...base,
+      ok: false,
+      failureLabel: "unhealthy",
+      detail:
+        `Ollama auth proxy is running on ${endpoint}, but its backend returned HTTP ${result.httpStatus}. ` +
+        `Verify host Ollama on localhost:${OLLAMA_PORT} and retry. (${result.message})`,
+    };
+  }
   return {
     ...base,
     ok: false,

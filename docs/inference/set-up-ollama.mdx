@@ -305,7 +305,9 @@ Scoped uninstall preserves the shared proxy state while a sibling gateway remain
 </Warning>
 
 All proxy endpoints require the token, including `GET /api/tags`.
-The host-side proxy liveness check treats any HTTP response, including `401`, as evidence that the proxy answered.
+When the container reachability check fails, onboarding continues only if the host-side proxy health check passes.
+That check sends the proxy token to `GET /api/tags` and requires an Ollama model list in the response.
+A `401`, a `5xx` from an unavailable Ollama backend, any other non-2xx status, a body that is not a model list, or a failed connection marks the proxy unhealthy and stops onboarding.
 The `status` and `doctor` route probe runs inside the sandbox and reports HTTP `200` through `499` as reachable, HTTP `500` through `599` as `unhealthy`, and transport failures or unavailable probes as `unreachable` or `not probed`.
 `status` then sends an inference request over the reachable route and reports `healthy` when the route served it, or `unauthorized` when the proxy token is no longer accepted.
 
