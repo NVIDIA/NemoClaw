@@ -216,6 +216,22 @@
         "url": "https://codeload.github.com/openai/codex/tar.gz/6b9826e3aa83b1a5947db50f4332cb9c65f1b340",
         "sha256": "848c7ffac62e21b14edc2048d2e5b7c82b31c556afa4b0d305da0f7d5aa794f4"
       },
+      "codex-symphonia-source.tar.gz": {
+        "url": "https://codeload.github.com/pdeljanov/Symphonia/tar.gz/980bf5830a90e069fd64641d9c38f067ab772a24",
+        "sha256": "3cbc98a8fcf42d4f9159a46818f0d9b222ea30938202425729d5e3f2420c64c6"
+      },
+      "codex-nucleo-source.tar.gz": {
+        "url": "https://codeload.github.com/helix-editor/nucleo/tar.gz/4253de9faabb4e5c6d81d946a5e35a90f87347ee",
+        "sha256": "d1676ac33a82c5903ffede68ce73c9d924666aa8a102bb649a8fb926a7a61ce1"
+      },
+      "colored-source.crate": {
+        "url": "https://static.crates.io/crates/colored/colored-3.1.1.crate",
+        "sha256": "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
+      },
+      "option-ext-source.crate": {
+        "url": "https://static.crates.io/crates/option-ext/option-ext-0.2.0.crate",
+        "sha256": "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+      },
       "codex-rg-LICENSE-MIT": {
         "url": "https://raw.githubusercontent.com/BurntSushi/ripgrep/e89fff89ac9af12e8d4ce9d5fd07beb408ca730f/LICENSE-MIT",
         "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"

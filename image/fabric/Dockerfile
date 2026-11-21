@@ -151,6 +151,7 @@ FROM generic AS codex
 COPY --from=sources --chmod=0644 /codex-LICENSE /codex-NOTICE /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /codex-rg-LICENSE-MIT /codex-zsh-LICENCE /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /codex-rusty-v8-LICENSE /opt/nemoclaw/source/
+COPY --from=sources --chmod=0644 /codex-symphonia-source.tar.gz /codex-nucleo-source.tar.gz /option-ext-source.crate /opt/nemoclaw/source/codex/
 COPY --from=codex-sources --chmod=0644 /sources/codex-source.tar.gz /sources/codex-libcap-source.tar.xz /sources/codex-bubblewrap-COPYING /sources/codex-libcap-License /sources/codex-rust-COPYRIGHT-library.html /sources/codex-rg-rust-COPYRIGHT-library.html /opt/nemoclaw/source/
 COPY --from=codex-sources --chmod=0644 /sources/codex-v8-source.tar.gz /sources/codex-v8-LICENSE /opt/nemoclaw/source/
 COPY --from=codex-sources --chmod=0644 /sources/codex-icu-LICENSE /sources/codex-libcxx-LICENSE /sources/codex-libcxxabi-LICENSE /sources/codex-llvm-libc-LICENSE /opt/nemoclaw/source/
@@ -160,6 +161,9 @@ FROM generic AS deepagents
 # These exact release notices supplement Fabric's attribution placeholders.
 COPY --from=sources --chmod=0644 /langsmith-LICENSE /sqlite-vec-LICENSE-MIT /opt/nemoclaw/source/
 COPY --from=sources --chmod=0644 /deepagents-orjson-source.tar.gz /opt/nemoclaw/source/deepagents/orjson-source.tar.gz
+
+FROM generic AS mini-swe-agent
+COPY --from=sources --chmod=0644 /colored-source.crate /option-ext-source.crate /opt/nemoclaw/source/hf-xet/
 
 FROM runtime-base AS interactive
 COPY --from=node /node/ /
