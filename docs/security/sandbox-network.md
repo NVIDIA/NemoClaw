@@ -13,8 +13,8 @@ Apply creates the sandbox and grants the access declared by the policy.
 ## Choosing a Policy
 
 Omitting `network`, or declaring `tier: isolated`, selects the image's advertised filesystem and process defaults.
-NemoClaw adds the declared inference and search endpoint grants without granting general egress.
-Those managed grants use only the selected adapter's executable paths resolved during image assembly.
+NemoClaw adds the declared inference endpoint grants, and each attached web search or API credential's profile grants its own endpoints, without granting general egress.
+Those grants use only the selected adapter's executable paths resolved during image assembly.
 
 To grant a few more endpoints without restating the preset, add named `grants` to it:
 
@@ -35,7 +35,7 @@ network:
 ```
 
 Each grant takes `endpoints` in the same shape as an explicit policy rule, including MCP method and tool rules.
-Its optional `binaries` default to the harness's executables, like the managed inference and search grants.
+Its optional `binaries` default to the harness's executables, like the managed inference grants.
 Grant names cannot reuse a managed grant's name, and an explicit policy cannot take `grants` or `grantRefs`, since it already lists every rule.
 
 An explicit policy replaces the entire preset.

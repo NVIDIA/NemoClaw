@@ -1,21 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Resources that own an OpenShell provider profile and the registration that
-//! imports it: `openshell_api`, `openshell_web_search` and `openshell_inference`.
+//! imports it: `openshell_api` and `openshell_inference`.
 //! They delegate to the profile and registration kinds. Missing profiles are
 //! recreated in place; missing registrations replace the pair. Failed API
 //! creates retain the established profile or registration binding for recovery.
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
-use nemoclaw_openshell::api::MCP_POLICY;
-use nemoclaw_openshell::pairs::{
-    api_rows, inference_provider_type, inference_rows, web_search_rows,
-};
-use nemoclaw_openshell::search::SearchProvider;
+use nemoclaw_openshell::api::{MCP_POLICY, REST_POLICY, Rules};
+use nemoclaw_openshell::pairs::{api_rows, inference_provider_type, inference_rows};
 
-pub(crate) const WEB_SEARCH: &str = "web_search";
 pub(crate) const INFERENCE: &str = "inference";
 pub(crate) const API: &str = "api";
-pub(crate) const KINDS: [&str; 3] = [WEB_SEARCH, INFERENCE, API];
+pub(crate) const KINDS: [&str; 2] = [INFERENCE, API];
 const PENDING_PROFILE: &str = "pending-profile:";
 /// The profile half of a credential resource whose profile APF serves.
 pub(crate) const APF_PROFILE: &str = "apf_provider_profile";
@@ -42,7 +38,6 @@ fn value<'a>(row: &'a Row, field: &str) -> &'a str {
 
 fn rows(kind: &str, row: &Row) -> Result<(Row, Row), ObservationError> {
     match kind {
-        WEB_SEARCH => web_search_rows(row),
         INFERENCE => inference_rows(row),
         API => {
             let (mut profile, mut registration) = api_rows(row);
@@ -93,31 +88,25 @@ fn validate(kind: &str, desired: &Row) -> Result<(), Error> {
                         &endpoints,
                         value(desired, "auth_style"),
                         value(desired, "header_name"),
-                        value(desired, MCP_POLICY),
+                        Rules::from_fields(value(desired, MCP_POLICY), value(desired, REST_POLICY))?,
                         value(desired, "sandbox_env"),
                     )
                 })
                 .map_err(|_| Error::Conflict(
-                "API credentials require one or more valid HTTP(S) endpoints and an authentication style. If set, MCP policy requires exactly one endpoint, a canonical endpoint path and rules with at most one tool selector each",
+                "API credentials require one or more valid HTTP(S) endpoints and an authentication style. Set at most one of mcp and rest, each with exactly one endpoint: mcp needs a canonical endpoint path and rules with at most one tool selector each; rest needs an endpoint without a path and rules that each name a method and a path",
             ))?;
             if value(desired, "credential_env").is_empty() {
                 return Err(Error::Conflict(
                     "credential_env must name the variable holding the API credential",
                 ));
             }
-            if apf_profile(desired) && !value(desired, MCP_POLICY).is_empty() {
+            if apf_profile(desired)
+                && [MCP_POLICY, REST_POLICY]
+                    .iter()
+                    .any(|policy| !value(desired, policy).is_empty())
+            {
                 return Err(Error::Conflict(
-                    "an API whose profile APF serves must not set an MCP policy: APF's profile sets the endpoint's rules",
-                ));
-            }
-        }
-        WEB_SEARCH => {
-            if SearchProvider::from_name(value(desired, "provider_type")).is_none() {
-                return Err(Error::Conflict("provider_type must be brave or tavily"));
-            }
-            if value(desired, "credential_env").is_empty() {
-                return Err(Error::Conflict(
-                    "credential_env must name the variable that holds the search API key",
+                    "an API whose profile APF serves must not set an mcp or rest policy: APF's profile sets the endpoint's rules",
                 ));
             }
         }
@@ -152,6 +141,7 @@ pub(crate) fn validate_api(
         "credential_env",
         "binaries_json",
         MCP_POLICY,
+        REST_POLICY,
         crate::POLICY_AUTHORITY,
     ]
     .iter()
@@ -262,12 +252,15 @@ pub(crate) async fn read(
                     value(&profile, "binaries_json").into(),
                 );
                 if kind == API {
-                    for field in ["auth_style", "header_name", "sandbox_env", MCP_POLICY] {
+                    for field in [
+                        "auth_style",
+                        "header_name",
+                        "sandbox_env",
+                        MCP_POLICY,
+                        REST_POLICY,
+                    ] {
                         observed.insert(field.into(), value(&profile, field).into());
                     }
-                }
-                if kind == WEB_SEARCH {
-                    observed.insert("sandbox_env".into(), value(&profile, "sandbox_env").into());
                 }
             }
             for field in registration_fields(kind).iter().chain(&["id"]) {

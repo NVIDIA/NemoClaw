@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Credentials a sandbox's tools use: a web search provider and an API, each
-# owning an OpenShell profile and registration.
+# Credentials a sandbox's tools use: a search API that admits only the requests
+# its REST rules list, and an MCP API, each owning an OpenShell profile and
+# registration.
 terraform {
   required_providers {
     openshell = { source = "registry.opentofu.org/nvidia/openshell" }
@@ -11,7 +12,7 @@ terraform {
 variable "endpoint" { type = string }
 variable "enabled" { default = true }
 variable "sandbox" { default = true }
-variable "web_search" { default = true }
+variable "search" { default = true }
 variable "destroying" { default = false }
 variable "sandbox_env" { default = "BRAVE_SEARCH_API_KEY" }
 variable "api_endpoints" { default = ["https://booking.example.com/mcp"] }
@@ -39,16 +40,26 @@ resource "openshell_workspace" "example" {
   owner      = "credentials-owner"
   generation = "workspace-generation"
 }
-resource "openshell_web_search" "brave" {
-  count          = var.enabled && var.web_search ? 1 : 0
+resource "openshell_api" "search" {
+  count          = var.enabled && var.search ? 1 : 0
   gateway        = local.gateway
   workspace      = openshell_workspace.example.ref
-  name           = "brave"
-  provider_type  = "brave"
+  name           = "search"
+  endpoints      = ["https://api.search.brave.com"]
   credential_env = "NEMOCLAW_TEST_BRAVE_KEY"
-  # Hermes's Brave plugin reads this rather than the default variable.
+  auth_style     = "header"
+  header_name    = "X-Subscription-Token"
+  # Hermes's Brave plugin reads this variable.
   sandbox_env = var.sandbox_env
-  binaries    = ["/usr/bin/curl"]
+  rest {
+    rules {
+      allow {
+        method = "GET"
+        path   = "/res/v1/web/search"
+      }
+    }
+  }
+  binaries = ["/usr/bin/curl"]
 }
 resource "openshell_api" "booking" {
   count          = var.enabled ? 1 : 0
@@ -78,6 +89,6 @@ resource "openshell_sandbox" "buyer" {
     binaries    = ["/usr/bin/curl"]
     metadata    = {}
   })
-  providers = concat(openshell_web_search.brave[*].ref, openshell_api.booking[*].ref)
+  providers = concat(openshell_api.search[*].ref, openshell_api.booking[*].ref)
   policy {}
 }

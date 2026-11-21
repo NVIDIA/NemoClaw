@@ -92,14 +92,15 @@ fn each_sandbox_attaches_only_its_providers_and_grants() {
     let providers = |name: &str| -> Vec<String> {
         serde_json::from_str(&sandbox(name).values["provider_names_json"]).unwrap()
     };
-    let search = rows
-        .iter()
-        .find(|r| r.kind == "web_search")
-        .expect("one web search");
+    // The researchers' web search is an API credential like the booking API.
+    let is_search = |r: &&nemoclaw_sdk::compile::Target| {
+        r.kind == "api" && r.values["name"].starts_with("brave-search-")
+    };
+    let search = rows.iter().find(is_search).expect("one web search");
     assert_eq!(search.values["sandbox_env"], "BRAVE_SEARCH_API_KEY");
     let api = rows
         .iter()
-        .find(|r| r.kind == "api")
+        .find(|r| r.kind == "api" && !is_search(r))
         .expect("one booking API");
     assert_eq!(
         api.values["endpoints_json"],

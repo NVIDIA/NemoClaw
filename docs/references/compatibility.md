@@ -47,7 +47,7 @@ Provider type names, inputs, and outputs can change between releases.
 Each release's [provider guide](provider.md) and schema snapshots describe that release's types.
 
 The examples under [`examples/hcl`](../../examples/hcl) are supported with the release they ship in: [`travel`](../../examples/hcl/travel/main.tf), which an integration scenario applies unchanged, and [`travel-team`](../../examples/hcl/travel-team/README.md).
-Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and destroy keeps what [deployment state](../build-deploy/state.md#understanding-the-retained-resources) lists as retained.
+Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and `tofu destroy` deletes everything the HCL manages, but refuses to run while the HCL or the provider protects one of its resources, as [Tearing the Configuration Down](../build-deploy/opentofu-project.md#tearing-the-configuration-down) describes.
 
 ## Import, Adoption, and State Backends
 
@@ -58,5 +58,6 @@ It checks ownership labels and its saved bindings before changing anything.
 The CLI and SDK keep each deployment's OpenTofu state in its local [state directory](../build-deploy/state.md).
 Remote state backends are not supported for them.
 Hand-written HCL can use any state backend OpenTofu supports, because the providers do not depend on the backend.
-State holds resource identities and settings, never credential values.
+State holds resource identities and settings.
+For credentials, NemoClaw's providers store the names of environment variables, never their values, as [Keeping State in Your Backend](../build-deploy/opentofu-project.md#keeping-state-in-your-backend) describes.
 Protect it like any OpenTofu state.

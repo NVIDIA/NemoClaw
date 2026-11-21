@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nemoclaw_openshell::{RejectableOperation, remote_rejection, search::SearchProvider};
+use nemoclaw_openshell::{RejectableOperation, remote_rejection};
 use std::{collections::HashMap, time::Duration};
 
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
@@ -63,12 +63,7 @@ impl ConnectedOpenShellGateway {
     }
 
     async fn provider(&self, want: &Row) -> Result<proto::Provider, ObservationError> {
-        let search = SearchProvider::from_name(value(want, "provider_type"));
         let api = value(want, "provider_type") == "api";
-        // The variable sandboxes see a search key in.
-        let search_key = search
-            .map(|provider| profile::sandbox_env(provider, want))
-            .unwrap_or_default();
         let (kind, endpoint_key, secret_key) = match value(want, "provider_type") {
             "api"
                 if value(want, "profile_name")
@@ -79,27 +74,9 @@ impl ConnectedOpenShellGateway {
             }
             "" => ("openai", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
             "anthropic" => ("anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
-            "brave" | "tavily"
-                if search.is_some_and(|provider| {
-                    value(want, "name")
-                        == nemoclaw_openshell::search::search_provider_name(
-                            provider,
-                            value(want, "credential_env"),
-                            value(want, "profile_name"),
-                        )
-                        && nemoclaw_openshell::search::SearchProvider::from_profile(value(
-                            want,
-                            "profile_name",
-                        )) == Some(provider)
-                        && value(want, "endpoint") == provider.endpoint()
-                        && !value(want, "credential_env").is_empty()
-                }) =>
-            {
-                (value(want, "profile_name"), "", search_key.as_str())
-            }
             _ => return Err(ObservationError::Query),
         };
-        let native = search.is_none() && !api;
+        let native = !api;
         let source = value(want, "credential_source");
         let profile = if value(want, crate::POLICY_AUTHORITY) == "apf" {
             // The registration takes APF's profile as its type and gives the
@@ -504,96 +481,5 @@ impl ConnectedOpenShellGateway {
             return Err(remote_rejection(operation, &status));
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-
-    struct SearchSecrets;
-    impl Secrets for SearchSecrets {
-        fn resolve(&self, reference: &str) -> Result<String, ObservationError> {
-            if reference == "SEARCH_KEY" {
-                Ok("fixture-secret".into())
-            } else {
-                Err(ObservationError::Authentication)
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn search_creation_resolves_only_the_reference_and_observation_drops_the_value() {
-        let connection = nemoclaw_openshell::Connection {
-            endpoint: "http://127.0.0.1:1".into(),
-            ..Default::default()
-        };
-        let client = ConnectedOpenShellGateway::connect(
-            &connection,
-            &SearchSecrets,
-            Arc::new(SearchSecrets),
-            Arc::new(crate::DockerServices),
-        )
-        .unwrap();
-        for provider in [SearchProvider::Brave, SearchProvider::Tavily] {
-            let name = nemoclaw_openshell::search::search_provider_name(
-                provider,
-                "SEARCH_KEY",
-                provider.profile(),
-            );
-            let want: Row = [
-                ("name", name.as_str()),
-                ("workspace", "workspace"),
-                ("owner", "deployment"),
-                ("generation", "generation"),
-                ("provider_type", provider.name()),
-                ("profile_name", provider.profile()),
-                ("endpoint", provider.endpoint()),
-                ("credential_env", "SEARCH_KEY"),
-            ]
-            .into_iter()
-            .map(|(key, value)| (key.into(), value.into()))
-            .collect();
-            let mut message = client.provider(&want).await.unwrap();
-            assert_eq!(message.r#type, provider.profile());
-            assert_eq!(message.credentials.len(), 1);
-            assert_eq!(
-                message.credentials[provider.credential_env()],
-                "fixture-secret"
-            );
-            assert!(message.config.is_empty());
-            let metadata = message.metadata.as_mut().unwrap();
-            metadata.id = "physical".into();
-            metadata.workspace = "workspace".into();
-            let observed = super::super::provider_row(
-                proto::ProviderResponse {
-                    provider: Some(message.clone()),
-                    ..Default::default()
-                },
-                &name,
-                false,
-                &crate::DockerServices,
-            )
-            .unwrap();
-            assert_eq!(observed["credential_env"], "SEARCH_KEY");
-            assert_eq!(observed["provider_type"], provider.name());
-            assert!(
-                !observed
-                    .values()
-                    .any(|value| value.contains("fixture-secret"))
-            );
-            for (key, value) in [
-                ("name", "other"),
-                ("endpoint", "https://other.example"),
-                ("credential_env", ""),
-            ] {
-                let mut changed = want.clone();
-                changed.insert(key.into(), value.into());
-                assert!(client.provider(&changed).await.is_err());
-            }
-            message.r#type = "nemoclaw-other".into();
-            assert!(profile::provider_row(message, &name, false).is_err());
-        }
     }
 }

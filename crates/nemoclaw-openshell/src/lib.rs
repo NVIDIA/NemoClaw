@@ -16,7 +16,6 @@ pub mod pairs;
 pub mod policy;
 pub mod profile;
 pub mod runtime;
-pub mod search;
 mod wait;
 
 pub use capabilities::{GatewayCapabilities, OPENSHELL_VERSION};

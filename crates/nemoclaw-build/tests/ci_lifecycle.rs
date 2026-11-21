@@ -402,6 +402,39 @@ fn lifecycle_partition_reaches_nextest_without_changing_the_selected_suite() {
     assert_eq!(inputs[1..3], ["unset", "unset"]);
 }
 
+/// CI runs the unit tests in partitions on separate runners. Each partition
+/// gives nextest its slice; the doctests, which nextest doesn't run, run once,
+/// with the first partition.
+#[test]
+fn unit_test_partitions_reach_nextest_and_only_the_first_runs_the_doctests() {
+    for (partition, doctests) in [("slice:1/2", true), ("slice:2/2", false)] {
+        let fixture = Fixture::new();
+        let output = fixture.run(&["test", "--partition", partition]);
+        assert!(
+            output.status.success(),
+            "{partition}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let invocations = fixture.invocations();
+        let nextest = invocations
+            .iter()
+            .find(|call| call.starts_with("nextest\nrun\n"))
+            .unwrap_or_else(|| panic!("{partition}: no nextest run in {invocations:?}"));
+        assert!(
+            nextest.contains(&format!("--partition\n{partition}\n")),
+            "{nextest}"
+        );
+        assert!(nextest.contains("--profile\nci\n"), "{nextest}");
+        assert_eq!(
+            invocations
+                .iter()
+                .any(|call| call.starts_with("test\n") && call.contains("--doc\n")),
+            doctests,
+            "{partition}: {invocations:?}"
+        );
+    }
+}
+
 /// Tests started from another package find the fixture executables in the
 /// directory the runner names, where Cargo leaves a build's executables.
 #[test]
@@ -485,14 +518,13 @@ fn archived_lifecycle_uses_the_checkout_without_building_again() {
 
 #[test]
 fn lifecycle_options_cannot_silently_narrow_default_or_other_ci_steps() {
-    let partition = "--partition requires ci contract or integration";
+    let partition = "--partition requires ci test, contract, or integration";
     let archive = "--archive-file requires ci contract, integration, live-docker, or live-kind";
     let images = "--images requires ci live-docker or live-kind";
     for (args, expected) in [
         (vec!["integration", "--images", "images.tar.zst"], images),
         (vec!["--images", "images.tar.zst"], images),
         (vec!["--partition", "hash:1/2"], partition),
-        (vec!["test", "--partition", "hash:1/2"], partition),
         (vec!["live-docker", "--partition", "hash:1/2"], partition),
         (vec!["fmt", "--archive-file", "tests.tar.zst"], archive),
         (vec!["--archive-file", "tests.tar.zst"], archive),

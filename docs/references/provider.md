@@ -12,6 +12,7 @@ Helm installs the managed Kubernetes gateway chart.
 OpenShell installs Podman gateway processes, Kubernetes gateway prerequisites, initialization, and retained gateway bridges.
 NemoClaw manages durable data bindings for inference services.
 Use [the SDK](sdk.md) or [CLI](cli.md) for the documented deployment workflow.
+To run the providers from your own OpenTofu configuration instead, refer to [Using the Providers From Your Own OpenTofu Project](../build-deploy/opentofu-project.md).
 
 ## Resource and State Ownership
 
@@ -96,7 +97,6 @@ The OpenShell types manage gateway-scoped resources and observe gateway capabili
 |---|---|
 | `openshell_workspace` | Workspace |
 | `openshell_inference` | [An inference server's provider and its profile](#inference-providers) |
-| `openshell_web_search` | [A web search provider and its profile](#web-search) |
 | `openshell_api` | [Credentials for another API and its profile](#api-credentials) |
 | `openshell_sandbox` | Sandbox |
 | `openshell_gateway` data source | [Gateway version and compute drivers](#gateway-capabilities) |
@@ -121,7 +121,7 @@ When a registration names a managed vLLM or Ollama proxy credential, the provide
 Each OpenShell resource exports a computed `ref` object identifying it: its `type`, `name`, `owner`, `generation`, and `id`, plus `workspace` for objects inside a workspace.
 Objects name each other by `ref`, never by separate name strings:
 
-- Inference, web search, API credential resources and sandboxes take `workspace = openshell_workspace.<label>.ref`.
+- Inference and API credential resources and sandboxes take `workspace = openshell_workspace.<label>.ref`.
 - A sandbox takes `providers`, a list of registration refs.
 
 A consumer checks the ref's `type` and rejects a ref of another type.
@@ -134,7 +134,7 @@ Other inputs are typed too:
   The block's attributes and blocks follow the sandbox policy model with snake_case names: an optional `explicit` policy, whose named network rules are labeled blocks, and `managed` deployment grants, a list of blocks with unique `name`s.
   Because grants are unlabeled, a `dynamic "managed"` block can generate them in a sandbox that uses `for_each`. OpenTofu requires the labels of dynamic blocks to be known when it validates, before `each.key` is.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
-- `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference`, `openshell_web_search` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
+- `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
   OpenShell attaches at most 32 to one sandbox and refuses to create a sandbox with more.
 - `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables that managed endpoint grants naming none allow.
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox. It does not depend on the agent runtime that produced the launch.
@@ -194,7 +194,7 @@ It takes:
 - Optional `cluster_source`, which the profile uses to resolve the server's cluster addresses.
 
 Plans reject a missing `server` or `binaries`.
-The schema lists them as optional for the same reason as web search's inputs.
+The schema lists them as optional so that when one of the two OpenShell objects disappears, the next plan shows drift.
 A rotated credential reference updates the registration in place. Adding or removing authentication, or any other change, replaces the resource, and removal deletes both objects.
 A sandbox that attaches it also needs a policy that allows traffic to the server's endpoint.
 Its `ref` has type `openshell_provider`, so sandboxes take it in `providers`.
@@ -214,7 +214,7 @@ resource "openshell_inference" "nemotron" {
 
 #### API Credentials
 
-Use `openshell_api` when a sandbox needs to authenticate to an API other than inference or web search, such as a booking service over HTTP MCP.
+Use `openshell_api` when a sandbox needs to authenticate to an API other than inference, such as a search API or a booking service over HTTP MCP.
 It owns an OpenShell profile and registration.
 Attach its `ref` to the sandbox's `providers`.
 The profile grants each of its `endpoints` to the named executables, and OpenShell replaces the placeholder only at those hosts, ports and paths.
@@ -241,10 +241,35 @@ For an API key sent without the Bearer prefix, set `auth_style = "header"` and `
 Query parameters, OAuth and refresh flows are not supported by this resource.
 Endpoints must use HTTP(S) without embedded credentials, queries, fragments or globs.
 By default, the profile grants full REST access to each endpoint's path subtree.
+To restrict a REST API to specific requests, declare a `rest` block with one or more `rules` blocks on `openshell_api`, each an `allow` block that matches a `method`, a `path` glob, or both. The resource then takes exactly one URL in `endpoints`, naming only a scheme, host and port, and OpenShell admits only the matching requests to it. OpenShell validates the rules, and a plan fails on rules it would reject:
+
+```hcl
+resource "openshell_api" "search" {
+  gateway        = data.openshell_gateway.example.ref
+  workspace      = openshell_workspace.example.ref
+  name           = "search"
+  endpoints      = ["https://api.search.brave.com"]
+  credential_env = "BRAVE_API_KEY"
+  auth_style     = "header"
+  header_name    = "X-Subscription-Token"
+  sandbox_env    = "BRAVE_API_KEY"
+  binaries       = ["/usr/bin/curl"]
+  rest {
+    rules {
+      allow {
+        method = "GET"
+        path   = "/res/v1/web/search"
+      }
+    }
+  }
+}
+```
+
 To restrict an MCP endpoint to specific methods and tools, declare an `mcp` block with one or more `rules` blocks on `openshell_api`, which then takes exactly one URL in `endpoints`. OpenShell enforces those rules on the exact URL path with its default MCP protocol revision.
 Use a canonical path such as `/mcp` or `/mcp/`. Paths with repeated slashes, path parameters, `^`, or `|` are rejected.
 Include the server's initialization and tool discovery methods and the allowed `tools/call` selectors. Use the profile as the only grant for that endpoint, because a broader matching grant can allow additional requests.
 Each tool rule can use one selector, either `allow.tool` or `allow.params.name`.
+A resource sets at most one of `rest` and `mcp`, and neither when APF serves its profile, because APF's profile sets the endpoint's rules.
 If the gateway defines a global policy, that policy controls authorization.
 Refer to the [HCL travel team](https://github.com/NVIDIA/NemoClaw/tree/v1/examples/hcl/travel-team) for the rules and Hermes header configuration.
 A literal IP grants only that address.
@@ -272,34 +297,7 @@ Foreign ownership or an incomplete observation stops planning.
 To remove the credential, first detach or explicitly remove sandboxes using its registration, then remove the API resource and apply.
 Removal deletes the registration and its owned profile.
 It does not unset the host variable or revoke the key at the API service.
-Endpoint, MCP policy, authentication and executable changes replace the pair. Arrange for attached sandboxes to detach or be replaced first.
-
-#### Web Search
-
-`openshell_web_search` registers a Brave or Tavily search provider with OpenShell, together with the provider profile it uses.
-It takes:
-
-- `workspace`, a workspace `ref`. The search objects belong to the workspace's owner, so the resource takes no `owner`.
-- `name`, which scopes the objects it owns. Their OpenShell names derive from it, the provider, and `credential_env`.
-- `provider_type`, `brave` or `tavily`. Each has a fixed endpoint.
-- `credential_env`, the variable holding the search API key. The provider reads it during apply, so the key never enters OpenTofu state.
-- `binaries`, the executables allowed to call the search API.
-
-Plans reject a missing `credential_env` or `binaries`.
-The schema lists both as optional so that when one of the two OpenShell objects disappears, the next plan shows drift and replaces the resource.
-Any change to an input also replaces it, and removal deletes both objects.
-Its `ref` has the same `openshell_provider` type as a registration's, so sandboxes take it in `providers`.
-
-```hcl
-resource "openshell_web_search" "brave" {
-  gateway        = data.openshell_gateway.current.ref
-  workspace      = openshell_workspace.example.ref
-  name           = "assistant"
-  provider_type  = "brave"
-  credential_env = "BRAVE_API_KEY"
-  binaries       = ["/usr/bin/curl"]
-}
-```
+Endpoint, REST or MCP policy, authentication and executable changes replace the pair. Arrange for attached sandboxes to detach or be replaced first.
 
 ### OpenShell Gateway Installation
 
@@ -537,13 +535,13 @@ Each resource is reconciled and protected as follows:
 
 | Resource | Reconciliation | Protection |
 |---|---|---|
-| Inference and web search | Create the profile and then the registration. Recreate a missing profile and rotate an inference credential reference in place. Replace on any other input change or a missing registration. | The same checks for both objects. A failure between them records the identity, so the next apply replaces the resource. |
+| Inference and API credentials | Create the profile and then the registration. Recreate a missing profile and rotate a credential reference in place. Replace on any other input change or a missing registration. | The same checks for both objects. A failure between them records the identity, so the next apply replaces the resource. |
 | Fabric agent | Apply the public Fabric document. Replace the agent on any input change. | Verify the parent sandbox identity. Refuse a replacement unless the sandbox is replaced too. |
 | Sandbox | Create and observe the declared sandbox. Replace it on any change to its specification. | Replacement and deletion delete its files and conversation history. Data that must survive belongs on a mounted volume. |
 | Workspace | Create and observe. Delete only during explicit teardown. | Refuse replacement and automatic recreation of a missing binding. `lifecycle { prevent_destroy = true }` retains it, as generated graphs do during apply. |
 
 OpenShell refuses deletion of profiles referenced by registrations and registrations attached to sandboxes.
-Inference and web search resources therefore recreate a missing profile in place, and remove the registration before its profile.
+Inference and API credential resources therefore recreate a missing profile in place, and remove the registration before its profile.
 Generated graphs create an `openshell_inference` only for definitions selected by sandboxes.
 Unused YAML definitions have no resource lifecycle.
 Standalone HCL can remove or replace an inference resource, while removing a last selection in SDK YAML also changes the sandbox's specification, which replaces the sandbox.
@@ -661,11 +659,10 @@ With `config_json`, image discovery also returns `runtime_json`, the selected ad
 The sandbox consumes `runtime_json`.
 Its `policy` block retains authored policy and managed endpoint inputs, resolved against that layout before creation.
 Provider profiles require a nonempty `binaries` list, which graphs decode from `binaries_json`.
-Search registrations take their scoped profile's `ref` as `profile`.
 Refresh verifies the actual launch and policy against retained metadata, and export and teardown do not need another image inspection.
 
 Inference registrations are scoped by authored provider identity, image digest, and adapter ID.
-Search registrations also include the credential reference.
+A YAML web search's API registration also includes the credential reference.
 Sandboxes using the same image and adapter can share registrations, while different image or adapter executable lists remain separate.
 Adding a sandbox preserves existing bindings.
 Export preserves authored definitions and refuses conflicting credential references among registrations for one inference definition.
@@ -1061,6 +1058,7 @@ The Docker and Helm providers have fixed release versions and checksum-pinned na
 
 The providers are not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Refer to [compatibility](compatibility.md) for the supported examples, import, adoption, state backends, and what each release guarantees.
+[Using the Providers From Your Own OpenTofu Project](../build-deploy/opentofu-project.md) covers installation, state, pipelines, credentials, and what the CLI and SDK add.
 
 Every resource and data source takes inputs that can be written in HCL.
 [`examples/hcl/travel`](../../examples/hcl/travel/main.tf) is a complete hand-written configuration: a Pi agent in an OpenShell sandbox, answering with a local Ollama server placed with Docker, and allowed only HTTPS `GET` requests to one site.
@@ -1068,8 +1066,8 @@ An integration test applies it unchanged against the bundle's providers.
 [`examples/hcl/travel-team`](../../examples/hcl/travel-team/README.md) scales the same pattern to a team of six agents with their own sandboxes, models, and grants.
 Writing one by hand:
 
-- Install the providers from a bundle: name its `providers` directory as a filesystem mirror, and pin each NVIDIA provider to the bundle's version. Development bundles carry pre-release versions, which OpenTofu selects only when pinned exactly.
+- Install the providers from a bundle, as [Installing the Providers From a Bundle](../build-deploy/opentofu-project.md#installing-the-providers-from-a-bundle) describes.
 - Place model servers with any platform from `vllm_runtime` or `ollama_runtime`'s [`launch` and `requirements`](#vllm-runtime-contract), confirm them with [endpoint readiness](#runtime-capacity-and-readiness), and register them with [`openshell_inference`](#inference-providers), passing the readiness read's `ref` as `server`.
 - Inference registrations take any well-formed HTTP or HTTPS endpoint. OpenShell decides which destinations sandboxes can reach, including its gateway-host alias `host.openshell.internal`.
-- Register web search with [`openshell_web_search`](#web-search), which owns its profile.
+- Register a web search API with [`openshell_api`](#api-credentials), with the search service's host, its key header, and `rest` rules for the requests the agent makes.
 - Tear the configuration down with `tofu destroy` and the provider's `destroy = true`. To keep a workspace instead, add `lifecycle { prevent_destroy = true }` to it. OpenTofu then refuses to destroy it.

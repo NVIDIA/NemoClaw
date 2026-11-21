@@ -127,7 +127,7 @@ enum Action {
         /// Print the selected steps and their plan as JSON without running checks.
         #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit", "hcl_cases"])]
         dry_run: bool,
-        /// Nextest partition for an explicitly selected contract or integration run (for example slice:1/2).
+        /// Nextest partition for an explicitly selected test, contract, or integration run (for example slice:1/2).
         #[arg(long)]
         partition: Option<String>,
         /// Run contract, integration, or live tests from a nextest archive instead of compiling them.
@@ -904,8 +904,10 @@ async fn main() -> Result<()> {
                 .map(str::to_owned)
                 .collect()
         });
-        if partition.is_some() && !matches!(step.as_deref(), Some("contract" | "integration")) {
-            return Err("--partition requires ci contract or integration".into());
+        if partition.is_some()
+            && !matches!(step.as_deref(), Some("test" | "contract" | "integration"))
+        {
+            return Err("--partition requires ci test, contract, or integration".into());
         }
         if archive_file.is_some()
             && !matches!(
