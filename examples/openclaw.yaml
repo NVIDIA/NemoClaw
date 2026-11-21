@@ -10,10 +10,11 @@ metadata:
 spec:
   gateway:
     management: external
-    # Replace with the Docker or Podman engine holding the sandbox image.
-    engine: unix:///var/run/docker.sock
-    runtime:
-      provider: docker
+    target:
+      docker:
+        # Replace with the Docker engine holding the sandbox image; name a
+        # Podman engine under target.podman instead.
+        engine: unix:///var/run/docker.sock
     endpoint: http://127.0.0.1:17671
   inferenceProviders:
     local:

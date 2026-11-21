@@ -220,8 +220,12 @@ fn run_step(
                 // the job that assembles the bundle brings the build tool.
                 let root = Path::new(".");
                 let source = nemoclaw_build::source_version(&nemoclaw_build::source_inputs(root)?);
-                let version = nemoclaw_build::bundle_version(root, &source);
-                return build(executables, target(platform)?, &version, &configure);
+                let version = nemoclaw_build::bundle_version(root, &source)?;
+                build(executables, target(platform)?, &version, &configure)?;
+                // The assembly, perhaps in a later attempt of the run, names
+                // the providers with the version compiled into the CLI.
+                std::fs::write(root.join(nemoclaw_build::BUNDLE_VERSION_FILE), &version)?;
+                return Ok(());
             }
             if step == Step::Bundle {
                 // CI builds the bundle in its own job, without the build step.

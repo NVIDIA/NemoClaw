@@ -193,8 +193,8 @@ pub const CONFIG_ATTRIBUTE: &str = "gateway_config";
 /// register APF with a Docker gateway; absent otherwise.
 pub const APF_ATTRIBUTE: &str = "apf_registration";
 /// Docker gateway data does not depend on the listen port, so its storage
-/// records this endpoint instead of the gateway's.
-const DOCKER_STORAGE_ENDPOINT: &str = "http://127.0.0.1:8080";
+/// records this port instead of the gateway's.
+const DOCKER_STORAGE_PORT: u16 = 8080;
 
 /// Check one gateway attribute, explaining a rejected value without echoing it.
 pub fn check_gateway_attribute(attribute: &str, value: &str) -> Result<(), &'static str> {
@@ -271,7 +271,9 @@ impl Spec {
         let mut storage = self.clone();
         if self.compute_driver == ComputeDriver::Docker {
             storage.layout = 1;
-            storage.gateway.endpoint = DOCKER_STORAGE_ENDPOINT.into();
+            if let Some(local) = storage.gateway.target.local_mut() {
+                local.port = DOCKER_STORAGE_PORT;
+            }
         } else {
             storage.layout = 0;
         }
@@ -284,6 +286,7 @@ impl Spec {
     pub fn gateway_row(&self, kind: &str) -> Result<crate::backend::Row, Error> {
         self.validate()?;
         let docker_storage = kind == GATEWAY_STORAGE_KIND && self.layout == 1;
+        let endpoint = self.endpoint();
         let mut row: crate::backend::Row = GATEWAY_ATTRIBUTES
             .into_iter()
             .zip([
@@ -291,10 +294,10 @@ impl Spec {
                 &self.owner,
                 &self.generation,
                 self.compute_driver.as_str(),
-                &self.gateway.engine,
-                &self.gateway.endpoint,
+                self.gateway.engine(),
+                &endpoint,
                 &self.image,
-                &self.gateway.network_cidr,
+                self.gateway.network_cidr(),
             ])
             .filter(|(attribute, _)| !(docker_storage && *attribute == "endpoint"))
             .map(|(attribute, value)| (attribute.to_owned(), value.to_owned()))
@@ -348,18 +351,35 @@ impl Spec {
             "podman" => ComputeDriver::Podman,
             _ => ComputeDriver::Docker,
         };
-        let (layout, endpoint) = match (kind, compute_driver) {
-            (GATEWAY_KIND, _) => (2, get("endpoint")?),
+        // The authored port, as the loopback origin the resource records.
+        let port = |endpoint: String| {
+            endpoint
+                .strip_prefix("http://127.0.0.1:")
+                .and_then(|text| {
+                    text.parse::<u16>()
+                        .ok()
+                        .filter(|port| port.to_string() == text)
+                })
+                .ok_or(Error::Conflict("invalid managed gateway attribute"))
+        };
+        let (layout, port) = match (kind, compute_driver) {
+            (GATEWAY_KIND, _) => (2, port(get("endpoint")?)?),
             (GATEWAY_STORAGE_KIND, ComputeDriver::Docker) => {
                 if row.get("endpoint").is_some_and(|value| !value.is_empty()) {
                     return Err(Error::Conflict(
                         "Docker gateway storage does not take an endpoint",
                     ));
                 }
-                (1, DOCKER_STORAGE_ENDPOINT.into())
+                (1, DOCKER_STORAGE_PORT)
             }
-            (GATEWAY_STORAGE_KIND, _) => (0, get("endpoint")?),
+            (GATEWAY_STORAGE_KIND, _) => (0, port(get("endpoint")?)?),
             _ => return Err(crate::ObservationError::BindingMismatch.into()),
+        };
+        let local = crate::config::LocalTarget {
+            engine: get("engine")?,
+            port,
+            network_cidr: get("network_cidr")?,
+            image_pull_policy: None,
         };
         let spec = Self {
             layout,
@@ -369,14 +389,10 @@ impl Spec {
             owner: get("owner")?,
             generation: get("generation")?,
             gateway: ManagedGateway {
-                runtime: crate::config::Runtime {
-                    provider: compute_driver,
+                target: match compute_driver {
+                    ComputeDriver::Podman => crate::config::ManagedTarget::Podman(local),
+                    _ => crate::config::ManagedTarget::Docker(local),
                 },
-                endpoint,
-                engine: get("engine")?,
-                image_pull_policy: None,
-                network_cidr: get("network_cidr")?,
-                kubernetes: None,
                 config: match row.get(CONFIG_ATTRIBUTE).filter(|value| !value.is_empty()) {
                     Some(value) => Some(
                         serde_json::from_str(value)
@@ -449,7 +465,7 @@ impl Spec {
                 "managed resource lacks ownership or generation",
             ));
         }
-        if self.gateway.kubernetes.is_some()
+        if self.gateway.local().is_none()
             || !matches!(
                 self.compute_driver,
                 ComputeDriver::Docker | ComputeDriver::Podman
@@ -458,12 +474,14 @@ impl Spec {
         {
             return Err(Error::Conflict("unsupported managed compute driver"));
         }
+        // The image pull policy is a mutable provider attribute, not part of
+        // the gateway's identity; documents check it against their target.
         if self
             .process
             .as_ref()
             .is_none_or(|process| !process.create_network)
         {
-            self.gateway.validate_managed()?;
+            self.gateway.runtime_settings().validate_managed()?;
         }
         if self.kind == GATEWAY_KIND && self.process.is_none() && matches!(self.layout, 0..=2) {
             // The gateway runs the SDK's pinned image; nothing authors it.
@@ -537,12 +555,16 @@ impl Spec {
     pub fn engine(&self) -> &str {
         self.process
             .as_ref()
-            .map_or(&self.gateway.engine, |process| &process.engine)
+            .map_or(self.gateway.engine(), |process| &process.engine)
     }
     pub fn network_cidr(&self) -> &str {
         self.process
             .as_ref()
-            .map_or(&self.gateway.network_cidr, |process| &process.network_cidr)
+            .map_or(self.gateway.network_cidr(), |process| &process.network_cidr)
+    }
+    /// The gateway's loopback origin, `http://127.0.0.1:PORT`.
+    pub fn endpoint(&self) -> String {
+        self.gateway.endpoint().unwrap_or_default()
     }
     /// Resolve the bridge for service placement or the gateway network.
     ///
@@ -596,7 +618,7 @@ impl Spec {
                 .map_err(|_| Error::State("cannot serialize process identity"))?
         } else {
             let mut identity = self.clone();
-            identity.gateway.image_pull_policy = None;
+            identity.gateway = identity.gateway.runtime_settings();
             identity.json()?
         };
 
@@ -626,15 +648,18 @@ impl Spec {
     ///
     /// # Errors
     /// Returns an error for invalid specifications, unsupported runtime layouts,
-    /// missing endpoint or service data, or launch configuration serialization.
+    /// a gateway without a local engine, missing service data, or launch
+    /// configuration serialization.
     pub fn container(&self, data_path: &str) -> Result<ContainerCreateBody, Error> {
         self.validate_runtime()?;
         let mut host = json!({"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges"],"RestartPolicy":{"Name":"no","MaximumRetryCount":0},"LogConfig":{"Type":"json-file","Config":{"max-size":"32m","max-file":"3"}},"Memory":0,"MemorySwap":0,"ShmSize":0});
         let mut config = json!({"Image":self.image(),"User":"","Labels":self.labels()?});
         if self.kind == GATEWAY_KIND {
-            let url = url::Url::parse(&self.gateway.endpoint)
-                .map_err(|_| Error::Conflict("invalid gateway endpoint"))?;
-            let port = url.port().ok_or(Error::Conflict("missing gateway port"))?;
+            let port = self
+                .gateway
+                .local()
+                .ok_or(Error::Conflict("managed gateway requires a local engine"))?
+                .port;
             config["User"] = json!("0:0");
             let launch = gateway_launch(self.compute_driver, &self.name, port, data_path);
             config["Env"] = json!(launch.env);
@@ -656,7 +681,7 @@ impl Spec {
                 host["NetworkMode"] = json!(self.network());
                 host["PortBindings"] = json!({format!("{port}/tcp"):[
                     {
-                        "HostIp":url.host_str().ok_or(Error::Conflict("missing gateway host"))?,
+                        "HostIp":"127.0.0.1",
                         "HostPort":port.to_string()
                     }
                 ]});
@@ -665,7 +690,7 @@ impl Spec {
                     self.network():{"IPAMConfig":{"IPv4Address":self.gateway_address()?}}
                 }});
             }
-            host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":crate::config::engine_socket(&self.gateway.engine).ok_or(Error::Conflict("managed gateway requires a local engine"))?,"Target":"/var/run/docker.sock"}]);
+            host["Mounts"] = json!([{"Type":"volume","Source":self.volume(),"Target":data_path},{"Type":"bind","Source":crate::config::engine_socket(self.gateway.engine()).ok_or(Error::Conflict("managed gateway requires a local engine"))?,"Target":"/var/run/docker.sock"}]);
         } else {
             let process = self.process.as_ref().ok_or(Error::Conflict(
                 "runtime specification has no managed service process",
@@ -758,7 +783,7 @@ impl Spec {
             self.compute_driver,
             &self.name,
             &network,
-            &self.gateway.endpoint,
+            &self.endpoint(),
             data_path,
             self.gateway.config.as_ref(),
             None,

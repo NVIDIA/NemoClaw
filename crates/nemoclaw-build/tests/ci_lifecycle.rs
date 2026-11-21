@@ -159,6 +159,15 @@ exit "${CARGO_RESULT:-0}"
             .env_remove("GITHUB_ENV")
             .env_remove("GITHUB_PATH")
             .env_remove("GITHUB_STEP_SUMMARY");
+        // A CI run's numbered version needs the checkout's history.
+        for name in [
+            "GITHUB_REPOSITORY",
+            "GITHUB_WORKFLOW_REF",
+            "GITHUB_RUN_NUMBER",
+            "GITHUB_RUN_ATTEMPT",
+        ] {
+            command.env_remove(name);
+        }
         command
     }
 
@@ -938,7 +947,12 @@ fn bundle_executables_compile_only_those_with_the_whole_bundles_features() {
     let version = fs::read_to_string(fixture.0.path().join("bundle-version-env")).unwrap();
     assert!(
         version.starts_with("0.1.0-dev."),
-        "an untagged part names the sources' version: {version}"
+        "a local part names the sources' version: {version}"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.0.path().join("target/bundle-version")).unwrap(),
+        version.trim_end(),
+        "the part records the version it compiled for the assembly"
     );
 }
 

@@ -63,26 +63,6 @@ echo "unexpected gh $command$endpoint" >&2
 exit 2
 "#;
 
-/// Verifies a file whose contents are "notarized TEAM" against a requirement
-/// naming TEAM, as `codesign` verifies a notarized Developer ID signature.
-const FAKE_CODESIGN: &str = r#"#!/bin/sh
-set -eu
-verify= strict= notarization= requirement=
-for argument; do
-  case "$argument" in
-    --verify) verify=1 ;;
-    --strict) strict=1 ;;
-    --check-notarization) notarization=1 ;;
-    -R=*) requirement=${argument#-R=} ;;
-  esac
-  file=$argument
-done
-[ -n "$verify" ] && [ -n "$strict" ] && [ -n "$notarization" ] || { echo "unexpected codesign $*" >&2; exit 2; }
-team=$(printf '%s\n' "$requirement" | sed -n 's/^notarized and anchor apple generic and certificate leaf\[subject.OU\] = "\(.*\)"$/\1/p')
-[ -n "$team" ] || { echo "unexpected requirement $requirement" >&2; exit 2; }
-[ "$(cat "$file")" = "notarized $team" ] || { echo "$file: test-requirement: code failed to satisfy specified code requirement(s)" >&2; exit 3; }
-"#;
-
 struct Github {
     root: tempfile::TempDir,
     /// The tag the release workflow runs for.
@@ -418,7 +398,7 @@ fn assert_checksums_verify(archives: &Path) {
 }
 
 #[test]
-fn each_platform_archive_holds_the_bundle_from_the_latest_ci_run_at_the_tag() {
+fn each_platform_archive_holds_the_bundle_from_the_ci_run_for_the_tags_push() {
     let mut github = Github::new();
     github.run(11, "push", "v1", "success", &bundles("untagged", 1));
     github.run(
@@ -435,8 +415,16 @@ fn each_platform_archive_holds_the_bundle_from_the_latest_ci_run_at_the_tag() {
         format!("bundle-part-windows_amd64-{COMMIT}-2-cli"),
         "part".into(),
     ));
-    github.run(14, "workflow_dispatch", VERSION, "success", &passing);
+    github.run(14, "push", VERSION, "success", &passing);
     github.run(15, "push", "v1", "success", &bundles("untagged rerun", 1));
+    // Only the tag's push run reports the tag; a manual run at it numbers its bundles.
+    github.run(
+        16,
+        "workflow_dispatch",
+        VERSION,
+        "success",
+        &bundles("manual run", 1),
+    );
 
     let output = github.stage();
     assert!(output.status.success(), "{}", report(&output));
@@ -447,7 +435,7 @@ fn each_platform_archive_holds_the_bundle_from_the_latest_ci_run_at_the_tag() {
         assert_eq!(
             contents,
             format!("rerun {platform}"),
-            "{platform}'s archive holds the latest run's latest bundle"
+            "{platform}'s archive holds the push run's latest bundle"
         );
         assert_eq!(
             mode & 0o111,
@@ -519,15 +507,15 @@ fn staging_fails_when_ci_has_not_run_at_the_tag() {
 }
 
 #[test]
-fn staging_fails_when_the_latest_ci_run_at_the_tag_failed() {
+fn staging_fails_when_the_ci_run_for_the_tags_push_failed() {
     let mut github = Github::new();
-    github.run(11, "push", VERSION, "success", &bundles("earlier run", 1));
+    github.run(12, "push", VERSION, "failure", &bundles("failed run", 1));
     github.run(
-        12,
+        13,
         "workflow_dispatch",
         VERSION,
-        "failure",
-        &bundles("failed run", 1),
+        "success",
+        &bundles("manual run", 1),
     );
 
     let output = github.stage();
@@ -563,6 +551,10 @@ fn staging_fails_naming_each_platform_whose_checked_bundle_expired() {
     assert!(
         !error.contains("linux_arm64"),
         "only the missing platform: {error}"
+    );
+    assert!(
+        error.contains("gh run rerun 13") && !error.contains("gh workflow run"),
+        "a new attempt of the tag's push run reports the tag, and a manual run doesn't: {error}"
     );
 }
 
@@ -872,86 +864,4 @@ fn a_program_the_signing_inventory_does_not_classify_stops_signing() {
             "{platform}: the error names the program: {report}"
         );
     }
-}
-
-const NVIDIA_TEAM: &str = "NVTEAM1234";
-
-/// A darwin bundle's executables, signed as `signatures` says, and its license.
-fn darwin_bundle(signatures: &[(&str, &str)]) -> tempfile::TempDir {
-    let directory = tempfile::tempdir().unwrap();
-    let license = directory.path().join("licenses/helm-provider-LICENSE");
-    fs::create_dir_all(license.parent().unwrap()).unwrap();
-    fs::write(&license, "license").unwrap();
-    for (name, signature) in signatures {
-        let path = directory.path().join(name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, signature).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    directory
-}
-
-fn verify_macos(bundle: &Path) -> Output {
-    let bin = tempfile::tempdir().unwrap();
-    fs::write(bin.path().join("codesign"), FAKE_CODESIGN).unwrap();
-    fs::set_permissions(
-        bin.path().join("codesign"),
-        fs::Permissions::from_mode(0o700),
-    )
-    .unwrap();
-    Command::new("/bin/bash")
-        .args(["--noprofile", "--norc", "-e"])
-        .arg(repository().join(".github/scripts/verify-macos-signatures.sh"))
-        .arg(bundle)
-        .arg(NVIDIA_TEAM)
-        .env_clear()
-        .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
-        .output()
-        .unwrap()
-}
-
-#[test]
-fn macos_verification_requires_notarized_nvidia_signatures_and_hashicorps_on_the_helm_provider() {
-    let helm = bundle::helm_provider_path("darwin_arm64").unwrap();
-    let openshell = format!(
-        "providers/registry.opentofu.org/nvidia/openshell/{PROVIDER_VERSION}/darwin_arm64/terraform-provider-openshell_v{PROVIDER_VERSION}"
-    );
-    let nvidia = format!("notarized {NVIDIA_TEAM}");
-    let signed = darwin_bundle(&[
-        ("bin/nemoclaw", &nvidia),
-        ("libexec/tofu", &nvidia),
-        (&openshell, &nvidia),
-        (&helm, "notarized D38WU7D763"),
-    ]);
-    let output = verify_macos(signed.path());
-    assert!(
-        output.status.success(),
-        "a notarized bundle verifies: {}",
-        report(&output)
-    );
-
-    // OpenTofu's own ad hoc signature, and the Helm provider re-signed with
-    // NVIDIA's identity in place of HashiCorp's.
-    let unsigned = darwin_bundle(&[
-        ("bin/nemoclaw", &nvidia),
-        ("libexec/tofu", "adhoc"),
-        (&openshell, &nvidia),
-        (&helm, &nvidia),
-    ]);
-    let output = verify_macos(unsigned.path());
-    let report = report(&output);
-    assert!(!output.status.success(), "verification fails: {report}");
-    let errors: Vec<_> = report
-        .lines()
-        .filter(|line| line.starts_with("::error"))
-        .collect();
-    assert!(
-        errors.iter().any(|line| line.contains("libexec/tofu")),
-        "the error names the ad hoc signed tofu: {report}"
-    );
-    assert!(
-        errors.iter().any(|line| line.contains(&helm)),
-        "the error names the re-signed Helm provider: {report}"
-    );
-    assert_eq!(errors.len(), 2, "only those two fail: {report}");
 }

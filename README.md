@@ -3,6 +3,11 @@
 
 # NemoClaw
 
+> [!TIP]
+> :rocket: **New:** NemoClaw Agent Configs — the next evolution of NemoClaw, with a simpler, more flexible way to configure and run agents. All new development will focus on Agent Configs, and we recommend it for new projects. [Explore Agent Configs](docs/about/overview.md) and [follow the first-deployment tutorial](docs/get-started/first-deployment.md) to get started.
+>
+> Already using NemoClaw? [The existing experience](https://github.com/NVIDIA/NemoClaw/tree/main) remains available. Review the [migration guide](docs/get-started/migration.md) for compatibility details and instructions for moving your existing NemoClaw setup to Agent Configs.
+
 ## NemoClaw Agent Configs
 
 Configure and deploy sandboxed AI agents from a YAML file.
@@ -13,23 +18,32 @@ Until its first release, [build it from source](docs/build-deploy/build.md).
 
 ### What You Can Do
 
-Each capability links to the guide that configures it:
+These outcomes are familiar from NemoClaw Classic, the earlier version:
 
-| Capability | What You Can Do |
+| Outcome | How |
 |---|---|
-| Run OpenClaw or Hermes | Deploy each agent in an NVIDIA OpenShell sandbox and connect through its [native interfaces](docs/agents-inference/interfaces.md). |
-| Choose model connections | Connect to hosted endpoints, or run managed vLLM, Ollama, or llama.cpp services. Refer to [inference configuration](docs/agents-inference/inference.md) for supported paths. |
-| Supply skills and tools | Load [skill folders](docs/agents-inference/agents.md#skills-on-a-mounted-volume), configure supported native settings, and connect [MCP servers](docs/agents-inference/agents.md#additional-agent-integrations). |
-| Control access | Declare [network policy](docs/security/sandbox-network.md) and route [API credentials](docs/agents-inference/agents.md#key-authenticated-apis) through OpenShell. |
-| Keep agent files | Use [mounted storage](docs/build-deploy/state.md#keeping-agent-files-on-mounted-volumes) for files that must survive sandbox replacement. Retaining files alone does not resume a conversation. |
-| Manage several agents | Define [separate sandboxes](docs/build-deploy/usage.md#configuring-sandboxes-and-inference) with shared or separate model connections. |
-| Automate deployments | [Preview, apply, export, and remove deployments](docs/build-deploy/usage.md) through the CLI or [Rust SDK](docs/references/sdk.md). |
+| Run sandboxed agents | Deploy OpenClaw or Hermes in an NVIDIA OpenShell sandbox and connect through its [native interfaces](docs/agents-inference/interfaces.md). |
+| Connect models | Use hosted endpoints or run managed vLLM, Ollama, or llama.cpp services, as [inference configuration](docs/agents-inference/inference.md) describes. |
+| Add skills and tools | Load [skill folders](docs/agents-inference/agents.md#skills-on-a-mounted-volume) and connect [MCP servers](docs/agents-inference/agents.md#additional-agent-integrations). |
+| Set access | Declare [network policy](docs/security/sandbox-network.md) and route [API credentials](docs/agents-inference/agents.md#key-authenticated-apis) through OpenShell. |
+| Persist files | Keep files that must survive sandbox replacement on [mounted storage](docs/build-deploy/state.md#keeping-agent-files-on-mounted-volumes). Files alone do not resume a conversation. |
+
+### What's New in Agent Configs
+
+NemoClaw Classic already runs several sandboxes and restarts, recovers, and rebuilds them with separate commands.
+In Agent Configs, one YAML file declares the whole deployment: `nemoclaw plan` previews the changes, and `nemoclaw apply` makes them.
+
+| New Workflow | How |
+|---|---|
+| Fix a setting and redeploy from the same YAML | Edit a setting in the file, such as the `targetPort` of a [service exposure](docs/agents-inference/interfaces.md#exposing-a-service-through-the-gateway), then preview, apply, and retry if apply fails. That edit updates the running sandbox in place; [other changes](docs/build-deploy/usage.md#choosing-the-change-path), such as a model or network policy change, replace the sandbox. |
+| Restart a stopped agent in its existing sandbox | When `nemoclaw plan` reports `agent runtime is not running`, apply the same YAML to start the agent again in its sandbox, which keeps its files. Reapplying does not fix an agent that runs but does not answer; refer to [replacing an unusable runtime](docs/build-deploy/usage.md#replacing-workloads-after-an-unusable-runtime). |
+| Retry an interrupted deployment | After fixing the cause, apply again with the original bundle, YAML, and state directory. Read [interrupted-operation recovery](docs/build-deploy/usage.md#recovering-an-interrupted-operation) first: after a failed agent start, the retry creates the agent in a new sandbox and deletes the old sandbox's files. |
+| Deploy different agents together | Declare several agents in one YAML file, each in its own sandbox with its own network policy and model selection, as the [multiple-sandbox example](examples/multiple-sandboxes.yaml) shows. |
+| Deploy agents as pods on Kubernetes or OpenShift | Run each agent's sandbox as a pod on an existing cluster, using the same agent images as Docker and Podman. Check the [cluster prerequisites](docs/build-deploy/kubernetes.md#prerequisites) and [platform limits](docs/resources/limits.md#platforms-models-and-placement). |
 
 Support depends on the selected agent, image, model, and platform.
 Check [current limits](docs/resources/limits.md) before choosing a configuration.
 [Out of Scope](docs/resources/out-of-scope.md) explains what Agent Configs leaves to other components by design.
-
-**Coming from NemoClaw Classic, the earlier version?** Use the [migration guide](docs/get-started/migration.md) to assess your workflows and evaluate a separate deployment while keeping your existing setup available.
 
 ### Watching a Deployment
 

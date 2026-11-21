@@ -137,10 +137,14 @@ fn every_scenario_test_names_its_inputs() {
         .filter_map(|entry| {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
             let scenario = name.strip_suffix(".tftest.hcl")?.to_owned();
-            let case = if scenario == "dgx-station-openclaw-nemotron" {
-                Path::new(EXAMPLES).join("gtc-dc/openclaw-dgx-station.yaml")
-            } else {
-                Path::new(CASES).join(format!("{scenario}.yaml"))
+            let case = match scenario.as_str() {
+                "dgx-station-openclaw-nemotron" => {
+                    Path::new(EXAMPLES).join("gtc-dc/openclaw-dgx-station.yaml")
+                }
+                "dgx-spark-openclaw-nemotron" => {
+                    Path::new(EXAMPLES).join("gtc-dc/openclaw-dgx-spark.yaml")
+                }
+                _ => Path::new(CASES).join(format!("{scenario}.yaml")),
             };
             (!case.is_file()).then(|| format!("e2e/hcl/tests/{name}"))
         })
@@ -320,7 +324,7 @@ fn prepare(
         .spec
         .gateway
         .as_managed()
-        .is_some_and(|managed| !managed.engine.is_empty());
+        .is_some_and(|managed| !managed.engine().is_empty());
     fixtures.redirect(&mut document);
     let generations: compile::Generations =
         GENERATIONS.map(|kind| (kind.into(), "a".repeat(32))).into();

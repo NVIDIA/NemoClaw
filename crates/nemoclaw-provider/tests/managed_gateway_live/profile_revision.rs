@@ -75,11 +75,12 @@ async fn imported_profile_revisions_survive_repeated_reads_and_gateway_restart()
     }
     eprintln!(
         "owned profile test gateway: {} ({})",
-        spec.name, spec.gateway.endpoint
+        spec.name,
+        spec.endpoint()
     );
     let client = start(&api, &engine, &spec).await;
     let gateway: Gateway = serde_json::from_value(serde_json::json!({
-        "management": "external", "endpoint": spec.gateway.endpoint
+        "management": "external", "endpoint": spec.endpoint()
     }))
     .unwrap();
     let backend = OpenShell::connect(&gateway.connection(), Arc::new(FixtureSecrets)).unwrap();
@@ -190,7 +191,7 @@ async fn imported_profile_revisions_survive_repeated_reads_and_gateway_restart()
         slot.write().unwrap().as_mut().unwrap().set_sensitive(true);
     }
     let sandbox_client = OpenShellClient::from_parts(
-        Channel::from_shared(spec.gateway.endpoint.clone())
+        Channel::from_shared(spec.endpoint())
             .unwrap()
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(30))

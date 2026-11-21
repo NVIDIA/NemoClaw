@@ -21,14 +21,9 @@ Within a release, configuration from `export` re-applies to the same deployment.
 
 ## Deployment State
 
-General state migration between releases is unavailable while v1 is in alpha.
-This bundle supports one explicit exception: [intent format 29 upgrades to 30](../build-deploy/state.md#upgrading-intent-format-29-to-30), preserving the serialized document, ownership generations and pending recovery state.
-Loading validates the record without rewriting it.
-The next successful intent save writes format 30, which the older CLI cannot read.
-Back up the whole state directory and keep the earlier bundle before upgrading.
-
-Unsupported intent formats are refused without changing the record: "deployment state was written by a different NemoClaw release (intent record version N; this release reads M); keep using the CLI bundle that created the deployment, or destroy it with that bundle and create a new deployment; state retained".
-For those formats, use the creating release to destroy the deployment, then create a new deployment with the new release, using a fresh `metadata.uid` and state directory.
+State is not migrated between releases while v1 is in alpha.
+A release refuses state written by a release with another intent record format, without changing it: "deployment state was written by a different NemoClaw release (intent record version N; this release reads M); keep using the CLI bundle that created the deployment, or destroy it with that bundle and create a new deployment; state retained".
+Keep the release that created a deployment until you have destroyed it, then create a new deployment with the new release, using a fresh `metadata.uid` and state directory.
 
 The providers refuse state recorded under an older version of a resource's schema.
 They do not upgrade it.
@@ -52,7 +47,7 @@ Provider type names, inputs, and outputs can change between releases.
 Each release's [provider guide](provider.md) and schema snapshots describe that release's types.
 
 The examples under [`examples/hcl`](../../examples/hcl) are supported with the release they ship in: [`travel`](../../examples/hcl/travel/main.tf), which an integration scenario applies unchanged, and [`travel-team`](../../examples/hcl/travel-team/README.md).
-Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and destroy keeps what [deployment state](../build-deploy/state.md#understanding-the-retained-resources) lists as retained.
+Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and `tofu destroy` deletes everything the HCL manages, but refuses to run while the HCL or the provider protects one of its resources, as [Tearing the Configuration Down](../build-deploy/opentofu-project.md#tearing-the-configuration-down) describes.
 
 ## Import, Adoption, and State Backends
 
@@ -63,5 +58,6 @@ It checks ownership labels and its saved bindings before changing anything.
 The CLI and SDK keep each deployment's OpenTofu state in its local [state directory](../build-deploy/state.md).
 Remote state backends are not supported for them.
 Hand-written HCL can use any state backend OpenTofu supports, because the providers do not depend on the backend.
-State holds resource identities and settings, never credential values.
+State holds resource identities and settings.
+For credentials, NemoClaw's providers store the names of environment variables, never their values, as [Keeping State in Your Backend](../build-deploy/opentofu-project.md#keeping-state-in-your-backend) describes.
 Protect it like any OpenTofu state.

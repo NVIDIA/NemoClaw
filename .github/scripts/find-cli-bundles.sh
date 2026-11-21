@@ -3,23 +3,24 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Find the CLI bundles CI / Bundle built and checked at the tag, as it
-# uploaded them. Only a push or manual run at the tag builds bundles that report
-# the tag's version: the tag's push starts one alongside this workflow, which
-# waits for the latest such run to finish.
+# uploaded them. Only the attempts of CI / Bundle's run for the tag's push
+# build bundles that report the tag's version; a manual run at the tag numbers
+# its own. The tag's push starts that run alongside this workflow, which waits
+# for it to finish.
 #
 # Writes to GITHUB_OUTPUT the run's ID (run) and URL (source), each platform's
 # artifact ID (<platform>), and all four IDs separated by commas (ids).
 set -euo pipefail
 
-retry="Run CI / Bundle at the tag with 'gh workflow run rust.yml --ref $GITHUB_REF_NAME', and rerun this workflow once it passes."
 found=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow rust.yml --commit "$GITHUB_SHA" \
   --branch "$GITHUB_REF_NAME" --json databaseId,event,url \
-  --jq '[.[] | select(.event == "push" or .event == "workflow_dispatch")][0] // empty | "\(.databaseId) \(.url)"')
+  --jq '[.[] | select(.event == "push")][0] // empty | "\(.databaseId) \(.url)"')
 if [ -z "$found" ]; then
-  echo "::error::CI / Bundle hasn't run at $GITHUB_REF_NAME, so no checked bundles exist to stage. $retry"
+  echo "::error::CI / Bundle hasn't run for the push of $GITHUB_REF_NAME, so no checked bundles that report the tag exist to stage."
   exit 1
 fi
 read -r run source <<< "$found"
+retry="Rerun all of its jobs with 'gh run rerun $run --repo $GITHUB_REPOSITORY', whose new attempt's bundles also report the tag, and rerun this workflow once it passes."
 if ! gh run watch "$run" --repo "$GITHUB_REPOSITORY" --exit-status --interval 60 > /dev/null; then
   echo "::error::$source failed, so no checked bundles exist to stage. Rerun its failed jobs, and rerun this workflow once it passes."
   exit 1

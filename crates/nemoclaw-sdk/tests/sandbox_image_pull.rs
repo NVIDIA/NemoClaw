@@ -9,6 +9,7 @@ use nemoclaw_sdk::{
     config::Document,
 };
 use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn generations() -> Generations {
     [
@@ -38,14 +39,16 @@ fn example(text: &str) -> Value {
 /// Docker and Podman gateways whose engine holds the sandbox images.
 fn local_gateways() -> Vec<Value> {
     let mut external = example(include_str!("../../../examples/fabric-openclaw.yaml"));
-    external["spec"]["gateway"]["engine"] = "unix:///var/run/docker.sock".into();
+    external["spec"]["gateway"]["target"]["docker"]["engine"] =
+        "unix:///var/run/docker.sock".into();
     let mut managed = example(include_str!("../../../examples/fabric-openclaw.yaml"));
     managed["spec"]["gateway"] = serde_json::json!({
         "management": "managed",
-        "runtime": {"provider": "docker"},
-        "endpoint": "http://127.0.0.1:17681",
-        "engine": "unix:///var/run/docker.sock",
-        "networkCIDR": "172.30.250.0/24",
+        "target": {"docker": {
+            "port": 17681,
+            "engine": "unix:///var/run/docker.sock",
+            "networkCIDR": "172.30.250.0/24",
+        }},
     });
     let podman = example(include_str!("../../../examples/managed-podman.yaml"));
     vec![external, managed, podman]
@@ -100,6 +103,76 @@ fn a_docker_sandbox_image_is_pulled_before_the_reads_that_need_it() {
             !resources.contains("data.fabric_harnesses.sandbox_assistant."),
             "{example}"
         );
+    }
+}
+
+/// Every resource and read address in `graph`, with the addresses each one
+/// names in `depends_on` or an expression.
+fn dependencies(graph: &Value) -> BTreeMap<String, BTreeSet<String>> {
+    let mut nodes = BTreeMap::new();
+    for (prefix, block) in [("", &graph["resource"]), ("data.", &graph["data"])] {
+        for (kind, instances) in block.as_object().into_iter().flatten() {
+            for (name, body) in instances.as_object().into_iter().flatten() {
+                nodes.insert(format!("{prefix}{kind}.{name}"), body.to_string());
+            }
+        }
+    }
+    let named = |text: &str, address: &str| {
+        text.match_indices(address).any(|(at, _)| {
+            !text[at + address.len()..].starts_with(|next: char| {
+                next.is_ascii_alphanumeric() || next == '_' || next == '-'
+            })
+        })
+    };
+    nodes
+        .iter()
+        .map(|(address, text)| {
+            let names = nodes
+                .keys()
+                .filter(|other| *other != address && named(text, other))
+                .cloned()
+                .collect();
+            (address.clone(), names)
+        })
+        .collect()
+}
+
+/// Whether `from` waits on `on`, directly or through other nodes.
+fn waits_on(graph: &BTreeMap<String, BTreeSet<String>>, from: &str, on: &str) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![from.to_owned()];
+    while let Some(address) = pending.pop() {
+        for next in graph.get(&address).into_iter().flatten() {
+            if next == on {
+                return true;
+            }
+            if seen.insert(next.clone()) {
+                pending.push(next.clone());
+            }
+        }
+    }
+    false
+}
+
+/// A pull that fails, or an image whose Fabric metadata doesn't fit the
+/// sandbox, leaves nothing to destroy: only other pulls run before the image's
+/// read succeeds, so no gateway, storage, or agent configuration is created.
+#[test]
+fn nothing_but_image_pulls_is_created_before_every_sandbox_image_is_read() {
+    for value in local_gateways() {
+        let (document, graph) = graph(&value);
+        let example = document.metadata.name.clone();
+        let dependencies = dependencies(&graph);
+        let acquired = "data.fabric_harnesses.sandbox_assistant_acquired";
+        assert!(dependencies.contains_key(acquired), "{example}");
+        let early: Vec<&String> = dependencies
+            .keys()
+            .filter(|address| {
+                !address.starts_with("data.") && !address.starts_with("docker_image.")
+            })
+            .filter(|address| !waits_on(&dependencies, address, acquired))
+            .collect();
+        assert!(early.is_empty(), "{example}: {early:?}");
     }
 }
 

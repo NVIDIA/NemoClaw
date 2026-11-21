@@ -10,8 +10,8 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: docker
+    target:
+      docker: {}
   inferenceProviders:
     nvidia-prod:
       provider: openai

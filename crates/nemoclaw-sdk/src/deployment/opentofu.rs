@@ -195,7 +195,7 @@ impl Deployment {
         let gateway = document.spec.gateway.as_managed()?;
         // The Docker provider refreshes a stopped container as must_run=false,
         // and NemoClaw's Podman gateway as running="false".
-        let (address, attribute, stopped, client) = match gateway.runtime.provider {
+        let (address, attribute, stopped, client) = match gateway.compute_driver() {
             ComputeDriver::Docker => (
                 "docker_container.managed_gateway_runtime",
                 "must_run",
@@ -253,7 +253,7 @@ impl Deployment {
         let name = values["name"].as_str()?;
         Some(Error::GatewayStopped {
             name: name.into(),
-            start: format!("{client} {} start {name}", gateway.engine),
+            start: format!("{client} {} start {name}", gateway.engine()),
         })
     }
     pub(super) fn provider_environment(
@@ -309,7 +309,7 @@ impl Deployment {
                             .ok_or(Error::State(
                                 "the pod's in-cluster Kubernetes configuration is missing: \
                                  KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be set; \
-                                 outside a pod, name gateway.kubernetes.kubeconfig and context",
+                                 outside a pod, name the gateway target's kubeconfig and context",
                             ))?;
                         environment.insert(name.into(), value);
                     }

@@ -5,7 +5,7 @@
 
 In this tutorial, you configure one OpenClaw sandbox with an existing NVIDIA OpenShell gateway and inference endpoint.
 You then plan the deployment, apply it, and send one request to the agent.
-The commands use the v1 source-built tools and the [OpenClaw example at implementation revision `637bdb6276`](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/examples/openclaw.yaml).
+The commands use the v1 source-built tools and the [OpenClaw example at implementation revision `1636069b91`](https://github.com/NVIDIA/NemoClaw/blob/1636069b91f402242a35714fde1011042c3f1f70/examples/openclaw.yaml), the `v0.1.0-rc12` tag's commit.
 Keep the bundle and generated schema from the source revision used to build the image.
 A successful apply starts a runtime.
 Only an invocation checks whether the agent replies.
@@ -17,7 +17,7 @@ You need a gateway you can operate, an endpoint that serves a known model, the m
 The image commands below use a native Linux ARM64 build host and a Docker engine that retains image digests.
 The endpoint must be reachable from OpenShell, not only from your client host.
 
-Use a separate worktree at the pinned implementation revision. Do not mix its example, bundle, image, or generated schema with another revision. The [build guide in this documentation checkout](../build-deploy/build.md) describes a newer toolchain; use `docs/build-deploy/build.md` in the pinned worktree for this exercise. Run the following steps on the client host unless a step names the image build host.
+Use a separate worktree at the pinned implementation revision. Do not mix its example, bundle, image, or generated schema with another revision. The [build guide in this documentation checkout](../build-deploy/build.md) can describe a newer toolchain; use `docs/build-deploy/build.md` in the pinned worktree for this exercise. Run the following steps on the client host unless a step names the image build host.
 
 1. Fetch the v1 branch from the root of your NemoClaw checkout.
 
@@ -28,7 +28,7 @@ Use a separate worktree at the pinned implementation revision. Do not mix its ex
 2. Create a separate worktree at the pinned revision.
 
    ```sh
-   git worktree add --detach ../nemoclaw-v1 637bdb6276309ea71d1f1fcb68fff518fe2db926
+   git worktree add --detach ../nemoclaw-v1 1636069b91f402242a35714fde1011042c3f1f70
    ```
 
    Choose another unused directory if `../nemoclaw-v1` exists.
@@ -40,12 +40,12 @@ Use a separate worktree at the pinned implementation revision. Do not mix its ex
    cd ../nemoclaw-v1
    ```
 
-4. Prepare the build tools using `docs/build-deploy/build.md` in this worktree ([pinned build prerequisites](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md)).
+4. Prepare the build tools using `docs/build-deploy/build.md` in this worktree ([pinned build prerequisites](https://github.com/NVIDIA/NemoClaw/blob/1636069b91f402242a35714fde1011042c3f1f70/docs/build-deploy/build.md)).
 
-   Its `rust-toolchain.toml` pins Rust 1.99.1.
+   Its `rust-toolchain.toml` pins Rust 1.100.0.
    A native bundle also requires Protocol Buffers compiler 36.2 and a C toolchain.
 
-5. Build the native bundle using the [pinned bundle instructions](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md#build-a-native-bundle).
+5. Build the native bundle using the [pinned bundle instructions](https://github.com/NVIDIA/NemoClaw/blob/1636069b91f402242a35714fde1011042c3f1f70/docs/build-deploy/build.md#building-a-native-bundle).
 
    Keep this bundle unchanged for the deployment.
    If you rebuild it, keep the original bundle for recovery.
@@ -63,7 +63,7 @@ Use a separate worktree at the pinned implementation revision. Do not mix its ex
    nemoclaw --help
    ```
 
-8. Prepare the native Linux ARM64 build host using `docs/build-deploy/build.md` in the pinned worktree ([pinned image prerequisites](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md#build-agent-images)).
+8. Prepare the native Linux ARM64 build host using `docs/build-deploy/build.md` in the pinned worktree ([pinned image prerequisites](https://github.com/NVIDIA/NemoClaw/blob/1636069b91f402242a35714fde1011042c3f1f70/docs/build-deploy/build.md#building-agent-images)).
 
 9. Build the OpenClaw image on that host from the same worktree revision.
 
@@ -117,7 +117,7 @@ Keep the deployment identity and state directory for the lifetime of this exerci
    | `metadata.uid` | The fresh UUID. Keep it for this deployment's lifetime. |
    | `metadata.name` | A label for this deployment. |
    | `spec.gateway.endpoint` | The existing gateway's client-reachable endpoint. |
-   | `spec.gateway.engine` | The Docker or Podman engine containing the selected image. Match `spec.gateway.runtime.provider`. |
+   | `spec.gateway.target.docker.engine` | The Docker engine containing the selected image. For a Podman engine, replace `target.docker` with `target.podman` and set `spec.gateway.target.podman.engine`. |
    | `spec.inferenceProviders.local.endpoint` | The inference base URL reachable by the gateway. |
    | `spec.inferenceProviders.local.provider` and `.api` | The endpoint's protocol and API. The example uses `openai` with `openai-responses`. |
    | `spec.sandboxes.assistant.image.ref` | The immutable image reference from the build. |
@@ -162,6 +162,8 @@ A plan previews changes without invoking inference. Apply can create a workspace
 2. Review the resource changes and the `complete` field. A zero exit code means the preview succeeded. `complete: false` means some prerequisites remain deferred.
 
 3. Resolve deferred work before treating the plan as complete. Even `complete: true` does not verify service readiness or an agent reply.
+
+   Before the first apply, the plan can defer "Selected image Fabric capabilities are unverified". If that is the only deferred item, continue: apply checks the image's adapter when it starts the agent, and a plan after a successful apply reports `complete: true`.
 
 4. Apply the same YAML and state directory only after reviewing the plan.
 

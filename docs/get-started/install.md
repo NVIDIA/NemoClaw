@@ -11,7 +11,7 @@ To build the bundle from source instead, see [build local artifacts](../build-de
 No release is published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Until then, release candidates are draft releases that only users with push access see, and the download commands below fail.
 A maintainer downloads a draft's files with `gh release download TAG --repo NVIDIA/NemoClaw --pattern ARCHIVE --pattern SHA256SUMS`.
-A draft's images are in internal packages, so deployments need registry credentials for them: `spec.registries` on Docker, `imagePullSecrets` on Kubernetes.
+A draft's images are in internal packages, so deployments need registry credentials for them: `spec.registries` on Docker, [`image_pull_secrets`](../build-deploy/kubernetes.md#referencing-registry-credentials) on Kubernetes.
 
 ## Choosing the Archive
 

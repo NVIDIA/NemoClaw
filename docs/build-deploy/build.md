@@ -256,7 +256,7 @@ Plan selects only the image that `image.ref` names:
   A harness identifier does not select a different image.
 - The selected image must still exist on the compute daemon, and the sandbox compute daemon must have access to that exact image.
 - Plan requires the image's runtime metadata to supply its `fabric-agent-ctl` command, environment, default policy, and executable grants.
-- For an external gateway, also set `spec.gateway.engine` to the engine that contains that same immutable sandbox image.
+- For an external gateway, also set the `engine` of its `docker` or `podman` target to the engine that contains that same immutable sandbox image.
   NemoClaw does not assume the client host's Docker socket and uses this engine only for image inspection.
   Using it does not authorize managing the external gateway.
 

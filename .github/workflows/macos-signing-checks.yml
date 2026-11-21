@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: macOS signing helper
+on:
+  pull_request:
+    paths:
+      - .github/workflows/macos-signing-checks.yml
+      - .github/workflows/release.yml
+      - tools/release/macos-signing.rs
+  push:
+    branches: [v1]
+    paths:
+      - .github/workflows/macos-signing-checks.yml
+      - .github/workflows/release.yml
+      - tools/release/macos-signing.rs
+permissions:
+  contents: read
+jobs:
+  helper:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the helper without signing credentials
+        run: |
+          rustfmt --edition 2021 --check tools/release/macos-signing.rs
+          rustc --edition=2021 -D warnings tools/release/macos-signing.rs -o "$RUNNER_TEMP/macos-signing"
+          rustc --edition=2021 -D warnings --test tools/release/macos-signing.rs -o "$RUNNER_TEMP/signing-tests"
+          "$RUNNER_TEMP/signing-tests"
