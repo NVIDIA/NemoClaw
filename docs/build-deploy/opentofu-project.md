@@ -42,7 +42,7 @@ Before you start, you need:
 - A bundle for the platform that runs OpenTofu: the unpacked `dist/PLATFORM` directory of a [release archive](../get-started/install.md), or a copy of a bundle [built from source](build.md#building-a-native-bundle), because the next build replaces `dist/PLATFORM`.
 - An OpenShell gateway at the version the release pins, with exactly one initialized compute driver matching `required_compute_drivers`, as [Gateway Capabilities](../references/provider.md#gateway-capabilities) describes.
 - Agent and runtime images from the same release, pinned by digest.
-- The repository's `versions.json` at the release's tag, or at the commit a source-built bundle came from, which records the OpenShell version and the SDK's image pins, because a release does not publish its tested version set yet ([#14722](https://github.com/NVIDIA/NemoClaw/issues/14722)).
+- The OpenShell version and image pins: the release's [`version-pins.json`](../references/compatibility.md#using-one-release-together), or for a source-built bundle, the repository's `versions.json` at the commit the bundle came from.
 - OpenTofu 1.12 or a later 1.x release, which the examples require; the bundle's `libexec/tofu` is the version its tests use, and the manifest records it as `OpenTofu`.
 - `jq`, to read the bundle's manifest.
 

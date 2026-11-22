@@ -16,6 +16,7 @@ pub mod hcl_cases;
 pub mod helm_provider;
 pub mod images;
 pub mod release_assessment;
+pub mod release_pins;
 #[cfg(feature = "sdk")]
 pub mod schema;
 mod source;

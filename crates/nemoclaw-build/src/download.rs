@@ -13,7 +13,7 @@ use std::{
 type Result<T> = std::result::Result<T, String>;
 
 /// A remote file pinned by its exact bytes, as `versions.json` lists it.
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct Artifact {
     pub url: String,
     pub sha256: String,
