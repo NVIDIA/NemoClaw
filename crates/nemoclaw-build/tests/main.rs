@@ -17,6 +17,8 @@ mod changes;
 mod ci;
 #[cfg(unix)]
 mod ci_lifecycle;
+#[cfg(unix)]
+mod dependency_sources;
 #[path = "docs.rs"]
 mod docs;
 #[path = "fabric_cache.rs"]
