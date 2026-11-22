@@ -22,6 +22,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { zstdCompressSync } from "node:zlib";
 
 import { expect, it } from "vitest";
 import { OPENCLAW_SESSION_EVIDENCE_SCRIPT } from "../live/launch-agent-turn.ts";
@@ -29,6 +30,8 @@ import { OPENCLAW_SESSION_EVIDENCE_SCRIPT } from "../live/launch-agent-turn.ts";
 type SessionRecords = Record<string, string[]>;
 
 interface SqliteSessionRecord {
+  eventZstd?: Uint8Array | null;
+  eventBytes?: number | null;
   eventJson: string | Uint8Array | null;
   seq: number;
   sessionId: string | Uint8Array;
@@ -93,16 +96,25 @@ function createSqliteSessionStore(
       CREATE TABLE transcript_events (
         session_id ${relaxedColumns ? "ANY" : "TEXT NOT NULL"},
         seq ${relaxedColumns ? "ANY" : "INTEGER NOT NULL"},
-        event_json ${relaxedColumns ? "ANY" : "TEXT NOT NULL"},
+        event_json ${relaxedColumns ? "ANY" : "TEXT"},
+        event_zstd BLOB,
+        event_utf8_bytes ${relaxedColumns ? "ANY" : "INTEGER"},
         created_at INTEGER NOT NULL,
         PRIMARY KEY (session_id, seq)
       ) STRICT
     `);
     const insert = database.prepare(
-      "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO transcript_events (session_id, seq, event_json, event_zstd, event_utf8_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     );
     for (const record of records) {
-      insert.run(record.sessionId, record.seq, record.eventJson, 0);
+      insert.run(
+        record.sessionId,
+        record.seq,
+        record.eventJson,
+        record.eventZstd ?? null,
+        record.eventBytes ?? null,
+        0,
+      );
     }
   } finally {
     database.close();
@@ -115,10 +127,17 @@ function appendSqliteSessionRecords(sqlitePath: string, records: SqliteSessionRe
   const database = new DatabaseSync(sqlitePath);
   try {
     const insert = database.prepare(
-      "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO transcript_events (session_id, seq, event_json, event_zstd, event_utf8_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     );
     for (const record of records) {
-      insert.run(record.sessionId, record.seq, record.eventJson, 0);
+      insert.run(
+        record.sessionId,
+        record.seq,
+        record.eventJson,
+        record.eventZstd ?? null,
+        record.eventBytes ?? null,
+        0,
+      );
     }
   } finally {
     database.close();
@@ -220,7 +239,24 @@ function runSqliteEvidenceFixture(input: {
   before?: SqliteSessionRecord[];
   expectedTurns: number;
   relaxedColumns?: boolean;
+  storage?: "inline" | "zstd" | "mixed";
 }) {
+  const compress = (record: SqliteSessionRecord): SqliteSessionRecord => {
+    const bytes = Buffer.from(record.eventJson as string);
+    return {
+      ...record,
+      eventJson: null,
+      eventZstd: zstdCompressSync(bytes),
+      eventBytes: bytes.length,
+    };
+  };
+  const encodings = {
+    inline: (records: SqliteSessionRecord[]) => records,
+    zstd: (records: SqliteSessionRecord[]) => records.map(compress),
+    mixed: (records: SqliteSessionRecord[]) =>
+      records.map((record) => (record.seq % 2 === 1 ? record : compress(record))),
+  };
+  const encode = encodings[input.storage ?? "inline"];
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-sqlite-evidence-"));
   const runId = randomUUID().replaceAll("-", "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
@@ -229,7 +265,7 @@ function runSqliteEvidenceFixture(input: {
   mkdirSync(sessionRoot);
   const sqlitePath = createSqliteSessionStore(
     sessionRoot,
-    input.before ?? [],
+    encode(input.before ?? []),
     input.relaxedColumns,
   );
   try {
@@ -247,7 +283,7 @@ function runSqliteEvidenceFixture(input: {
       ],
       { encoding: "utf8", env: { ...process.env, NODE_NO_WARNINGS: "1" } },
     );
-    appendSqliteSessionRecords(sqlitePath, input.after);
+    appendSqliteSessionRecords(sqlitePath, encode(input.after));
     const qualification = spawnSync(
       process.execPath,
       [
@@ -364,29 +400,70 @@ it("qualifies two ordered structured turns without comparing message content (#9
   expect(qualification.status).toBe(0);
 });
 
-it("qualifies ordered turns from the OpenClaw 2026.9.1 SQLite transcript store", () => {
-  const { baseline, baselineDocument, qualification } = runSqliteEvidenceFixture({
-    before: [
-      { eventJson: message("user", "prior input"), seq: 1, sessionId: "session-a" },
-      { eventJson: message("assistant", "prior response"), seq: 2, sessionId: "session-a" },
-    ],
-    after: [
-      { eventJson: message("user", "first input"), seq: 3, sessionId: "session-a" },
-      { eventJson: message("assistant", "first response"), seq: 4, sessionId: "session-a" },
-      { eventJson: message("user", "second input"), seq: 5, sessionId: "session-a" },
-      { eventJson: message("assistant", "second response"), seq: 6, sessionId: "session-a" },
-    ],
-    expectedTurns: 2,
-  });
+it.each(["inline", "zstd", "mixed"] as const)(
+  "qualifies ordered turns from %s SQLite transcript rows",
+  (storage) => {
+    const { baseline, baselineDocument, qualification } = runSqliteEvidenceFixture({
+      storage,
+      before: [
+        { eventJson: message("user", "prior input"), seq: 1, sessionId: "session-a" },
+        { eventJson: message("assistant", "prior response"), seq: 2, sessionId: "session-a" },
+      ],
+      after: [
+        { eventJson: message("user", "first input"), seq: 3, sessionId: "session-a" },
+        { eventJson: message("assistant", "first response"), seq: 4, sessionId: "session-a" },
+        { eventJson: message("user", "second input"), seq: 5, sessionId: "session-a" },
+        { eventJson: message("assistant", "second response"), seq: 6, sessionId: "session-a" },
+      ],
+      expectedTurns: 2,
+    });
 
-  expect(baseline.status).toBe(0);
-  expect(baselineDocument.schemaVersion).toBe(2);
-  expect(baselineDocument.sqlite.sessions).toHaveLength(1);
-  expect(qualification.status, qualification.stderr).toBe(0);
-});
+    expect(baseline.status).toBe(0);
+    expect(baselineDocument.schemaVersion).toBe(2);
+    expect(baselineDocument.sqlite.sessions).toHaveLength(1);
+    expect(qualification.status, qualification.stderr).toBe(0);
+  },
+);
 
 const SQLITE_SESSION_CANARY = "private-session-canary-984512735";
 const SQLITE_CONTENT_CANARY = "private-transcript-canary-984512735";
+
+it.each([
+  "corrupt",
+  "length-mismatch",
+  "compressed-oversize",
+  "expanded-oversize",
+  "invalid-utf8",
+] as const)("rejects %s compressed SQLite transcript rows without contents", (fault) => {
+  const bytes =
+    fault === "invalid-utf8"
+      ? Buffer.from([0xc3, 0x28])
+      : Buffer.from(message("user", SQLITE_CONTENT_CANARY));
+  const frame =
+    fault === "corrupt"
+      ? Buffer.from("invalid zstd")
+      : fault === "compressed-oversize"
+        ? Buffer.alloc(4 * 1024 * 1024 + 1)
+        : zstdCompressSync(bytes);
+  const eventBytes =
+    fault === "expanded-oversize"
+      ? 4 * 1024 * 1024 + 1
+      : bytes.length + Number(fault === "length-mismatch");
+  const { baseline, qualification } = runSqliteEvidenceFixture({
+    after: [
+      { eventJson: null, eventZstd: frame, eventBytes, seq: 1, sessionId: SQLITE_SESSION_CANARY },
+    ],
+    expectedTurns: 1,
+  });
+  expect(baseline.status).toBe(0);
+  expect(qualification.status).toBe(2);
+  expect(qualification.stderr).toContain('"reason":"sqlite_session_record_invalid"');
+  expect(qualification.stdout).toBe("");
+  expect(qualification.stderr).not.toContain(SQLITE_CONTENT_CANARY);
+  expect(qualification.stderr).not.toContain(SQLITE_SESSION_CANARY);
+  expect(Buffer.byteLength(qualification.stderr)).toBeLessThanOrEqual(1024);
+});
+
 const sqliteDiagnosticRecord = (): SqliteSessionRecord => ({
   eventJson: message("user", SQLITE_CONTENT_CANARY),
   seq: 984512735,
@@ -623,63 +700,88 @@ it("keeps an incomplete SQLite-backed turn pending", () => {
   expect(qualification.status).toBe(1);
 });
 
-it("rejects a rewritten SQLite transcript prefix", () => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-sqlite-rewrite-"));
-  const runId = randomUUID().replaceAll("-", "");
-  const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
-  const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
-  const sessionRoot = join(fixtureRoot, "sessions");
-  mkdirSync(sessionRoot);
-  const sqlitePath = createSqliteSessionStore(sessionRoot, [
-    { eventJson: message("user", "before"), seq: 1, sessionId: "session-a" },
-  ]);
-  try {
-    const baseline = spawnSync(
-      process.execPath,
-      [
-        "-e",
-        OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-        "baseline",
-        sessionRoot,
-        baselinePath,
-        "",
-        ptyMonitorRoot,
-        runId,
-      ],
-      { encoding: "utf8", env: { ...process.env, NODE_NO_WARNINGS: "1" } },
-    );
-    const database = new DatabaseSync(sqlitePath);
+it.each(["inline", "zstd"] as const)(
+  "rejects a rewritten %s SQLite transcript prefix",
+  (storage) => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-sqlite-rewrite-"));
+    const runId = randomUUID().replaceAll("-", "");
+    const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
+    const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
+    const sessionRoot = join(fixtureRoot, "sessions");
+    mkdirSync(sessionRoot);
+    const sqlitePath = createSqliteSessionStore(sessionRoot, [
+      {
+        eventJson: storage === "inline" ? message("user", "before") : null,
+        eventZstd:
+          storage === "zstd" ? zstdCompressSync(Buffer.from(message("user", "before"))) : null,
+        eventBytes: storage === "zstd" ? Buffer.byteLength(message("user", "before")) : null,
+        seq: 1,
+        sessionId: "session-a",
+      },
+    ]);
     try {
-      database
-        .prepare("UPDATE transcript_events SET event_json = ? WHERE session_id = ? AND seq = ?")
-        .run(message("user", "after"), "session-a", 1);
+      const baseline = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          OPENCLAW_SESSION_EVIDENCE_SCRIPT,
+          "baseline",
+          sessionRoot,
+          baselinePath,
+          "",
+          ptyMonitorRoot,
+          runId,
+        ],
+        { encoding: "utf8", env: { ...process.env, NODE_NO_WARNINGS: "1" } },
+      );
+      const database = new DatabaseSync(sqlitePath);
+      try {
+        const changed = message("user", "after");
+        const rewrites = {
+          inline: {
+            sql: "UPDATE transcript_events SET event_json = ?, event_zstd = NULL, event_utf8_bytes = NULL WHERE session_id = ? AND seq = ?",
+            values: [changed, "session-a", 1],
+          },
+          zstd: {
+            sql: "UPDATE transcript_events SET event_json = NULL, event_zstd = ?, event_utf8_bytes = ? WHERE session_id = ? AND seq = ?",
+            values: [
+              zstdCompressSync(Buffer.from(changed)),
+              Buffer.byteLength(changed),
+              "session-a",
+              1,
+            ],
+          },
+        };
+        const rewrite = rewrites[storage];
+        database.prepare(rewrite.sql).run(...rewrite.values);
+      } finally {
+        database.close();
+      }
+      const qualification = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          OPENCLAW_SESSION_EVIDENCE_SCRIPT,
+          "qualify",
+          sessionRoot,
+          baselinePath,
+          "1",
+          ptyMonitorRoot,
+          runId,
+        ],
+        { encoding: "utf8", env: { ...process.env, NODE_NO_WARNINGS: "1" } },
+      );
+      expect(baseline.status).toBe(0);
+      expect(qualification.status).toBe(2);
+      expect(qualification.stderr).toContain('"reason":"session_rewritten"');
     } finally {
-      database.close();
+      rmSync(fixtureRoot, { force: true, recursive: true });
+      rmSync(baselinePath, { force: true });
+      rmSync(`${baselinePath}.tmp`, { force: true });
+      rmSync(ptyMonitorRoot, { force: true, recursive: true });
     }
-    const qualification = spawnSync(
-      process.execPath,
-      [
-        "-e",
-        OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-        "qualify",
-        sessionRoot,
-        baselinePath,
-        "1",
-        ptyMonitorRoot,
-        runId,
-      ],
-      { encoding: "utf8", env: { ...process.env, NODE_NO_WARNINGS: "1" } },
-    );
-    expect(baseline.status).toBe(0);
-    expect(qualification.status).toBe(2);
-    expect(qualification.stderr).toContain('"reason":"session_rewritten"');
-  } finally {
-    rmSync(fixtureRoot, { force: true, recursive: true });
-    rmSync(baselinePath, { force: true });
-    rmSync(`${baselinePath}.tmp`, { force: true });
-    rmSync(ptyMonitorRoot, { force: true, recursive: true });
-  }
-});
+  },
+);
 
 it("keeps a partial structured turn pending (#9160)", () => {
   const { baseline, qualification } = runEvidenceFixture({

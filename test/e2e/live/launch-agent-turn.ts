@@ -560,18 +560,14 @@ function validPtyResponse(response) {
     !/^\/dev\/pts\/\d+$/.test(response.ttyPath || "") ||
     ![response.dev, response.ino, response.rdev].every(
       (value) => typeof value === "string" && /^(0|[1-9]\d{0,24})$/.test(value),
-    )
+    ) ||
+    (response.status !== null &&
+      (!Number.isInteger(response.status) || response.status < 0 || response.status > 255)) ||
+    (response.signal !== null && !/^SIG[A-Z0-9]{1,24}$/.test(response.signal)) ||
+    (response.errorCode !== null && !/^[A-Z0-9_]{1,64}$/.test(response.errorCode))
   ) {
     return false;
   }
-  if (
-    response.status !== null &&
-    (!Number.isInteger(response.status) || response.status < 0 || response.status > 255)
-  ) {
-    return false;
-  }
-  if (response.signal !== null && !/^SIG[A-Z0-9]{1,24}$/.test(response.signal)) return false;
-  if (response.errorCode !== null && !/^[A-Z0-9_]{1,64}$/.test(response.errorCode)) return false;
   if (
     typeof response.stderr !== "string" ||
     Buffer.byteLength(response.stderr) > 256 ||
@@ -704,6 +700,31 @@ function requireEvidence(value, reason, detail = {}) {
   value ? undefined : finish(2, reason, detail);
 }
 
+function decodeSqliteEventRow(row) {
+  if (row.eventJson !== null) return row;
+  const invalid = () => finish(2, "sqlite_session_record_invalid", sqliteEventRowDiagnostic(row));
+  if (
+    !(row.eventZstd instanceof Uint8Array) ||
+    row.eventZstd.byteLength < 1 ||
+    row.eventZstd.byteLength > 4 * 1024 * 1024 ||
+    !Number.isSafeInteger(row.eventBytes) ||
+    row.eventBytes < 1 ||
+    row.eventBytes > 4 * 1024 * 1024
+  ) {
+    return invalid();
+  }
+  try {
+    const bytes = require("node:zlib").zstdDecompressSync(row.eventZstd, {
+      maxOutputLength: row.eventBytes,
+    });
+    if (bytes.byteLength !== row.eventBytes) return invalid();
+    const eventJson = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    return { ...row, eventJson };
+  } catch {
+    return invalid();
+  }
+}
+
 function validSqliteEventRow(row) {
   return (
     typeof row.sessionId === "string" &&
@@ -805,7 +826,8 @@ function readExistingSqliteTranscriptSnapshot(before) {
     requireEvidence(table?.name === "transcript_events", "sqlite_session_store_invalid", { check: "transcript_table" });
     rows = database
       .prepare(
-        "SELECT session_id AS sessionId, seq, event_json AS eventJson " +
+        "SELECT session_id AS sessionId, seq, event_json AS eventJson, " +
+          "event_zstd AS eventZstd, event_utf8_bytes AS eventBytes " +
           "FROM transcript_events ORDER BY session_id, seq",
       )
       .all();
@@ -823,7 +845,8 @@ function readExistingSqliteTranscriptSnapshot(before) {
     "sqlite_session_store_replaced",
   );
   const sessions = new Map();
-  for (const row of rows) {
+  for (const storedRow of rows) {
+    const row = decodeSqliteEventRow(storedRow);
     const valid = validSqliteEventRow(row);
     requireEvidence(valid, "sqlite_session_record_invalid", valid ? {} : sqliteEventRowDiagnostic(row));
     const events = sessions.get(row.sessionId) ?? [];

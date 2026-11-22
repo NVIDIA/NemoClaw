@@ -188,6 +188,11 @@ restores the original home mode and umask in cleanup. Local runs and preinstalle
 Launchable validation retain their original home permissions. Deterministic
 permission denials remain owned by `src/lib/state/launch-readiness-lease.test.ts`.
 
+OpenClaw launch evidence reads inline or zstd-compressed SQLite transcript rows.
+Compressed payloads and their expanded data must each fit within 4 MiB.
+The verifier checks the recorded expanded length and UTF-8 before validating
+message order and transcript-prefix digests.
+
 The native Podman row of Hermes GPU startup installs its reviewed host prerequisites before candidate checkout.
 It uses the pinned host-dependency action for `conmon`, `fuse-overlayfs`, `golang-github-containers-common`, `iptables`, `nftables`, `slirp4netns`, and `uidmap`.
 The container configuration package supplies Podman's standard image policy and seccomp files.
