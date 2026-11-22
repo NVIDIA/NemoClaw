@@ -87,6 +87,7 @@ function createSqliteSessionStore(
   sessionRoot: string,
   records: SqliteSessionRecord[],
   relaxedColumns = false,
+  legacySchema = false,
 ): string {
   const sqlitePath = sqlitePathForSessionRoot(sessionRoot);
   mkdirSync(join(sessionRoot, "..", "agent"), { recursive: true });
@@ -96,48 +97,35 @@ function createSqliteSessionStore(
       CREATE TABLE transcript_events (
         session_id ${relaxedColumns ? "ANY" : "TEXT NOT NULL"},
         seq ${relaxedColumns ? "ANY" : "INTEGER NOT NULL"},
-        event_json ${relaxedColumns ? "ANY" : "TEXT"},
-        event_zstd BLOB,
-        event_utf8_bytes ${relaxedColumns ? "ANY" : "INTEGER"},
+        event_json ${relaxedColumns ? "ANY" : legacySchema ? "TEXT NOT NULL" : "TEXT"},
+        ${legacySchema ? "" : `event_zstd BLOB, event_utf8_bytes ${relaxedColumns ? "ANY" : "INTEGER"},`}
         created_at INTEGER NOT NULL,
         PRIMARY KEY (session_id, seq)
       ) STRICT
     `);
-    const insert = database.prepare(
-      "INSERT INTO transcript_events (session_id, seq, event_json, event_zstd, event_utf8_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-    );
-    for (const record of records) {
-      insert.run(
-        record.sessionId,
-        record.seq,
-        record.eventJson,
-        record.eventZstd ?? null,
-        record.eventBytes ?? null,
-        0,
-      );
-    }
   } finally {
     database.close();
   }
   chmodSync(sqlitePath, 0o600);
+  appendSqliteSessionRecords(sqlitePath, records, legacySchema);
   return sqlitePath;
 }
 
-function appendSqliteSessionRecords(sqlitePath: string, records: SqliteSessionRecord[]): void {
+function appendSqliteSessionRecords(
+  sqlitePath: string,
+  records: SqliteSessionRecord[],
+  legacySchema = false,
+): void {
   const database = new DatabaseSync(sqlitePath);
   try {
     const insert = database.prepare(
-      "INSERT INTO transcript_events (session_id, seq, event_json, event_zstd, event_utf8_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      legacySchema
+        ? "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)"
+        : "INSERT INTO transcript_events (session_id, seq, event_json, event_zstd, event_utf8_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     );
     for (const record of records) {
-      insert.run(
-        record.sessionId,
-        record.seq,
-        record.eventJson,
-        record.eventZstd ?? null,
-        record.eventBytes ?? null,
-        0,
-      );
+      const compressed = legacySchema ? [] : [record.eventZstd ?? null, record.eventBytes ?? null];
+      insert.run(record.sessionId, record.seq, record.eventJson, ...compressed, 0);
     }
   } finally {
     database.close();
@@ -240,6 +228,7 @@ function runSqliteEvidenceFixture(input: {
   expectedTurns: number;
   relaxedColumns?: boolean;
   storage?: "inline" | "zstd" | "mixed";
+  legacySchema?: boolean;
 }) {
   const compress = (record: SqliteSessionRecord): SqliteSessionRecord => {
     const bytes = Buffer.from(record.eventJson as string);
@@ -267,6 +256,7 @@ function runSqliteEvidenceFixture(input: {
     sessionRoot,
     encode(input.before ?? []),
     input.relaxedColumns,
+    input.legacySchema,
   );
   try {
     const baseline = spawnSync(
@@ -283,7 +273,7 @@ function runSqliteEvidenceFixture(input: {
       ],
       { encoding: "utf8", env: { ...process.env, NODE_NO_WARNINGS: "1" } },
     );
-    appendSqliteSessionRecords(sqlitePath, encode(input.after));
+    appendSqliteSessionRecords(sqlitePath, encode(input.after), input.legacySchema);
     const qualification = spawnSync(
       process.execPath,
       [
@@ -400,11 +390,17 @@ it("qualifies two ordered structured turns without comparing message content (#9
   expect(qualification.status).toBe(0);
 });
 
-it.each(["inline", "zstd", "mixed"] as const)(
-  "qualifies ordered turns from %s SQLite transcript rows",
-  (storage) => {
+it.each([
+  ["inline", false],
+  ["zstd", false],
+  ["mixed", false],
+  ["inline", true],
+] as const)(
+  "qualifies ordered turns from %s SQLite transcript rows (legacy schema: %s)",
+  (storage, legacySchema) => {
     const { baseline, baselineDocument, qualification } = runSqliteEvidenceFixture({
       storage,
+      legacySchema,
       before: [
         { eventJson: message("user", "prior input"), seq: 1, sessionId: "session-a" },
         { eventJson: message("assistant", "prior response"), seq: 2, sessionId: "session-a" },

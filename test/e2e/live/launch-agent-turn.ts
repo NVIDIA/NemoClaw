@@ -824,10 +824,15 @@ function readExistingSqliteTranscriptSnapshot(before) {
       )
       .get();
     requireEvidence(table?.name === "transcript_events", "sqlite_session_store_invalid", { check: "transcript_table" });
+    const columns = new Set(
+      database.prepare("PRAGMA table_info(transcript_events)").all().map((column) => column.name),
+    );
+    const eventZstd = columns.has("event_zstd") ? "event_zstd" : "NULL";
+    const eventBytes = columns.has("event_utf8_bytes") ? "event_utf8_bytes" : "NULL";
     rows = database
       .prepare(
         "SELECT session_id AS sessionId, seq, event_json AS eventJson, " +
-          "event_zstd AS eventZstd, event_utf8_bytes AS eventBytes " +
+          eventZstd + " AS eventZstd, " + eventBytes + " AS eventBytes " +
           "FROM transcript_events ORDER BY session_id, seq",
       )
       .all();

@@ -189,6 +189,7 @@ Launchable validation retain their original home permissions. Deterministic
 permission denials remain owned by `src/lib/state/launch-readiness-lease.test.ts`.
 
 OpenClaw launch evidence reads inline or zstd-compressed SQLite transcript rows.
+Inline-only schemas can omit the compression columns.
 Compressed payloads and their expanded data must each fit within 4 MiB.
 The verifier checks the recorded expanded length and UTF-8 before validating
 message order and transcript-prefix digests.
