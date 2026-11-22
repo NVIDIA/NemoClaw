@@ -6,35 +6,35 @@
 //! and test NemoClaw are left out.
 
 use crate::download::Artifact;
+use crate::images::SourcePins;
 use crate::release_assessment::release::{digest, hex};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 type Result<T> = std::result::Result<T, String>;
 
-/// The Fabric source archive's URL up to its revision, as the SDK reads it.
+/// The Fabric source archive's URL up to its revision.
 const FABRIC_SOURCE: &str = "https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/";
 
-#[derive(Debug, Serialize)]
-pub struct VersionPins {
-    /// The release's tag.
-    pub release: String,
-    pub components: BTreeMap<String, Component>,
+#[derive(Serialize)]
+struct VersionPins<'a> {
+    release: &'a str,
+    components: BTreeMap<String, Component>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct Component {
+#[derive(Serialize)]
+struct Component {
     /// Absent when `versions.json` pins the component by digest alone.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
+    version: Option<String>,
     #[serde(flatten)]
-    pub pin: Pin,
+    pin: Pin,
 }
 
 /// What fixes a component's bytes.
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Pin {
+enum Pin {
     /// An image reference by digest.
     Image(String),
     /// An OCI Helm chart reference by digest.
@@ -43,6 +43,15 @@ pub enum Pin {
     Archives(BTreeMap<String, Artifact>),
     /// A source archive.
     Source(Artifact),
+}
+
+impl Pin {
+    fn at(self, version: &str) -> Component {
+        Component {
+            version: Some(version.into()),
+            pin: self,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -54,12 +63,7 @@ struct Versions {
     helm_provider: String,
     platforms: BTreeMap<String, BTreeMap<String, Artifact>>,
     images: BTreeMap<String, String>,
-    image_sources: ImageSources,
-}
-
-#[derive(Deserialize)]
-struct ImageSources {
-    fabric: BTreeMap<String, Artifact>,
+    image_sources: SourcePins,
 }
 
 /// An image as the release's `inventory.json` lists it.
@@ -70,9 +74,10 @@ struct Image {
     index_digest: String,
 }
 
-/// The pins of the release `tag` from its `versions.json` and `inventory.json`.
-/// Refuses input that leaves a component unpinned or names one twice.
-pub fn pins(versions: &[u8], inventory: &[u8], tag: &str) -> Result<VersionPins> {
+/// The pins of the release `tag` from its `versions.json` and `inventory.json`,
+/// as `version-pins.json`'s text. Refuses input that leaves a component
+/// unpinned or names one twice.
+pub fn pins(versions: &[u8], inventory: &[u8], tag: &str) -> Result<String> {
     let versions: Versions =
         serde_json::from_slice(versions).map_err(|error| format!("versions.json: {error}"))?;
     let inventory: Vec<Image> =
@@ -102,13 +107,7 @@ pub fn pins(versions: &[u8], inventory: &[u8], tag: &str) -> Result<VersionPins>
         if archives.is_empty() || !archives.values().all(pinned) {
             return Err(format!("versions.json doesn't pin each {tool} archive"));
         }
-        components.insert(
-            name.into(),
-            Component {
-                version: Some(version.clone()),
-                pin: Pin::Archives(archives),
-            },
-        );
+        components.insert(name.into(), Pin::Archives(archives).at(version));
     }
     let image = |name: &str| {
         versions
@@ -118,33 +117,23 @@ pub fn pins(versions: &[u8], inventory: &[u8], tag: &str) -> Result<VersionPins>
             .cloned()
             .ok_or_else(|| format!("versions.json doesn't pin the {name} image by digest"))
     };
-    for name in ["gateway", "supervisor", "sandboxRuntime"] {
-        components.insert(
-            name.into(),
-            Component {
-                version: Some(versions.openshell.clone()),
-                pin: Pin::Image(image(name)?),
-            },
-        );
+    for (name, pin) in [
+        ("gateway", Pin::Image as fn(String) -> Pin),
+        ("supervisor", Pin::Image),
+        ("sandboxRuntime", Pin::Image),
+        ("gatewayChart", Pin::Chart),
+    ] {
+        components.insert(name.into(), pin(image(name)?).at(&versions.openshell));
     }
-    components.insert(
-        "gatewayChart".into(),
-        Component {
-            version: Some(versions.openshell.clone()),
-            pin: Pin::Chart(image("gatewayChart")?),
-        },
-    );
-    components.insert(
-        "developmentIssuer".into(),
-        Component {
-            version: None,
-            pin: Pin::Image(image("developmentIssuer")?),
-        },
-    );
+    let issuer = Component {
+        version: None,
+        pin: Pin::Image(image("developmentIssuer")?),
+    };
+    components.insert("developmentIssuer".into(), issuer);
     let fabric = versions
         .image_sources
-        .fabric
-        .get("fabric.tar.gz")
+        .get("fabric")
+        .and_then(|files| files.get("fabric.tar.gz"))
         .filter(|source| pinned(source))
         .ok_or("versions.json doesn't pin the Fabric source archive")?;
     let revision = fabric
@@ -152,13 +141,7 @@ pub fn pins(versions: &[u8], inventory: &[u8], tag: &str) -> Result<VersionPins>
         .strip_prefix(FABRIC_SOURCE)
         .filter(|revision| hex(revision, 40))
         .ok_or("versions.json doesn't pin the Fabric source to a revision")?;
-    components.insert(
-        "fabric".into(),
-        Component {
-            version: Some(revision.into()),
-            pin: Pin::Source(fabric.clone()),
-        },
-    );
+    components.insert("fabric".into(), Pin::Source(fabric.clone()).at(revision));
     if inventory.is_empty() {
         return Err("inventory.json lists no images".into());
     }
@@ -176,10 +159,7 @@ pub fn pins(versions: &[u8], inventory: &[u8], tag: &str) -> Result<VersionPins>
                 image.name
             ));
         }
-        let component = Component {
-            version: Some(tag.into()),
-            pin: Pin::Image(reference),
-        };
+        let component = Pin::Image(reference).at(tag);
         if components.insert(image.name.clone(), component).is_some() {
             return Err(format!(
                 "inventory.json lists {} twice or as another component",
@@ -187,10 +167,11 @@ pub fn pins(versions: &[u8], inventory: &[u8], tag: &str) -> Result<VersionPins>
             ));
         }
     }
-    Ok(VersionPins {
-        release: tag.into(),
+    let pins = VersionPins {
+        release: tag,
         components,
-    })
+    };
+    serde_json::to_string_pretty(&pins).map_err(|error| error.to_string())
 }
 
 fn pinned(artifact: &Artifact) -> bool {

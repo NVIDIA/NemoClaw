@@ -103,10 +103,8 @@ fn a_release_pins_what_its_deployments_use_and_no_build_tools() {
         );
     }
     // Rust, protoc, nextest, kind, and the OpenShell CLI only build and test NemoClaw.
-    let mut names: Vec<&str> = components.keys().map(String::as_str).collect();
-    names.sort_unstable();
     assert_eq!(
-        names,
+        components.keys().collect::<Vec<_>>(),
         [
             "developmentIssuer",
             "dockerProvider",
@@ -143,57 +141,52 @@ fn a_final_release_requires_the_pins_of_its_tag_and_staged_images() {
     let generated = tempfile::tempdir().unwrap();
     let pins = release_pins(generated.path(), &staged, TAG);
     assert!(pins.status.success());
-    let checksum = |bytes: &[u8]| {
-        sha2::Sha256::digest(bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    };
     let changed = release_pins(generated.path(), &inventory("c"), TAG);
+    let root = tempfile::tempdir().unwrap();
+    let fixture = root.path().join("fixture");
+    let bin = root.path().join("bin");
+    fs::create_dir(&fixture).unwrap();
+    fs::create_dir(&bin).unwrap();
+    fs::write(fixture.join("versions.json"), VERSIONS).unwrap();
+    fs::write(fixture.join("inventory.json"), &staged).unwrap();
+    let mut tools = vec![
+        (
+            "gh",
+            "#!/bin/sh\ntest \"$1 $2 $3\" = \"release download $TAG\" || exit 2\nwhile [ $# -gt 0 ]; do\n  case \"$1\" in --pattern) pattern=$2 ;; --output) out=$2 ;; esac\n  shift\ndone\nexec /bin/cp \"$FIXTURE/$pattern\" \"$out\"\n",
+        ),
+        (
+            "git",
+            "#!/bin/sh\ntest \"$1 $2\" = \"show $CANDIDATE_REVISION:versions.json\" || exit 2\nexec /bin/cat \"$FIXTURE/versions.json\"\n",
+        ),
+        (
+            "cargo",
+            "#!/bin/sh\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$CONTROLLER_BIN\" \"$@\"\n",
+        ),
+    ];
+    // The Ubuntu runner has sha256sum; macOS has shasum instead.
+    if !["/usr/bin/sha256sum", "/bin/sha256sum"]
+        .iter()
+        .any(|path| Path::new(path).exists())
+    {
+        tools.push((
+            "sha256sum",
+            "#!/bin/sh\nexec /usr/bin/shasum -a 256 \"$@\"\n",
+        ));
+    }
+    for (name, script) in tools {
+        let path = bin.join(name);
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let checksum = |bytes: &[u8]| nemoclaw_build::hex(&sha2::Sha256::digest(bytes));
     for (version_pins, inventory_checksum, allowed) in [
-        (pins.stdout.clone(), checksum(&staged), true),
+        (&pins.stdout, checksum(&staged), true),
         // The draft's pins name another digest than the images staging recorded.
-        (changed.stdout, checksum(&staged), false),
+        (&changed.stdout, checksum(&staged), false),
         // The inventory must be the one staging recorded.
-        (pins.stdout.clone(), checksum(b"other"), false),
+        (&pins.stdout, checksum(b"other"), false),
     ] {
-        let root = tempfile::tempdir().unwrap();
-        let fixture = root.path().join("fixture");
-        let bin = root.path().join("bin");
-        fs::create_dir(&fixture).unwrap();
-        fs::create_dir(&bin).unwrap();
-        fs::write(fixture.join("versions.json"), VERSIONS).unwrap();
-        fs::write(fixture.join("inventory.json"), &staged).unwrap();
-        fs::write(fixture.join("version-pins.json"), &version_pins).unwrap();
-        let mut tools = vec![
-            (
-                "gh",
-                "#!/bin/sh\ntest \"$1 $2 $3\" = \"release download $TAG\" || exit 2\nwhile [ $# -gt 0 ]; do\n  case \"$1\" in --pattern) pattern=$2 ;; --output) out=$2 ;; esac\n  shift\ndone\nexec /bin/cp \"$FIXTURE/$pattern\" \"$out\"\n",
-            ),
-            (
-                "git",
-                "#!/bin/sh\ntest \"$1 $2\" = \"show $CANDIDATE_REVISION:versions.json\" || exit 2\nexec /bin/cat \"$FIXTURE/versions.json\"\n",
-            ),
-            (
-                "cargo",
-                "#!/bin/sh\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$CONTROLLER_BIN\" \"$@\"\n",
-            ),
-        ];
-        // The Ubuntu runner has sha256sum; macOS has shasum instead.
-        if !["/usr/bin/sha256sum", "/bin/sha256sum"]
-            .iter()
-            .any(|path| Path::new(path).exists())
-        {
-            tools.push((
-                "sha256sum",
-                "#!/bin/sh\nexec /usr/bin/shasum -a 256 \"$@\"\n",
-            ));
-        }
-        for (name, script) in tools {
-            let path = bin.join(name);
-            fs::write(&path, script).unwrap();
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-        }
+        fs::write(fixture.join("version-pins.json"), version_pins).unwrap();
         let output = Command::new("/bin/bash")
             .args(["-euo", "pipefail", "-c", script])
             .env_clear()

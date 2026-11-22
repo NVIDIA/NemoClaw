@@ -644,7 +644,7 @@ async fn main() -> Result<()> {
     {
         let pins =
             nemoclaw_build::release_pins::pins(&fs::read(versions)?, &fs::read(inventory)?, tag)?;
-        println!("{}", serde_json::to_string_pretty(&pins)?);
+        println!("{pins}");
         return Ok(());
     }
     if let Action::ReleaseCatalog {

@@ -610,9 +610,7 @@ jobs:
             echo
             echo '## Version pins'
             echo
-            cat <<'NOTES'
-          `version-pins.json` lists each component that a deployment of this release uses, with its version and digest or checksum: OpenTofu, the Docker and Helm providers, the OpenShell gateway, supervisor, sandbox, and Helm chart, the development issuer, Fabric, and the images above. Hand-written HCL can read it instead of the repository's `versions.json`.
-          NOTES
+            echo "\`version-pins.json\` lists the version and digest or checksum of each component that a deployment of this release uses, including the images above. Hand-written HCL can read it instead of the repository's \`versions.json\`."
           } >> "$notes"
           # Each platform's SPDX document was recorded where the image was built,
           # under its digest. Syft scans only an image whose record doesn't name it.
