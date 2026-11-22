@@ -1,13 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
+import { isHostLocalInferenceServingRecipe } from "../../../src/lib/inference/serving/adapter-registry.ts";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
 import YAML from "yaml";
-import { selectedEnvironment } from "./managed-image-receipt-fixture.ts";
+import { materializeHostLocalVllmModel } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
+import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
+import { assembleManagedImageCatalog } from "../../../tools/e2e/pr-managed-image-publication.mts";
+import {
+  ARM64_REFERENCE,
+  candidateCatalogEnvironment,
+  REVISION,
+  selectedEnvironment,
+} from "./managed-image-receipt-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildRiskSignal } from "../../../tools/e2e/risk-signal.ts";
 import {
@@ -21,8 +32,16 @@ const candidate = "a".repeat(40);
 const imageRevision = "b".repeat(40);
 const workflowSha = "c".repeat(40);
 const correlationId = "11111111-2222-4333-8444-555555555555";
-const boundedCommand =
-  "vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 --max-model-len 32768 --max-num-seqs 1 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.5 --load-format safetensors --safetensors-load-strategy lazy --max-num-seqs 2";
+const recipe = loadManagedInferenceCatalog().recipes.find(
+  ({ metadata }) => metadata.id === "vllm.qwen3-6-35b-a3b-nvfp4.spark-single-64gb.v1",
+);
+assert(recipe && isHostLocalInferenceServingRecipe(recipe) && recipe.spec.serve?.directInstall);
+const boundedCommand = buildVllmServeCommand(
+  materializeHostLocalVllmModel(recipe, recipe.spec.serve.directInstall, "spark"),
+  {
+    NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-num-seqs","2"]',
+  },
+);
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -65,7 +84,7 @@ async function fixture() {
     { passed: 1, failed: 0, skipped: 0, pending: 0, unhandledErrors: 0, runReason: "passed" },
   );
   writeFileSync(path.join(directory, "risk-signal.json"), JSON.stringify(signal));
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     NEMOCLAW_E2E_EXPECTED_SHA: candidate,
     E2E_MANAGED_IMAGE_REVISION: imageRevision,
     SPARK_VLLM_WORKFLOW_SHA: workflowSha,
@@ -76,7 +95,15 @@ async function fixture() {
       directory,
     ).E2E_MANAGED_IMAGE_COHORT_RECEIPT!.replaceAll("d".repeat(40), imageRevision),
   };
-  return { directory, scenario, artifacts, signal, env };
+  const workload = {
+    agent: "openclaw",
+    platform: "linux/arm64",
+    reference: ARM64_REFERENCE,
+    sourceCohort: "ghrun-32707920950-1",
+    sourceRevision: imageRevision,
+  };
+  await artifacts.writeJson("spark-sandbox-image.json", workload);
+  return { directory, scenario, artifacts, signal, env, workload };
 }
 
 it("consumes actual target-writer and risk-reporter artifacts with independent run and image identities", async () => {
@@ -95,6 +122,58 @@ it("consumes actual target-writer and risk-reporter artifacts with independent r
     cleanup: { failures: [] },
     result: { status: "passed" },
   });
+});
+
+async function candidateFixture(platform: "linux/arm64" | "linux/amd64") {
+  const { directory, artifacts, env, workload } = await fixture();
+  const source = candidateCatalogEnvironment(directory, platform);
+  const contracts = JSON.parse(
+    readFileSync(source.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG!, "utf8").replaceAll(
+      REVISION,
+      candidate,
+    ),
+  );
+  const catalog = assembleManagedImageCatalog(
+    Object.values(contracts),
+    candidate,
+    { id: 32707920950, attempt: 1 },
+    platform,
+  );
+  delete env.E2E_MANAGED_IMAGE_REVISION;
+  delete env.E2E_MANAGED_IMAGE_COHORT_RECEIPT;
+  env.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON = JSON.stringify(catalog);
+  const observed = { ...workload, sourceRevision: candidate };
+  await artifacts.writeJson("spark-sandbox-image.json", observed);
+  return { directory, env, observed };
+}
+
+it("qualifies the ARM64 candidate catalog and installed sandbox image", async () => {
+  const { directory, env, observed } = await candidateFixture("linux/arm64");
+  expect(sparkVllmQualificationReceipt(directory, env)).toMatchObject({
+    managedImageRevision: candidate,
+    workload: observed,
+  });
+});
+
+it.each([
+  { platform: "linux/amd64", revision: candidate, error: /platform/ },
+  { platform: "linux/arm64", revision: imageRevision, error: /revision/ },
+] as const)(
+  "rejects a candidate catalog with the wrong $error",
+  async ({ platform, revision, error }) => {
+    const { directory, env } = await candidateFixture(platform);
+    env.SPARK_CATALOG_REVISION = revision;
+    expect(() => sparkVllmQualificationReceipt(directory, env)).toThrow(error);
+  },
+);
+
+it("rejects a different durable sandbox image on the physical run", async () => {
+  const { directory, artifacts, env, workload } = await fixture();
+  await artifacts.writeJson("spark-sandbox-image.json", {
+    ...workload,
+    reference: workload.reference.replaceAll("b".repeat(64), "e".repeat(64)),
+  });
+  expect(() => sparkVllmQualificationReceipt(directory, env)).toThrow(/sandbox image/);
 });
 
 it("writes the canonical qualification file through the workflow CLI entrypoint", async () => {
@@ -130,6 +209,9 @@ it.each([
 });
 
 it.each([
+  "vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 --max-model-len 32768 --max-num-seqs 1 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.5 --load-format safetensors --safetensors-load-strategy lazy --max-model-len=262144 --max-num-seqs 2",
+  boundedCommand.replace("lazy --max-num-seqs 2", "lazy --max-model-len=262144 --max-num-seqs 2"),
+  boundedCommand.replace("lazy --max-num-seqs 2", "lazy --max_model_len 262144 --max-num-seqs 2"),
   boundedCommand.replace("32768", "262144"),
   boundedCommand.replace(" --max-num-seqs 2", ""),
   boundedCommand + " --max-num-seqs 1",

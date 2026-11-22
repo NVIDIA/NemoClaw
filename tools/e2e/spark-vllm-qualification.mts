@@ -3,10 +3,15 @@
 
 import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { createPrivateRegularFile, readPrivateRegularFile } from "./private-file.mts";
+
+const { MANAGED_IMAGE_REPOSITORIES, parseManagedImageContractV1 } = createRequire(import.meta.url)(
+  "../../src/lib/onboard/managed-image/contract.ts",
+) as typeof import("../../src/lib/onboard/managed-image/contract.ts");
 
 export const SPARK_VLLM_TARGET = "spark-vllm-extra-arguments";
 export const SPARK_OBSERVATIONS_ARTIFACT =
@@ -21,7 +26,7 @@ export const SPARK_RECEIPT_UPLOAD = {
   },
 };
 export const SPARK_VLLM_JOB_IF =
-  "${{ !cancelled() && needs['base-image-publication'].result == 'success' && needs['base-image-publication'].outputs.managed_image_revision != '' && needs['generate-matrix'].result == 'success' && needs['package-openshell-sdk'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.allow_dgx_spark_runner_queue && inputs.checkout_repository == github.repository && inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.workflow_sha == github.workflow_sha && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'spark-vllm-extra-arguments') && ((inputs.jobs == 'spark-vllm-extra-arguments' && inputs.targets == '') || (inputs.targets == 'spark-vllm-extra-arguments' && inputs.jobs == '')) }}";
+  "${{ !cancelled() && needs['base-image-publication'].result == 'success' && (needs['base-image-publication'].outputs.managed_image_revision != '' || needs['base-image-publication'].outputs.managed_image_catalog != '') && needs['generate-matrix'].result == 'success' && needs['package-openshell-sdk'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.allow_dgx_spark_runner_queue && inputs.checkout_repository == github.repository && inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.workflow_sha == github.workflow_sha && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'spark-vllm-extra-arguments') && ((inputs.jobs == 'spark-vllm-extra-arguments' && inputs.targets == '') || (inputs.targets == 'spark-vllm-extra-arguments' && inputs.jobs == '')) }}";
 
 type RecordValue = Record<string, unknown>;
 function record(value: unknown): RecordValue {
@@ -32,32 +37,84 @@ function readJson(file: string): RecordValue {
   return record(JSON.parse(readPrivateRegularFile(file, { maxBytes: 1024 * 1024 })!));
 }
 
-/** Compare the inspected launch with the bounded profile independently of the installer. */
+const boundedSparkLaunch = [
+  "export HF_HOME=/root/.cache/huggingface && export HF_HUB_OFFLINE=1 && export TRANSFORMERS_OFFLINE=1",
+  "pip install vllm[fastsafetensors]",
+  [
+    "vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 --tensor-parallel-size 1 --pipeline-parallel-size 1",
+    "--data-parallel-size 1 --port 8000 --max-model-len 32768 --revision 491c2f1ea524c639598bf8fa787a93fed5a6fbce",
+    "--served-model-name nvidia/Qwen3.6-35B-A3B-NVFP4 --gpu-memory-utilization 0.5 --dtype auto --quantization modelopt",
+    "--kv-cache-dtype fp8 --attention-backend flashinfer --moe-backend marlin --max-num-seqs 1 --max-num-batched-tokens 4096",
+    "--enable-chunked-prefill --async-scheduling --enable-prefix-caching --enable-auto-tool-choice --tool-call-parser qwen3_coder",
+    "--reasoning-parser qwen3 --load-format safetensors --safetensors-load-strategy lazy --max-num-seqs 2",
+  ].join(" "),
+].join(" && ");
+
+/** The reviewed scenario has one exact recipe, environment and operator override. */
 export function hasBoundedSparkCommand(command: unknown): boolean {
-  if (typeof command !== "string") return false;
-  const launch = command.split(" && ").at(-1) ?? "";
-  const tokens = launch.split(" ");
-  const flags = [
-    ["--max-model-len", "32768"],
-    ["--max-num-batched-tokens", "4096"],
-    ["--gpu-memory-utilization", "0.5"],
-    ["--load-format", "safetensors"],
-    ["--safetensors-load-strategy", "lazy"],
-  ] as const;
-  return (
-    launch.startsWith("vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 ") &&
-    flags.every(([flag, value]) => tokens[tokens.lastIndexOf(flag) + 1] === value) &&
-    tokens[tokens.indexOf("--max-num-seqs") + 1] === "1" &&
-    launch.endsWith(" --max-num-seqs 2")
+  return command === boundedSparkLaunch;
+}
+
+/** Resolve the ARM64 workload from the trusted publication job's mutually exclusive outputs. */
+function sparkImageAuthority(env: NodeJS.ProcessEnv, candidateSha: string) {
+  const revision = env.E2E_MANAGED_IMAGE_REVISION;
+  const cohort = env.E2E_MANAGED_IMAGE_COHORT_RECEIPT;
+  const catalog = env.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON;
+  const agent = "openclaw";
+  const platform = "linux/arm64";
+  if (catalog) {
+    assert(!cohort && !revision, "conflicting Spark image authorities");
+    const contract = parseManagedImageContractV1(
+      record(JSON.parse(catalog))[agent],
+      agent,
+      platform,
+    );
+    assert.equal(
+      contract.source.revision,
+      env.SPARK_CATALOG_REVISION || candidateSha,
+      "candidate catalog revision mismatch",
+    );
+    return {
+      imageAuthority: contract,
+      workload: {
+        agent,
+        platform,
+        reference: contract.reference,
+        sourceCohort: contract.source.cohort,
+        sourceRevision: contract.source.revision,
+      },
+    };
+  }
+  assert(revision && /^[a-f0-9]{40}$/u.test(revision) && cohort, "missing Spark cohort authority");
+  const receipt = record(JSON.parse(cohort));
+  assert.equal(receipt.kind, "nemoclaw-managed-image-cohort-receipt-v1");
+  assert.equal(receipt.revision, revision, "qualification image authority mismatch");
+  assert.equal(receipt.cohort, `ghrun-${receipt.runId}-${receipt.runAttempt}`);
+  const reference = record(record(receipt.images)[agent])[platform];
+  const prefix = `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:`;
+  assert(
+    typeof reference === "string" &&
+      reference.startsWith(prefix) &&
+      /^[a-f0-9]{64}$/u.test(reference.slice(prefix.length)),
+    "invalid ARM64 OpenClaw image",
   );
+  return {
+    imageAuthority: receipt,
+    workload: {
+      agent,
+      platform,
+      reference,
+      sourceCohort: receipt.cohort,
+      sourceRevision: revision,
+    },
+  };
 }
 
 /** Check existing live artifacts; never turn a skipped test or incomplete cleanup into proof. */
 export function sparkVllmQualificationReceipt(directory: string, env: NodeJS.ProcessEnv) {
   const candidateSha = env.NEMOCLAW_E2E_EXPECTED_SHA ?? "";
-  const managedImageRevision = env.E2E_MANAGED_IMAGE_REVISION ?? "";
   const workflowSha = env.SPARK_VLLM_WORKFLOW_SHA ?? "";
-  for (const sha of [candidateSha, managedImageRevision, workflowSha]) {
+  for (const sha of [candidateSha, workflowSha]) {
     assert(
       /^[a-f0-9]{40}$/u.test(sha),
       "qualification requires exact candidate, image and workflow revisions",
@@ -156,17 +213,17 @@ export function sparkVllmQualificationReceipt(directory: string, env: NodeJS.Pro
     /^[a-f0-9]{64}$/u.test(String(containerId)),
     "qualification requires the installed container identity",
   );
-  const imageAuthority = record(JSON.parse(env.E2E_MANAGED_IMAGE_COHORT_RECEIPT ?? ""));
-  assert.equal(imageAuthority.kind, "nemoclaw-managed-image-cohort-receipt-v1");
-  assert.equal(
-    imageAuthority.revision,
-    managedImageRevision,
-    "qualification image authority mismatch",
+  const { imageAuthority, workload } = sparkImageAuthority(env, candidateSha);
+  assert.deepEqual(
+    readJson(path.join(scenario, "spark-sandbox-image.json")),
+    workload,
+    "durable Spark sandbox image differs from the verified ARM64 publication",
   );
   return {
     kind: "nemoclaw-spark-vllm-qualification-v1",
     candidateSha,
-    managedImageRevision,
+    managedImageRevision: workload.sourceRevision,
+    workload,
     workflowSha,
     runId: env.GITHUB_RUN_ID,
     runAttempt: env.GITHUB_RUN_ATTEMPT,
@@ -347,6 +404,9 @@ export function validateSparkVllmWorkflowBoundary(workflow: unknown): string[] {
           "${{ needs.base-image-publication.outputs.managed_image_revision }}",
         E2E_MANAGED_IMAGE_COHORT_RECEIPT:
           "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON:
+          "${{ needs.base-image-publication.outputs.managed_image_catalog }}",
+        SPARK_CATALOG_REVISION: "${{ inputs.managed_image_revision || inputs.checkout_sha }}",
         SPARK_VLLM_WORKFLOW_SHA: "${{ github.workflow_sha }}",
       },
       steps: [

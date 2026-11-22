@@ -2504,7 +2504,10 @@ A trusted candidate catalog is an alternative in the GitHub Actions live-E2E con
 Clear `E2E_MANAGED_IMAGE_REVISION` and `E2E_MANAGED_IMAGE_COHORT_RECEIPT` before selecting this alternative.
 For a file catalog, set `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG` to its filename and `NEMOCLAW_E2E_MANAGED_IMAGE_REVISION` to the verified publication source commit.
 For inline JSON, set `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON` to the catalog contents instead; do not set both catalog variables.
-Verify that the catalog source revision matches the requested managed-image revision.
+Verify that the catalog contains the shipped agents' `linux/arm64` contracts and that each source revision matches the requested managed-image revision.
+For an image-changing PR, the protected Spark dispatch obtains these contracts from the successful managed-images PR run for that revision.
+Check the run and attempt, the `managed-pr-contract-arm64-<run-id>-<agent>` artifacts and the immutable OpenClaw image reference before approving the hardware run.
+A missing ARM64 publication blocks qualification. The regular AMD64 catalog cannot qualify a Spark.
 On a standalone host outside that Actions context, use the cohort receipt above.
 Both Spark variants require the durable sandbox workload receipt to match the selected authority before runtime and inference probes.
 
@@ -2532,12 +2535,12 @@ public image/model access, adequate model-cache storage, and no pre-existing `ne
 Candidate dependency manifests must match the trusted workflow revision.
 No provider or registry credentials are supplied to the scenario.
 The job retains the existing real-memory requirement, 65-minute scenario and identity-bound cleanup within its 95-minute setup/execution/upload deadline.
-If the job fails or is interrupted, inspect the retained cleanup receipt and reconcile owned resources before another run.
+If onboarding is interrupted before an identity can be captured, cleanup rechecks the named resource. It records a failure if ownership or absence cannot be established. Reconcile the named resource before another run.
 
 The `spark-vllm-observations-<run-id>-<attempt>` artifact contains raw installation, inspected-command, health, sandbox inference,
 publication-denial and egress-denial results, `risk-signal.json`, and `cleanup.json`.
 A separate GitHub-hosted job checks out the validator at the workflow SHA and downloads the observations for that run and attempt.
-It checks the memory tier, inspected command, candidate-bound test result and cleanup, then publishes `spark-vllm-qualification.json`
+It checks the memory tier, exact launch command, durable ARM64 sandbox image against the selected publication, candidate-bound test result and cleanup, then publishes `spark-vllm-qualification.json`
 in `spark-vllm-receipt-<run-id>-<attempt>`. A failed-job rerun needs fresh observations from the physical job for the new attempt.
 The normal result reporter includes the selected job; missing or skipped results remain unresolved.
 These are reviewed-run artifacts, not authenticated hardware attestation.

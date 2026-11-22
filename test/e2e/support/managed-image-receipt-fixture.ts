@@ -77,10 +77,16 @@ export function selectedEnvironment(home: string): NodeJS.ProcessEnv {
   };
 }
 
-export function candidateCatalogEnvironment(home: string): NodeJS.ProcessEnv {
+export function candidateCatalogEnvironment(
+  home: string,
+  platform: "linux/amd64" | "linux/arm64" = "linux/amd64",
+): NodeJS.ProcessEnv {
   const catalog = Object.fromEntries(
     SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => {
-      const reference = CATALOG_REFERENCES[agent];
+      const reference =
+        agent === "openclaw" && platform === "linux/arm64"
+          ? ARM64_REFERENCE
+          : CATALOG_REFERENCES[agent];
       return [
         agent,
         {
@@ -89,7 +95,7 @@ export function candidateCatalogEnvironment(home: string): NodeJS.ProcessEnv {
           contractVersion: MANAGED_IMAGE_CONTRACT_VERSION,
           digest: reference.slice(reference.indexOf("@") + 1),
           image: MANAGED_IMAGE_REPOSITORIES[agent],
-          platform: "linux/amd64",
+          platform,
           reference,
           source: {
             cohort: COHORT,

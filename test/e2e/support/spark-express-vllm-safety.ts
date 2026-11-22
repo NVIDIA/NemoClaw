@@ -15,6 +15,27 @@ export type SandboxInspection =
   | { readonly kind: "absent" }
   | { readonly kind: "present"; readonly id: string };
 
+export async function cleanupCapturedSparkResource(
+  resource: string,
+  capturedId: string | null,
+  inspection: SandboxInspection,
+  remove: (capturedId: string, currentId: string) => Promise<void>,
+): Promise<void> {
+  if (inspection.kind === "absent") return;
+  if (!capturedId) {
+    throw new Error(
+      `Cannot establish ownership of ${resource} after onboarding; leaving it for reconciliation.`,
+    );
+  }
+  await remove(capturedId, inspection.id);
+}
+
+export function inspectDockerContainerIdentity(result: CommandExitResult): SandboxInspection {
+  return classifyDockerContainerInspection(result) === "absent"
+    ? { kind: "absent" }
+    : { kind: "present", id: result.stdout.trim() };
+}
+
 export function assertLocalDockerEnvironment(env: NodeJS.ProcessEnv): void {
   const host = String(env.DOCKER_HOST ?? "").trim();
   const context = String(env.DOCKER_CONTEXT ?? "").trim();

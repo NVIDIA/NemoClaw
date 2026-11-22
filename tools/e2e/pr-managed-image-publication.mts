@@ -353,6 +353,8 @@ export async function resolvePrManagedImageCatalog(
     readonly managedImageSha?: string;
     readonly outputPath: string;
     readonly platform?: ManagedImagePlatform;
+    readonly jobs?: string;
+    readonly targets?: string;
     readonly prNumber: number;
     readonly token: string;
     readonly workflowSource: string;
@@ -364,7 +366,12 @@ export async function resolvePrManagedImageCatalog(
   downloadArtifact: (identity: BoundArtifactIdentity) => Promise<Buffer> = (identity) =>
     downloadBoundArtifact(identity, input.token, { log: console.error }),
 ): Promise<PrManagedImageSelection> {
-  const platform = input.platform ?? "linux/amd64";
+  const spark =
+    (input.jobs === "spark-vllm-extra-arguments" && !input.targets) ||
+    (input.targets === "spark-vllm-extra-arguments" && !input.jobs);
+  const platform = input.platform ?? (spark ? "linux/arm64" : "linux/amd64");
+  if (spark && platform !== "linux/arm64")
+    throw new Error("Spark qualification requires linux/arm64 managed images");
   if (!isManagedImagePlatform(platform)) throw new Error("unsupported managed-image platform");
   if (!SHA_PATTERN.test(input.baseSha) || !SHA_PATTERN.test(input.candidateSha)) {
     throw new Error("PR base and candidate SHAs are required");
@@ -442,8 +449,9 @@ function requiredInteger(value: string | undefined, label: string): number {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
-  const platform = env.MANAGED_IMAGE_PLATFORM ?? "linux/amd64";
-  if (!isManagedImagePlatform(platform)) throw new Error("unsupported managed-image platform");
+  const platform = env.MANAGED_IMAGE_PLATFORM;
+  if (platform !== undefined && !isManagedImagePlatform(platform))
+    throw new Error("unsupported managed-image platform");
   if (argv[0] === "assemble") {
     if (argv.length < 4) {
       throw new Error("expected candidate SHA, output path, and managed-image contract paths");
@@ -469,6 +477,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     managedImageSha: env.MANAGED_IMAGE_SHA || undefined,
     outputPath: argv[0],
     platform,
+    jobs: env.PR_E2E_JOBS,
+    targets: env.PR_E2E_TARGETS,
     prNumber: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
     token: env.GITHUB_TOKEN ?? "",
     workflowSource: fs.readFileSync(BASE_IMAGE_WORKFLOW_PATH, "utf8"),

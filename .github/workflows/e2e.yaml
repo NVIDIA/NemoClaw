@@ -295,6 +295,8 @@ jobs:
           CANDIDATE_SHA: ${{ inputs.checkout_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           MANAGED_IMAGE_SHA: ${{ inputs.managed_image_revision }}
+          PR_E2E_JOBS: ${{ inputs.jobs }}
+          PR_E2E_TARGETS: ${{ inputs.targets }}
           PR_NUMBER: ${{ inputs.pr_number }}
         shell: bash
         run: |
@@ -330,7 +332,7 @@ jobs:
                 exit 1
               }
               printf 'catalog=%s\n' "$catalog" >>"$GITHUB_OUTPUT"
-              echo "::notice::Jetson dispatch is unavailable because the exact PR managed-image catalog qualifies linux/amd64 only."
+              echo "::notice::Using verified candidate managed-image contracts for the selected platform."
               ;;
             *) echo "::error::PR managed-image selection is invalid" >&2; exit 1 ;;
           esac
@@ -6734,7 +6736,7 @@ jobs:
 
   spark-vllm-extra-arguments:
     needs: [base-image-publication, generate-matrix, package-openshell-sdk]
-    if: ${{ !cancelled() && needs['base-image-publication'].result == 'success' && needs['base-image-publication'].outputs.managed_image_revision != '' && needs['generate-matrix'].result == 'success' && needs['package-openshell-sdk'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.allow_dgx_spark_runner_queue && inputs.checkout_repository == github.repository && inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.workflow_sha == github.workflow_sha && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'spark-vllm-extra-arguments') && ((inputs.jobs == 'spark-vllm-extra-arguments' && inputs.targets == '') || (inputs.targets == 'spark-vllm-extra-arguments' && inputs.jobs == '')) }}
+    if: ${{ !cancelled() && needs['base-image-publication'].result == 'success' && (needs['base-image-publication'].outputs.managed_image_revision != '' || needs['base-image-publication'].outputs.managed_image_catalog != '') && needs['generate-matrix'].result == 'success' && needs['package-openshell-sdk'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.allow_dgx_spark_runner_queue && inputs.checkout_repository == github.repository && inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.workflow_sha == github.workflow_sha && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'spark-vllm-extra-arguments') && ((inputs.jobs == 'spark-vllm-extra-arguments' && inputs.targets == '') || (inputs.targets == 'spark-vllm-extra-arguments' && inputs.jobs == '')) }}
     runs-on: linux-arm64-gpu-dgx-spark-gb10-protected-1
     environment: approve-dgx-spark-image-qualification
     timeout-minutes: 95
@@ -6825,6 +6827,8 @@ jobs:
     env:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
+      SPARK_CATALOG_REVISION: ${{ inputs.managed_image_revision || inputs.checkout_sha }}
       SPARK_VLLM_WORKFLOW_SHA: ${{ github.workflow_sha }}
     steps:
       - name: Check out trusted Spark receipt validator

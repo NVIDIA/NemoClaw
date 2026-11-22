@@ -30,6 +30,8 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertLocalDockerEnvironment,
   classifyDockerContainerInspection,
+  cleanupCapturedSparkResource,
+  inspectDockerContainerIdentity,
   inspectSandboxIdentity,
   listedSandboxNames,
   vllmPublicationProbeUrls,
@@ -170,12 +172,16 @@ async function removeExactSandbox(
   host: HostCliClient,
   sandbox: Parameters<typeof cleanupSandbox>[1],
   sandboxName: string,
-  sandboxId: string,
+  sandboxId: string | null,
 ): Promise<void> {
   const current = await inspectSandbox(host, sandboxName, "cleanup-spark-express-sandbox-inspect");
-  return current.kind === "absent"
-    ? undefined
-    : removePresentExactSandbox(host, sandbox, sandboxName, sandboxId, current.id);
+  await cleanupCapturedSparkResource(
+    `sandbox ${sandboxName}`,
+    sandboxId,
+    current,
+    (captured, observed) =>
+      removePresentExactSandbox(host, sandbox, sandboxName, captured, observed),
+  );
 }
 
 async function removePresentExactSandbox(
@@ -219,21 +225,20 @@ async function captureOnboardFailureDiagnostics(
 
 async function removeExactVllmContainer(
   host: HostCliClient,
-  containerId: string,
+  containerId: string | null,
   artifactName: string,
 ): Promise<void> {
-  assert(
-    /^[a-f0-9]{64}$/u.test(containerId),
-    "cleanup requires the exact full Docker container ID created by this test",
-  );
   const inspection = await host.command(
     "docker",
     ["inspect", "--format", "{{.Id}}", VLLM_CONTAINER],
     { artifactName: `${artifactName}-inspect`, env: e2eEnv(), timeoutMs: 30_000 },
   );
-  return classifyDockerContainerInspection(inspection) === "absent"
-    ? undefined
-    : removePresentExactVllmContainer(host, containerId, inspection.stdout.trim(), artifactName);
+  await cleanupCapturedSparkResource(
+    VLLM_CONTAINER,
+    containerId,
+    inspectDockerContainerIdentity(inspection),
+    (captured, observed) => removePresentExactVllmContainer(host, captured, observed, artifactName),
+  );
 }
 
 async function removePresentExactVllmContainer(
@@ -242,6 +247,10 @@ async function removePresentExactVllmContainer(
   currentContainerId: string,
   artifactName: string,
 ): Promise<void> {
+  assert(
+    /^[a-f0-9]{64}$/u.test(containerId),
+    "cleanup requires the exact full Docker container ID created by this test",
+  );
   const result = await host.command(
     "bash",
     [
@@ -367,18 +376,6 @@ test.for([
         })()
       : Promise.resolve());
 
-    let createdContainerId: string | null = null;
-    let createdSandboxId: string | null = null;
-    cleanup.add(`remove ${VLLM_CONTAINER}`, () =>
-      createdContainerId
-        ? removeExactVllmContainer(host, createdContainerId, "cleanup-spark-express-vllm-container")
-        : Promise.resolve(),
-    );
-    cleanup.add(`remove sandbox ${SANDBOX_NAME}`, () =>
-      createdSandboxId
-        ? removeExactSandbox(host, sandbox, SANDBOX_NAME, createdSandboxId)
-        : Promise.resolve(),
-    );
     const existingContainer = await host.command("docker", ["inspect", VLLM_CONTAINER], {
       artifactName: "preflight-spark-express-vllm-container",
       env: e2eEnv(),
@@ -391,6 +388,14 @@ test.for([
     await assertSandboxAbsent(host, SANDBOX_NAME);
 
     progress.phase("install the selected Spark vLLM profile");
+    let createdContainerId: string | null = null;
+    let createdSandboxId: string | null = null;
+    cleanup.add(`remove ${VLLM_CONTAINER}`, () =>
+      removeExactVllmContainer(host, createdContainerId, "cleanup-spark-express-vllm-container"),
+    );
+    cleanup.add(`remove sandbox ${SANDBOX_NAME}`, () =>
+      removeExactSandbox(host, sandbox, SANDBOX_NAME, createdSandboxId),
+    );
     const onboard = await host.command(
       "bash",
       [
@@ -448,11 +453,14 @@ test.for([
       createdSandboxId,
       "onboarding did not create the expected sandbox identity",
     ).not.toBeNull();
-    assertStockManagedImageReceipt({
+    const workload = assertStockManagedImageReceipt({
+      expectedPlatform: "linux/arm64",
       environment: installEnv,
       expectedAgent: "openclaw",
       sandboxName: SANDBOX_NAME,
     });
+
+    await artifacts.writeJson("spark-sandbox-image.json", workload);
 
     progress.phase("verify selected vLLM runtime configuration");
     expect(inspectionResult.exitCode, resultText(inspectionResult)).toBe(0);

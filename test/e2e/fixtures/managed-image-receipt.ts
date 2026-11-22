@@ -198,6 +198,7 @@ export function assertManagedImageReceiptMatchesSelectedCohort(options: {
 }
 
 export interface StockManagedImageReceiptEvidence {
+  readonly platform: ManagedImagePlatform;
   readonly agent: string;
   readonly reference: string;
   readonly sourceCohort: string;
@@ -221,6 +222,7 @@ function gatewayPort(environment: NodeJS.ProcessEnv): number {
 export function assertStockManagedImageReceipt(options: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly expectedAgent?: string;
+  readonly expectedPlatform?: ManagedImagePlatform;
   readonly sandboxName: string;
 }): StockManagedImageReceiptEvidence | null {
   const environment = options.environment ?? process.env;
@@ -253,6 +255,11 @@ export function assertStockManagedImageReceipt(options: {
       `stock sandbox '${options.sandboxName}' managed-image revision does not match the selected cohort`,
     );
   }
+  if (options.expectedPlatform && authority.contract.platform !== options.expectedPlatform) {
+    throw new Error(
+      `stock sandbox '${options.sandboxName}' must use a ${options.expectedPlatform} managed image`,
+    );
+  }
   if (options.expectedAgent && authority.agent !== options.expectedAgent) {
     throw new Error(`stock sandbox '${options.sandboxName}' managed-image agent does not match`);
   }
@@ -265,6 +272,7 @@ export function assertStockManagedImageReceipt(options: {
   }
   return {
     agent: authority.agent,
+    platform: authority.contract.platform,
     reference: authority.receipt.reference,
     sourceCohort: authority.receipt.sourceCohort,
     sourceRevision: authority.receipt.sourceRevision,
