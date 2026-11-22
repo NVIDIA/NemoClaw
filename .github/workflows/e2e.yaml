@@ -6844,6 +6844,17 @@ jobs:
           node-version: 24.22.1
           package-manager-cache: false
 
+      - name: Install reviewed npm for Spark receipt validation
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+
+      - name: Install trusted Spark receipt dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build trusted serving catalog inputs
+        run: |
+          npm run build:policy-boundary
+          npm run catalog:compile
+
       - name: Download this attempt's Spark observations
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -6853,7 +6864,7 @@ jobs:
       - name: Validate Spark vLLM qualification receipt
         env:
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/spark-observations
-        run: node --no-warnings tools/e2e/spark-vllm-qualification.mts
+        run: node --no-warnings --import tsx tools/e2e/spark-vllm-qualification.mts
 
       - name: Publish the validated Spark receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

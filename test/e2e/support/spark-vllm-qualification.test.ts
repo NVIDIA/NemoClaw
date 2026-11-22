@@ -108,7 +108,7 @@ async function fixture() {
 
 it("consumes actual target-writer and risk-reporter artifacts with independent run and image identities", async () => {
   const { directory, env } = await fixture();
-  const receipt = sparkVllmQualificationReceipt(directory, env);
+  const receipt = await sparkVllmQualificationReceipt(directory, env);
   expect(receipt).toMatchObject({
     kind: "nemoclaw-spark-vllm-qualification-v1",
     candidateSha: candidate,
@@ -149,7 +149,7 @@ async function candidateFixture(platform: "linux/arm64" | "linux/amd64") {
 
 it("qualifies the ARM64 candidate catalog and installed sandbox image", async () => {
   const { directory, env, observed } = await candidateFixture("linux/arm64");
-  expect(sparkVllmQualificationReceipt(directory, env)).toMatchObject({
+  expect(await sparkVllmQualificationReceipt(directory, env)).toMatchObject({
     managedImageRevision: candidate,
     workload: observed,
   });
@@ -163,7 +163,7 @@ it.each([
   async ({ platform, revision, error }) => {
     const { directory, env } = await candidateFixture(platform);
     env.SPARK_CATALOG_REVISION = revision;
-    expect(() => sparkVllmQualificationReceipt(directory, env)).toThrow(error);
+    await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(error);
   },
 );
 
@@ -173,14 +173,14 @@ it("rejects a different durable sandbox image on the physical run", async () => 
     ...workload,
     reference: workload.reference.replaceAll("b".repeat(64), "e".repeat(64)),
   });
-  expect(() => sparkVllmQualificationReceipt(directory, env)).toThrow(/sandbox image/);
+  await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(/sandbox image/);
 });
 
 it("writes the canonical qualification file through the workflow CLI entrypoint", async () => {
   const { directory, env } = await fixture();
   const result = spawnSync(
     process.execPath,
-    ["--no-warnings", "tools/e2e/spark-vllm-qualification.mts"],
+    ["--no-warnings", "--import", "tsx", "tools/e2e/spark-vllm-qualification.mts"],
     {
       encoding: "utf8",
       timeout: 10000,
@@ -205,15 +205,15 @@ it.each([
     exitCode,
     stdout,
   });
-  expect(() => sparkVllmQualificationReceipt(directory, env)).toThrow(/memory/);
+  await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(/memory/);
 });
 
 it.each([
-  "vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 --max-model-len 32768 --max-num-seqs 1 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.5 --load-format safetensors --safetensors-load-strategy lazy --max-model-len=262144 --max-num-seqs 2",
-  boundedCommand.replace("lazy --max-num-seqs 2", "lazy --max-model-len=262144 --max-num-seqs 2"),
-  boundedCommand.replace("lazy --max-num-seqs 2", "lazy --max_model_len 262144 --max-num-seqs 2"),
-  boundedCommand.replace("32768", "262144"),
-  boundedCommand.replace(" --max-num-seqs 2", ""),
+  `${boundedCommand} && true`,
+  boundedCommand + " --max-model-len=262144",
+  boundedCommand + " --max_model_len 262144",
+  boundedCommand.replace(/--max-model-len \d+/u, "--max-model-len 0"),
+  boundedCommand.replace(/ --max-num-seqs 2$/u, ""),
   boundedCommand + " --max-num-seqs 1",
 ])(
   "rejects an inspected command that loses the bounded recipe or final override",
@@ -223,7 +223,7 @@ it.each([
       exitCode: 0,
       stdout: JSON.stringify([{ Id: "d".repeat(64), Config: { Cmd: ["-lc", command] } }]),
     });
-    expect(() => sparkVllmQualificationReceipt(directory, env)).toThrow(/command/);
+    await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(/command/);
   },
 );
 
@@ -284,7 +284,7 @@ it.each<[string, (proof: Proof) => void | Promise<unknown>]>([
   const proof = await fixture();
   await mutate(proof);
   writeFileSync(path.join(proof.directory, "risk-signal.json"), JSON.stringify(proof.signal));
-  expect(() => sparkVllmQualificationReceipt(proof.directory, proof.env)).toThrow();
+  await expect(sparkVllmQualificationReceipt(proof.directory, proof.env)).rejects.toThrow();
 });
 
 const readWorkflow = () => YAML.parse(readFileSync(".github/workflows/e2e.yaml", "utf8"));
@@ -375,7 +375,8 @@ it.each<[string, (job: Job) => void]>([
   [
     "candidate loader",
     (job) => {
-      step(job, "Validate Spark vLLM qualification receipt").run += " --import tsx";
+      step(job, "Validate Spark vLLM qualification receipt").run =
+        "node --import ./candidate-loader.mjs tools/e2e/spark-vllm-qualification.mts";
     },
   ],
   [

@@ -37,22 +37,32 @@ function readJson(file: string): RecordValue {
   return record(JSON.parse(readPrivateRegularFile(file, { maxBytes: 1024 * 1024 })!));
 }
 
-const boundedSparkLaunch = [
-  "export HF_HOME=/root/.cache/huggingface && export HF_HUB_OFFLINE=1 && export TRANSFORMERS_OFFLINE=1",
-  "pip install vllm[fastsafetensors]",
-  [
-    "vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 --tensor-parallel-size 1 --pipeline-parallel-size 1",
-    "--data-parallel-size 1 --port 8000 --max-model-len 32768 --revision 491c2f1ea524c639598bf8fa787a93fed5a6fbce",
-    "--served-model-name nvidia/Qwen3.6-35B-A3B-NVFP4 --gpu-memory-utilization 0.5 --dtype auto --quantization modelopt",
-    "--kv-cache-dtype fp8 --attention-backend flashinfer --moe-backend marlin --max-num-seqs 1 --max-num-batched-tokens 4096",
-    "--enable-chunked-prefill --async-scheduling --enable-prefix-caching --enable-auto-tool-choice --tool-call-parser qwen3_coder",
-    "--reasoning-parser qwen3 --load-format safetensors --safetensors-load-strategy lazy --max-num-seqs 2",
-  ].join(" "),
-].join(" && ");
+export const SPARK_EXTRA_ARGS = '["--max-num-seqs","2"]';
 
-/** The reviewed scenario has one exact recipe, environment and operator override. */
-export function hasBoundedSparkCommand(command: unknown): boolean {
-  return command === boundedSparkLaunch;
+export async function boundedSparkVllmProfilePlan() {
+  const { loadManagedInferenceCatalog } =
+    await import("../../src/lib/inference/serving/catalog-loader.ts");
+  const { isHostLocalInferenceServingRecipe } =
+    await import("../../src/lib/inference/serving/adapter-registry.ts");
+  const catalog = loadManagedInferenceCatalog();
+  const preset = catalog.presets.find(
+    ({ metadata }) => metadata.id === "vllm.dgx-spark-gb10.single-64gb.qwen3-6-35b-a3b-nvfp4",
+  );
+  const recipe = catalog.recipes.find(
+    ({ metadata }) => metadata.id === preset?.spec.plan.recipeRef,
+  );
+  if (!preset || !recipe || !isHostLocalInferenceServingRecipe(recipe)) return undefined;
+  return {
+    catalogDigest: catalog.catalogDigest,
+    preset,
+    recipe,
+    presetDigest: catalog.sources.find(
+      (source) => source.kind === "ServingPreset" && source.id === preset.metadata.id,
+    )!.digest,
+    recipeDigest: catalog.sources.find(
+      (source) => source.kind === "ServingRecipe" && source.id === recipe.metadata.id,
+    )!.digest,
+  };
 }
 
 /** Resolve the ARM64 workload from the trusted publication job's mutually exclusive outputs. */
@@ -111,7 +121,7 @@ function sparkImageAuthority(env: NodeJS.ProcessEnv, candidateSha: string) {
 }
 
 /** Check existing live artifacts; never turn a skipped test or incomplete cleanup into proof. */
-export function sparkVllmQualificationReceipt(directory: string, env: NodeJS.ProcessEnv) {
+export async function sparkVllmQualificationReceipt(directory: string, env: NodeJS.ProcessEnv) {
   const candidateSha = env.NEMOCLAW_E2E_EXPECTED_SHA ?? "";
   const workflowSha = env.SPARK_VLLM_WORKFLOW_SHA ?? "";
   for (const sha of [candidateSha, workflowSha]) {
@@ -172,7 +182,10 @@ export function sparkVllmQualificationReceipt(directory: string, env: NodeJS.Pro
   const result = readJson(path.join(scenario, "target-result.json"));
   assert.equal(target.id, SPARK_VLLM_TARGET);
   assert.equal(target.scenario, "extra-arguments");
-  assert.equal(target.presetId, "vllm.dgx-spark-gb10.single-64gb.qwen3-6-35b-a3b-nvfp4");
+  const plan = await boundedSparkVllmProfilePlan();
+  assert(plan, "the bounded Spark recipe is unavailable");
+  const { preset, recipe } = plan;
+  assert.equal(target.presetId, preset.metadata.id);
   assert.deepEqual(
     [result.id, result.scenario, result.status],
     [SPARK_VLLM_TARGET, "extra-arguments", "passed"],
@@ -201,11 +214,17 @@ export function sparkVllmQualificationReceipt(directory: string, env: NodeJS.Pro
   const [container] = JSON.parse(String(inspected.stdout)) as unknown[];
   assert.equal(inspected.exitCode, 0, "container inspection failed");
   const config = record(record(container).Config);
+  const { materializeHostLocalVllmModel } =
+    await import("../../src/lib/inference/serving/host-local-vllm-selection.ts");
+  const { buildVllmServeCommand } = await import("../../src/lib/inference/vllm-models.ts");
+  assert(recipe.spec.serve.directInstall, "the bounded Spark recipe needs a direct-install policy");
+  const model = materializeHostLocalVllmModel(recipe, recipe.spec.serve.directInstall, "spark");
   assert(
     Array.isArray(config.Cmd) &&
       config.Cmd.length === 2 &&
       config.Cmd[0] === "-lc" &&
-      hasBoundedSparkCommand(config.Cmd[1]),
+      config.Cmd[1] ===
+        buildVllmServeCommand(model, { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: SPARK_EXTRA_ARGS }),
     "inspected command must retain the bounded recipe and final sequence override",
   );
   const containerId = record(container).Id;
@@ -425,6 +444,18 @@ export function validateSparkVllmWorkflowBoundary(workflow: unknown): string[] {
           with: { "node-version": "24.22.1", "package-manager-cache": false },
         },
         {
+          name: "Install reviewed npm for Spark receipt validation",
+          uses: "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2",
+        },
+        {
+          name: "Install trusted Spark receipt dependencies",
+          run: "npm ci --ignore-scripts --no-audit --no-fund",
+        },
+        {
+          name: "Build trusted serving catalog inputs",
+          run: "npm run build:policy-boundary\nnpm run catalog:compile\n",
+        },
+        {
           name: "Download this attempt's Spark observations",
           uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
           with: { name: SPARK_OBSERVATIONS_ARTIFACT, path: observations },
@@ -432,7 +463,7 @@ export function validateSparkVllmWorkflowBoundary(workflow: unknown): string[] {
         {
           name: "Validate Spark vLLM qualification receipt",
           env: { E2E_ARTIFACT_DIR: observations },
-          run: "node --no-warnings tools/e2e/spark-vllm-qualification.mts",
+          run: "node --no-warnings --import tsx tools/e2e/spark-vllm-qualification.mts",
         },
         SPARK_RECEIPT_UPLOAD,
       ],
@@ -445,7 +476,7 @@ export function validateSparkVllmWorkflowBoundary(workflow: unknown): string[] {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const directory = process.env.E2E_ARTIFACT_DIR ?? "";
   assert(path.isAbsolute(directory), "qualification requires an absolute artifact directory");
-  const receipt = sparkVllmQualificationReceipt(directory, process.env);
+  const receipt = await sparkVllmQualificationReceipt(directory, process.env);
   createPrivateRegularFile(
     path.join(directory, "spark-vllm-qualification.json"),
     `${JSON.stringify(receipt, null, 2)}\n`,

@@ -4,13 +4,12 @@
 /** Exercises the DGX Spark and Station Express vLLM paths on physical hardware. */
 
 import assert from "node:assert/strict";
-import { hasBoundedSparkCommand } from "../../../tools/e2e/spark-vllm-qualification.mts";
-
-import { isHostLocalInferenceServingRecipe } from "../../../src/lib/inference/serving/adapter-registry.ts";
 import {
-  loadManagedInferenceCatalog,
-  loadServingCatalog,
-} from "../../../src/lib/inference/serving/catalog-loader.ts";
+  boundedSparkVllmProfilePlan,
+  SPARK_EXTRA_ARGS,
+} from "../../../tools/e2e/spark-vllm-qualification.mts";
+
+import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
 import { resolveManagedVllmBridgeHost } from "../../../src/lib/inference/serving/vllm-host-local-network.ts";
 import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
@@ -99,31 +98,6 @@ function e2eEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_VLLM_PORT: "",
     OPENSHELL_GATEWAY: "nemoclaw",
     ...extra,
-  };
-}
-
-function boundedSparkVllmProfilePlan() {
-  const catalog = loadManagedInferenceCatalog();
-  const preset = catalog.presets.find(
-    ({ metadata }) => metadata.id === "vllm.dgx-spark-gb10.single-64gb.qwen3-6-35b-a3b-nvfp4",
-  );
-  const recipe = catalog.recipes.find(
-    ({ metadata }) => metadata.id === preset?.spec.plan.recipeRef,
-  );
-  assert(
-    preset && recipe && isHostLocalInferenceServingRecipe(recipe),
-    "the bounded Spark recipe is unavailable",
-  );
-  return {
-    catalogDigest: catalog.catalogDigest,
-    preset,
-    recipe,
-    presetDigest: catalog.sources.find(
-      (source) => source.kind === "ServingPreset" && source.id === preset.metadata.id,
-    )!.digest,
-    recipeDigest: catalog.sources.find(
-      (source) => source.kind === "ServingRecipe" && source.id === recipe.metadata.id,
-    )!.digest,
   };
 }
 
@@ -301,11 +275,12 @@ test.for([
       extraArguments
         ? {
             NEMOCLAW_PROVIDER: "install-vllm",
-            NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-num-seqs","2"]',
+            NEMOCLAW_VLLM_EXTRA_ARGS_JSON: SPARK_EXTRA_ARGS,
           }
         : {},
     );
-    const plan = extraArguments ? boundedSparkVllmProfilePlan() : vllmProfilePlan();
+    const plan = extraArguments ? await boundedSparkVllmProfilePlan() : vllmProfilePlan();
+    assert(plan, "the bounded Spark recipe is unavailable");
     const baseProfile = detectVllmProfile({ platform: "spark" });
     assert(baseProfile, "the DGX Spark vLLM base profile is unavailable");
     const materialized = materializeHostLocalVllmSelection(
@@ -470,10 +445,7 @@ test.for([
     expect(inspection.Config.Entrypoint).toEqual(["/bin/bash"]);
     expect(inspection.Config.Cmd[0]).toBe("-lc");
     const command = inspection.Config.Cmd[1];
-    const matchesRecipe = extraArguments
-      ? hasBoundedSparkCommand(command)
-      : command === buildVllmServeCommand(materialized.model, installEnv);
-    expect(matchesRecipe, command).toBe(true);
+    expect(command).toBe(buildVllmServeCommand(materialized.model, installEnv));
     expect(inspection.Config.Labels).toMatchObject({
       "com.nvidia.nemoclaw.managed-vllm": "true",
     });
