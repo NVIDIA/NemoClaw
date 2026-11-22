@@ -3,11 +3,14 @@
 
 import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import { createServer } from "node:http";
 import os from "node:os";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 
 import { afterEach, describe, expect, test } from "vitest";
 
+import { ownChildProcess } from "../../helpers/child-process-lifecycle.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import {
   startTestProgress,
@@ -115,6 +118,47 @@ describe("observed E2E child process", () => {
       expect.stringContaining("child lifecycle 1: started"),
       expect.stringContaining(`child lifecycle 1: ${outcome}`),
     ]);
+  });
+
+  test("reports an owned server exit when another server keeps its endpoint healthy", async () => {
+    const server = createServer((_request, response) => response.end("ready"));
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address() as AddressInfo;
+    const lines: string[] = [];
+    const progress = trackedProgress(
+      "observed server ownership",
+      ["start owned server", "verify owned server outcome"],
+      { logLine: (line) => lines.push(line) },
+    );
+    const child = spawnObservedChild(
+      process.execPath,
+      [
+        "-e",
+        "require('node:http').createServer().on('error', () => process.exit(7)).listen(Number(process.argv[1]), '127.0.0.1')",
+        String(address.port),
+      ],
+      { activityLabel: "command: owned-server", progress, spawn: { stdio: "ignore" } },
+    );
+    const owner = ownChildProcess(child, { gracefulTimeoutMs: 1_000, forceTimeoutMs: 1_000 });
+    try {
+      await expect(waitForClose(child)).resolves.toEqual({ code: 7, signal: null });
+      const response = await fetch(`http://127.0.0.1:${address.port}`);
+      expect(response.status).toBe(200);
+      await response.arrayBuffer();
+      expect(child.exitCode).toBe(7);
+      expect(lifecycleLines(lines).at(-1)).toContain("exited-nonzero");
+    } finally {
+      try {
+        await owner.terminate();
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    }
   });
 
   test("keeps a post-launch process error distinct from a spawn failure", async () => {
