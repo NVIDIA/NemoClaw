@@ -123,7 +123,7 @@ async function cleanupBootstrapState(host: HostCliClient, cloneDir: string): Pro
     [
       `nemoclaw ${JSON.stringify(SANDBOX_NAME)} destroy --yes 2>/dev/null || true`,
       `openshell sandbox delete ${JSON.stringify(SANDBOX_NAME)} 2>/dev/null || true`,
-      "openshell gateway destroy -g nemoclaw 2>/dev/null || true",
+      "openshell gateway remove nemoclaw 2>/dev/null || true",
       `sudo rm -rf ${JSON.stringify(cloneDir)} 2>/dev/null || rm -rf ${JSON.stringify(cloneDir)} || true`,
     ].join("\n"),
     {
@@ -461,8 +461,8 @@ test(
       timeoutMs: 120_000,
     });
     expectExitZero(destroy, `destroy ${SANDBOX_NAME}`);
-    await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "phase-7-openshell-gateway-destroy",
+    await host.cleanupGatewayRegistration("nemoclaw", {
+      artifactName: "phase-7-openshell-gateway",
       env: pathEnv,
       timeoutMs: 60_000,
     });
