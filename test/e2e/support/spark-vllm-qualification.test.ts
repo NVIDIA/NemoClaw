@@ -47,7 +47,12 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-async function fixture() {
+async function fixture(
+  config: { Entrypoint?: string[]; Cmd: string[] } = {
+    Entrypoint: ["/bin/bash"],
+    Cmd: ["-lc", boundedCommand],
+  },
+) {
   const directory = mkdtempSync(path.join(tmpdir(), "spark-proof-"));
   roots.push(directory);
   const scenario = path.join(directory, "scenario");
@@ -70,7 +75,7 @@ async function fixture() {
   });
   await artifacts.writeJson("shell/spark-express-vllm-container-inspect.result.json", {
     exitCode: 0,
-    stdout: JSON.stringify([{ Id: "d".repeat(64), Config: { Cmd: ["-lc", boundedCommand] } }]),
+    stdout: JSON.stringify([{ Id: "d".repeat(64), Config: config }]),
   });
   const signal = buildRiskSignal(
     {
@@ -218,12 +223,16 @@ it.each([
 ])(
   "rejects an inspected command that loses the bounded recipe or final override",
   async (command) => {
-    const { artifacts, directory, env } = await fixture();
-    await artifacts.writeJson("shell/spark-express-vllm-container-inspect.result.json", {
-      exitCode: 0,
-      stdout: JSON.stringify([{ Id: "d".repeat(64), Config: { Cmd: ["-lc", command] } }]),
-    });
+    const { directory, env } = await fixture({ Entrypoint: ["/bin/bash"], Cmd: ["-lc", command] });
     await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(/command/);
+  },
+);
+
+it.each([{}, { Entrypoint: ["/bin/sh"] }, { Entrypoint: ["/bin/bash", "-n"] }])(
+  "rejects an otherwise exact command with a non-matching entrypoint: %j",
+  async (entrypoint) => {
+    const { directory, env } = await fixture({ ...entrypoint, Cmd: ["-lc", boundedCommand] });
+    await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(/entrypoint/i);
   },
 );
 

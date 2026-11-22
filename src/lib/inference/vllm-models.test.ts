@@ -776,6 +776,17 @@ describe("parseVllmExtraServeArgs", () => {
     ).toEqual(["--max-num-seqs", "2"]);
   });
 
+  it.each(["__config", "__trust_remote_code", "__gpu_memory_utilization"])(
+    "preserves the served-model name %s as a value, not an option",
+    (name) => {
+      const argv = ["--served-model-name", name];
+      expect(parseVllmExtraServeArgs({ [VLLM_EXTRA_ARGS_ENV]: JSON.stringify(argv) })).toEqual(
+        argv,
+      );
+      expect(resolveVllmGpuMemoryUtilization(0.7, argv)).toBe(0.7);
+    },
+  );
+
   it.each([
     "--trust-remote-code",
     "--trust_remote_code",

@@ -214,17 +214,15 @@ export async function sparkVllmQualificationReceipt(directory: string, env: Node
   const [container] = JSON.parse(String(inspected.stdout)) as unknown[];
   assert.equal(inspected.exitCode, 0, "container inspection failed");
   const config = record(record(container).Config);
+  assert.deepEqual(config.Entrypoint, ["/bin/bash"], "inspected entrypoint must be /bin/bash");
   const { materializeHostLocalVllmModel } =
     await import("../../src/lib/inference/serving/host-local-vllm-selection.ts");
   const { buildVllmServeCommand } = await import("../../src/lib/inference/vllm-models.ts");
   assert(recipe.spec.serve.directInstall, "the bounded Spark recipe needs a direct-install policy");
   const model = materializeHostLocalVllmModel(recipe, recipe.spec.serve.directInstall, "spark");
-  assert(
-    Array.isArray(config.Cmd) &&
-      config.Cmd.length === 2 &&
-      config.Cmd[0] === "-lc" &&
-      config.Cmd[1] ===
-        buildVllmServeCommand(model, { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: SPARK_EXTRA_ARGS }),
+  assert.deepEqual(
+    config.Cmd,
+    ["-lc", buildVllmServeCommand(model, { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: SPARK_EXTRA_ARGS })],
     "inspected command must retain the bounded recipe and final sequence override",
   );
   const containerId = record(container).Id;

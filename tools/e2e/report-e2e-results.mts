@@ -245,7 +245,12 @@ export function renderE2eReport(input: {
     .split(",")
     .map((testId) => testId.trim())
     .filter(Boolean);
-  const requestedTestIdSet = new Set(requestedTestIds);
+  const requiredTestIds = new Set(
+    requestedTestIdsCsv === "spark-vllm-extra-arguments" ||
+      requestedTargets === "spark-vllm-extra-arguments"
+      ? ["spark-vllm-extra-arguments", "spark-vllm-receipt"]
+      : requestedTestIds,
+  );
   const selectiveDispatch =
     requestedTestIds.length > 0 || Boolean(requestedTargets) || targetsRejected || testIdsRejected;
   const emoji: Record<string, string> = {
@@ -366,7 +371,7 @@ export function renderE2eReport(input: {
     .map(([name, value]) => [
       name,
       {
-        ...value,
+        result: TERMINAL_CONCLUSIONS.includes(value.result ?? "") ? value.result : "unknown",
         jobUrl: jobLinks.get(name)?.url,
         wallClockRange: wallClockRanges.get(name),
       },
@@ -385,7 +390,7 @@ export function renderE2eReport(input: {
   }
   allEntries.sort(([a], [b]) => a.localeCompare(b));
   const missingRequestedTestIds = selectorValidationPassed
-    ? requestedTestIds.filter((testId) => !allEntries.some(([name]) => name === testId))
+    ? [...requiredTestIds].filter((testId) => !allEntries.some(([name]) => name === testId))
     : [];
   const candidateSelectedJobs: string[] = validHostedCandidateContext(env, context)
     ? (JSON.parse(env.SELECTED_WORKFLOW_JOBS || "[]") as string[])
@@ -395,13 +400,13 @@ export function renderE2eReport(input: {
     (result !== "skipped" &&
       (name !== "generate-matrix" || result === "failure" || result === "cancelled"));
   const sparkSelected =
-    requestedTestIdSet.has("llama-cpp-dgx-spark-qualification") ||
+    requiredTestIds.has("llama-cpp-dgx-spark-qualification") ||
     candidateSelectedJobs.includes("llama-cpp-dgx-spark-qualification");
   const selectedEntries =
     requestedTestIds.length > 0
       ? allEntries.filter(
           ([name]) =>
-            requestedTestIdSet.has(name) ||
+            requiredTestIds.has(name) ||
             (sparkSelected &&
               (name === "llama-cpp-dgx-spark-plan" ||
                 name === "llama-cpp-dgx-spark-qualification")) ||
