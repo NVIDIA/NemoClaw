@@ -251,6 +251,9 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
         },
       },
     });
+    // Run the real emitter: a stubbed helper proves only that the action called
+    // something before exiting, not that the operator receives the guidance.
+    harness.emitProviderDetachResidualHintSpy.mockRestore();
     harness.setCrossRootGatewayCleanupOwners([
       {
         name: "cleanup-peer",
@@ -264,15 +267,22 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
     ).rejects.toThrow("process.exit(1)");
 
     // The refusal must not swallow the provider names and the detach-then-delete
-    // commands: those are the only remediation the operator gets.
-    expect(harness.emitProviderDetachResidualHintSpy).toHaveBeenCalledWith(
-      "alpha",
-      [{ name: "provider-a", output: "detach failed" }],
-      expect.any(Function),
-    );
-    expect(harness.emitProviderDetachResidualHintSpy.mock.invocationCallOrder[0]!).toBeLessThan(
-      exitSpy.mock.invocationCallOrder[0]!,
-    );
+    // commands: those are the only remediation the operator gets. Assert the text
+    // the operator actually sees rather than that a helper was called, because a
+    // stubbed helper proves the call order and nothing about the guidance.
+    expect(warnOutput(harness)).toContain("provider-a");
+    expect(warnOutput(harness)).toContain("openshell sandbox provider detach alpha <name>");
+    expect(warnOutput(harness)).toContain("openshell provider delete <name>");
+    // The success line is the other half of what the refusal used to skip, so pin
+    // it too: the operator is told the sandbox went away *and* why cleanup didn't.
+    const logOutput = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logOutput).toContain("Sandbox 'alpha' destroyed");
+    // Ordering is still the point of the fix: the residual guidance and the
+    // destroyed line both precede exit 1, so neither is dropped by the refusal.
+    const outputOrder = harness.warnSpy.mock.invocationCallOrder[0]!;
+    expect(outputOrder).toBeLessThan(exitSpy.mock.invocationCallOrder[0]!);
+    const exitOrder = exitSpy.mock.invocationCallOrder[0]!;
+    expect(harness.logSpy.mock.invocationCallOrder[0]!).toBeLessThan(exitOrder);
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
