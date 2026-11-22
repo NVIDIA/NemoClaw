@@ -22,45 +22,6 @@ type Fixture = {
   script: string;
 };
 
-const setupSystemCommandAllowlist = [
-  "awk",
-  "basename",
-  "bash",
-  "cat",
-  "dirname",
-  "find",
-  "grep",
-  "mktemp",
-  "readlink",
-  "rm",
-  "sed",
-];
-
-function pathWithoutHostHadolint(fixture: Fixture): string {
-  const systemBin = path.join(path.dirname(fixture.fakeBin), "system-bin");
-  fs.mkdirSync(systemBin, { recursive: true });
-  const hostPath = [...(process.env.PATH ?? "").split(path.delimiter), "/usr/bin", "/bin"].filter(
-    Boolean,
-  );
-
-  for (const commandName of setupSystemCommandAllowlist) {
-    const executable = hostPath
-      .map((directory) => path.join(directory, commandName))
-      .find((candidate) => {
-        try {
-          fs.accessSync(candidate, fs.constants.X_OK);
-          return fs.statSync(candidate).isFile();
-        } catch {
-          return false;
-        }
-      });
-    expect(executable, `Required test system command not found: ${commandName}`).toBeDefined();
-    fs.symlinkSync(fs.realpathSync(executable!), path.join(systemBin, commandName));
-  }
-
-  return [fixture.fakeBin, systemBin].join(path.delimiter);
-}
-
 function writeExecutable(filePath: string, contents = "#!/usr/bin/env bash\nexit 0\n"): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, contents, { mode: 0o755 });
@@ -232,7 +193,6 @@ else
 fi`,
   );
   writeTool(fakeBin, "python3", 'echo "Python 3.12.1"');
-  writeTool(fakeBin, "hadolint", 'echo "Haskell Dockerfile Linter 2.14.0"');
   writeTool(
     fakeBin,
     "git",
@@ -625,47 +585,19 @@ describe("contributor environment doctor", () => {
     expect(result.output).toContain(`Git commit signing configured (${format})`);
   });
 
-  it("reports missing commands, dependencies, artifacts, and contributor identity", () => {
+  it("reports missing dependencies, artifacts, and contributor identity", () => {
     const fixture = createFixture();
-    fs.rmSync(path.join(fixture.fakeBin, "hadolint"));
     fs.rmSync(path.join(fixture.repo, "node_modules", ".bin", "tsc"));
     fs.rmSync(fixture.pluginArtifact);
 
     const result = runDoctor(fixture, {
       FAKE_GIT_IDENTITY_MISSING: "1",
-      PATH: pathWithoutHostHadolint(fixture),
     });
 
     expect(result.status).toBe(1);
-    expect(result.output).toContain("hadolint: not found");
-    expect(result.output).toContain(
-      "Next: Install hadolint before running Dockerfile lint checks (macOS: brew install hadolint).",
-    );
     expect(result.output).toContain("Root TypeScript dependencies: missing or not executable");
     expect(result.output).toContain("Plugin build artifacts: missing");
     expect(result.output).toContain("Git contributor identity is incomplete");
-  });
-
-  it("keeps the environment ready when optional Dockerfile linting is unavailable", () => {
-    const fixture = createFixture();
-    fs.rmSync(path.join(fixture.fakeBin, "hadolint"));
-
-    const result = runDoctor(fixture, { PATH: pathWithoutHostHadolint(fixture) });
-
-    expect(result.status).toBe(0);
-    expect(result.output).toContain("! hadolint: not found");
-    expect(result.output).toContain("Ready to create a feature branch.");
-  });
-
-  it("keeps the environment ready when optional Dockerfile linting fails", () => {
-    const fixture = createFixture();
-    writeTool(path.join(fixture.fakeBin), "hadolint", "exit 1");
-
-    const result = runDoctor(fixture);
-
-    expect(result.status).toBe(0);
-    expect(result.output).toContain("! hadolint: version check failed");
-    expect(result.output).toContain("Ready to create a feature branch.");
   });
 
   it("does not ask npm to download TypeScript when plugin dependencies are missing", () => {
@@ -962,14 +894,12 @@ describe("contributor repository setup", () => {
     expect(commands).not.toContain("npm --prefix nemoclaw install");
   });
 
-  it("sets a default heap limit for setup type checks and accepts missing optional hadolint", () => {
+  it("sets a default heap limit for setup type checks", () => {
     const fixture = createFixture();
-    fs.rmSync(path.join(fixture.fakeBin, "hadolint"));
 
-    const result = runSetup(fixture, [], { PATH: pathWithoutHostHadolint(fixture) });
+    const result = runSetup(fixture);
 
     expect(result.status).toBe(0);
-    expect(result.output).toContain("! hadolint: not found");
     const commands = readCommandLog(fixture);
     expect(commands).toContain("NODE_OPTIONS=--max-old-space-size=6144");
     expect(commands).toContain("npm-plugin-build NODE_OPTIONS=--max-old-space-size=6144");
