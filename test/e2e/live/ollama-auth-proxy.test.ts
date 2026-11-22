@@ -20,12 +20,13 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
+import { hasOwnedLoopbackTcpListener } from "../fixtures/owned-tcp-listener.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const PROXY_SCRIPT = path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.mts");
-const OLLAMA_PORT = parsePort("NEMOCLAW_E2E_OLLAMA_PORT", 11434);
+const OLLAMA_PORT = parsePort("NEMOCLAW_E2E_OLLAMA_PORT", 11436);
 const PROXY_PORT = parsePort("NEMOCLAW_E2E_OLLAMA_PROXY_PORT", 11435);
 const MODEL = process.env.NEMOCLAW_E2E_OLLAMA_PROXY_MODEL ?? "qwen2.5:0.5b";
 const LIVE_TIMEOUT_MS = 35 * 60_000;
@@ -226,8 +227,6 @@ test(
       ],
     });
 
-    expect(fs.existsSync(PROXY_SCRIPT), `proxy script missing: ${PROXY_SCRIPT}`).toBe(true);
-
     const tokenRoot = await mkdtemp(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-"));
     const tokenFile = path.join(tokenRoot, ".nemoclaw", "ollama-proxy-token");
     let ollama: ChildProcess | undefined;
@@ -277,19 +276,6 @@ test(
       await expectCommandZero(install, "install Ollama");
     }
 
-    await host.command(
-      "bash",
-      [
-        "-lc",
-        "systemctl --user stop ollama 2>/dev/null || true; sudo -n systemctl stop ollama 2>/dev/null || true; pkill -f 'ollama [s]erve' 2>/dev/null || true",
-      ],
-      {
-        artifactName: "phase-2-stop-existing-ollama",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-
     ollama = spawnLogged(
       "ollama",
       ["serve"],
@@ -299,7 +285,13 @@ test(
       progress,
       "ollama-serve",
     );
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    await expect
+      .poll(() => hasOwnedLoopbackTcpListener(ollama.pid, OLLAMA_PORT), {
+        timeout: 3_000,
+        interval: 50,
+        message: `Ollama must own 127.0.0.1:${OLLAMA_PORT}. If occupied, choose a free NEMOCLAW_E2E_OLLAMA_PORT; existing listeners are preserved.`,
+      })
+      .toBe(true);
     const tagsStatus = await curlStatus(host, `http://127.0.0.1:${OLLAMA_PORT}/api/tags`, {
       artifactName: "phase-2-ollama-tags-status",
     });

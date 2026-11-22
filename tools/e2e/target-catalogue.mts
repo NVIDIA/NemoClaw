@@ -1236,7 +1236,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: false,
     exposeCliBin: false,
     environment: {
-      NEMOCLAW_E2E_OLLAMA_PORT: "11434",
+      NEMOCLAW_E2E_OLLAMA_PORT: "11436",
       NEMOCLAW_E2E_OLLAMA_PROXY_PORT: "11435",
     },
   }),

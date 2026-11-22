@@ -120,7 +120,7 @@ describe("observed E2E child process", () => {
     ]);
   });
 
-  test("reports an owned server exit when another server keeps its endpoint healthy", async () => {
+  test("keeps an unbound owned server distinct from another healthy listener", async () => {
     const server = createServer((_request, response) => response.end("ready"));
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -137,17 +137,33 @@ describe("observed E2E child process", () => {
       process.execPath,
       [
         "-e",
-        "require('node:http').createServer().on('error', () => process.exit(7)).listen(Number(process.argv[1]), '127.0.0.1')",
+        "process.on('message', () => require('node:http').createServer().on('error', () => process.exit(7)).listen(Number(process.argv[1]), '127.0.0.1')); process.send('ready')",
         String(address.port),
       ],
-      { activityLabel: "command: owned-server", progress, spawn: { stdio: "ignore" } },
+      {
+        activityLabel: "command: owned-server",
+        progress,
+        spawn: { stdio: ["ignore", "ignore", "ignore", "ipc"] },
+      },
     );
     const owner = ownChildProcess(child, { gracefulTimeoutMs: 1_000, forceTimeoutMs: 1_000 });
     try {
-      await expect(waitForClose(child)).resolves.toEqual({ code: 7, signal: null });
+      await new Promise<void>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("message", () => resolve());
+      });
       const response = await fetch(`http://127.0.0.1:${address.port}`);
       expect(response.status).toBe(200);
       await response.arrayBuffer();
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+      const closed = waitForClose(child);
+      child.send!("bind");
+      await expect(closed).resolves.toEqual({ code: 7, signal: null });
+      await owner.terminate();
+      const preserved = await fetch(`http://127.0.0.1:${address.port}`);
+      expect(preserved.status).toBe(200);
+      await preserved.arrayBuffer();
       expect(child.exitCode).toBe(7);
       expect(lifecycleLines(lines).at(-1)).toContain("exited-nonzero");
     } finally {
