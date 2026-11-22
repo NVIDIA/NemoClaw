@@ -204,6 +204,7 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "llama-cpp-dgx-spark-qualification",
   "dgx-station-express",
+  "spark-vllm-extra-arguments",
   "hermes-e2e",
   "hermes-gpu-startup",
   "jetson-nvmap-gpu",
@@ -218,6 +219,7 @@ const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
 const NO_IMAGE_E2E_JOBS = new Set([
   "llama-cpp-dgx-spark-qualification",
   "dgx-station-express",
+  "spark-vllm-extra-arguments",
   "external-gateway-health",
   "staging-brev-launchable",
   "staging-brev-launchable-identity",
@@ -2128,7 +2130,7 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && (inputs.checkout_sha == inputs.base_sha && format('pr-{0}-base-{1}-jobs-{2}-targets-{3}', inputs.pr_number, inputs.base_sha, toJSON(inputs.jobs), toJSON(inputs.targets)) || format('pr-{0}-candidate', inputs.pr_number)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ (inputs.jobs == 'llama-cpp-dgx-spark-qualification' || inputs.jobs == 'spark-vllm-extra-arguments' || inputs.targets == 'spark-vllm-extra-arguments') && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && (inputs.checkout_sha == inputs.base_sha && format('pr-{0}-base-{1}-jobs-{2}-targets-{3}', inputs.pr_number, inputs.base_sha, toJSON(inputs.jobs), toJSON(inputs.targets)) || format('pr-{0}-candidate', inputs.pr_number)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
   if (concurrency.group !== expectedGroup) {
     errors.push(
       "workflow concurrency must isolate baseline comparisons and each Launchable dispatch",

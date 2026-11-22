@@ -21,8 +21,10 @@ import {
   REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
 } from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 
+import { validateSparkVllmWorkflowBoundary } from "./spark-vllm-qualification.mts";
+
 export const MANUAL_PR_CANCEL_IN_PROGRESS =
-  "${{ inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}";
+  "${{ inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',spark-vllm-extra-arguments,') && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -725,6 +727,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
             ((step.name === "Check out trusted Spark plan compiler" ||
               step.name === "Check out trusted Spark qualification harness") &&
               step.with?.ref === "${{ github.workflow_sha }}"))) ||
+        (jobName === "spark-vllm-extra-arguments" &&
+          step.name === "Check out trusted Spark receipt validator" &&
+          step.with?.repository === "NVIDIA/NemoClaw" &&
+          step.with?.ref === "${{ github.workflow_sha }}" &&
+          step.with?.path === ".trusted-spark" &&
+          step.with?.["persist-credentials"] === false) ||
         trustedCompilerCheckout ||
         trustedHermesFixtureCheckout ||
         trustedPortablePodmanCleanupCheckout ||
@@ -1128,6 +1136,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
 }
 
 const STOCK_ONBOARDING_JOBS = [
+  "spark-vllm-extra-arguments",
   "live",
   "mcp-bridge",
   "openshell-credential-generation-window",
@@ -1368,7 +1377,7 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       if (
         job.if !==
-        "${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification')))) }}"
+        "${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'spark-vllm-extra-arguments')))) }}"
       ) {
         errors.push("report-to-pr must run only for manual workflow dispatches");
       }
@@ -1836,6 +1845,7 @@ export function validateE2eOperationsWorkflow(workflow: OperationsWorkflow): str
   );
   errors.push(...validateBaseImagePublicationGate(workflow));
   errors.push(...validateStockOnboardingPublicationBoundary(workflow));
+  errors.push(...validateSparkVllmWorkflowBoundary(workflow));
   validateManualPrDispatch(errors, workflow);
   validateSparkQualificationBoundary(errors, workflow);
   validatePrGateEvidenceProducers(errors, workflow);

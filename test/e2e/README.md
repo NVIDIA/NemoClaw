@@ -2518,8 +2518,29 @@ A passing `spark-express-vllm` target establishes that option 2 selects the fixe
 The extra-arguments case compares the real container command with the bounded recipe and appended sequence override.
 Fast installer tests own the selected-profile output, 32,768-token context and argument-order assertions.
 Each case keeps the existing 65-minute test deadline and identity-bound cleanup.
-Both Spark variants are standalone hardware tests.
-The workflow and planner do not select `spark-vllm-extra-arguments`.
+The fixed-profile variant remains standalone.
+The extra-arguments variant also has an explicit-only hosted job and target, `spark-vllm-extra-arguments`.
+After this workflow and receipt consumer land on trusted `main`, use the [manual PR procedure](../../.agents/skills/nemoclaw-maintainer-e2e/references/manual-pr.md)
+with that exact job or target alone, `allow_dgx_spark_runner_queue=true`, and the exact candidate, base, workflow and managed-image identities.
+The protected environment `approve-dgx-spark-image-qualification` approves execution of the reviewed candidate CLI and scenario on
+`linux-arm64-gpu-dgx-spark-gb10-protected-1`. Review the candidate before granting that approval.
+This expands that environment beyond the existing inert-data llama.cpp qualification; the llama.cpp job remains unchanged.
+Both jobs share one non-cancelling hardware concurrency group.
+
+The Spark runner must be a prepared ARM64 GB10 host with Docker GPU support, the reviewed OpenShell CLI and gateway,
+public image/model access, adequate model-cache storage, and no pre-existing `nemoclaw-vllm` container or `e2e-spark-vllm` sandbox.
+Candidate dependency manifests must match the trusted workflow revision.
+No provider or registry credentials are supplied to the scenario.
+The job retains the existing real-memory requirement, 65-minute scenario and identity-bound cleanup within its 95-minute setup/execution/upload deadline.
+If the job fails or is interrupted, inspect the retained cleanup receipt and reconcile owned resources before another run.
+
+The `e2e-spark-vllm-extra-arguments` artifact contains raw installation, inspected-command, health, sandbox inference,
+publication-denial and egress-denial results, `risk-signal.json`, and `cleanup.json`.
+The trusted receipt consumer requires one passing candidate-bound scenario and successful cleanup before writing
+`spark-vllm-qualification.json` with the workflow/run, candidate, managed-image authority, memory and container identity.
+The normal result reporter includes the selected job; missing or skipped results remain unresolved.
+These are reviewed-run artifacts, not authenticated hardware attestation.
+A local check or standalone run cannot replace the required post-publication physical receipt or the other jobs in the generated risk plan.
 The command below runs the extra-arguments case directly on a physical Spark reporting at least 60 GB and less than 64 GB.
 A standalone result does not establish hosted qualification.
 Keep the independently verified image authority exported before running this standalone command:

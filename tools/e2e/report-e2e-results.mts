@@ -105,7 +105,8 @@ function validHostedCandidateContext(env: ReportEnv, context: ReportContext): bo
     env.MATRIX_RESULT === "success" &&
     Array.isArray(selectedJobs) &&
     (selectedJobs.includes("catalogue-hosted-inference") ||
-      selectedJobs.includes("llama-cpp-dgx-spark-qualification")) &&
+      selectedJobs.includes("llama-cpp-dgx-spark-qualification") ||
+      selectedJobs.includes("spark-vllm-extra-arguments")) &&
     env.JOB_CHECKOUT_REPOSITORY === "NVIDIA/NemoClaw" &&
     Boolean(env.JOB_PR_NUMBER) &&
     [env.JOB_CHECKOUT_SHA, env.JOB_BASE_SHA, env.JOB_WORKFLOW_SHA].every((sha) =>
@@ -386,8 +387,11 @@ export function renderE2eReport(input: {
   const missingRequestedTestIds = selectorValidationPassed
     ? requestedTestIds.filter((testId) => !allEntries.some(([name]) => name === testId))
     : [];
+  const candidateSelectedJobs: string[] = validHostedCandidateContext(env, context)
+    ? (JSON.parse(env.SELECTED_WORKFLOW_JOBS || "[]") as string[])
+    : [];
   const isSelectiveReportEntry = ([name, { result }]: [string, ReportEntry]) =>
-    (name === "catalogue-hosted-inference" && validHostedCandidateContext(env, context)) ||
+    candidateSelectedJobs.includes(name) ||
     (result !== "skipped" &&
       (name !== "generate-matrix" || result === "failure" || result === "cancelled"));
   const sparkSelected =
@@ -404,7 +408,7 @@ export function renderE2eReport(input: {
             (sparkSelected &&
               (name === "llama-cpp-dgx-spark-plan" ||
                 name === "llama-cpp-dgx-spark-qualification")) ||
-            (name === "catalogue-hosted-inference" && validHostedCandidateContext(env, context)),
+            candidateSelectedJobs.includes(name),
         )
       : selectiveDispatch
         ? allEntries.filter(isSelectiveReportEntry)

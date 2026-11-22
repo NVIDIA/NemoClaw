@@ -8,12 +8,24 @@ import {
   selectedWorkflowJobs,
 } from "../../../tools/e2e/workflow-plan.mts";
 
-it.each(["jobs", "targets"] as const)("rejects premature Spark dispatch through %s", (selector) => {
-  expect(() => buildE2eWorkflowPlan({ [selector]: "spark-vllm-extra-arguments" })).toThrow(
-    /Unknown.*spark-vllm-extra-arguments/,
-  );
-  const plan = buildE2eWorkflowPlan();
-  expect(selectedWorkflowJobs(plan)).not.toContain("spark-vllm-extra-arguments");
-  expect(plan.explicitOnlyJobs).not.toContain("spark-vllm-extra-arguments");
-  expect(releaseRequiredWorkflowJobs()).not.toContain("spark-vllm-extra-arguments");
+const target = "spark-vllm-extra-arguments";
+
+it.each(["jobs", "targets"] as const)(
+  "selects only the physical Spark scenario through %s",
+  (selector) => {
+    const plan = buildE2eWorkflowPlan({ [selector]: target });
+    expect(selectedWorkflowJobs(plan)).toEqual([target]);
+    expect(plan.explicitOnlyJobs).toContain(target);
+    expect(selectedWorkflowJobs(buildE2eWorkflowPlan())).not.toContain(target);
+    expect(releaseRequiredWorkflowJobs()).not.toContain(target);
+  },
+);
+
+it.each([
+  { jobs: `${target},cloud-onboard` },
+  { targets: `${target},dgx-station-express` },
+  { jobs: target, targets: target },
+  { jobs: `${target},${target}` },
+])("rejects mixed or repeated Spark dispatch %j", (selectors) => {
+  expect(() => buildE2eWorkflowPlan(selectors)).toThrow(/must be selected by itself|Duplicate/);
 });

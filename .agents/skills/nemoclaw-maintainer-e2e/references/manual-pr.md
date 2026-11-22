@@ -68,6 +68,11 @@ HEAD_OWNER_TYPE="$(jq -r .head.repo.owner.type <<<"$PR_JSON")"
 A same-repository PR can use the full candidate plan and credential profiles.
 The controller runs default-enabled jobs for empty selectors. This procedure requires an explicit, authorized job or target selector.
 
+The `spark-vllm-extra-arguments` job or target requires selection alone,
+`allow_dgx_spark_runner_queue=true`, a prepared physical 60-to-under-64-GB Spark, and protected
+environment approval for reviewed candidate-code execution. Follow its [execution contract](../../../../test/e2e/README.md#dgx-spark-express-vllm) for runner prerequisites and retained proof.
+The workflow and receipt consumer must already exist on trusted `main`; candidate changes cannot enable their own route.
+
 Jetson and Launchable runs require a branch in `NVIDIA/NemoClaw`. Jetson also requires
 `allow_jetson_dispatch=true` and the reviewed service configuration in
 [Jetson Dispatch Controller](../../../../test/e2e/docs/jetson-dispatch.md).
@@ -145,11 +150,13 @@ save_dispatch_intent() {
     --arg owner "$E2E_CLEANUP_OWNER" --arg cleanup "$E2E_CLEANUP_OBLIGATION" \
     --arg cost "$E2E_COST_BOUNDS" --argjson jetson "$jetson" \
     --argjson launchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
+    --argjson spark "${ALLOW_DGX_SPARK_RUNNER_QUEUE:-false}" \
     '{phase:$phase,prNumber:$pr,checkoutSha:$checkout,repository:$repository,
       baseSha:$base,workflowSha:$workflow,jobs:$jobs,targets:$targets,
       correlationId:$correlation,budgetKey:$budget,cleanupOwner:$owner,
       cleanupObligation:$cleanup,costBounds:$cost,inferenceMode:"mock",
-      allowJetsonDispatch:$jetson,includeStagingBrevLaunchable:$launchable}')"
+      allowJetsonDispatch:$jetson,includeStagingBrevLaunchable:$launchable}
+      + (if $spark then {allowDgxSparkRunnerQueue:true} else {} end)')"
   jq -e --arg key "manualE2E.authorization.${budget}" --argjson action "$action" '
     (.identities[$key] | fromjson) == ($action | del(.correlationId))
   ' <<<"$view" >/dev/null || {
@@ -237,6 +244,8 @@ E2E_COST_BOUNDS="${E2E_COST_BOUNDS:?Use the recorded cost bounds}"
 E2E_JOBS="${E2E_JOBS?Set the jobs verified against recorded authorization}"
 E2E_TARGETS="${E2E_TARGETS?Set the targets verified against recorded authorization}"
 test -n "${E2E_JOBS//[[:space:]]/}${E2E_TARGETS//[[:space:]]/}"
+ALLOW_DGX_SPARK_RUNNER_QUEUE="${ALLOW_DGX_SPARK_RUNNER_QUEUE:-false}"
+[[ "$ALLOW_DGX_SPARK_RUNNER_QUEUE" = true || "$ALLOW_DGX_SPARK_RUNNER_QUEUE" = false ]]
 ALLOW_JETSON_DISPATCH="${ALLOW_JETSON_DISPATCH:?Set the recorded credential flag}"
 INCLUDE_STAGING_BREV_LAUNCHABLE="${INCLUDE_STAGING_BREV_LAUNCHABLE:?Set the recorded credential flag}"
 [[ "$ALLOW_JETSON_DISPATCH" = true || "$ALLOW_JETSON_DISPATCH" = false ]]
@@ -253,6 +262,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
+  -f "allow_dgx_spark_runner_queue=${ALLOW_DGX_SPARK_RUNNER_QUEUE}" \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${HEAD_SHA}" \
   -f "checkout_repository=${HEAD_REPOSITORY}" \
@@ -350,6 +360,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f allow_jetson_dispatch=false \
+  -f allow_dgx_spark_runner_queue=false \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${BASE_SHA}" \
   -f "checkout_repository=${BASE_REPOSITORY}" \

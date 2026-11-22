@@ -1139,3 +1139,30 @@ it.each(["failure", "skipped"])(
     expect(report.body).not.toContain("All requested tests passed");
   },
 );
+
+it.each(["success", "failure", "skipped", "unknown"])(
+  "reports exact-candidate Spark vLLM %s without hiding missing proof",
+  async (result) => {
+    const env = {
+      ...HOSTED_CANDIDATE_ENV,
+      SELECTED_WORKFLOW_JOBS: '["spark-vllm-extra-arguments"]',
+      JOB_TARGETS: "",
+      JOBS: "spark-vllm-extra-arguments",
+    };
+    const core = { info: vi.fn(), setFailed: vi.fn(), warning: vi.fn() };
+    const github = reportGithub({ get: vi.fn(async () => ({ data: hostedCandidatePr() })) });
+    expect(await resolveReportPr({ github, context: REPORT_CONTEXT, core, env })).toBe(12886);
+    const report = renderE2eReport({
+      context: REPORT_CONTEXT,
+      env,
+      apiJobs: [],
+      apiJobsLoaded: true,
+      needs: { "generate-matrix": { result: "success" }, "spark-vllm-extra-arguments": { result } },
+    });
+    expect(report.body).toContain("spark-vllm-extra-arguments");
+    expect(report.body).toContain(` ${result} |`);
+    expect(report.body).toContain(`**Candidate commit:** \`${"a".repeat(40)}\``);
+    expect(report.body.includes("All requested tests passed")).toBe(result === "success");
+    expect(core.setFailed).not.toHaveBeenCalled();
+  },
+);

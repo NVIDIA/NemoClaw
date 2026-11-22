@@ -95,6 +95,8 @@ describe("manual PR comparison scheduling", () => {
     { checkout_sha: "", base_sha: "" },
     { allow_jetson_dispatch: true },
     { jobs: "llama-cpp-dgx-spark-qualification" },
+    { jobs: "spark-vllm-extra-arguments" },
+    { targets: "spark-vllm-extra-arguments" },
     { jobs: "dgx-station-express" },
     { jobs: "staging-brev-launchable" },
     { jobs: "staging-brev-launchable-identity" },
