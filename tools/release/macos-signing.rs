@@ -268,6 +268,34 @@ fn inventory(bundle: &Path) -> Result<Vec<String>> {
     }
     Ok(names)
 }
+/// The identifier codesign gives a program: 3S signs the submitted file, and
+/// codesign names it after the file without its extension. A reverse-DNS name
+/// per program, without a provider's version, keeps each program's designated
+/// requirement distinct and unchanged across releases.
+fn signing_identifier(name: &str) -> Result<String> {
+    let file = Path::new(name)
+        .file_name()
+        .and_then(|file| file.to_str())
+        .ok_or("Invalid program name")?;
+    let stem = file
+        .match_indices("_v")
+        .find(|(index, _)| file[index + 2..].starts_with(|c: char| c.is_ascii_digit()))
+        .map_or(file, |(index, _)| &file[..index]);
+    if stem.is_empty() {
+        return Err("Invalid program name".into());
+    }
+    let stem: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    Ok(format!("com.nvidia.nemoclaw.{stem}"))
+}
 fn prepare_executable(source: &Path, destination: &Path) -> Result<()> {
     fs::copy(source, destination).map_err(|_| "Could not copy executable")?;
     // The private runner extracts under umask 077; 3S must receive a normal
@@ -289,7 +317,8 @@ fn sign(bundle: &Path) -> Result<()> {
     let (id, secret, token) = credentials()?;
     drop(token);
     for name in names {
-        let input = scratch.0.join("payload.command");
+        let member = format!("{}.command", signing_identifier(&name)?);
+        let input = scratch.0.join(&member);
         let archive = scratch.0.join("input.zip");
         let signed = scratch.0.join("signed.zip");
         prepare_executable(&bundle.join(&name), &input)?;
@@ -298,7 +327,7 @@ fn sign(bundle: &Path) -> Result<()> {
                 .current_dir(&scratch.0)
                 .args(["-q", "-X"])
                 .arg(&archive)
-                .arg("payload.command"),
+                .arg(&member),
             None,
         )?;
         capture(
@@ -334,14 +363,11 @@ fn sign(bundle: &Path) -> Result<()> {
         )?;
         // Read just the expected member; never extract service-returned paths.
         let listing = capture(Command::new("unzip").arg("-Z1").arg(&signed), None)?;
-        if listing != b"payload.command\n" {
+        if listing != format!("{member}\n").as_bytes() {
             return Err("Unexpected 3S archive layout".into());
         }
         let bytes = capture(
-            Command::new("unzip")
-                .arg("-p")
-                .arg(&signed)
-                .arg("payload.command"),
+            Command::new("unzip").arg("-p").arg(&signed).arg(&member),
             None,
         )?;
         if bytes.len() < 4 {
@@ -494,6 +520,25 @@ mod tests {
     fn inventory_cannot_escape_bundle() {
         assert!(safe_program(Path::new("."), "../outside").is_err());
         assert!(safe_program(Path::new("."), "/tmp/outside").is_err());
+    }
+    #[test]
+    fn each_program_gets_its_own_versionless_signing_identifier() {
+        for (name, identifier) in [
+            ("bin/nemoclaw", "com.nvidia.nemoclaw.nemoclaw"),
+            ("libexec/tofu", "com.nvidia.nemoclaw.tofu"),
+            (
+                "providers/registry.opentofu.org/nvidia/fabric/0.1.0-rc.1/darwin_arm64/terraform-provider-fabric_v0.1.0-rc.1",
+                "com.nvidia.nemoclaw.terraform-provider-fabric",
+            ),
+            (
+                "providers/registry.opentofu.org/kreuzwerker/docker/4.7.0/darwin_arm64/terraform-provider-docker_v4.7.0",
+                "com.nvidia.nemoclaw.terraform-provider-docker",
+            ),
+            ("bin/odd_name.x", "com.nvidia.nemoclaw.odd-name-x"),
+        ] {
+            assert_eq!(signing_identifier(name).unwrap(), identifier);
+        }
+        assert!(signing_identifier("bin/_v1").is_err());
     }
 
     #[test]

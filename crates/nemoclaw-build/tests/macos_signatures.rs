@@ -40,11 +40,19 @@ case "$requirement" in
     [ -z "$notarization" ] || exit 2
     expected=signed ;;
 esac
+ident=
+case "$requirement" in
+  'identifier "'*)
+    ident=${requirement#'identifier "'}
+    ident=${ident%%'"'*}
+    requirement=${requirement#*'" and '} ;;
+esac
 team=$(printf '%s\n' "$requirement" | sed -n 's/^anchor apple generic and certificate leaf\[subject.OU\] = "\(.*\)"$/\1/p')
 [ -n "$team" ] || { echo "unexpected requirement $requirement" >&2; exit 2; }
+signer="$team${ident:+ $ident}"
 actual=$(cat "$file")
-if [ "$expected" = signed ] && [ "$actual" = "notarized $team" ]; then exit 0; fi
-[ "$actual" = "$expected $team" ] || { echo "$file: test-requirement: code failed to satisfy specified code requirement(s)" >&2; exit 3; }
+if [ "$expected" = signed ] && [ "$actual" = "notarized $signer" ]; then exit 0; fi
+[ "$actual" = "$expected $signer" ] || { echo "$file: test-requirement: code failed to satisfy specified code requirement(s)" >&2; exit 3; }
 "#;
 
 const NVIDIA_TEAM: &str = "NVTEAM1234";
@@ -96,11 +104,12 @@ fn macos_verification_requires_notarized_nvidia_signatures_and_hashicorps_on_the
     let openshell = String::from(
         "providers/registry.opentofu.org/nvidia/openshell/0.1.0/darwin_arm64/terraform-provider-openshell_v0.1.0",
     );
-    let nvidia = format!("notarized {NVIDIA_TEAM}");
+    let nvidia =
+        |identifier: &str| format!("notarized {NVIDIA_TEAM} com.nvidia.nemoclaw.{identifier}");
     let signed = darwin_bundle(&[
-        ("bin/nemoclaw", &nvidia),
-        ("libexec/tofu", &nvidia),
-        (&openshell, &nvidia),
+        ("bin/nemoclaw", &nvidia("nemoclaw")),
+        ("libexec/tofu", &nvidia("tofu")),
+        (&openshell, &nvidia("terraform-provider-openshell")),
         (&helm, "notarized D38WU7D763"),
     ]);
     let output = verify_macos(signed.path());
@@ -113,10 +122,10 @@ fn macos_verification_requires_notarized_nvidia_signatures_and_hashicorps_on_the
     // OpenTofu's own ad hoc signature, and the Helm provider re-signed with
     // NVIDIA's identity in place of HashiCorp's.
     let unsigned = darwin_bundle(&[
-        ("bin/nemoclaw", &nvidia),
+        ("bin/nemoclaw", &nvidia("nemoclaw")),
         ("libexec/tofu", "adhoc"),
-        (&openshell, &nvidia),
-        (&helm, &nvidia),
+        (&openshell, &nvidia("terraform-provider-openshell")),
+        (&helm, &nvidia("terraform-provider-helm")),
     ]);
     let output = verify_macos(unsigned.path());
     let report = report(&output);
@@ -138,7 +147,7 @@ fn macos_verification_requires_notarized_nvidia_signatures_and_hashicorps_on_the
 
 #[test]
 fn macos_can_verify_signatures_without_claiming_notarization() {
-    let signature = format!("signed {NVIDIA_TEAM}");
+    let signature = format!("signed {NVIDIA_TEAM} com.nvidia.nemoclaw.nemoclaw");
     let helm =
         "providers/registry.opentofu.org/hashicorp/helm/3.1.1/darwin_arm64/terraform-provider-helm";
     let bundle = darwin_bundle(&[("bin/nemoclaw", &signature), (helm, "notarized D38WU7D763")]);
@@ -155,7 +164,12 @@ fn macos_signature_only_checks_still_reject_adhoc_and_wrong_signers() {
             .to_owned();
     for (name, signature) in [
         ("bin/nemoclaw", "adhoc"),
-        ("bin/nemoclaw", "signed WRONGTEAM"),
+        (
+            "bin/nemoclaw",
+            "signed WRONGTEAM com.nvidia.nemoclaw.nemoclaw",
+        ),
+        // One identifier for every program, as when 3S signed a file named payload.
+        ("bin/nemoclaw", "signed NVTEAM1234 payload"),
         (helm.as_str(), "signed 6KR3T733EC"),
     ] {
         let bundle = darwin_bundle(&[(name, signature)]);
