@@ -60,6 +60,7 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
     answer: 0,
     redirects: 0,
     errors: 0,
+    failedTargets: [] as Array<"efficient" | "capable" | "unexpected">,
     forbidden: 0,
     badAuth: 0,
     callerLeaked: false,
@@ -73,7 +74,7 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
   const forbiddenPort = await listen(forbidden, bindHost);
   const upstream = createServer(async (request, response) => {
     evidence.requests++;
-    // Retain only counts/booleans, never headers, bodies, or credentials in evidence.
+    // Retain counts, flags, and bounded fixture labels, never headers, bodies, or credentials.
     let text = "";
     try {
       for await (const chunk of request) {
@@ -116,6 +117,15 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
     const judge = Boolean(body.response_format);
     if (fail && !judge) {
       evidence.errors++;
+      if (evidence.failedTargets.length < 3) {
+        evidence.failedTargets.push(
+          body.model === "fixture-efficient"
+            ? "efficient"
+            : body.model === "fixture-capable"
+              ? "capable"
+              : "unexpected",
+        );
+      }
       response
         .writeHead(500, { "content-type": "application/json" })
         .end(JSON.stringify({ error: { message: `${SWITCHYARD_BODY_CANARY}:${credential}` } }));

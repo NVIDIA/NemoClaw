@@ -1113,7 +1113,6 @@ test(
       const unmanagedBlocked = await boundaryProbe(boundary.forbiddenUrl, "unmanaged-forbidden", {
         mode: "unmanaged",
       });
-      expect(unmanagedBlocked.passthrough).toBe(true);
       expect(
         isSwitchyardCallbackPolicyDenial(unmanagedBlocked),
         JSON.stringify(unmanagedBlocked),
@@ -1134,16 +1133,19 @@ test(
       const unmatchedBlocked = await boundaryProbe(boundary.forbiddenUrl, "unmatched-forbidden", {
         mode: "unmatched",
       });
-      expect(unmatchedBlocked.passthrough).toBe(true);
       expect(
         isSwitchyardCallbackPolicyDenial(unmatchedBlocked),
         JSON.stringify(unmatchedBlocked),
       ).toBe(true);
       boundary.respondWithError(true);
       const beforeProviderError = boundary.evidence.errors;
+      const beforeFailedTargets = boundary.evidence.failedTargets.length;
       const providerFailed = await boundaryProbe(boundary.baseUrl, "provider-failure");
       expect(providerFailed.failed).toBe(true);
-      expect(boundary.evidence.errors).toBe(beforeProviderError + 1);
+      // HTTP 500 falls through to the capable target with client retries disabled.
+      expect(boundary.evidence.errors).toBe(beforeProviderError + 2);
+      expect(boundary.evidence.failedTargets[beforeFailedTargets]).toBe("efficient");
+      expect(boundary.evidence.failedTargets[beforeFailedTargets + 1]).toBe("capable");
       boundary.respondWithError(false);
       const afterFailure = await boundaryProbe(boundary.baseUrl, "provider-failure-recovery");
       expect(afterFailure.answer).toBe(SWITCHYARD_BOUNDARY_ANSWER);

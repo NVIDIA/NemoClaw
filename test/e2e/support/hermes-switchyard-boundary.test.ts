@@ -57,19 +57,29 @@ test("boundary peers require the credential, expose redirect/denial witnesses, a
     expect(await forbidden.text()).toBe(SWITCHYARD_BOUNDARY_ANSWER);
     fixture.redirect(false);
     fixture.respondWithError(true);
-    const failure = await post(headers);
+    const failure = await post(headers, { model: "fixture-efficient" });
     expect(failure.status).toBe(500);
     expect(await failure.text()).toContain(SWITCHYARD_BODY_CANARY);
+    const fallbackFailure = await post(headers, { model: "fixture-capable" });
+    expect(fallbackFailure.status).toBe(500);
+    expect(await fallbackFailure.text()).toContain(SWITCHYARD_BODY_CANARY);
     expect(fixture.evidence).toEqual({
-      requests: 5,
+      requests: 6,
       judge: 1,
       answer: 1,
       redirects: 1,
-      errors: 1,
+      errors: 2,
+      failedTargets: ["efficient", "capable"],
       forbidden: 1,
       badAuth: 1,
       callerLeaked: true,
     });
+    await post(headers, { model: SWITCHYARD_CALLER_CANARY });
+    await post(headers, { model: fixture.credential });
+    expect(fixture.evidence.errors).toBe(4);
+    expect(fixture.evidence.failedTargets).toEqual(["efficient", "capable", "unexpected"]);
+    expect(JSON.stringify(fixture.evidence)).not.toContain(SWITCHYARD_CALLER_CANARY);
+    expect(JSON.stringify(fixture.evidence)).not.toContain(fixture.credential);
   } finally {
     await fixture.close();
   }
