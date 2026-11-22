@@ -199,7 +199,7 @@ test(
     timeout: LIVE_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm proxy script Node and curl prerequisites",
+        "confirm Node and curl prerequisites",
         "install and start Ollama with the test model",
         "start the tokenized Ollama auth proxy",
         "enforce proxy authentication",

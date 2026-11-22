@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { catalogueTargetsForChangedFiles } from "../../../tools/e2e/target-catalogue.mts";
+import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 
 describe("native NVIDIA target ownership", () => {
   it.each([
@@ -23,5 +24,16 @@ describe("native NVIDIA target ownership", () => {
         (target) => target.id,
       ),
     ).toContain("openclaw-inference-switch");
+  });
+});
+
+describe("Ollama target ownership", () => {
+  it("selects Ollama when its listener ownership fixture changes", () => {
+    const changedFile = "test/e2e/fixtures/owned-tcp-listener.ts";
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
+      "ollama-auth-proxy",
+    ]);
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+    expect(plan.catalogueMatrices.standard.map((row) => row.id)).toContain("ollama-auth-proxy");
   });
 });
