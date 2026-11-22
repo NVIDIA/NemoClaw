@@ -345,6 +345,10 @@ jobs:
   sign-macos:
     name: Sign the macOS CLI
     needs: [sign-macos-3s, security-controller]
+    # The Apple notary credentials live in this environment, whose deployment
+    # rule admits only release tags. The 3S job stays outside it so its Vault
+    # identity remains bound to the tag.
+    environment: release-signing
     if: >-
       !cancelled() && needs.sign-macos-3s.result == 'success' &&
       needs.security-controller.result == 'success' &&
@@ -380,7 +384,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/dist"
           tar -xf "$RUNNER_TEMP/ci/macos-3s.tar" -C "$RUNNER_TEMP/dist"
-      # Enable after Apple credentials are configured. Signing works independently.
+      # MACOS_NOTARIZATION turns this on; signing works without it.
       - name: Notarize the signed executables
         if: vars.MACOS_NOTARIZATION == 'true'
         env:
