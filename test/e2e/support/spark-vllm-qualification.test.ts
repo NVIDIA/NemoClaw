@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
-import { isHostLocalInferenceServingRecipe } from "../../../src/lib/inference/serving/adapter-registry.ts";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,8 +18,10 @@ import {
   selectedEnvironment,
 } from "./managed-image-receipt-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { SPARK_EGRESS_PROBE, vllmPublicationCurlArgs } from "./spark-express-vllm-safety.ts";
 import { buildRiskSignal } from "../../../tools/e2e/risk-signal.ts";
 import {
+  boundedSparkVllmProfilePlan,
   sparkVllmQualificationReceipt,
   validateSparkVllmWorkflowBoundary,
 } from "../../../tools/e2e/spark-vllm-qualification.mts";
@@ -32,10 +32,61 @@ const candidate = "a".repeat(40);
 const imageRevision = "b".repeat(40);
 const workflowSha = "c".repeat(40);
 const correlationId = "11111111-2222-4333-8444-555555555555";
-const recipe = loadManagedInferenceCatalog().recipes.find(
-  ({ metadata }) => metadata.id === "vllm.qwen3-6-35b-a3b-nvfp4.spark-single-64gb.v1",
-);
-assert(recipe && isHostLocalInferenceServingRecipe(recipe) && recipe.spec.serve?.directInstall);
+const plan = await boundedSparkVllmProfilePlan();
+assert(plan);
+const { recipe } = plan;
+assert(recipe.spec.serve.directInstall);
+const identity = {
+  presetId: plan.preset.metadata.id,
+  recipeId: recipe.metadata.id,
+  catalogDigest: plan.catalogDigest,
+  presetDigest: plan.presetDigest,
+  recipeDigest: plan.recipeDigest,
+};
+const probes = {
+  allowed: ["http://127.0.0.1:8000/health", "http://172.18.0.1:8000/health"],
+  denied: ["http://192.0.2.1:8000/health", "http://[::1]:8000/health"],
+  ipv6: "configured",
+};
+const exec = ["openshell", "sandbox", "exec", "-n", "e2e-spark-vllm", "--"];
+const observations = {
+  "vllm-publication-allowed": {
+    command: ["curl", ...vllmPublicationCurlArgs(probes.allowed)],
+    exitCode: 0,
+    stdout: "0 200\n0 200\n",
+  },
+  "vllm-publication-denied": {
+    command: ["curl", ...vllmPublicationCurlArgs(probes.denied)],
+    exitCode: 7,
+    stdout: "7 000\n7 000\n",
+  },
+  "inference-local-chat": {
+    command: [
+      ...exec,
+      "curl",
+      "-sS",
+      "--max-time",
+      "60",
+      "https://inference.local/v1/chat/completions",
+      "-H",
+      "Content-Type: application/json",
+      "--data-raw",
+      JSON.stringify({
+        model: recipe.spec.model.servedName,
+        messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+        max_tokens: 1024,
+      }),
+    ],
+    exitCode: 0,
+    stdout: JSON.stringify({ choices: [{ message: { content: "PONG" } }] }),
+  },
+  "unrelated-egress-denied": {
+    command: [...exec, "sh", "-lc", SPARK_EGRESS_PROBE],
+    exitCode: 0,
+    stdout: "56 403",
+  },
+};
+const probeFile = (name: string) => `shell/spark-express-${name}.result.json`;
 const boundedCommand = buildVllmServeCommand(
   materializeHostLocalVllmModel(recipe, recipe.spec.serve.directInstall, "spark"),
   {
@@ -61,10 +112,15 @@ async function fixture(
   await artifacts.target.declare({
     id: target,
     scenario: "extra-arguments",
-    presetId: "vllm.dgx-spark-gb10.single-64gb.qwen3-6-35b-a3b-nvfp4",
+    ...identity,
+    boundary:
+      "physical DGX Spark + Express fixed profile or automatic managed selection with extra arguments + real Docker vLLM + OpenShell sandbox",
     sandboxName: "e2e-spark-vllm",
   });
   await artifacts.target.complete({ id: target, scenario: "extra-arguments" });
+  await artifacts.writeJson("spark-express-vllm-publication-probes", probes);
+  for (const [name, observation] of Object.entries(observations))
+    await artifacts.writeJson(probeFile(name), observation);
   await artifacts.writeJson("cleanup.json", {
     passed: ["remove nemoclaw-vllm", "remove sandbox e2e-spark-vllm"],
     failures: [],
@@ -124,10 +180,60 @@ it("consumes actual target-writer and risk-reporter artifacts with independent r
     correlationId,
     memoryBytes: 63082733568,
     containerId: "d".repeat(64),
+    target: identity,
     cleanup: { failures: [] },
     result: { status: "passed" },
   });
 });
+
+it.each(
+  Object.keys(identity).flatMap((key) => [undefined, "different"].map((value) => ({ key, value }))),
+)("rejects target $key set to $value", async ({ key, value }) => {
+  const { directory, scenario, artifacts, env } = await fixture();
+  const declaration = JSON.parse(readFileSync(path.join(scenario, "target.json"), "utf8"));
+  await artifacts.writeJson("target.json", { ...declaration, [key]: value });
+  await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(key);
+});
+
+it.each(["spark-express-vllm-publication-probes", ...Object.keys(observations).map(probeFile)])(
+  "rejects a passing bundle missing %s",
+  async (file) => {
+    const { directory, scenario, env } = await fixture();
+    rmSync(path.join(scenario, file));
+    await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow();
+  },
+);
+
+it.each([
+  ["vllm-publication-allowed", 0, "0 200"],
+  ["vllm-publication-denied", 7, "0 200\n7 000"],
+  ["inference-local-chat", 0, JSON.stringify({ choices: [{ message: { content: " " } }] })],
+  ["unrelated-egress-denied", 0, "0 200"],
+  ["unrelated-egress-denied", 1, "56 403"],
+] as const)("rejects contradictory %s results (%i, %s)", async (name, exitCode, stdout) => {
+  const { directory, env, artifacts } = await fixture();
+  await artifacts.writeJson(probeFile(name), { ...observations[name], exitCode, stdout });
+  await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow();
+});
+
+it("requires an unintended IPv4 refusal even if the denied result has no replies", async () => {
+  const { directory, env, artifacts } = await fixture();
+  await artifacts.writeJson("spark-express-vllm-publication-probes", { ...probes, denied: [] });
+  await artifacts.writeJson(probeFile("vllm-publication-denied"), { exitCode: 7, stdout: "" });
+  await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow();
+});
+
+it.each(Object.entries(observations))(
+  "rejects a valid output from a different %s command",
+  async (name, observation) => {
+    const { directory, env, artifacts } = await fixture();
+    await artifacts.writeJson(probeFile(name), {
+      ...observation,
+      command: ["printf", observation.stdout],
+    });
+    await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow();
+  },
+);
 
 async function candidateFixture(platform: "linux/arm64" | "linux/amd64") {
   const { directory, artifacts, env, workload } = await fixture();

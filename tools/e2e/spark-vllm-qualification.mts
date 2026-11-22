@@ -4,10 +4,15 @@
 import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
 import { createRequire } from "node:module";
+import { isIP } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { createPrivateRegularFile, readPrivateRegularFile } from "./private-file.mts";
+import {
+  SPARK_EGRESS_PROBE,
+  vllmPublicationCurlArgs,
+} from "../../test/e2e/support/spark-express-vllm-safety.ts";
 
 const { MANAGED_IMAGE_REPOSITORIES, parseManagedImageContractV1 } = createRequire(import.meta.url)(
   "../../src/lib/onboard/managed-image/contract.ts",
@@ -35,6 +40,99 @@ function record(value: unknown): RecordValue {
 }
 function readJson(file: string): RecordValue {
   return record(JSON.parse(readPrivateRegularFile(file, { maxBytes: 1024 * 1024 })!));
+}
+
+function verifySparkProbes(scenario: string, sandbox: string, model: string): void {
+  function observation(name: string, exitCode: number) {
+    const {
+      command,
+      stdout,
+      exitCode: observed,
+    } = readJson(path.join(scenario, "shell", `spark-express-${name}.result.json`));
+    assert.equal(observed, exitCode, `${name}: unexpected exit code`);
+    assert(
+      typeof stdout === "string" &&
+        Array.isArray(command) &&
+        command.every((arg) => typeof arg === "string"),
+      `${name}: missing command or output`,
+    );
+    return { command, stdout: stdout.trim() };
+  }
+  const { allowed, denied, ipv6 } = readJson(
+    path.join(scenario, "spark-express-vllm-publication-probes"),
+  );
+  assert(
+    Array.isArray(allowed) && allowed.length === 2 && allowed[0] === "http://127.0.0.1:8000/health",
+    "missing loopback or bridge health probe",
+  );
+  const bridge = /^http:\/\/([0-9.]+):8000\/health$/u.exec(String(allowed[1]))?.[1];
+  assert(bridge && isIP(bridge) === 4 && !bridge.startsWith("127."), "invalid bridge health probe");
+  assert(
+    Array.isArray(denied) && denied.length > 0 && new Set(denied).size === denied.length,
+    "missing or duplicate refusal probes",
+  );
+  const deniedHosts = denied.map((url) => {
+    const match = /^http:\/\/(?:\[([^\]]+)\]|([0-9.]+)):8000\/health$/u.exec(String(url));
+    const host = match?.[1] ?? match?.[2];
+    assert(
+      host && isIP(host) === (match?.[1] ? 6 : 4) && !allowed.includes(url),
+      "invalid refusal probe",
+    );
+    return host;
+  });
+  assert(
+    deniedHosts.some((host) => isIP(host) === 4 && !host.startsWith("127.")),
+    "missing unintended IPv4 refusal probe",
+  );
+  assert.equal(ipv6, deniedHosts.some((host) => isIP(host) === 6) ? "configured" : "unconfigured");
+  for (const [name, urls, exit, line] of [
+    ["allowed", allowed, 0, "0 200"],
+    ["denied", denied, 7, "7 000"],
+  ] as const) {
+    const { command, stdout } = observation(`vllm-publication-${name}`, exit);
+    assert.deepEqual(
+      command,
+      ["curl", ...vllmPublicationCurlArgs(urls)],
+      `${name}: publication probe differs`,
+    );
+    assert.deepEqual(
+      stdout.split("\n"),
+      urls.map(() => line),
+      `${name}: unexpected publication result`,
+    );
+  }
+  function sandboxObservation(name: string) {
+    const { command, stdout } = observation(name, 0);
+    assert.equal(path.basename(command[0]), "openshell");
+    assert.deepEqual(command.slice(1, 6), ["sandbox", "exec", "-n", sandbox, "--"]);
+    return { command: command.slice(6), stdout };
+  }
+  const chat = sandboxObservation("inference-local-chat");
+  assert.equal(chat.command[0], "curl");
+  assert(chat.command.includes("https://inference.local/v1/chat/completions"));
+  const payload = chat.command.indexOf("--data-raw");
+  assert(
+    payload > 0 && record(JSON.parse(chat.command[payload + 1])).model === model,
+    "chat did not request the selected model",
+  );
+  const { choices, error } = record(JSON.parse(chat.stdout));
+  assert(
+    !error &&
+      Array.isArray(choices) &&
+      choices.some((choice) =>
+        [choice?.message?.content, choice?.text].some(
+          (text) => typeof text === "string" && text.trim(),
+        ),
+      ),
+    "sandbox chat returned no completion",
+  );
+  const egress = sandboxObservation("unrelated-egress-denied");
+  assert.deepEqual(
+    egress.command,
+    ["sh", "-lc", SPARK_EGRESS_PROBE],
+    "unrelated egress probe differs",
+  );
+  assert.equal(egress.stdout, "56 403", "sandbox egress was not denied by the proxy");
 }
 
 export const SPARK_EXTRA_ARGS = '["--max-num-seqs","2"]';
@@ -178,14 +276,23 @@ export async function sparkVllmQualificationReceipt(directory: string, env: Node
   );
   assert.equal(roots.length, 1, "qualification requires one scenario artifact directory");
   const scenario = path.join(directory, roots[0]!.name);
-  const target = readJson(path.join(scenario, "target.json"));
+  const declared = readJson(path.join(scenario, "target.json"));
   const result = readJson(path.join(scenario, "target-result.json"));
-  assert.equal(target.id, SPARK_VLLM_TARGET);
-  assert.equal(target.scenario, "extra-arguments");
   const plan = await boundedSparkVllmProfilePlan();
   assert(plan, "the bounded Spark recipe is unavailable");
   const { preset, recipe } = plan;
-  assert.equal(target.presetId, preset.metadata.id);
+  const target = {
+    id: SPARK_VLLM_TARGET,
+    scenario: "extra-arguments",
+    sandboxName: "e2e-spark-vllm",
+    presetId: preset.metadata.id,
+    recipeId: recipe.metadata.id,
+    catalogDigest: plan.catalogDigest,
+    presetDigest: plan.presetDigest,
+    recipeDigest: plan.recipeDigest,
+  };
+  for (const [key, expected] of Object.entries(target))
+    assert.equal(declared[key], expected, `Spark target ${key} differs from the trusted plan`);
   assert.deepEqual(
     [result.id, result.scenario, result.status],
     [SPARK_VLLM_TARGET, "extra-arguments", "passed"],
@@ -231,6 +338,7 @@ export async function sparkVllmQualificationReceipt(directory: string, env: Node
     "qualification requires the installed container identity",
   );
   const { imageAuthority, workload } = sparkImageAuthority(env, candidateSha);
+  verifySparkProbes(scenario, target.sandboxName, recipe.spec.model.servedName);
   assert.deepEqual(
     readJson(path.join(scenario, "spark-sandbox-image.json")),
     workload,

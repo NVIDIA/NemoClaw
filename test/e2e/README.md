@@ -2540,7 +2540,8 @@ If onboarding is interrupted before an identity can be captured, cleanup recheck
 The `spark-vllm-observations-<run-id>-<attempt>` artifact contains raw installation, inspected-command, health, sandbox inference,
 publication-denial and egress-denial results, `risk-signal.json`, and `cleanup.json`.
 A separate GitHub-hosted job checks out the validator at the workflow SHA and downloads the observations for that run and attempt.
-It checks the memory tier, exact launch command, durable ARM64 sandbox image against the selected publication, candidate-bound test result and cleanup, then publishes `spark-vllm-qualification.json`
+It checks the target against the trusted catalog, the memory tier, the exact launch command, and the ARM64 sandbox image against the selected publication.
+It requires the recorded health and refusal probes, sandbox chat and unrelated-egress denial, the candidate-bound test result, and cleanup before publishing `spark-vllm-qualification.json`
 in `spark-vllm-receipt-<run-id>-<attempt>`. A failed-job rerun needs fresh observations from the physical job for the new attempt.
 The normal result reporter includes the selected job; missing or skipped results remain unresolved.
 These are reviewed-run artifacts, not authenticated hardware attestation.

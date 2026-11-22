@@ -205,8 +205,6 @@ export function resolveHostLocalVllmSelection(
   // (#14016). A fixed recipe cannot take them, and a host the catalog cannot
   // match never could, so those cases keep using the established installer.
   const operatorServeArguments = Boolean(String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim());
-  const rejectUnlessOperatorOwned = (reason: string): HostLocalVllmSelectionResult =>
-    operatorServeArguments ? { kind: "not-selected" } : { kind: "rejected", reason };
   const readinessReports =
     options.readinessReports ??
     ([
@@ -225,6 +223,8 @@ export function resolveHostLocalVllmSelection(
         : { provider: "vllm" },
   });
   if (resolution.outcome !== "selected") {
+    if (operatorServeArguments && resolution.outcome === "no-match")
+      return { kind: "not-selected" };
     const hostFacts =
       resolution.outcome === "no-match"
         ? readinessReports[0]?.report.observations
@@ -236,21 +236,24 @@ export function resolveHostLocalVllmSelection(
             .map(({ id, value }) => sanitizeReadinessText(`${id}=${String(value)}`, 256))
             .join(", ")
         : undefined;
-    return rejectUnlessOperatorOwned(
-      hostFacts
+    return {
+      kind: "rejected",
+      reason: hostFacts
         ? `${resolution.message} Host: ${hostFacts}. Choose another inference provider or an explicitly compatible serving profile.`
         : resolution.message,
-    );
+    };
   }
   if ("topologyQualification" in resolution) {
-    return rejectUnlessOperatorOwned(
-      `Serving preset ${resolution.preset.metadata.id} requires a managed topology.`,
-    );
+    return {
+      kind: "rejected",
+      reason: `Serving preset ${resolution.preset.metadata.id} requires a managed topology.`,
+    };
   }
   if (!isHostLocalInferenceServingRecipe(resolution.recipe)) {
-    return rejectUnlessOperatorOwned(
-      `Serving preset ${resolution.preset.metadata.id} is not a host-local vLLM preset.`,
-    );
+    return {
+      kind: "rejected",
+      reason: `Serving preset ${resolution.preset.metadata.id} is not a host-local vLLM preset.`,
+    };
   }
   try {
     const vllmResolution: ResolvedHostLocalInferenceSelection = {
@@ -268,6 +271,6 @@ export function resolveHostLocalVllmSelection(
     }
     return { kind: "selected", ...materialized };
   } catch (error) {
-    return rejectUnlessOperatorOwned((error as Error).message);
+    return { kind: "rejected", reason: (error as Error).message };
   }
 }

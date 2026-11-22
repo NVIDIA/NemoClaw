@@ -28,6 +28,8 @@ import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receip
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertLocalDockerEnvironment,
+  SPARK_EGRESS_PROBE,
+  vllmPublicationCurlArgs,
   classifyDockerContainerInspection,
   cleanupCapturedSparkResource,
   inspectDockerContainerIdentity,
@@ -45,21 +47,6 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-spark-vllm";
 const VLLM_CONTAINER = "nemoclaw-vllm";
 const TEST_TIMEOUT_MS = 65 * 60_000;
 const ONBOARD_TIMEOUT_MS = 55 * 60_000;
-
-const VLLM_PUBLICATION_CURL_ARGS = [
-  "-q",
-  "--noproxy",
-  "*",
-  "--globoff",
-  "--silent",
-  "--show-error",
-  "--connect-timeout",
-  "3",
-  "--max-time",
-  "5",
-  "--write-out",
-  "%{exitcode} %{http_code}\n",
-];
 
 interface VllmContainerInspection {
   readonly Id: string;
@@ -479,32 +466,18 @@ test.for([
       resolveManagedVllmBridgeHost(undefined, buildLocalManagedVllmDockerEnv({}, publicationEnv)),
     );
     await artifacts.writeJson("spark-express-vllm-publication-probes", probes);
-    const allowed = await host.command(
-      "curl",
-      [
-        ...VLLM_PUBLICATION_CURL_ARGS,
-        ...probes.allowed.flatMap((url) => ["--output", "/dev/null", url]),
-      ],
-      {
-        artifactName: "spark-express-vllm-publication-allowed",
-        env: publicationEnv,
-        timeoutMs: 30_000,
-      },
-    );
+    const allowed = await host.command("curl", vllmPublicationCurlArgs(probes.allowed), {
+      artifactName: "spark-express-vllm-publication-allowed",
+      env: publicationEnv,
+      timeoutMs: 30_000,
+    });
     expect(allowed.exitCode, resultText(allowed)).toBe(0);
     expect(allowed.stdout.trim().split("\n")).toEqual(["0 200", "0 200"]);
-    const refused = await host.command(
-      "curl",
-      [
-        ...VLLM_PUBLICATION_CURL_ARGS,
-        ...probes.denied.flatMap((url) => ["--output", "/dev/null", url]),
-      ],
-      {
-        artifactName: "spark-express-vllm-publication-denied",
-        env: publicationEnv,
-        timeoutMs: 60_000,
-      },
-    );
+    const refused = await host.command("curl", vllmPublicationCurlArgs(probes.denied), {
+      artifactName: "spark-express-vllm-publication-denied",
+      env: publicationEnv,
+      timeoutMs: 60_000,
+    });
     expect(refused.exitCode, resultText(refused)).toBe(7);
     expect(refused.stdout.trim().split("\n")).toEqual(probes.denied.map(() => "7 000"));
 
@@ -518,9 +491,7 @@ test.for([
     );
     const denied = await sandbox.execShell(
       SANDBOX_NAME,
-      trustedSandboxShellScript(
-        "status=0; code=$(curl -sS -o /dev/null -w '%{http_connect}' --max-time 20 https://example.com/) || status=$?; printf '%s %s' \"$status\" \"$code\"",
-      ),
+      trustedSandboxShellScript(SPARK_EGRESS_PROBE),
       {
         artifactName: "spark-express-unrelated-egress-denied",
         env: e2eEnv(),
@@ -574,32 +545,18 @@ test(
           resolveManagedVllmBridgeHost(undefined, buildLocalManagedVllmDockerEnv({}, env)),
         );
         await artifacts.writeJson("station-express-vllm-publication-probes", probes);
-        const allowed = await host.command(
-          "curl",
-          [
-            ...VLLM_PUBLICATION_CURL_ARGS,
-            ...probes.allowed.flatMap((url) => ["--output", "/dev/null", url]),
-          ],
-          {
-            artifactName: "station-express-vllm-publication-allowed",
-            env,
-            timeoutMs: 30_000,
-          },
-        );
+        const allowed = await host.command("curl", vllmPublicationCurlArgs(probes.allowed), {
+          artifactName: "station-express-vllm-publication-allowed",
+          env,
+          timeoutMs: 30_000,
+        });
         expect(allowed.exitCode, resultText(allowed)).toBe(0);
         expect(allowed.stdout.trim().split("\n")).toEqual(["0 200", "0 200"]);
-        const refused = await host.command(
-          "curl",
-          [
-            ...VLLM_PUBLICATION_CURL_ARGS,
-            ...probes.denied.flatMap((url) => ["--output", "/dev/null", url]),
-          ],
-          {
-            artifactName: "station-express-vllm-publication-denied",
-            env,
-            timeoutMs: 60_000,
-          },
-        );
+        const refused = await host.command("curl", vllmPublicationCurlArgs(probes.denied), {
+          artifactName: "station-express-vllm-publication-denied",
+          env,
+          timeoutMs: 60_000,
+        });
         expect(refused.exitCode, resultText(refused)).toBe(7);
         expect(refused.stdout.trim().split("\n")).toEqual(probes.denied.map(() => "7 000"));
       },

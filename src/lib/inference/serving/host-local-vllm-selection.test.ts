@@ -322,7 +322,7 @@ describe("host-local vLLM selection", () => {
           message: "Several presets match.",
         },
       ],
-    ] as const)("falls back to the installer on %s", (_label, resolution) => {
+    ] as const)("preserves the selection outcome for %s", (_label, resolution) => {
       mocks.resolveManagedInferenceServing.mockReturnValue(resolution);
 
       expect(
@@ -331,7 +331,11 @@ describe("host-local vLLM selection", () => {
           { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: extraArguments },
           { automatic: true, readinessReports: [] },
         ),
-      ).toEqual({ kind: "not-selected" });
+      ).toEqual(
+        resolution.outcome === "no-match"
+          ? { kind: "not-selected" }
+          : { kind: "rejected", reason: resolution.message },
+      );
     });
 
     it("still rejects the same unmatched host when no arguments are set", () => {

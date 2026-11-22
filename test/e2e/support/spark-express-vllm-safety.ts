@@ -77,6 +77,27 @@ export function vllmPublicationProbeUrls(
   };
 }
 
+export function vllmPublicationCurlArgs(urls: readonly string[]): string[] {
+  return [
+    "-q",
+    "--noproxy",
+    "*",
+    "--globoff",
+    "--silent",
+    "--show-error",
+    "--connect-timeout",
+    "3",
+    "--max-time",
+    "5",
+    "--write-out",
+    "%{exitcode} %{http_code}\n",
+    ...urls.flatMap((url) => ["--output", "/dev/null", url]),
+  ];
+}
+
+export const SPARK_EGRESS_PROBE =
+  "status=0; code=$(curl -sS -o /dev/null -w '%{http_connect}' --max-time 20 https://example.com/) || status=$?; printf '%s %s' \"$status\" \"$code\"";
+
 export function classifyDockerContainerInspection(result: CommandExitResult): "absent" | "present" {
   if (result.exitCode === 0) return "present";
   if (DOCKER_NOT_FOUND_PATTERN.test(`${result.stdout}\n${result.stderr}`)) return "absent";
