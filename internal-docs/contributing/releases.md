@@ -137,9 +137,8 @@ On Windows, SmartScreen doesn't check programs that another program starts, so O
 ## Version Pins
 
 Staging attaches `version-pins.json`, which `nemoclaw-build release-pins` writes from the tag's `versions.json` and the images staging pushed, in the format that [compatibility](../../docs/references/compatibility.md#using-one-release-together) describes.
-It lists what a deployment uses: each platform's OpenTofu, Docker provider, and Helm provider archive by URL and SHA-256; the OpenShell gateway, supervisor, sandbox, and Helm chart, and the development issuer, by digest; the Fabric source archive by revision and SHA-256; and each image the release stages by index digest.
-It leaves out what only builds and tests NemoClaw: Rust, Protocol Buffers, cargo-nextest, kind and its node image, and the OpenShell CLI.
-A component that `versions.json` gains is listed only once `release-pins` selects it, and `release-pins` fails when a component it selects is missing or isn't pinned by digest or checksum.
+The command selects the components a deployment uses and leaves out what only builds and tests NemoClaw: Rust, Protocol Buffers, cargo-nextest, kind and its node image, and the OpenShell CLI.
+A component added to `versions.json` is listed only after `release-pins` selects it, and the command fails when a selected component is missing or isn't pinned by digest or checksum.
 
 Before it publishes a final release, the workflow writes the pins again with the trusted controller, from the tag's `versions.json` and the `inventory.json` that staging recorded, and fails when the draft's `version-pins.json` differs.
 

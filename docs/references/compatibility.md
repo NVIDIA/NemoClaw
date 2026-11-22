@@ -13,8 +13,8 @@ Use them together.
 Mixing releases is not supported.
 Refer to [bundle building](../build-deploy/build.md) for how a bundle pins its parts.
 
-Each release attaches `version-pins.json`, the versions and digests that a deployment of the release uses, so hand-written HCL and other installers don't need the repository's `versions.json`.
-The file's `release` field is the tag.
+Each release attaches `version-pins.json`, which lists the version and digest or checksum of each component that a deployment of the release uses, so hand-written HCL and other installers do not need the repository's `versions.json`.
+Its `release` field is the tag.
 Each entry under `components` has one pin: `image` or `chart`, a reference by digest; `archives`, each platform's release archive by `url` and `sha256`; or `source`, a source archive by `url` and `sha256`.
 Every entry except `developmentIssuer` also has a `version`.
 
@@ -26,9 +26,10 @@ Every entry except `developmentIssuer` also has a `version`.
 | `gatewayChart` | OpenShell | `chart` |
 | `developmentIssuer`, the issuer that a managed Kubernetes gateway runs for the `development` profile | None | `image` |
 | `fabric` | The Fabric source revision | `source` |
-| Each agent and runtime image that the release stages, by its name, such as `hermes` or `vllm` | The release's tag | `image` |
+| Each agent and runtime image of the release, by name, such as `hermes` or `vllm` | The release's tag | `image` |
 
-Tools that only build and test NemoClaw, such as Rust and kind, are left out, and the NemoClaw providers are in the CLI archives that `SHA256SUMS` lists.
+The file leaves out tools that only build and test NemoClaw, such as Rust and kind.
+The NemoClaw providers ship in the CLI archives, which `SHA256SUMS` lists.
 HCL can read the file with `jsondecode`, as in `jsondecode(file("version-pins.json")).components.gateway.image`.
 A final release is published only when its `version-pins.json` matches its tag's `versions.json` and the images it staged.
 

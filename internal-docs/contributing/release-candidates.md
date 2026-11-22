@@ -29,7 +29,7 @@ Bundles:
 
 Releases:
 
-- Each release attaches `version-pins.json`, the versions and digests that a deployment of it uses: OpenTofu, the Docker and Helm providers, the OpenShell images and chart, the development issuer, Fabric, and the release's own images ([#14722](https://github.com/NVIDIA/NemoClaw/issues/14722)).
+- Each release attaches `version-pins.json`, which lists the version and digest or checksum of each component that a deployment of it uses, including the release's images ([#14722](https://github.com/NVIDIA/NemoClaw/issues/14722)).
   See [compatibility](../../docs/references/compatibility.md#using-one-release-together).
   A final release is published only when the file matches its tag's `versions.json` and the images it staged.
   Before, hand-written HCL copied `versions.json` from the release's tag.
