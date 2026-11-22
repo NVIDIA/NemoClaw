@@ -29,6 +29,7 @@ import {
 import { scopeGatewayOpenshellArgs } from "../../../src/lib/adapters/openshell/gateway-scope.ts";
 import { parseOpenShellPolicy } from "../../../src/lib/adapters/openshell/policy-boundary.ts";
 import {
+  isSwitchyardCallbackPolicyDenial,
   startSwitchyardBoundaryUpstream,
   switchyardBoundaryProbe,
   SWITCHYARD_BOUNDARY_ANSWER,
@@ -1113,7 +1114,10 @@ test(
         mode: "unmanaged",
       });
       expect(unmanagedBlocked.passthrough).toBe(true);
-      expect(unmanagedBlocked.callback_status).toBe(403);
+      expect(
+        isSwitchyardCallbackPolicyDenial(unmanagedBlocked),
+        JSON.stringify(unmanagedBlocked),
+      ).toBe(true);
       const beforeWrongCallbackHandle = boundary.evidence.requests;
       const wrongCallbackHandle = await boundaryProbe(boundary.baseUrl, "unmanaged-wrong-handle", {
         mode: "unmanaged",
@@ -1131,7 +1135,10 @@ test(
         mode: "unmatched",
       });
       expect(unmatchedBlocked.passthrough).toBe(true);
-      expect(unmatchedBlocked.callback_status).toBe(403);
+      expect(
+        isSwitchyardCallbackPolicyDenial(unmatchedBlocked),
+        JSON.stringify(unmatchedBlocked),
+      ).toBe(true);
       boundary.respondWithError(true);
       const beforeProviderError = boundary.evidence.errors;
       const providerFailed = await boundaryProbe(boundary.baseUrl, "provider-failure");

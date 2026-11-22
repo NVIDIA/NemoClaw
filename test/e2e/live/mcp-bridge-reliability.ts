@@ -24,6 +24,8 @@ import {
 import { buildMcpBridgeProviderName } from "../../../src/lib/actions/sandbox/mcp-bridge-validation";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -906,6 +908,34 @@ export async function restartBridgeWithoutHostSecret(
     timeoutMs: 12 * 60_000,
   });
   assertExitZero(restart, `${artifactPrefix} mcp restart without host secret`);
+}
+
+/** Register after acquired resources so failure evidence precedes destructive cleanup. */
+export function trackMcpFailureDiagnostics(
+  cleanup: Pick<CleanupRegistry, "trackDisposable">,
+  host: HostCliClient,
+  bridge: { sandboxName: string; artifactPrefix: string },
+  toolChallenge: string,
+  capture = captureSandboxFailureDiagnostics,
+): () => void {
+  let completed = false;
+  cleanup.trackDisposable("capture OpenClaw MCP lifecycle failure diagnostics", async () => {
+    if (!completed)
+      await capture(
+        host,
+        { exitCode: 1, timedOut: false },
+        {
+          sandboxName: bridge.sandboxName,
+          artifactPrefix: `${bridge.artifactPrefix}-mcp-lifecycle`,
+          env: buildAvailabilityProbeEnv(),
+          redactionValues: [...MCP_BRIDGE_TEST_REDACTION_VALUES, toolChallenge],
+          captureOpenClawOwner: true,
+        },
+      );
+  });
+  return () => {
+    completed = true;
+  };
 }
 
 export async function rebuildWithoutMcpHostSecret(

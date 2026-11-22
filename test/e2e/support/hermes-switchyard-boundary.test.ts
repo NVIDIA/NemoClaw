@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { expect, test } from "vitest";
 import {
+  isSwitchyardCallbackPolicyDenial,
   startSwitchyardBoundaryUpstream,
   switchyardBoundaryProbe,
   SWITCHYARD_BOUNDARY_ANSWER,
@@ -118,6 +119,7 @@ sys.modules['agent'] = agent
       answer: SWITCHYARD_BOUNDARY_ANSWER,
       callback_status: null,
       callback_errno: null,
+      callback_syscall: null,
       failure_category: null,
     });
     const payload = JSON.parse(Buffer.from(args[4]!, "base64").toString());
@@ -131,13 +133,14 @@ sys.modules['agent'] = agent
 function runContinuationProbe(mode: "unmanaged" | "unmatched" | undefined, fault = "") {
   const args = switchyardBoundaryProbe("http://host.openshell.internal:12345/v1", { mode });
   const sdk = String.raw`
-import base64, io, json, os, sys, types, urllib.error, urllib.request
+import base64, io, json, os, socket, sys, types, urllib.error, urllib.request
 payload = json.loads(base64.b64decode(sys.argv[1]))
 fault = os.environ['TEST_PROBE_FAULT']
 canary = '${SWITCHYARD_BODY_CANARY}' * 10000
 class Runtime:
     def managed_execution_enabled(self): return bool(os.environ.get('TEST_RELAY_CONFIG'))
     def shutdown(self):
+        if socket.socket.connect is not fixture_connect: raise RuntimeError('Connect observer not restored')
         if fault == 'shutdown': raise RuntimeError(canary)
 class Response:
     status = 200
@@ -147,7 +150,20 @@ class Response:
         if fault == 'parse': return canary.encode()
         if fault == 'read': raise OSError(canary)
         return json.dumps({'choices': [{'message': {'content': '${SWITCHYARD_BOUNDARY_ANSWER}'}}]}).encode()
+original_connect = socket.socket.connect
+def fixture_connect(sock, address):
+    if fault in ('connect-permission', 'connect-unrelated-permission'): raise PermissionError(13, canary)
+    if fault == 'connect-refused': raise ConnectionRefusedError(111, canary)
+    if fault == 'connect-timed-out': raise TimeoutError(110, canary)
+    raise RuntimeError('Unexpected network attempt')
+socket.socket.connect = fixture_connect
 def urlopen(request, **kwargs):
+    if fault.startswith('connect-'):
+        try:
+            with socket.socket() as sock: sock.connect(('127.0.0.1', 1))
+        except OSError as error:
+            if fault == 'connect-unrelated-permission': error = PermissionError(13, canary)
+            raise urllib.error.URLError(error) from None
     if fault in ('http', 'denial'):
         status = 403 if fault == 'denial' else 503
         raise urllib.error.HTTPError(request.full_url, status, 'fixture error', {}, io.BytesIO(canary.encode()))
@@ -162,7 +178,11 @@ def urlopen(request, **kwargs):
         reason.errno = errnos[fault]
         raise urllib.error.URLError(reason)
     return Response()
-urllib.request.urlopen = urlopen
+def checked_urlopen(request, **kwargs):
+    try: return urlopen(request, **kwargs)
+    finally:
+        if socket.socket.connect is fixture_connect: raise RuntimeError('Missing connect observation')
+urllib.request.urlopen = checked_urlopen
 async def execute(capability, request, continuation):
     if fault == 'native-exception': raise RuntimeError(canary)
     if fault == 'native-error': return {'error': {'message': canary}}
@@ -199,13 +219,16 @@ function continuationProbe(mode: "unmanaged" | "unmatched" | undefined, fault = 
 test.each(["unmanaged", "unmatched"] as const)(
   "%s routing exercises the original-provider continuation",
   (mode) => {
-    expect(continuationProbe(mode)).toEqual({
+    const outcome = continuationProbe(mode);
+    expect(isSwitchyardCallbackPolicyDenial(outcome)).toBe(false);
+    expect(outcome).toEqual({
       active: mode === "unmatched",
       failed: false,
       passthrough: true,
       answer: SWITCHYARD_BOUNDARY_ANSWER,
       callback_status: 200,
       callback_errno: null,
+      callback_syscall: null,
       failure_category: null,
     });
   },
@@ -214,25 +237,33 @@ test.each(["unmanaged", "unmatched"] as const)(
 test.each(["unmanaged", "unmatched"] as const)(
   "%s callback failures expose only observed status and bounded categories",
   (mode) => {
-    expect(continuationProbe(mode, "denial")).toMatchObject({
+    const denial = continuationProbe(mode, "denial");
+    expect(isSwitchyardCallbackPolicyDenial(denial)).toBe(true);
+    expect(denial).toMatchObject({
       failed: true,
       callback_status: 403,
       failure_category: "http_error",
       answer: null,
     });
-    expect(continuationProbe(mode, "http")).toMatchObject({
+    const http = continuationProbe(mode, "http");
+    expect(isSwitchyardCallbackPolicyDenial(http)).toBe(false);
+    expect(http).toMatchObject({
       failed: true,
       callback_status: 503,
       failure_category: "http_error",
       answer: null,
     });
-    expect(continuationProbe(mode, "proxy")).toMatchObject({
+    const proxy = continuationProbe(mode, "proxy");
+    expect(isSwitchyardCallbackPolicyDenial(proxy)).toBe(true);
+    expect(proxy).toMatchObject({
       failed: true,
       callback_status: 403,
       failure_category: "proxy_connect_denied",
       answer: null,
     });
-    expect(continuationProbe(mode, "transport")).toMatchObject({
+    const transport = continuationProbe(mode, "transport");
+    expect(isSwitchyardCallbackPolicyDenial(transport)).toBe(false);
+    expect(transport).toMatchObject({
       failed: true,
       callback_status: null,
       failure_category: "transport_error",
@@ -279,6 +310,10 @@ test.each(
   (["unmanaged", "unmatched"] as const).flatMap((mode) =>
     (
       [
+        ["connect-permission", 13],
+        ["connect-unrelated-permission", 13],
+        ["connect-refused", 111],
+        ["connect-timed-out", 110],
         ["permission", 13],
         ["refused", 111],
         ["timed-out", 110],
@@ -290,10 +325,14 @@ test.each(
     ).map(([fault, errno]) => [mode, fault, errno] as const),
   ),
 )("%s callback %s retains only a bounded numeric errno", (mode, fault, errno) => {
-  expect(continuationProbe(mode, fault)).toMatchObject({
+  const outcome = continuationProbe(mode, fault);
+  expect(isSwitchyardCallbackPolicyDenial(outcome)).toBe(fault === "connect-permission");
+  expect(outcome).toMatchObject({
     failed: true,
     callback_status: null,
     callback_errno: errno,
+    callback_syscall:
+      fault.startsWith("connect-") && fault !== "connect-unrelated-permission" ? "connect" : null,
     failure_category: "transport_error",
     answer: null,
   });

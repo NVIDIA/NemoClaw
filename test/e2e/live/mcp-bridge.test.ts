@@ -70,6 +70,7 @@ import {
   runMcpProviderRewriteProbe,
   runOpenClawDeniedToolUpdateProof,
   runOpenClawPublicPinRefreshProof,
+  trackMcpFailureDiagnostics,
   restartBridgeWithoutHostSecret,
   rebuildWithoutMcpHostSecret,
   retryOpenClawBaselineScopeOnboardFailure,
@@ -988,6 +989,7 @@ test(
       "/sandbox/.mcp.json",
     ]);
 
+    const completeMcp = trackMcpFailureDiagnostics(cleanup, host, bridge, TOOL_CHALLENGE);
     progress.phase("exercise lifecycle and confirm OpenClaw bridge removal");
     const updateProof = await runOpenClawDeniedToolUpdateProof(
       host,
@@ -1062,6 +1064,7 @@ test(
       ...bridge,
       adapter: "openclaw-config",
     });
+    completeMcp();
   },
 );
 

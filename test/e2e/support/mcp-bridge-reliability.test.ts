@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { buildMcpBridgePolicyKey } from "../../../src/lib/actions/sandbox/mcp-bridge-policy-render";
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
@@ -28,6 +29,7 @@ import {
   retryAfterConcurrentAddTransientFailure,
   retryHermesGatewayDraining,
   retryOpenClawBaselineScopeOnboardFailure,
+  trackMcpFailureDiagnostics,
 } from "../live/mcp-bridge-reliability.ts";
 
 const HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
@@ -930,4 +932,52 @@ describe("MCP bridge transient classification", () => {
     expect(retry).not.toHaveBeenCalled();
     expect(wait).not.toHaveBeenCalled();
   });
+});
+
+it("captures lifecycle evidence before destruction after the test signal aborts", async () => {
+  const controller = new AbortController();
+  const cleanup = new CleanupRegistry(undefined, undefined, { testSignal: controller.signal });
+  const events: string[] = [];
+  cleanup.trackDisposable("destroy sandbox", () => {
+    events.push("destroy");
+  });
+  const capture = vi.fn(async () => {
+    events.push("capture");
+    expect(cleanup.currentSignal().aborted).toBe(false);
+  });
+  trackMcpFailureDiagnostics(
+    cleanup,
+    {} as HostCliClient,
+    { sandboxName: "e2e-mcp-bridge", artifactPrefix: "openclaw" },
+    "challenge",
+    capture,
+  );
+  controller.abort();
+  expect((await cleanup.runAll()).failures).toEqual([]);
+  expect(events).toEqual(["capture", "destroy"]);
+  expect(capture).toHaveBeenCalledWith(
+    {},
+    { exitCode: 1, timedOut: false },
+    expect.objectContaining({
+      sandboxName: "e2e-mcp-bridge",
+      artifactPrefix: "openclaw-mcp-lifecycle",
+      captureOpenClawOwner: true,
+      redactionValues: [...MCP_BRIDGE_TEST_REDACTION_VALUES, "challenge"],
+    }),
+  );
+});
+
+it("omits failure diagnostics after the lifecycle assertions complete", async () => {
+  const cleanup = new CleanupRegistry();
+  const capture = vi.fn().mockResolvedValue(undefined);
+  const complete = trackMcpFailureDiagnostics(
+    cleanup,
+    {} as HostCliClient,
+    { sandboxName: "e2e-mcp-bridge", artifactPrefix: "openclaw" },
+    "challenge",
+    capture,
+  );
+  complete();
+  expect((await cleanup.runAll()).failures).toEqual([]);
+  expect(capture).not.toHaveBeenCalled();
 });

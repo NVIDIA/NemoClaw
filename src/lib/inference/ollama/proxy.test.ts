@@ -747,7 +747,10 @@ describe("isProxyHealthy with a live proxy PID", () => {
 
   // The persisted PID matches a running proxy in every case below. Only the
   // curl result differs, so a PID-based fallback would report all of them healthy.
-  function probeHealth(curl: { status: number; curlStatus?: number; body?: string }) {
+  function probeHealth(
+    curl: { status: number; curlStatus?: number; body?: string },
+    prepareToken: (tokenPath: string) => void = () => {},
+  ) {
     const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-proxy-health-"));
     tempHomes.push(home);
     vi.stubEnv("HOME", home);
@@ -757,7 +760,9 @@ describe("isProxyHealthy with a live proxy PID", () => {
     const stateDir = lifecycle.SHARED_LOCAL_ADAPTER_STATE_DIR;
     fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4242", { mode: 0o600 });
-    fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "token", { mode: 0o600 });
+    const tokenPath = path.join(stateDir, "ollama-proxy-token");
+    fs.writeFileSync(tokenPath, "token", { mode: 0o600 });
+    prepareToken(tokenPath);
     const runner = require(RUNNER_DIST);
     const childProcess = require(CHILD_PROCESS_DIST) as typeof import("node:child_process");
     const originalRunCapture = runner.runCapture;
@@ -817,6 +822,18 @@ describe("isProxyHealthy with a live proxy PID", () => {
     expect(calls).toBe(1);
     expect(request.args.at(-1)).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/tags$/);
     expect(request.authConfig).toContain("Authorization: Bearer token");
+  });
+
+  it("rejects a symbolic-link token before sending an authenticated request", () => {
+    expect(() =>
+      probeHealth({ status: 200, body: MODEL_LIST }, (tokenPath) => {
+        const target = `${tokenPath}.target`;
+        fs.renameSync(tokenPath, target);
+        fs.symlinkSync(target, tokenPath);
+      }),
+    ).toThrow("Cannot safely read Ollama auth proxy state");
+    const childProcess = require(CHILD_PROCESS_DIST) as typeof import("node:child_process");
+    expect(childProcess.spawnSync).not.toHaveBeenCalled();
   });
 
   // Callers only get a Boolean, so the wrapper has to print what the probe

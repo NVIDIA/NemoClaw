@@ -16,6 +16,24 @@ export const SWITCHYARD_BOUNDARY_CREDENTIAL_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_T
 export const SWITCHYARD_PEER_CREDENTIAL_ENV = "NEMOCLAW_E2E_SWITCHYARD_PEER_TOKEN";
 export const SWITCHYARD_BODY_CANARY = "switchyard-provider-body-must-not-enter-diagnostics";
 
+/** Recognize only explicit HTTP denial or an observed native connect/EACCES rejection. */
+export function isSwitchyardCallbackPolicyDenial(outcome: Record<string, unknown>): boolean {
+  if (outcome.failed !== true || outcome.passthrough !== true || outcome.answer !== null)
+    return false;
+  if (outcome.callback_status === 403) {
+    return (
+      outcome.failure_category === "http_error" ||
+      outcome.failure_category === "proxy_connect_denied"
+    );
+  }
+  return (
+    outcome.callback_status === null &&
+    outcome.callback_errno === 13 &&
+    outcome.callback_syscall === "connect" &&
+    outcome.failure_category === "transport_error"
+  );
+}
+
 async function listen(server: Server, host: string): Promise<number> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -177,7 +195,7 @@ export function switchyardBoundaryProbe(
     "-I",
     "-c",
     String.raw`
-import asyncio, base64, json, os, signal, ssl, sys
+import asyncio, base64, json, os, signal, socket, ssl, sys
 import urllib.error, urllib.request
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -204,7 +222,7 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
         os.environ[key] = os.environ[payload['credentialEnv']]
     runtime = relay_runtime.RelayRuntime()
     outcome = {'active': False, 'failed': False, 'passthrough': False, 'answer': None,
-        'callback_status': None, 'callback_errno': None, 'failure_category': None}
+        'callback_status': None, 'callback_errno': None, 'callback_syscall': None, 'failure_category': None}
     try:
         outcome['active'] = runtime.managed_execution_enabled()
         if not outcome['active'] and payload['mode'] != 'unmanaged':
@@ -222,6 +240,17 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
+            original_connect = socket.socket.connect
+            connect_error = None
+            def observed_connect(sock, address):
+                nonlocal connect_error
+                connect_error = None
+                try:
+                    return original_connect(sock, address)
+                except OSError as error:
+                    connect_error = error
+                    raise
+            socket.socket.connect = observed_connect
             try:
                 with urllib.request.urlopen(request, timeout=20, context=context) as response:
                     outcome['callback_status'] = response.status
@@ -234,12 +263,16 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
             except urllib.error.URLError as error:
                 errno = getattr(error.reason, 'errno', None)
                 outcome['callback_errno'] = errno if type(errno) is int and 0 <= errno <= 4095 else None
+                if type(errno) is int and error.reason is connect_error:
+                    outcome['callback_syscall'] = 'connect'
                 if 'tunnel connection failed: 403' in str(error.reason).lower():
                     outcome['callback_status'] = 403
                     outcome['failure_category'] = 'proxy_connect_denied'
                 else:
                     outcome['failure_category'] = 'transport_error'
                 raise RuntimeError('Provider callback failed') from None
+            finally:
+                socket.socket.connect = original_connect
         async def execute():
             if not outcome['active']:
                 return await provider_callback(None)
