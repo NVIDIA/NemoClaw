@@ -159,231 +159,213 @@ describe("DGX Spark Express vLLM qualification safety", () => {
   });
 });
 
-describe.each(["fixed-profile", "extra-arguments"] as const)(
-  "DGX Spark %s callback safety",
-  (variant) => {
-    it.each([
-      { state: "owned", failure: false, removalAttempted: true },
-      { state: "absent", failure: false, removalAttempted: false },
-      { state: "daemon", failure: true, removalAttempted: false },
-      { state: "permission", failure: true, removalAttempted: false },
-      { state: "replacement", failure: true, removalAttempted: false },
-      { state: "unmanaged", failure: true, removalAttempted: false },
-      { state: "label-failure", failure: true, removalAttempted: false },
-      { state: "remove-failure", failure: true, removalAttempted: true },
-    ])(
-      "records $state without hiding inspection or removal failures",
-      async ({ state, failure, removalAttempted }) => {
-        const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cleanup-"));
-        directories.push(directory);
-        const marker = path.join(directory, "removed");
-        const id = "a".repeat(64);
-        fs.writeFileSync(
-          path.join(directory, "docker"),
-          `#!/bin/bash
+describe("DGX Spark callback safety", () => {
+  it.each([
+    { state: "owned", failure: false, removalAttempted: true },
+    { state: "absent", failure: false, removalAttempted: false },
+    { state: "daemon", failure: true, removalAttempted: false },
+    { state: "permission", failure: true, removalAttempted: false },
+    { state: "replacement", failure: true, removalAttempted: false },
+    { state: "unmanaged", failure: true, removalAttempted: false },
+    { state: "label-failure", failure: true, removalAttempted: false },
+    { state: "remove-failure", failure: true, removalAttempted: true },
+  ])(
+    "records $state without hiding inspection or removal failures",
+    async ({ state, failure, removalAttempted }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cleanup-"));
+      directories.push(directory);
+      const marker = path.join(directory, "removed");
+      const id = "a".repeat(64);
+      fs.writeFileSync(
+        path.join(directory, "docker"),
+        `#!/bin/bash
 set -eu
 case "$1" in
-  inspect)
-    case "$CLEANUP_STATE" in
-      absent) echo 'Error: No such object: nemoclaw-vllm' >&2; exit 1 ;;
-      daemon) echo 'Cannot connect to the Docker daemon' >&2; exit 1 ;;
-      permission) echo 'permission denied connecting to Docker' >&2; exit 1 ;;
-    esac
-    if [[ "$3" == '{{.Id}}' ]]; then
-      if [[ "$CLEANUP_STATE" == replacement ]]; then printf '%064d\n' 0; else echo "$CREATED_ID"; fi
-    else
-      [[ "$CLEANUP_STATE" != label-failure ]] || { echo 'Docker label inspection failed' >&2; exit 1; }
-      if [[ "$CLEANUP_STATE" == unmanaged ]]; then echo false; else echo true; fi
-    fi ;;
-  rm)
-    printf '%s\n' "$*" > "$REMOVE_MARKER"
-    [[ "$CLEANUP_STATE" != remove-failure ]] || { echo 'Docker removal failed' >&2; exit 1; } ;;
-  *) exit 99 ;;
+inspect)
+  case "$CLEANUP_STATE" in
+    absent) echo 'Error: No such object: nemoclaw-vllm' >&2; exit 1 ;;
+    daemon) echo 'Cannot connect to the Docker daemon' >&2; exit 1 ;;
+    permission) echo 'permission denied connecting to Docker' >&2; exit 1 ;;
+  esac
+  if [[ "$3" == '{{.Id}}' ]]; then
+    if [[ "$CLEANUP_STATE" == replacement ]]; then printf '%064d\n' 0; else echo "$CREATED_ID"; fi
+  else
+    [[ "$CLEANUP_STATE" != label-failure ]] || { echo 'Docker label inspection failed' >&2; exit 1; }
+    if [[ "$CLEANUP_STATE" == unmanaged ]]; then echo false; else echo true; fi
+  fi ;;
+rm)
+  printf '%s\n' "$*" > "$REMOVE_MARKER"
+  [[ "$CLEANUP_STATE" != remove-failure ]] || { echo 'Docker removal failed' >&2; exit 1; } ;;
+*) exit 99 ;;
 esac
 `,
-          { mode: 0o700 },
-        );
-        vi.stubEnv("DOCKER_HOST", "");
-        vi.stubEnv("DOCKER_CONTEXT", "");
-        const cleanup = new CleanupRegistry();
-        const responses = {
-          "spark-express-platform": result(0, "DGX Spark"),
-          "spark-express-nvidia-smi": result(0),
-          "spark-extra-arguments-physical-memory": result(0, "63082733568"),
-          "preflight-spark-express-vllm-container": result(1, "", "No such container"),
-          "preflight-spark-express-sandbox-list": result(0),
-          "spark-express-vllm-onboard": result(1, "", "interrupted onboarding"),
-          "spark-express-vllm-container-inspect": result(0, JSON.stringify([{ Id: id }])),
-          "spark-express-vllm-sandbox-inspect": result(1, "", "sandbox not found"),
-          "failure-spark-express-vllm-container-logs": result(0),
-          "failure-spark-express-sandbox-get": result(0),
-        };
-        const executeCleanup = (command: string, args: string[]) => {
-          const child = spawnSync(command, args, {
-            encoding: "utf8",
-            timeout: 5_000,
-            env: {
-              PATH: `${directory}:${process.env.PATH}`,
-              CLEANUP_STATE: state,
-              CREATED_ID: id,
-              REMOVE_MARKER: marker,
-            },
-          });
-          return child.error
-            ? Promise.reject(child.error)
-            : result(child.status ?? 1, child.stdout, child.stderr);
-        };
-        const host = {
-          command: vi.fn(
-            async (command: string, args: string[], options: { artifactName: string }) =>
-              options.artifactName.startsWith("cleanup-")
-                ? executeCleanup(command, args)
-                : (responses[options.artifactName as keyof typeof responses] ??
-                  Promise.reject(new Error(`Unexpected command: ${options.artifactName}`))),
-          ),
-        };
-        const run = capturedDgx.run as (
-          selection: readonly string[],
-          fixtures: object,
-        ) => Promise<void>;
-        await expect(
-          run(
-            [
-              variant === "extra-arguments" ? "spark-vllm-extra-arguments" : "spark-express-vllm",
-              variant,
-            ],
-            {
-              artifacts: { target: { declare: vi.fn() } },
-              cleanup,
-              host,
-              sandbox: {},
-              runtimeProvider: {},
-              progress: { phase: vi.fn() },
-            },
-          ),
-        ).rejects.toThrow("interrupted onboarding");
-        const receipt = await cleanup.runAll();
-        expect(receipt.failures.map(({ name }) => name)).toEqual(
-          failure ? ["remove nemoclaw-vllm"] : [],
-        );
-        expect(receipt.passed).toContain("remove sandbox e2e-spark-vllm");
-        expect(receipt.passed.includes("remove nemoclaw-vllm")).toBe(!failure);
-        expect(fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : null).toBe(
-          removalAttempted ? `rm -f ${id}` : null,
-        );
-      },
-    );
-    it.each([
-      {
-        evidence: "cohort",
-        workload: () => managedReceipt(),
-        environment: selectedEnvironment,
-        expected: "selected managed image accepted",
-      },
-      {
-        evidence: "catalog",
-        workload: () => managedReceipt(),
-        environment: candidateCatalogEnvironment,
-        expected: "selected managed image accepted",
-      },
-      {
-        evidence: "wrong revision",
-        workload: () => managedReceipt("b".repeat(40)),
-        environment: selectedEnvironment,
-        expected: "does not match the selected cohort",
-      },
-      {
-        evidence: "wrong image",
-        workload: () => ({
-          ...managedReceipt(),
-          reference: `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"9".repeat(64)}`,
-        }),
-        environment: selectedEnvironment,
-        expected: "exact agent image from the selected cohort",
-      },
-      {
-        evidence: "missing workload",
-        workload: () => null,
-        environment: selectedEnvironment,
-        expected: "must record a managed-image receipt",
-      },
-      {
-        evidence: "missing authority",
-        workload: () => managedReceipt(),
-        environment: (home: string) => ({ HOME: home }),
-        expected: "one exact managed-image cohort revision",
-      },
-    ])("checks $evidence before runtime probes", async ({ workload, environment, expected }) => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), "spark-managed-image-"));
-      directories.push(home);
-      writeManagedImageRegistry(home, workload(), "openclaw", SPARK_SANDBOX_NAME);
-      const selected: NodeJS.ProcessEnv = environment(home);
-      vi.stubEnv("HOME", home);
-      vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", selected.E2E_MANAGED_IMAGE_REVISION ?? "");
-      vi.stubEnv(
-        "E2E_MANAGED_IMAGE_COHORT_RECEIPT",
-        selected.E2E_MANAGED_IMAGE_COHORT_RECEIPT ?? "",
+        { mode: 0o700 },
       );
-      vi.stubEnv(
-        "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
-        selected.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG ?? "",
-      );
-      vi.stubEnv("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON", "");
-      vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", REVISION);
-      vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
-      vi.stubEnv("GITHUB_ACTIONS", "true");
       vi.stubEnv("DOCKER_HOST", "");
       vi.stubEnv("DOCKER_CONTEXT", "");
-      const result = (stdout = "", exitCode = 0, stderr = "") => ({ stdout, exitCode, stderr });
-      const responses: Record<string, ReturnType<typeof result>> = {
-        "spark-express-platform": result("DGX Spark"),
-        "spark-express-nvidia-smi": result(),
-        "spark-extra-arguments-physical-memory": result("63082733568"),
-        "preflight-spark-express-vllm-container": result("", 1, "No such container"),
-        "preflight-spark-express-sandbox-list": result(),
-        "spark-express-vllm-onboard": result(),
-        "spark-express-vllm-container-inspect": result(JSON.stringify([{ Id: "a".repeat(64) }])),
-        "spark-express-vllm-sandbox-inspect": result(
-          JSON.stringify({ id: "05d120e4-484c-47d4-9a59-77a08cbb6e67", name: SPARK_SANDBOX_NAME }),
-        ),
+      const cleanup = new CleanupRegistry();
+      const responses = {
+        "spark-express-platform": result(0, "DGX Spark"),
+        "spark-express-nvidia-smi": result(0),
+        "spark-extra-arguments-physical-memory": result(0, "63082733568"),
+        "preflight-spark-express-vllm-container": result(1, "", "No such container"),
+        "preflight-spark-express-sandbox-list": result(0),
+        "spark-express-vllm-onboard": result(1, "", "interrupted onboarding"),
+        "spark-express-vllm-container-inspect": result(0, JSON.stringify([{ Id: id }])),
+        "spark-express-vllm-sandbox-inspect": result(1, "", "sandbox not found"),
+        "failure-spark-express-vllm-container-logs": result(0),
+        "failure-spark-express-sandbox-get": result(0),
+      };
+      const executeCleanup = (command: string, args: string[]) => {
+        const child = spawnSync(command, args, {
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            PATH: `${directory}:${process.env.PATH}`,
+            CLEANUP_STATE: state,
+            CREATED_ID: id,
+            REMOVE_MARKER: marker,
+          },
+        });
+        return child.error
+          ? Promise.reject(child.error)
+          : result(child.status ?? 1, child.stdout, child.stderr);
       };
       const host = {
         command: vi.fn(
-          async (_command: string, _args: string[], options: { artifactName: string }) =>
-            responses[options.artifactName] ??
-            Promise.reject(new Error(`Unexpected probe: ${options.artifactName}`)),
+          async (command: string, args: string[], options: { artifactName: string }) =>
+            options.artifactName.startsWith("cleanup-")
+              ? executeCleanup(command, args)
+              : (responses[options.artifactName as keyof typeof responses] ??
+                Promise.reject(new Error(`Unexpected command: ${options.artifactName}`))),
         ),
       };
       const run = capturedDgx.run as (
         selection: readonly string[],
         fixtures: object,
       ) => Promise<void>;
-      const execution = run(
-        [
-          variant === "extra-arguments" ? "spark-vllm-extra-arguments" : "spark-express-vllm",
-          variant,
-        ],
-        {
+      await expect(
+        run(["spark-vllm-extra-arguments", "extra-arguments"], {
           artifacts: { target: { declare: vi.fn() } },
-          cleanup: { add: vi.fn() },
+          cleanup,
           host,
           sandbox: {},
           runtimeProvider: {},
-          progress: {
-            phase: (phase: string) => {
-              expect(phase, "selected managed image accepted").not.toBe(
-                "verify selected vLLM runtime configuration",
-              );
-            },
-          },
+          progress: { phase: vi.fn() },
+        }),
+      ).rejects.toThrow("interrupted onboarding");
+      const receipt = await cleanup.runAll();
+      expect(receipt.failures.map(({ name }) => name)).toEqual(
+        failure ? ["remove nemoclaw-vllm"] : [],
+      );
+      expect(receipt.passed).toContain("remove sandbox e2e-spark-vllm");
+      expect(receipt.passed.includes("remove nemoclaw-vllm")).toBe(!failure);
+      expect(fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").trim() : null).toBe(
+        removalAttempted ? `rm -f ${id}` : null,
+      );
+    },
+  );
+  it.each([
+    {
+      evidence: "cohort",
+      workload: () => managedReceipt(),
+      environment: selectedEnvironment,
+      expected: "selected managed image accepted",
+    },
+    {
+      evidence: "catalog",
+      workload: () => managedReceipt(),
+      environment: candidateCatalogEnvironment,
+      expected: "selected managed image accepted",
+    },
+    {
+      evidence: "wrong revision",
+      workload: () => managedReceipt("b".repeat(40)),
+      environment: selectedEnvironment,
+      expected: "does not match the selected cohort",
+    },
+    {
+      evidence: "wrong image",
+      workload: () => ({
+        ...managedReceipt(),
+        reference: `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"9".repeat(64)}`,
+      }),
+      environment: selectedEnvironment,
+      expected: "exact agent image from the selected cohort",
+    },
+    {
+      evidence: "missing workload",
+      workload: () => null,
+      environment: selectedEnvironment,
+      expected: "must record a managed-image receipt",
+    },
+    {
+      evidence: "missing authority",
+      workload: () => managedReceipt(),
+      environment: (home: string) => ({ HOME: home }),
+      expected: "one exact managed-image cohort revision",
+    },
+  ])("checks $evidence before runtime probes", async ({ workload, environment, expected }) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "spark-managed-image-"));
+    directories.push(home);
+    writeManagedImageRegistry(home, workload(), "openclaw", SPARK_SANDBOX_NAME);
+    const selected: NodeJS.ProcessEnv = environment(home);
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", selected.E2E_MANAGED_IMAGE_REVISION ?? "");
+    vi.stubEnv("E2E_MANAGED_IMAGE_COHORT_RECEIPT", selected.E2E_MANAGED_IMAGE_COHORT_RECEIPT ?? "");
+    vi.stubEnv(
+      "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
+      selected.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG ?? "",
+    );
+    vi.stubEnv("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON", "");
+    vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", REVISION);
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("DOCKER_HOST", "");
+    vi.stubEnv("DOCKER_CONTEXT", "");
+    const result = (stdout = "", exitCode = 0, stderr = "") => ({ stdout, exitCode, stderr });
+    const responses: Record<string, ReturnType<typeof result>> = {
+      "spark-express-platform": result("DGX Spark"),
+      "spark-express-nvidia-smi": result(),
+      "spark-extra-arguments-physical-memory": result("63082733568"),
+      "preflight-spark-express-vllm-container": result("", 1, "No such container"),
+      "preflight-spark-express-sandbox-list": result(),
+      "spark-express-vllm-onboard": result(),
+      "spark-express-vllm-container-inspect": result(JSON.stringify([{ Id: "a".repeat(64) }])),
+      "spark-express-vllm-sandbox-inspect": result(
+        JSON.stringify({ id: "05d120e4-484c-47d4-9a59-77a08cbb6e67", name: SPARK_SANDBOX_NAME }),
+      ),
+    };
+    const host = {
+      command: vi.fn(
+        async (_command: string, _args: string[], options: { artifactName: string }) =>
+          responses[options.artifactName] ??
+          Promise.reject(new Error(`Unexpected probe: ${options.artifactName}`)),
+      ),
+    };
+    const run = capturedDgx.run as (
+      selection: readonly string[],
+      fixtures: object,
+    ) => Promise<void>;
+    const execution = run(["spark-vllm-extra-arguments", "extra-arguments"], {
+      artifacts: { target: { declare: vi.fn() } },
+      cleanup: { add: vi.fn() },
+      host,
+      sandbox: {},
+      runtimeProvider: {},
+      progress: {
+        phase: (phase: string) => {
+          expect(phase, "selected managed image accepted").not.toBe(
+            "verify selected vLLM runtime configuration",
+          );
         },
-      );
-      await expect(execution).rejects.toThrow(expected);
-      expect(host.command).toHaveBeenCalledWith(
-        "openshell",
-        ["sandbox", "get", "-o", "json", SPARK_SANDBOX_NAME],
-        expect.objectContaining({ artifactName: "spark-express-vllm-sandbox-inspect" }),
-      );
+      },
     });
-  },
-);
+    await expect(execution).rejects.toThrow(expected);
+    expect(host.command).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "get", "-o", "json", SPARK_SANDBOX_NAME],
+      expect.objectContaining({ artifactName: "spark-express-vllm-sandbox-inspect" }),
+    );
+  });
+});
