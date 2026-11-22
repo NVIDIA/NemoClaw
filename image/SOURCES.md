@@ -18,6 +18,29 @@ The vendor trees can include build dependencies and dependencies for other platf
 Their presence does not mean every package is linked into the executable.
 The images separately retain the Rust standard-library notices; the standard-library source and toolchain are not included in these archives.
 
+## Native Python Dependency Sources
+
+Every Fabric image retains `/opt/nemoclaw/source/native-dependency-sources.tar.gz`.
+It contains the original Cargo registry archives and OpenSSL releases identified by installed wheels' embedded SBOMs, verified against their SHA-256 pins.
+The Deep Agents and mini-swe-agent archives additionally retain their pinned tiktoken, ormsgpack, fastuuid, or LiteLLM source distributions where installed, and the registry dependencies recorded by those distributions' Cargo locks.
+Images that install the `nemo-relay` CLI also retain its matching 0.11.0 Python source distribution and the registry dependencies in its Cargo lock.
+Hermes regenerates the archive after installing its additional wheels.
+
+Extract the outer archive with `tar -xzf native-dependency-sources.tar.gz`; extract individual `.crate` files with the same command to read their original sources, notices, and copyright headers.
+The original Python source distributions are under `python/`.
+The archive is a conservative source set: SBOMs and Cargo locks can include build, optional, and other-platform dependencies.
+It does not prove that every entry survives linking, supply every non-registry native dependency, or provide an offline build environment.
+Deep Agents and mini-swe-agent build Tiktoken 0.13.0 from that unmodified source distribution with the retained `local/tiktoken-Cargo.lock` instead of installing the published wheel.
+`tiktoken-cargo-source.tar.gz` retains that lock, its vendored dependencies and original notices, and relative Cargo source-replacement configuration.
+Extract the original Python source distribution, then extract this Cargo archive into the same directory before rebuilding with Python 3.14, Rust 1.100.0, and a C toolchain:
+
+```sh
+CARGO_NET_OFFLINE=true python -m pip wheel --no-deps .
+```
+
+The Python build backend and its dependencies remain prerequisites.
+The Cargo lock records this image's build; it does not reconstruct the dependencies of historical upstream wheels.
+
 ## Deep Agents' orjson Extension
 
 The Deep Agents image retains orjson 3.11.9's original source distribution at `/opt/nemoclaw/source/deepagents/orjson-source.tar.gz`.

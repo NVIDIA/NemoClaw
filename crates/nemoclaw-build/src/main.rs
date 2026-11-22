@@ -48,6 +48,15 @@ enum Action {
         #[arg(long)]
         supported: PathBuf,
     },
+    /// Print the versions and digests that a deployment of the release uses.
+    ReleasePins {
+        #[arg(long)]
+        versions: PathBuf,
+        #[arg(long)]
+        inventory: PathBuf,
+        #[arg(long)]
+        tag: String,
+    },
     /// Validate the candidate's inert image catalog with the trusted controller.
     ReleaseCatalog {
         #[arg(long)]
@@ -627,6 +636,17 @@ fn reseal(directory: &Path) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Action::ReleasePins {
+        versions,
+        inventory,
+        tag,
+    } = &cli.command
+    {
+        let pins =
+            nemoclaw_build::release_pins::pins(&fs::read(versions)?, &fs::read(inventory)?, tag)?;
+        println!("{pins}");
+        return Ok(());
+    }
     if let Action::ReleaseCatalog {
         catalog,
         candidate_revision,
@@ -1016,6 +1036,7 @@ async fn main() -> Result<()> {
         | Action::ReleaseGate(..)
         | Action::ReleaseVerifyPromotion { .. }
         | Action::ReleaseMonitorPlan { .. }
+        | Action::ReleasePins { .. }
         | Action::ReleaseCatalog { .. }
         | Action::ReleaseMonitorVerify { .. }
         | Action::ReleaseAssess { .. }
