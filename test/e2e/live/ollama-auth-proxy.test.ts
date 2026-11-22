@@ -281,7 +281,7 @@ test(
       "bash",
       [
         "-lc",
-        "pkill -f 'ollama serve' 2>/dev/null || true; systemctl --user stop ollama 2>/dev/null || true; systemctl stop ollama 2>/dev/null || true",
+        "systemctl --user stop ollama 2>/dev/null || true; sudo -n systemctl stop ollama 2>/dev/null || true; pkill -f 'ollama [s]erve' 2>/dev/null || true",
       ],
       {
         artifactName: "phase-2-stop-existing-ollama",
@@ -304,6 +304,8 @@ test(
       artifactName: "phase-2-ollama-tags-status",
     });
     expect(tagsStatus).toBe("200");
+    expect(ollama.exitCode).toBeNull();
+    expect(ollama.signalCode).toBeNull();
 
     const pull = await host.command("ollama", ["pull", MODEL], {
       artifactName: "phase-2-ollama-pull-model",
@@ -333,11 +335,6 @@ test(
     await new Promise((resolve) => setTimeout(resolve, 2_000));
 
     const correctAuth = `Bearer ${proxyToken}`;
-    const aliveStatus = await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/api/tags`, {
-      artifactName: "phase-3-proxy-alive-status",
-    });
-    expect(aliveStatus).toMatch(/^[1-9][0-9]{2}$/u);
-
     progress.phase("enforce proxy authentication");
     expect(
       await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/api/generate`, {
@@ -423,11 +420,6 @@ test(
       "ollama-auth-proxy-restarted",
     );
     await new Promise((resolve) => setTimeout(resolve, 2_000));
-    expect(
-      await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/api/tags`, {
-        artifactName: "phase-7-restarted-proxy-status",
-      }),
-    ).toMatch(/^[1-9][0-9]{2}$/u);
     const recover = await curlBody(host, `http://127.0.0.1:${PROXY_PORT}/v1/chat/completions`, {
       artifactName: "phase-7-recovery-chat-completions",
       auth: `Bearer ${persistedToken}`,
