@@ -47,6 +47,8 @@ mod macos_signatures;
 mod release_bundles;
 #[cfg(unix)]
 mod release_gate;
+#[path = "release_pins.rs"]
+mod release_pins;
 #[path = "schema.rs"]
 mod schema;
 #[cfg(target_os = "linux")]

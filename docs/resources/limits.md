@@ -160,7 +160,6 @@ The following SDK and provider limits apply:
 | [Hand-written HCL](../build-deploy/opentofu-project.md) under Terraform: the provider addresses are under `registry.opentofu.org`, and the examples' tests run only under OpenTofu. | [#14725](https://github.com/NVIDIA/NemoClaw/issues/14725) | [`1b5574f`][v1-1b5574f]: code, issue |
 | A guard against lost creation replies in hand-written HCL: only the SDK records the OpenShell and Fabric objects an apply might create. | [#14726](https://github.com/NVIDIA/NemoClaw/issues/14726) | [`1b5574f`][v1-1b5574f]: code, issue |
 | Handing an existing CLI deployment over to hand-written HCL | [#14721](https://github.com/NVIDIA/NemoClaw/issues/14721) | [`1b5574f`][v1-1b5574f]: code, issue |
-| A tested version set that hand-written HCL can read from a release: the gateway version and image pins are in the repository's `versions.json` at the release's tag. | [#14722](https://github.com/NVIDIA/NemoClaw/issues/14722) | [`1b5574f`][v1-1b5574f]: code, issue |
 
 ## Documentation Site
 
