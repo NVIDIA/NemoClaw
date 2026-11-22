@@ -1145,7 +1145,7 @@ it.each(["success", "failure", "skipped", "unknown"])(
   async (result) => {
     const env = {
       ...HOSTED_CANDIDATE_ENV,
-      SELECTED_WORKFLOW_JOBS: '["spark-vllm-extra-arguments"]',
+      SELECTED_WORKFLOW_JOBS: '["spark-vllm-extra-arguments","spark-vllm-receipt"]',
       JOB_TARGETS: "",
       JOBS: "spark-vllm-extra-arguments",
     };
@@ -1157,9 +1157,14 @@ it.each(["success", "failure", "skipped", "unknown"])(
       env,
       apiJobs: [],
       apiJobsLoaded: true,
-      needs: { "generate-matrix": { result: "success" }, "spark-vllm-extra-arguments": { result } },
+      needs: {
+        "generate-matrix": { result: "success" },
+        "spark-vllm-extra-arguments": { result: "success" },
+        "spark-vllm-receipt": { result },
+      },
     });
     expect(report.body).toContain("spark-vllm-extra-arguments");
+    expect(report.body).toContain("spark-vllm-receipt");
     expect(report.body).toContain(` ${result} |`);
     expect(report.body).toContain(`**Candidate commit:** \`${"a".repeat(40)}\``);
     expect(report.body.includes("All requested tests passed")).toBe(result === "success");

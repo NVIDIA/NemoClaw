@@ -396,10 +396,7 @@ export function renderE2eReport(input: {
       (name !== "generate-matrix" || result === "failure" || result === "cancelled"));
   const sparkSelected =
     requestedTestIdSet.has("llama-cpp-dgx-spark-qualification") ||
-    (validHostedCandidateContext(env, context) &&
-      (JSON.parse(env.SELECTED_WORKFLOW_JOBS || "[]") as string[]).includes(
-        "llama-cpp-dgx-spark-qualification",
-      ));
+    candidateSelectedJobs.includes("llama-cpp-dgx-spark-qualification");
   const selectedEntries =
     requestedTestIds.length > 0
       ? allEntries.filter(

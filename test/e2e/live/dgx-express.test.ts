@@ -4,6 +4,7 @@
 /** Exercises the DGX Spark and Station Express vLLM paths on physical hardware. */
 
 import assert from "node:assert/strict";
+import { hasBoundedSparkCommand } from "../../../tools/e2e/spark-vllm-qualification.mts";
 
 import { isHostLocalInferenceServingRecipe } from "../../../src/lib/inference/serving/adapter-registry.ts";
 import {
@@ -460,7 +461,11 @@ test.for([
     expect(inspection.Config.Image).toBe(plan.recipe.spec.runtime.image);
     expect(inspection.Config.Entrypoint).toEqual(["/bin/bash"]);
     expect(inspection.Config.Cmd[0]).toBe("-lc");
-    expect(inspection.Config.Cmd[1]).toBe(buildVllmServeCommand(materialized.model, installEnv));
+    const command = inspection.Config.Cmd[1];
+    const matchesRecipe = extraArguments
+      ? hasBoundedSparkCommand(command)
+      : command === buildVllmServeCommand(materialized.model, installEnv);
+    expect(matchesRecipe, command).toBe(true);
     expect(inspection.Config.Labels).toMatchObject({
       "com.nvidia.nemoclaw.managed-vllm": "true",
     });

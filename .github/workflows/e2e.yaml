@@ -6763,7 +6763,6 @@ jobs:
       NEMOCLAW_GATEWAY_RUNTIME: docker
       NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      SPARK_VLLM_WORKFLOW_SHA: ${{ github.workflow_sha }}
     steps:
       - name: Check out exact Spark candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6774,14 +6773,6 @@ jobs:
           persist-credentials: false
           clean: true
 
-      - name: Check out trusted Spark receipt validator
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: NVIDIA/NemoClaw
-          ref: ${{ github.workflow_sha }}
-          path: .trusted-spark
-          persist-credentials: false
-
       - name: Verify approved Spark source identity
         shell: bash
         env:
@@ -6790,7 +6781,6 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          test "$(git -C .trusted-spark rev-parse HEAD)" = "$TRUSTED_SHA"
           git diff --exit-code "$TRUSTED_SHA" "$EXPECTED_SHA" -- package.json package-lock.json .npmrc
           test "$(uname -m)" = aarch64
           nvidia-smi
@@ -6819,12 +6809,54 @@ jobs:
       - name: Run Spark vLLM extra arguments
         run: npx --no-install tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-vllm-extra-arguments:'
 
-      - name: Validate Spark vLLM qualification receipt
-        run: node --no-warnings --import tsx .trusted-spark/tools/e2e/spark-vllm-qualification.mts
-
       - name: Upload Spark vLLM qualification artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: spark-vllm-observations-${{ github.run_id }}-${{ github.run_attempt }}
+
+  spark-vllm-receipt:
+    needs: [spark-vllm-extra-arguments, base-image-publication]
+    if: ${{ !cancelled() && needs.spark-vllm-extra-arguments.result == 'success' && needs.base-image-publication.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      SPARK_VLLM_WORKFLOW_SHA: ${{ github.workflow_sha }}
+    steps:
+      - name: Check out trusted Spark receipt validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up Node for Spark receipt validation
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.22.1
+          package-manager-cache: false
+
+      - name: Download this attempt's Spark observations
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: spark-vllm-observations-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/spark-observations
+
+      - name: Validate Spark vLLM qualification receipt
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/spark-observations
+        run: node --no-warnings tools/e2e/spark-vllm-qualification.mts
+
+      - name: Publish the validated Spark receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spark-vllm-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/spark-observations/spark-vllm-qualification.json
+          if-no-files-found: error
 
   dgx-station-express:
     needs: [base-image-publication, generate-matrix]
@@ -7192,6 +7224,7 @@ jobs:
         jetson-nvmap-gpu,
         dgx-station-express,
         spark-vllm-extra-arguments,
+        spark-vllm-receipt,
         cloud-onboard,
         native-runtime-qualification-producer,
         native-runtime-qualification-producer-aggregate,

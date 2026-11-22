@@ -816,7 +816,7 @@ Set `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` to a JSON array of individual non-blank `vll
 NemoClaw trims and validates the array before downloads, shell-quotes each token, and appends the tokens after the selected recipe's defaults.
 Remote-code trust options and `--config` files are rejected before Docker work, including abbreviated option names, underscore spellings and assignment forms.
 When the array overrides `--gpu-memory-utilization`, NemoClaw validates the last value and uses that effective value for GPU-memory preflight, matching the final `vllm serve` command.
-NemoClaw appends the tokens to the recipe selected for the host.
+With extra arguments, the installer displays the recipe’s default context limit. A later `--max-model-len` argument sets the limit used by vLLM.
 A DGX Spark reporting at least 60 GB and less than 64 GB keeps its smaller Qwen recipe and selected-profile output.
 A recipe with a fixed serve command rejects the array, and a host that no recipe matches falls back to the registry defaults.
 

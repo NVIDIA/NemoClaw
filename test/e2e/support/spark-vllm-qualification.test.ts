@@ -21,6 +21,8 @@ const candidate = "a".repeat(40);
 const imageRevision = "b".repeat(40);
 const workflowSha = "c".repeat(40);
 const correlationId = "11111111-2222-4333-8444-555555555555";
+const boundedCommand =
+  "vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 --max-model-len 32768 --max-num-seqs 1 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.5 --load-format safetensors --safetensors-load-strategy lazy --max-num-seqs 2";
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -44,10 +46,12 @@ async function fixture() {
     failures: [],
   });
   await artifacts.writeJson("shell/spark-extra-arguments-physical-memory.result.json", {
+    exitCode: 0,
     stdout: "63082733568\n",
   });
   await artifacts.writeJson("shell/spark-express-vllm-container-inspect.result.json", {
-    stdout: JSON.stringify([{ Id: "d".repeat(64) }]),
+    exitCode: 0,
+    stdout: JSON.stringify([{ Id: "d".repeat(64), Config: { Cmd: ["-lc", boundedCommand] } }]),
   });
   const signal = buildRiskSignal(
     {
@@ -97,7 +101,7 @@ it("writes the canonical qualification file through the workflow CLI entrypoint"
   const { directory, env } = await fixture();
   const result = spawnSync(
     process.execPath,
-    ["--no-warnings", "--import", "tsx", "tools/e2e/spark-vllm-qualification.mts"],
+    ["--no-warnings", "tools/e2e/spark-vllm-qualification.mts"],
     {
       encoding: "utf8",
       timeout: 10000,
@@ -109,6 +113,37 @@ it("writes the canonical qualification file through the workflow CLI entrypoint"
     JSON.parse(readFileSync(path.join(directory, "spark-vllm-qualification.json"), "utf8")),
   ).toMatchObject({ candidateSha: candidate, runId: "123", memoryBytes: 63082733568 });
 });
+
+it.each([
+  [1, "63082733568"],
+  [0, " "],
+  [0, "59999999999"],
+  [0, "64000000000"],
+  [0, "6.1e10"],
+])("rejects an unsuccessful or out-of-tier memory probe (%s, %s)", async (exitCode, stdout) => {
+  const { artifacts, directory, env } = await fixture();
+  await artifacts.writeJson("shell/spark-extra-arguments-physical-memory.result.json", {
+    exitCode,
+    stdout,
+  });
+  expect(() => sparkVllmQualificationReceipt(directory, env)).toThrow(/memory/);
+});
+
+it.each([
+  boundedCommand.replace("32768", "262144"),
+  boundedCommand.replace(" --max-num-seqs 2", ""),
+  boundedCommand + " --max-num-seqs 1",
+])(
+  "rejects an inspected command that loses the bounded recipe or final override",
+  async (command) => {
+    const { artifacts, directory, env } = await fixture();
+    await artifacts.writeJson("shell/spark-express-vllm-container-inspect.result.json", {
+      exitCode: 0,
+      stdout: JSON.stringify([{ Id: "d".repeat(64), Config: { Cmd: ["-lc", command] } }]),
+    });
+    expect(() => sparkVllmQualificationReceipt(directory, env)).toThrow(/command/);
+  },
+);
 
 type Proof = Awaited<ReturnType<typeof fixture>>;
 it.each<[string, (proof: Proof) => void | Promise<unknown>]>([
@@ -217,22 +252,9 @@ it.each<[string, (job: Job) => void]>([
     },
   ],
   [
-    "validator checkout",
-    (job) => {
-      step(job, "Check out trusted Spark receipt validator").with.ref =
-        "${{ inputs.checkout_sha }}";
-    },
-  ],
-  [
     "selector",
     (job) => {
       step(job, "Run Spark vLLM extra arguments").run += " --selector '^dgx-station-express:'";
-    },
-  ],
-  [
-    "receipt",
-    (job) => {
-      step(job, "Validate Spark vLLM qualification receipt").run = "true";
     },
   ],
   [
@@ -251,4 +273,37 @@ it.each<[string, (job: Job) => void]>([
   const workflow = readWorkflow();
   mutate(workflow.jobs[target]);
   expect(validateSparkVllmWorkflowBoundary(workflow).length).toBeGreaterThan(0);
+});
+
+it.each<[string, (job: Job) => void]>([
+  [
+    "candidate checkout",
+    (job) => {
+      step(job, "Check out trusted Spark receipt validator").with.ref =
+        "${{ inputs.checkout_sha }}";
+    },
+  ],
+  [
+    "previous attempt",
+    (job) => {
+      step(job, "Download this attempt's Spark observations").with.name =
+        "spark-vllm-observations-1-1";
+    },
+  ],
+  [
+    "candidate loader",
+    (job) => {
+      step(job, "Validate Spark vLLM qualification receipt").run += " --import tsx";
+    },
+  ],
+  [
+    "shared runner",
+    (job) => {
+      job["runs-on"] = "linux-arm64-gpu-dgx-spark-gb10-protected-1";
+    },
+  ],
+])("rejects a compromised receipt consumer: %s", (_fault, mutate) => {
+  const workflow = readWorkflow();
+  mutate(workflow.jobs["spark-vllm-receipt"]);
+  expect(validateSparkVllmWorkflowBoundary(workflow)).not.toEqual([]);
 });

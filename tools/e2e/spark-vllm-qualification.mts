@@ -9,6 +9,17 @@ import { isDeepStrictEqual } from "node:util";
 import { createPrivateRegularFile, readPrivateRegularFile } from "./private-file.mts";
 
 export const SPARK_VLLM_TARGET = "spark-vllm-extra-arguments";
+export const SPARK_OBSERVATIONS_ARTIFACT =
+  "spark-vllm-observations-${{ github.run_id }}-${{ github.run_attempt }}";
+export const SPARK_RECEIPT_UPLOAD = {
+  name: "Publish the validated Spark receipt",
+  uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+  with: {
+    name: "spark-vllm-receipt-${{ github.run_id }}-${{ github.run_attempt }}",
+    path: "${{ runner.temp }}/spark-observations/spark-vllm-qualification.json",
+    "if-no-files-found": "error",
+  },
+};
 export const SPARK_VLLM_JOB_IF =
   "${{ !cancelled() && needs['base-image-publication'].result == 'success' && needs['base-image-publication'].outputs.managed_image_revision != '' && needs['generate-matrix'].result == 'success' && needs['package-openshell-sdk'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.allow_dgx_spark_runner_queue && inputs.checkout_repository == github.repository && inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.workflow_sha == github.workflow_sha && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'spark-vllm-extra-arguments') && ((inputs.jobs == 'spark-vllm-extra-arguments' && inputs.targets == '') || (inputs.targets == 'spark-vllm-extra-arguments' && inputs.jobs == '')) }}";
 
@@ -19,6 +30,26 @@ function record(value: unknown): RecordValue {
 }
 function readJson(file: string): RecordValue {
   return record(JSON.parse(readPrivateRegularFile(file, { maxBytes: 1024 * 1024 })!));
+}
+
+/** Compare the inspected launch with the bounded profile independently of the installer. */
+export function hasBoundedSparkCommand(command: unknown): boolean {
+  if (typeof command !== "string") return false;
+  const launch = command.split(" && ").at(-1) ?? "";
+  const tokens = launch.split(" ");
+  const flags = [
+    ["--max-model-len", "32768"],
+    ["--max-num-batched-tokens", "4096"],
+    ["--gpu-memory-utilization", "0.5"],
+    ["--load-format", "safetensors"],
+    ["--safetensors-load-strategy", "lazy"],
+  ] as const;
+  return (
+    launch.startsWith("vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4 ") &&
+    flags.every(([flag, value]) => tokens[tokens.lastIndexOf(flag) + 1] === value) &&
+    tokens[tokens.indexOf("--max-num-seqs") + 1] === "1" &&
+    launch.endsWith(" --max-num-seqs 2")
+  );
 }
 
 /** Check existing live artifacts; never turn a skipped test or incomplete cleanup into proof. */
@@ -97,12 +128,29 @@ export function sparkVllmQualificationReceipt(directory: string, env: NodeJS.Pro
   const memory = readJson(
     path.join(scenario, "shell", "spark-extra-arguments-physical-memory.result.json"),
   );
-  const memoryBytes = Number(String(memory.stdout).trim());
-  assert(Number.isSafeInteger(memoryBytes), "qualification requires retained host memory");
+  assert.equal(memory.exitCode, 0, "physical memory probe failed");
+  assert(
+    typeof memory.stdout === "string" && /^[0-9]+$/u.test(memory.stdout.trim()),
+    "physical memory probe must report bytes in decimal",
+  );
+  const memoryBytes = Number(memory.stdout.trim());
+  assert(
+    memoryBytes >= 60_000_000_000 && memoryBytes < 64_000_000_000,
+    "physical memory is outside the bounded Spark tier",
+  );
   const inspected = readJson(
     path.join(scenario, "shell", "spark-express-vllm-container-inspect.result.json"),
   );
   const [container] = JSON.parse(String(inspected.stdout)) as unknown[];
+  assert.equal(inspected.exitCode, 0, "container inspection failed");
+  const config = record(record(container).Config);
+  assert(
+    Array.isArray(config.Cmd) &&
+      config.Cmd.length === 2 &&
+      config.Cmd[0] === "-lc" &&
+      hasBoundedSparkCommand(config.Cmd[1]),
+    "inspected command must retain the bounded recipe and final sequence override",
+  );
   const containerId = record(container).Id;
   assert(
     /^[a-f0-9]{64}$/u.test(String(containerId)),
@@ -177,7 +225,6 @@ export function validateSparkVllmWorkflowBoundary(workflow: unknown): string[] {
     E2E_TARGET_ID: SPARK_VLLM_TARGET,
     E2E_DEFAULT_ENABLED: "0",
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/spark-vllm-extra-arguments",
-    SPARK_VLLM_WORKFLOW_SHA: "${{ github.workflow_sha }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_GATEWAY_RUNTIME: "docker",
     E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
@@ -193,16 +240,6 @@ export function validateSparkVllmWorkflowBoundary(workflow: unknown): string[] {
     requireEqual(env[key], expected, key);
   const steps = (Array.isArray(job.steps) ? job.steps : []).map(record);
   const step = (name: string) => steps.find((item) => item.name === name) ?? {};
-  requireEqual(
-    step("Check out trusted Spark receipt validator").with,
-    {
-      repository: "NVIDIA/NemoClaw",
-      ref: "${{ github.workflow_sha }}",
-      path: ".trusted-spark",
-      "persist-credentials": false,
-    },
-    "trusted receipt-validator checkout",
-  );
   requireEqual(
     step("Check out exact Spark candidate").with,
     {
@@ -220,27 +257,18 @@ export function validateSparkVllmWorkflowBoundary(workflow: unknown): string[] {
     "the existing scenario selector",
   );
   requireEqual(
-    step("Validate Spark vLLM qualification receipt").run,
-    "node --no-warnings --import tsx .trusted-spark/tools/e2e/spark-vllm-qualification.mts",
-    "the trusted canonical receipt consumer",
-  );
-  requireEqual(
     step("Upload Spark vLLM qualification artifacts").if,
     "always()",
     "failure and cleanup diagnostics",
   );
   requireEqual(
     step("Upload Spark vLLM qualification artifacts").with,
-    undefined,
-    "shared artifact defaults",
+    { name: SPARK_OBSERVATIONS_ARTIFACT },
+    "observations bound to the producing run and attempt",
   );
   const expectedSteps = [
     [
       "Check out exact Spark candidate",
-      "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-    ],
-    [
-      "Check out trusted Spark receipt validator",
       "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
     ],
     ["Verify approved Spark source identity", undefined],
@@ -261,7 +289,6 @@ export function validateSparkVllmWorkflowBoundary(workflow: unknown): string[] {
       "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554",
     ],
     ["Run Spark vLLM extra arguments", undefined],
-    ["Validate Spark vLLM qualification receipt", undefined],
     [
       "Upload Spark vLLM qualification artifacts",
       "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57",
@@ -288,7 +315,6 @@ export function validateSparkVllmWorkflowBoundary(workflow: unknown): string[] {
     [
       "set -euo pipefail",
       'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"',
-      'test "$(git -C .trusted-spark rev-parse HEAD)" = "$TRUSTED_SHA"',
       'git diff --exit-code "$TRUSTED_SHA" "$EXPECTED_SHA" -- package.json package-lock.json .npmrc',
       'test "$(uname -m)" = aarch64',
       "nvidia-smi",
@@ -307,6 +333,52 @@ export function validateSparkVllmWorkflowBoundary(workflow: unknown): string[] {
     if (item.name !== "Upload Spark vLLM qualification artifacts")
       requireEqual(item.if, undefined, "unconditional proof steps");
   }
+  const observations = "${{ runner.temp }}/spark-observations";
+  requireEqual(
+    root?.jobs?.["spark-vllm-receipt"],
+    {
+      needs: [SPARK_VLLM_TARGET, "base-image-publication"],
+      if: "${{ !cancelled() && needs.spark-vllm-extra-arguments.result == 'success' && needs.base-image-publication.result == 'success' }}",
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 10,
+      permissions: { contents: "read" },
+      env: {
+        E2E_MANAGED_IMAGE_REVISION:
+          "${{ needs.base-image-publication.outputs.managed_image_revision }}",
+        E2E_MANAGED_IMAGE_COHORT_RECEIPT:
+          "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
+        SPARK_VLLM_WORKFLOW_SHA: "${{ github.workflow_sha }}",
+      },
+      steps: [
+        {
+          name: "Check out trusted Spark receipt validator",
+          uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+          with: {
+            repository: "NVIDIA/NemoClaw",
+            ref: "${{ github.workflow_sha }}",
+            "persist-credentials": false,
+          },
+        },
+        {
+          name: "Set up Node for Spark receipt validation",
+          uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+          with: { "node-version": "24.22.1", "package-manager-cache": false },
+        },
+        {
+          name: "Download this attempt's Spark observations",
+          uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+          with: { name: SPARK_OBSERVATIONS_ARTIFACT, path: observations },
+        },
+        {
+          name: "Validate Spark vLLM qualification receipt",
+          env: { E2E_ARTIFACT_DIR: observations },
+          run: "node --no-warnings tools/e2e/spark-vllm-qualification.mts",
+        },
+        SPARK_RECEIPT_UPLOAD,
+      ],
+    },
+    "isolated trusted receipt validation and publication",
+  );
   return errors;
 }
 

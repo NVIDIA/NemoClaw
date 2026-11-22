@@ -14,7 +14,7 @@ it.each(["jobs", "targets"] as const)(
   "selects only the physical Spark scenario through %s",
   (selector) => {
     const plan = buildE2eWorkflowPlan({ [selector]: target });
-    expect(selectedWorkflowJobs(plan)).toEqual([target]);
+    expect(selectedWorkflowJobs(plan)).toEqual([target, "spark-vllm-receipt"]);
     expect(plan.explicitOnlyJobs).toContain(target);
     expect(selectedWorkflowJobs(buildE2eWorkflowPlan())).not.toContain(target);
     expect(releaseRequiredWorkflowJobs()).not.toContain(target);

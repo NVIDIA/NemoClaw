@@ -622,6 +622,7 @@ export function releaseRequiredWorkflowJobs(): string[] {
 
 export function selectedWorkflowJobs(plan: E2eWorkflowPlan): string[] {
   const jobs = new Set(plan.selectedJobs);
+  if (jobs.has("spark-vllm-extra-arguments")) jobs.add("spark-vllm-receipt");
   if (plan.matrix.length > 0) jobs.add("live");
   if (plan.testMatrix.length > 0) jobs.add(SHARED_E2E_JOB_ID);
   for (const profile of E2E_EXECUTION_PROFILES) {

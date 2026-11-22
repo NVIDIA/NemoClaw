@@ -727,11 +727,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
             ((step.name === "Check out trusted Spark plan compiler" ||
               step.name === "Check out trusted Spark qualification harness") &&
               step.with?.ref === "${{ github.workflow_sha }}"))) ||
-        (jobName === "spark-vllm-extra-arguments" &&
+        (jobName === "spark-vllm-receipt" &&
           step.name === "Check out trusted Spark receipt validator" &&
           step.with?.repository === "NVIDIA/NemoClaw" &&
           step.with?.ref === "${{ github.workflow_sha }}" &&
-          step.with?.path === ".trusted-spark" &&
           step.with?.["persist-credentials"] === false) ||
         trustedCompilerCheckout ||
         trustedHermesFixtureCheckout ||

@@ -2534,10 +2534,11 @@ No provider or registry credentials are supplied to the scenario.
 The job retains the existing real-memory requirement, 65-minute scenario and identity-bound cleanup within its 95-minute setup/execution/upload deadline.
 If the job fails or is interrupted, inspect the retained cleanup receipt and reconcile owned resources before another run.
 
-The `e2e-spark-vllm-extra-arguments` artifact contains raw installation, inspected-command, health, sandbox inference,
+The `spark-vllm-observations-<run-id>-<attempt>` artifact contains raw installation, inspected-command, health, sandbox inference,
 publication-denial and egress-denial results, `risk-signal.json`, and `cleanup.json`.
-The trusted receipt consumer requires one passing candidate-bound scenario and successful cleanup before writing
-`spark-vllm-qualification.json` with the workflow/run, candidate, managed-image authority, memory and container identity.
+A separate GitHub-hosted job checks out the validator at the workflow SHA and downloads the observations for that run and attempt.
+It checks the memory tier, inspected command, candidate-bound test result and cleanup, then publishes `spark-vllm-qualification.json`
+in `spark-vllm-receipt-<run-id>-<attempt>`. A failed-job rerun needs fresh observations from the physical job for the new attempt.
 The normal result reporter includes the selected job; missing or skipped results remain unresolved.
 These are reviewed-run artifacts, not authenticated hardware attestation.
 A local check or standalone run cannot replace the required post-publication physical receipt or the other jobs in the generated risk plan.

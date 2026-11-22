@@ -556,10 +556,14 @@ describe("fixed catalog vLLM installs", () => {
     },
   );
 
-  it.each(["automatic", "picker"] as const)(
-    "keeps the reported 64 GB Spark recipe when extra serve arguments are set through %s selection (#14016)",
-    async (mode) => {
-      process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = '["--max-num-seqs","2","--disable-log-requests"]';
+  it.each([
+    ["automatic", ["--max-model-len", "8192"]],
+    ["automatic", ["--max-num-seqs", "2", "--disable-log-requests"]],
+    ["picker", ["--max-num-seqs", "2", "--disable-log-requests"]],
+  ] as const)(
+    "keeps the bounded Spark recipe through %s selection with %j (#14016)",
+    async (mode, extraArgs) => {
+      process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify(extraArgs);
       const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
       const readinessReports = vllmInstallTestReadinessAtMemory(profile, 63_082_733_568);
       await withActualSelectionGuard(readinessReports);
@@ -576,9 +580,9 @@ describe("fixed catalog vLLM installs", () => {
       expect(spies.logSpy).toHaveBeenCalledWith(
         "    Selected for your hardware: Qwen3.6 35B-A3B NVFP4 on one 64 GB DGX Spark",
       );
-      expect(spies.logSpy).toHaveBeenCalledWith("    Context limit: 32768 tokens");
+      expect(spies.logSpy).toHaveBeenCalledWith("    Recipe context limit: 32768 tokens");
       expect(spies.logSpy).toHaveBeenCalledWith(
-        "    Extra serve args: 3 token(s) from NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
+        `    Extra serve args: ${extraArgs.length} token(s) from NEMOCLAW_VLLM_EXTRA_ARGS_JSON`,
       );
       const runArgs = mocks.dockerRunDetached.mock.calls[0]![0] as string[];
       expect(runArgs).toContain("com.nvidia.nemoclaw.managed-vllm=true");
@@ -589,7 +593,8 @@ describe("fixed catalog vLLM installs", () => {
       expect(command).toContain("--safetensors-load-strategy lazy");
       expect(command).not.toContain("--load-format fastsafetensors");
       expect(command).not.toContain("--trust-remote-code");
-      expect(command).toMatch(/--max-num-seqs 1 .*--max-num-seqs 2 --disable-log-requests/u);
+      expect(command).toContain("--max-num-seqs 1 ");
+      expect(command.endsWith(" " + extraArgs.join(" "))).toBe(true);
     },
   );
 
