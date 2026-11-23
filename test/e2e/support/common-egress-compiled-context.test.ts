@@ -60,6 +60,18 @@ describe("compiled disabled-search context diagnostics", () => {
     [compiled()],
     [compiled(PRIVATE), COMPLETED],
     [compiled("selected-run", { systemPrompt: null }), COMPLETED],
+    [compiled(), compiled("selected-run", { systemPrompt: null }), COMPLETED],
+    [
+      compiled(),
+      compiled("selected-run", { systemPrompt: "[Oversized diagnostic JSON redacted]" }),
+      COMPLETED,
+    ],
+    [
+      compiled(),
+      compiled("selected-run", { systemPrompt: "[Malformed diagnostic JSON redacted]" }),
+      COMPLETED,
+    ],
+    [compiled(), compiled("selected-run", { systemPrompt: "[Unserializable]" }), COMPLETED],
     [compiled(), { ...COMPLETED, runId: "newest-run" }],
   ])("keeps missing or unrelated compiled context unknown: %j", (...events) => {
     expect(reduce(events).compiledSearchContext).toBeUndefined();

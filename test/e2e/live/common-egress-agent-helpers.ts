@@ -605,8 +605,18 @@ export function reduceOpenClawToolEvidence(
         continue;
       }
       const data = asRecord(root.data);
-      if (typeof data?.systemPrompt !== "string") continue;
-      const prompt = data.systemPrompt;
+      const prompt = data?.systemPrompt;
+      // Native persistence can replace the entire prompt with a redaction marker.
+      // An unobservable latest context also invalidates an earlier observation.
+      if (
+        typeof prompt !== "string" ||
+        prompt === "[Oversized diagnostic JSON redacted]" ||
+        prompt === "[Malformed diagnostic JSON redacted]" ||
+        prompt === "[Unserializable]"
+      ) {
+        observed = undefined;
+        continue;
+      }
       const tools = Array.isArray(data.providerVisibleTools)
         ? data.providerVisibleTools
         : Array.isArray(data.tools)
