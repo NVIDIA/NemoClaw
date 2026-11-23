@@ -186,10 +186,15 @@ async fn case() {
         .env("TF_LOG_PATH", &log.0)
         .status();
     report_timings(&case, &log.run_durations());
+    let succeeded = tested.as_ref().is_ok_and(|status| status.success());
     if let Some(cache) = &mut model_cache {
-        cache
-            .finish(tested.as_ref().is_ok_and(|status| status.success()))
-            .expect("host model cache cleanup failed; preserve this run for recovery");
+        let finished = cache.finish(succeeded);
+        // A failed scenario can stop before its destroy run, so the deployment
+        // may still hold the mount and its release fail too. The always-run
+        // Destroy and cache recovery steps release it; report the scenario.
+        if succeeded {
+            finished.expect("host model cache cleanup failed; preserve this run for recovery");
+        }
     }
     assert!(tested.unwrap().success(), "tofu test failed");
 }
