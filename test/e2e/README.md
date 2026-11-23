@@ -1067,8 +1067,8 @@ a matching field for each active refusal cause, absence of output files, and omi
 values. Refusal detail wording is incidental and can change during redaction. Redaction erases the
 credential finding's category token. The fixture normalizes that finding to the source contract's
 `unsupported` category; it cannot establish the original token. Domain config-export tests own the
-original category and exact refusal messages. Live evidence checks the credential field, refusal
-header, exit status, and absence of output files and credential values.
+original category and exact refusal messages. Live evidence checks the field for each active
+expected refusal cause, the header, exit status, and absence of output files and credential values.
 Both launchers must report the same normalized field/category set. Every finding must identify an
 allowed cause, and the header must match the normalized finding categories.
 The effective-policy refusal is allowed alongside any expected source refusal when its finding is present.
