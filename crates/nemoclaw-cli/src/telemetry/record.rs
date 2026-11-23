@@ -133,6 +133,23 @@ words!(ComputeDriver {
 });
 words!(WebSearch { Brave = "brave", None = "none", Other = "other", Tavily = "tavily", Unknown = "unknown" });
 
+/// The record's `version` and `buildKind` from the bundle version stamp.
+pub fn build() -> (&'static str, BuildKind) {
+    build_of(option_env!("NEMOCLAW_BUNDLE_VERSION"))
+}
+
+/// The rule of `build_kind` in `nemoclaw-build`: a pre-release part (a `-`
+/// before any `+`) is `dev`. A build without a stamp is `dev` too.
+fn build_of(stamp: Option<&'static str>) -> (&'static str, BuildKind) {
+    match stamp {
+        Some(version) if !version.split('+').next().unwrap_or_default().contains('-') => {
+            (version, BuildKind::Release)
+        }
+        Some(version) => (version, BuildKind::Dev),
+        None => (env!("CARGO_PKG_VERSION"), BuildKind::Dev),
+    }
+}
+
 /// The record's JSON schema (draft-07, every type inlined), generated from [`Record`].
 pub fn schema() -> serde_json::Value {
     schemars::generate::SchemaSettings::draft07()
@@ -204,6 +221,21 @@ pub mod tests {
                 value
             })
             .collect()
+    }
+
+    #[test]
+    fn only_a_stamped_version_without_pre_release_is_a_release() {
+        assert_eq!(build_of(Some("1.0.0")), ("1.0.0", BuildKind::Release));
+        assert_eq!(build_of(Some("1.0.0+abc")).1, BuildKind::Release);
+        for dev in [
+            "1.0.0-rc.1",
+            "1.0.0-8700",
+            "1.0.0-rc.1.8870",
+            "1.0.0-dev.1a2b3c",
+        ] {
+            assert_eq!(build_of(Some(dev)), (dev, BuildKind::Dev));
+        }
+        assert_eq!(build_of(None), (env!("CARGO_PKG_VERSION"), BuildKind::Dev));
     }
 
     #[test]
