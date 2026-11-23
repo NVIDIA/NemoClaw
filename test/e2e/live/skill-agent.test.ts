@@ -71,7 +71,7 @@ function buildVerifySkillFixtureScript(): string {
     'test -f "$path"',
     'grep -Fq "$token" "$path"',
     'echo "SKILL_TOKEN_PATH=$path"',
-  ].join("; ");
+  ].join(" && ");
 }
 
 async function verifySkillFixturePresent(

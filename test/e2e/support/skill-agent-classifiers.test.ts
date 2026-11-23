@@ -71,6 +71,7 @@ describe("skill-agent live test local classifiers", () => {
         encoding: "utf8",
         env: {
           PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+          TMPDIR: fixtureDir,
           SANDBOX_NAME: "test-sandbox",
           SKILL_FILE: skillFile,
           SKILL_ID: "expected-skill",
