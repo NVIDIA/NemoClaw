@@ -117,6 +117,7 @@ describe("published docs route checking", () => {
       "[Documentation](https://docs.nvidia.com/nemoclaw/latest/)",
       "[Commands](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/reference/commands.html)",
       "[Legacy commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html)",
+      "[Missing v0 page](https://docs.nvidia.com/nemoclaw/v0/missing)",
       "[External](https://example.com/not-checked)",
     ].join("\n");
 
@@ -126,6 +127,7 @@ describe("published docs route checking", () => {
         resolved: "/reference/commands",
         text: "Legacy commands",
       }),
+      expect.objectContaining({ line: 4, resolved: "/missing", text: "Missing v0 page" }),
     ]);
   });
 
@@ -368,19 +370,19 @@ redirects:
     const fernYaml = `
 redirects:
   - source: /nemoclaw/latest/user-guide/:variant/about/release-notes
-    destination: /nemoclaw/latest/user-guide/:variant/release-notes
+    destination: /nemoclaw/v0/user-guide/:variant/release-notes
 `;
 
     expect(findMissingDirectLegacyReleaseNotesRedirects(fernYaml)).toHaveLength(19);
     expect(findMissingDirectLegacyReleaseNotesRedirects(fernYaml)).toContainEqual({
       source: "/nemoclaw/about/release-notes.html",
       destination: null,
-      expected: "/nemoclaw/user-guide/openclaw/release-notes",
+      expected: "/nemoclaw/v0/user-guide/openclaw/release-notes",
     });
     expect(findMissingDirectLegacyReleaseNotesRedirects(fernYaml)).toContainEqual({
       source: "/nemoclaw/about/release-notes.md",
       destination: null,
-      expected: "/nemoclaw/user-guide/openclaw/release-notes.md",
+      expected: "/nemoclaw/v0/user-guide/openclaw/release-notes.md",
     });
   });
 
@@ -390,13 +392,13 @@ redirects:
   - source: /nemoclaw/:path*.html
     destination: /nemoclaw/:path*
   - source: /nemoclaw/latest/user-guide/:variant/about/release-notes.html
-    destination: /nemoclaw/latest/user-guide/:variant/release-notes
+    destination: /nemoclaw/v0/user-guide/:variant/release-notes
 `;
 
     expect(findMissingDirectLegacyReleaseNotesRedirects(fernYaml)).toContainEqual({
       source: "/nemoclaw/latest/user-guide/:variant/about/release-notes.html",
-      destination: "/nemoclaw/latest/user-guide/:variant/release-notes",
-      expected: "/nemoclaw/latest/user-guide/:variant/release-notes",
+      destination: "/nemoclaw/v0/user-guide/:variant/release-notes",
+      expected: "/nemoclaw/v0/user-guide/:variant/release-notes",
       mustPrecede: "/nemoclaw/:path*.html",
     });
   });
@@ -592,19 +594,19 @@ describe("public security review boundaries", () => {
         [
           [
             `/nemoclaw/latest/user-guide/:variant/security/${reviewSlug}`,
-            "/nemoclaw/latest/user-guide/:variant/security/security-controls/gateway-authentication-controls",
+            "/nemoclaw/v0/user-guide/:variant/security/security-controls/gateway-authentication-controls",
           ],
           [
             `/nemoclaw/user-guide/:variant/security/${reviewSlug}`,
-            "/nemoclaw/user-guide/:variant/security/security-controls/gateway-authentication-controls",
+            "/nemoclaw/v0/user-guide/:variant/security/security-controls/gateway-authentication-controls",
           ],
           [
             `/nemoclaw/latest/security/${reviewSlug}`,
-            "/nemoclaw/latest/user-guide/openclaw/security/security-controls/gateway-authentication-controls",
+            "/nemoclaw/v0/user-guide/openclaw/security/security-controls/gateway-authentication-controls",
           ],
           [
             `/nemoclaw/security/${reviewSlug}`,
-            "/nemoclaw/user-guide/openclaw/security/security-controls/gateway-authentication-controls",
+            "/nemoclaw/v0/user-guide/openclaw/security/security-controls/gateway-authentication-controls",
           ],
         ].map(([sourceBase, destinationBase]) => ({ destinationBase, sourceBase })),
     ),
@@ -657,19 +659,19 @@ describe("headless server deployment routes", () => {
     [
       [
         `/nemoclaw/latest/user-guide/openclaw/deployment/${retiredSlug}`,
-        "/nemoclaw/latest/user-guide/openclaw/deployment/deploy-to-headless-server",
+        "/nemoclaw/v0/user-guide/openclaw/deployment/deploy-to-headless-server",
       ],
       [
         `/nemoclaw/user-guide/openclaw/deployment/${retiredSlug}`,
-        "/nemoclaw/user-guide/openclaw/deployment/deploy-to-headless-server",
+        "/nemoclaw/v0/user-guide/openclaw/deployment/deploy-to-headless-server",
       ],
       [
         `/nemoclaw/latest/deployment/${retiredSlug}`,
-        "/nemoclaw/latest/user-guide/openclaw/deployment/deploy-to-headless-server",
+        "/nemoclaw/v0/user-guide/openclaw/deployment/deploy-to-headless-server",
       ],
       [
         `/nemoclaw/deployment/${retiredSlug}`,
-        "/nemoclaw/user-guide/openclaw/deployment/deploy-to-headless-server",
+        "/nemoclaw/v0/user-guide/openclaw/deployment/deploy-to-headless-server",
       ],
     ].map(([sourceBase, destinationBase]) => ({ destinationBase, sourceBase })),
   );

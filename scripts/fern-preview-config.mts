@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { cpSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parse, stringify } from "yaml";
+
 export const DEFAULT_FERN_PREVIEW_INSTANCE =
   "nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw";
 
@@ -61,4 +66,52 @@ function isFernPreviewInstance(value: string): boolean {
     pathSegments.length > 0 &&
     pathSegments.every((segment) => instancePathSegment.test(segment))
   );
+}
+
+/** Use the branch's rendered v1 pages for PR previews, or link to v1 on shared staging. */
+export function prepareStagingProject(repo: string, destination: string, v1Pages?: string): void {
+  cpSync(path.join(repo, "docs"), path.join(destination, "docs"), { recursive: true });
+  const fern = path.join(destination, "fern");
+  cpSync(path.join(repo, "fern"), fern, {
+    recursive: true,
+    filter: (source) => ![".fern", ".fern-cache"].includes(path.basename(source)),
+  });
+  const config = path.join(fern, "docs.yml");
+  const site = parse(readFileSync(config, "utf8"));
+  const v1 = site.products.findIndex(
+    (product: { "display-name": string }) => product["display-name"] === "v1",
+  );
+  if (v1 < 0) throw new Error("Expected a v1 product in fern/docs.yml");
+  if (v1Pages) {
+    const guide = path.join(fern, "v1");
+    cpSync(v1Pages, guide, { recursive: true });
+    const manifest = path.join(guide, "navigation.yml");
+    const nav = parse(readFileSync(manifest, "utf8"));
+    // On the v1 home, the shared installation instructions still lead into the v0 guide.
+    const docs = path.join(destination, "docs");
+    const home = readFileSync(path.join(docs, "index.mdx"), "utf8")
+      .replaceAll(/(\]\(|href=")\.\.\//g, "$1/nemoclaw/v0/user-guide/")
+      .replaceAll("](/user-guide/", "](/nemoclaw/v0/user-guide/");
+    writeFileSync(path.join(docs, "preview-v1-home.mdx"), home);
+    nav.navigation = [
+      { page: "Home", slug: "home", path: "../../docs/preview-v1-home.mdx" },
+      ...nav.navigation.filter((entry: { slug?: string }) => entry.slug !== "home"),
+    ];
+    writeFileSync(manifest, stringify(nav));
+    site.redirects = [
+      { source: "/nemoclaw/v1", destination: "/nemoclaw/v1/home" },
+      ...(site.redirects ?? []),
+    ];
+    site.products[v1] = { "display-name": "v1", slug: "v1", path: "./v1/navigation.yml" };
+  } else {
+    const instance = resolveFernPreviewInstance(process.env.FERN_STAGING_INSTANCE);
+    site.products[v1].href = `https://${instance}/v1/home`;
+  }
+  writeFileSync(config, stringify(site));
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const destination = process.argv[2];
+  if (!destination) throw new Error("Pass a temporary directory for the staging project");
+  prepareStagingProject(path.resolve(import.meta.dirname, ".."), destination, process.argv[3]);
 }

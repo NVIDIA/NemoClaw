@@ -5,13 +5,14 @@ name: Docs / Publish Staging and Clean Up PR Previews
 
 on:
   push:
-    branches: [main]
+    branches: [main, v0]
     paths:
       - "docs/**"
       - "fern/**"
       - "package.json"
       - "package-lock.json"
       - "scripts/generate-starter-prompt.mts"
+      - "scripts/fern-preview-config.mts"
       - "scripts/sync-agent-variant-docs.mts"
       - ".github/workflows/docs-publish-staging.yaml"
 
@@ -35,6 +36,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node.js
@@ -57,8 +59,13 @@ jobs:
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
         run: |
+          if [[ "$GITHUB_REF_NAME" == "main" ]] && git show-ref --verify --quiet refs/remotes/origin/v0; then
+            echo "::notice::The v0 branch now publishes v0 staging."
+            exit 0
+          fi
           FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
-          cd fern
+          node scripts/fern-preview-config.mts "$RUNNER_TEMP/v0-preview"
+          cd "$RUNNER_TEMP/v0-preview/fern"
           npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE"
 
   delete-preview:
