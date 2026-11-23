@@ -110,8 +110,11 @@ The following paths have different prerequisites and retention behavior:
 | Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#using-external-ollama-through-a-managed-proxy) |
 | You run a model server in a Kubernetes or OpenShift gateway's cluster | External `endpoint` naming its Service, `http://<service>.<namespace>.svc.cluster.local:<port>/v1`, and an optional credential reference; follow [in-cluster model servers](../build-deploy/kubernetes.md#using-a-model-server-in-the-cluster) | [In-cluster vLLM](../../examples/kubernetes/in-cluster-vllm.yaml), [in-cluster Ollama](../../examples/kubernetes/in-cluster-ollama.yaml) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../../examples/spark/vllm.yaml) |
+| NemoClaw should serve a pinned public GGUF on a CUDA GPU | Declare `kind: llamaCpp` with a pinned runtime image and the repository, revision, filename, and SHA-256 for the GGUF | [Managed llama.cpp](models.md#serving-a-pinned-gguf-with-llamacpp) |
 | The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../../examples/spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Use an immutable image that packages the recipe's reviewed tools, and declare an [inline recipe](recipes.md) | [Recipe declaration](recipes.md#declaration) |
+
+An external endpoint remains under its operator's control after destroy. A managed service's container belongs to the deployment, but some data and credentials can outlive it. Review [deletion and retention](../build-deploy/state.md#deletion-and-retention) before retiring either deployment.
 
 Service ownership doesn't depend on the harness.
 The service must support the [request API](#choosing-the-request-api) selected by that harness.

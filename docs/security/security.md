@@ -4,7 +4,7 @@
 # Security and Credential Ownership
 
 Select controls for the actual sandbox image, engine host, gateway, and inference endpoint.
-Parser acceptance and protocol fixtures do not establish security qualification on a deployment host.
+Verify the [CLI archive's provenance](../get-started/install.md) before extracting it and pin runtime images by digest. Artifact verification does not qualify the sandbox or inference endpoint. Parser acceptance and protocol fixtures do not establish security qualification on a deployment host.
 
 ## Isolation and Trust
 

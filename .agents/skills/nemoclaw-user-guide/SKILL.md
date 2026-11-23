@@ -12,7 +12,7 @@ description: Find revision-matched NemoClaw user guidance for deployment, infere
 
 Establish which NemoClaw the user runs before suggesting commands: their stated version, the checkout's README and revision, and the executable's `--help` or `--version`.
 A branch name doesn't identify an installed executable.
-The v1 CLI has `plan`, `apply`, `export`, and `destroy`; npm onboarding, `launch`, `backup-all`, and `inference get` belong to earlier versions.
+The v1 CLI has `onboard`, `plan`, `apply`, `export`, and `destroy`. `onboard` writes YAML only. npm onboarding, `launch`, `backup-all`, and `inference get` belong to earlier versions.
 
 Use the documentation in the matching checkout, starting with [the index](../../../docs/README.md).
 Without a checkout, use [the hosted v1 index](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/llms.txt); keep `/nemoclaw/v1/` in page URLs and append `.md` for Markdown.
@@ -24,7 +24,9 @@ If the executable and the documentation disagree, establish which deployment the
 
 | Task | Owning source in a v1 checkout |
 |---|---|
-| First deployment and build | [Prerequisites](../../../docs/get-started/prerequisites.md), [get started](../../../docs/get-started/first-deployment.md), [build](../../../docs/build-deploy/build.md) |
+| Install and verify a first reply | [Install](../../../docs/get-started/install.md), [prerequisites](../../../docs/get-started/prerequisites.md), [first deployment](../../../docs/get-started/first-deployment.md) |
+| Author a new deployment document | [Onboarding](../../../docs/get-started/onboard.md) |
+| Build a custom revision | [Build from source](../../../docs/build-deploy/build.md) |
 | Plan, change, recover, export, or destroy | [Usage](../../../docs/build-deploy/usage.md), [state](../../../docs/build-deploy/state.md), [troubleshooting](../../../docs/observability/troubleshooting.md) |
 | Inference API, models, recipes, or SSH placement | [Inference](../../../docs/agents-inference/inference.md), [models](../../../docs/agents-inference/models.md), [recipes](../../../docs/agents-inference/recipes.md), [remote service](../../../docs/agents-inference/remote-service.md) |
 | Native agents, dashboards, or integrations | [Agents](../../../docs/agents-inference/agents.md), [interfaces](../../../docs/agents-inference/interfaces.md) |

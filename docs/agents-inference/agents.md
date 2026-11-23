@@ -83,15 +83,15 @@ Headless operation follows the same public Fabric invocation boundary.
 The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/76bde16c40747062001bd6ea5f5d13cadab3d706/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
-With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory.
-Run these steps from the pinned v1 worktree root on the client host:
+With the [v0.1.0 OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. Run these steps from the directory that holds `deployment.yaml`:
 
 1. [Select the deployment's gateway and workspace](interfaces.md#selecting-the-gateway-and-workspace) in this terminal.
 
 2. Read the runtime ID from a plan using the deployment's original YAML, state directory, and credential environment.
 
    ```sh
-   RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml | jq -er '.agents.assistant.runtimeId') || exit 1
+   nemoclaw plan -o json --progress off --non-interactive --state-dir .nemoclaw-first deployment.yaml > applied-plan.json &&
+     RUNTIME_ID=$(jq -er '.agents.assistant.runtimeId | strings | select(length > 0)' applied-plan.json)
    ```
 
    If the lookup fails, stop and inspect the apply result instead of invoking with an empty ID.

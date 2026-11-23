@@ -3,7 +3,7 @@
 
 # Documentation and Project Resources
 
-Use the [documentation index](../README.md) for the v1 development branch and [Release Notes](../changelog/overview.md) for release status.
+Use the [documentation index](../README.md) for Agent Configs v0.1.0 and [Release Notes](../changelog/overview.md) for release status.
 Keep the documentation, configuration schema, and runtime bundle matched to the source revision you use.
 
 ## Documentation for Coding Agents
@@ -19,8 +19,8 @@ Choose a source by its use:
 
 | Source | Use |
 |---|---|
-| This checkout's `docs/README.md` and task guides | V1 guidance grounded in the inspected implementation revision. Use the [generated field reference](../reference/configuration.md) from a matching v1 worktree. |
-| [v1 staging overview](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) | Browser preview. Choose **v1 (Development)** in the version selector. |
+| The `v0.1.0` tag's `docs/README.md` and task guides | Release-specific guidance. Use the [generated field reference](../reference/configuration.md) from the matching worktree and the JSON Schema from the installed archive. |
+| [v1 staging overview](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) | Browser preview. Choose **v1 (Agent Configs)** in the version selector. |
 | [v1 Markdown index](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/llms.txt) | Discover pages in this version. |
 | [v1 overview as Markdown](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview.md) | Fetch page text. Append `.md` to another v1 page URL for that page. |
 
@@ -37,10 +37,10 @@ Docs search, MCP and v1-scoped results are tracked in [#12644](https://github.co
 Use this prompt with an assistant that can read your checkout, replacing the final line with your task:
 
 ```text
-Help me use the v1 development version of NemoClaw.
+Help me use NemoClaw Agent Configs v0.1.0.
 Read docs/README.md, docs/about/overview.md, and the guide for my task from this checkout.
 Use CLI and configuration references from the same source revision as my bundle, starting with docs/reference/configuration.md.
-For hosted documentation, use the v1 (Development) selector and /nemoclaw/v1/llms.txt.
+For hosted documentation, use the v1 (Agent Configs) selector and /nemoclaw/v1/llms.txt.
 Keep main-version commands and procedures separate from v1 guidance.
 Treat anything listed in docs/resources/limits.md as not yet available or tested.
 Identify the client, sandbox engine, inference host, image digests, and deployment state path before deployment work.
@@ -67,9 +67,7 @@ To move a deployment from the earlier product, ask the assistant to read `.agent
 Refer to [migration](../get-started/migration.md#starting-from-the-earlier-export).
 Automatic discovery, packaged installation across assistant clients and a rehearsed installation prompt are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
-## Contributing
-
-Follow [repository instructions](../../AGENTS.md), [the writing guide](../../WRITING.md), and [documentation contribution guidance](../../internal-docs/contributing/documentation.md).
+## Getting Help
 
 Use [NemoClaw issues](https://github.com/NVIDIA/NemoClaw/issues) for reproducible implementation or documentation problems and [discussions](https://github.com/NVIDIA/NemoClaw/discussions) for product questions or proposed capabilities.
 Identify the v1 revision, bundle, relevant configuration, expected behavior, and the failure observed.
@@ -79,7 +77,7 @@ Exclude credential values and private deployment data.
 [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) hosts community solutions and examples.
 Check their target version before using them with v1.
 Their existence does not establish v1 support or qualification.
-v1 has no support policy yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
+Refer to [Current Limits](limits.md) before choosing a deployment configuration.
 
 ## Licenses and Source Notices
 

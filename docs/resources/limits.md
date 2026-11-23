@@ -3,7 +3,6 @@
 
 # Current Limits
 
-NemoClaw Agent Configs is a release candidate and has no published final release.
 This page lists what Agent Configs does not do yet or has not tested, with the open GitHub issue that tracks each where one exists.
 Other pages state a limit where it affects a procedure and link the same issue.
 Unlike these limits, the responsibilities in [Out of Scope](out-of-scope.md) are left to other components by design.
@@ -23,15 +22,13 @@ A row marked **not verified** names the run that would check it.
 
 ## Installation and Releases
 
-Release archives exist only on draft releases.
-There is no installer or published package.
+[Install the native CLI archive](../get-started/install.md) rather than a package manager distribution.
 Keep the matching bundle for an existing deployment.
 The following installation and release limits apply:
 
 | Limit | Issue | Last Verified |
 |---|---|---|
-| No published final release: the [release archives](../get-started/install.md) are on draft releases, which only maintainers see. Others [build the bundle from source](../build-deploy/build.md#building-a-native-bundle). | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`291723b`][v1-291723b]: issue, and only draft releases exist |
-| The release executables are neither signed nor notarized for macOS or Windows. | [#14621](https://github.com/NVIDIA/NemoClaw/issues/14621) | [`291723b`][v1-291723b]: code, issue |
+| Archive provenance, OS signing, and macOS notarization are separate checks. Use the release's evidence record for platform results. | [#14621](https://github.com/NVIDIA/NemoClaw/issues/14621) | [Signing record contract](../../.github/scripts/record-cli-signing.sh); final platform results not verified |
 | Releases don't include a `claude` agent image: it bundles Anthropic's proprietary Claude Code CLI, which NVIDIA can't redistribute. Build it locally as [Building Agent Images](../build-deploy/build.md#building-agent-images) describes. | [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) | [`43c9dc9`][v1-43c9dc9]: issue |
 | The SDK and provider packages are not published. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | No support policy or enterprise deployment qualification. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue |

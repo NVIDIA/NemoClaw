@@ -3,7 +3,7 @@
 
 # NemoClaw CLI Reference
 
-Use `nemoclaw` from a [verified native bundle](../build-deploy/build.md).
+Use `nemoclaw` from a [verified native bundle](../get-started/install.md).
 Run commands from the directory containing your deployment YAML, and select the same state directory for every operation.
 The [CLI parser](../../crates/nemoclaw-cli/src/args.rs) defines the following commands and options.
 The [process tests](../../crates/nemoclaw-cli/tests/commands.rs) cover execution behavior.
@@ -34,11 +34,11 @@ The output defaults to `deployment.yaml`.
 Onboarding never overwrites an existing file.
 It requires a terminal and does not create deployment state or apply resources.
 It reads the target's engines, the selected image, and the model catalog without a bundle or OpenTofu.
-A read that fails leaves the target unverified, and you can still save.
+An unverified read or absent image can leave an advisory and allow saving. A confirmed conflict blocks saving.
 The saved file holds only the template's values and your answers.
 `plan` fills the omitted fields with the defaults of the release in use.
 Known engine incompatibility or conflicting image platform, manifest digest, or NVIDIA NeMo Fabric adapter requirements blocks onboarding review and saving.
-The [onboarding guide](../../crates/nemoclaw-onboarding/README.md) describes how to run it, what it reads from the target, and what to do with the saved file.
+The [onboarding guide](../get-started/onboard.md) describes how to run it, what it reads from the target, and what to do with the saved file.
 
 Plan and apply derive credential requirements from the parsed document.
 They use a matching nonempty environment variable first and prompt only for unresolved references.
@@ -159,7 +159,7 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `agents` | Each sandbox's agent, by sandbox name: `agent`, its name, and `runtimeId`, the runtime ID that `fabric-agent-ctl invoke --runtime-id` takes. A plan reports the runtimes the last apply left, and apply reports the runtimes after its changes. `runtimeId` is omitted while state records no runtime. Never contains a credential. Omitted when empty. When apply cannot read state, `warnings` says so. Refer to [invoke an agent](../agents-inference/interfaces.md#invoking-an-agent). |
 | `deferred` | Unresolved planning prerequisites. Omitted when empty. |
 | `resourceSources` | Authored provider `name` and definition `path`, keyed by opaque scoped resource address. Intent metadata, not proof of an established resource. Omitted when empty. |
-| `unverified` | Apply-time service-readiness checks. Does not change `complete`. Omitted when empty. |
+| `unverified` | Advisories about checks such as apply-time service readiness or an unavailable catalog. Does not change `complete`. Omitted when empty. |
 | `discovery` | Plan query targets, typed observations, credential-reference availability, and resource inventory. Refer to the [SDK report contract](sdk.md#reading-plan-discovery-and-resource-inventory). Omitted when empty. |
 | `retained` | Retained resource addresses reported by the operation, not an inventory of every surviving file or external service. Omitted when empty. |
 | `interfaces` | After apply, each enabled agent interface: `sandbox`, `interface`, its loopback `port` for an HTTP interface, the `tokenPath` in the sandbox for an interface with a token, `signIn` (`token_in_url_fragment`, `bearer_token`, `none`, or `adapter_documented`), and, for an interface with a terminal UI, the `terminal` command to run in the sandbox with `TOKEN` in place of the token. Never contains a token. Omitted when empty. Refer to [agent interfaces](../agents-inference/interfaces.md#reaching-an-agent-interface). |

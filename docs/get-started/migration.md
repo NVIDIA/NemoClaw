@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Assessing Migration From an Earlier Version
+# Evaluating Agent Configs Alongside NemoClaw Classic
 
 The desired-state SDK, schema, and state format do not promise compatibility with the earlier product.
 The current CLI has no state adoption or migration command.
@@ -18,8 +18,8 @@ Choose the current owner of the task rather than translating earlier CLI command
 
 | Earlier task | Current destination |
 |---|---|
-| Install with npm | Build the native bundle from source; releases are tracked in [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) |
-| Interactive onboarding and agent-specific aliases | `nemoclaw onboard` writes deployment YAML for the one `nemoclaw` CLI; see the [onboarding guide](../../crates/nemoclaw-onboarding/README.md) |
+| Install with npm | [Install the v0.1.0 native bundle](install.md) |
+| Interactive onboarding and agent-specific aliases | `nemoclaw onboard` writes deployment YAML for the one `nemoclaw` CLI; see the [onboarding guide](onboard.md) |
 | `launch`, `status`, `doctor`, `backup-all`, or `rebuild` | No equivalent commands; the [CLI reference](../references/cli.md) lists the current ones |
 | Imperative inference or sandbox changes | [Desired-state lifecycle](../build-deploy/usage.md), with explicit update/replacement limits |
 | Export configuration (`config export`) | `nemoclaw export`; see [CLI reference](../references/cli.md) and [state](../build-deploy/state.md) |
@@ -64,7 +64,7 @@ It leaves the earlier deployment untouched and moves no native data.
    An export without the first line `# nemoclaw-export-report: 1` comes from a release without the report; export again with a release that writes it.
 3. Ask the assistant to read `.agents/skills/nemoclaw-v0-migration/SKILL.md` and complete the export.
    It assigns a fresh UUID, state directory, and free gateway port, selects an agent image, replaces the parts of the policy that describe the earlier image, writes the settings v1 can hold, and lists the ones it can't.
-4. Review the completed YAML and the list of lost settings, then plan it as step 4 below describes.
+4. Review the completed YAML and the list of lost settings, then plan it as the evaluation procedure below describes.
 
 The skill lists the harnesses and revisions it has been run with.
 Deep Agents exports and exports with managed inference services are untested.
@@ -77,13 +77,15 @@ Use a separate identity and state directory so the comparison doesn't mutate an 
    Use that version's documentation and tools to inspect it.
 2. Check the task mapping above for workflows you rely on.
    If a workflow you need is in [current limits](../resources/limits.md) or [Out of Scope](../resources/out-of-scope.md), keep the earlier deployment available rather than assuming feature parity.
-3. Build a separate matched v1 bundle and images, then prepare a fresh UUID and dedicated state directory using [the first-deployment guide](first-deployment.md).
+3. [Install the v0.1.0 bundle](install.md).
+4. Prepare a fresh UUID and dedicated state directory using [the first-deployment guide](first-deployment.md).
    Check names, exposed ports, model capacity, and credentials so the evaluation doesn't overwrite or exhaust the original deployment's resources.
-4. Plan and apply only the new v1 configuration/state.
-   Verify the native interface and an actual agent reply, then check configuration export and [unchanged reapply](../build-deploy/usage.md#verifying-an-unchanged-reapply).
-5. Validate each required task in the new deployment before switching use to it.
+5. Plan and apply only the new v1 configuration and state.
+6. Verify a reply through the native interface.
+7. Check configuration export and [unchanged reapply](../build-deploy/usage.md#verifying-an-unchanged-reapply).
+8. Validate each required task in the new deployment before switching use to it.
    An agent reply alone doesn't validate tools, channels, history continuity, or workload quality.
-6. If evaluation fails, continue using the retained earlier deployment and diagnose v1 with its own bundle and state.
+9. If evaluation fails, continue using the retained earlier deployment and diagnose v1 with its own bundle and state.
    Preview any v1 teardown separately and retain data needed for investigation before destroying its sandbox.
 
 Continuing to use an untouched earlier deployment isn't a rollback of data written in v1.
@@ -107,7 +109,7 @@ Retain the earlier deployment until the required continuity has been verified.
 
 The [combined staging site](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) has a version selector:
 
-- **v1 (Development)** describes the desired-state product.
+- **v1 (Agent Configs)** describes the desired-state product.
 - **Latest (main)** preserves the imported main guides and their release history.
   Start at its [OpenClaw home](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/user-guide/openclaw/home).
 

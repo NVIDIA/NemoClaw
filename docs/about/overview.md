@@ -10,8 +10,7 @@ Deployment state lets you check changes and recover interrupted operations, but 
 
 ## What You Can Do
 
-The inspected v1 implementation supports these workflows.
-Use a bundle and agent image built from the same source revision as your configuration.
+Use the v0.1.0 bundle, configuration schema, and agent image together. The following workflows cover first deployment and ongoing operations:
 
 - [Deploy an OpenClaw agent](../get-started/first-deployment.md) with an existing gateway and model endpoint, then send a native request to verify the reply.
 - [Manage multiple sandboxes](../build-deploy/usage.md#configuring-sandboxes-and-inference), each with one agent, and connect them to hosted or managed inference providers.
@@ -19,11 +18,11 @@ Use a bundle and agent image built from the same source revision as your configu
 - [Using the Rust SDK](../references/sdk.md) to integrate deployment operations, or [deploy to Kubernetes or OpenShift](../build-deploy/kubernetes.md) when the cluster prerequisites are available.
 - [Use the providers from your own OpenTofu project](../build-deploy/opentofu-project.md), with your own pipelines and state backend, instead of the CLI or SDK.
 
-The CLI doesn't invoke agents, manage channels, or take snapshots. An apply checks configuration and runtime readiness, not a model response. Refer to [native agent access](../agents-inference/agents.md#choosing-native-access) and [current limits](../resources/limits.md) before choosing a workflow. v1 has no published release or support policy established by these sources.
+The CLI doesn't invoke agents, manage channels, or take snapshots. An apply checks configuration and runtime readiness, not a model response. Refer to [native agent access](../agents-inference/agents.md#choosing-native-access) and [current limits](../resources/limits.md) before choosing a workflow.
 Refer to [Release Notes](../changelog/overview.md).
 
 ## Where to Start
 
 Coming from Classic, the earlier version of NemoClaw? Use the [migration guide](../get-started/migration.md) to assess your workflows before evaluating a separate deployment.
 
-For a first deployment, [check prerequisites](../get-started/prerequisites.md) and follow the [guided OpenClaw deployment](../get-started/first-deployment.md). For a different environment, [Architecture Overview](architecture-overview.md) explains the deployment flow and ownership, and [Ecosystem](ecosystem.md) distinguishes the adjacent products. Before changing an existing deployment, [review data retention](../build-deploy/state.md#deletion-and-retention) and [recovery](../build-deploy/usage.md#updates-and-recovery).
+The [guided OpenClaw deployment](../get-started/first-deployment.md) leads from CLI installation to a verified reply. For a separate deployment of your own, use [interactive YAML authoring](../get-started/onboard.md). For a different environment, [Architecture Overview](architecture-overview.md) explains the deployment flow and ownership, and [Ecosystem](ecosystem.md) distinguishes the adjacent products. Before changing an existing deployment, [review data retention](../build-deploy/state.md#deletion-and-retention) and [recovery](../build-deploy/usage.md#updates-and-recovery).

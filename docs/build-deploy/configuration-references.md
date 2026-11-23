@@ -8,7 +8,7 @@ Both forms use the same configuration type, defaults, and validation.
 A shared inference, provider, harness, integration, policy, or grant definition becomes active only when a consumer selects it.
 Managed services have a separate rule: every entry in `spec.services` is installed and checked, even without a consumer.
 
-The authoring library and its [example TUI](../../crates/nemoclaw-onboarding/README.md) can generate a validated starter document without resolving credentials, planning, or applying.
+[Onboarding](../get-started/onboard.md) can write a starter document without saving credential values, planning, or applying.
 The questionnaire edits a single-sandbox deployment and derives native settings questions from NVIDIA NeMo Fabric schemas.
 Other deployment shapes remain available through hand-authored YAML according to the [field reference](../reference/configuration.md).
 Generated and hand-authored files use the same lifecycle CLI `plan` and `apply` implementations.

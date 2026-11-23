@@ -46,7 +46,12 @@
           "slug": "get-started"
         },
         {
-          "title": "Assessing Migration From an Earlier Version",
+          "title": "Authoring Deployment YAML With Onboarding",
+          "source": "docs/get-started/onboard.md",
+          "slug": "onboard"
+        },
+        {
+          "title": "Evaluating Agent Configs Alongside NemoClaw Classic",
           "source": "docs/get-started/migration.md",
           "slug": "migration"
         }
@@ -148,6 +153,31 @@
       ]
     },
     {
+      "title": "Security",
+      "pages": [
+        {
+          "title": "Security and Credential Ownership",
+          "source": "docs/security/security.md",
+          "slug": "security"
+        },
+        {
+          "title": "Threat Model",
+          "source": "docs/security/threat-model.md",
+          "slug": "threat-model"
+        },
+        {
+          "title": "Configuring Sandbox Policy",
+          "source": "docs/security/sandbox-network.md",
+          "slug": "sandbox-network"
+        },
+        {
+          "title": "Rotating Credentials",
+          "source": "docs/security/credential-rotation.md",
+          "slug": "credential-rotation"
+        }
+      ]
+    },
+    {
       "title": "References",
       "pages": [
         {
@@ -204,31 +234,6 @@
           "title": "Out of Scope",
           "source": "docs/resources/out-of-scope.md",
           "slug": "out-of-scope"
-        }
-      ]
-    },
-    {
-      "title": "Security",
-      "pages": [
-        {
-          "title": "Security and Credential Ownership",
-          "source": "docs/security/security.md",
-          "slug": "security"
-        },
-        {
-          "title": "Threat Model",
-          "source": "docs/security/threat-model.md",
-          "slug": "threat-model"
-        },
-        {
-          "title": "Configuring Sandbox Policy",
-          "source": "docs/security/sandbox-network.md",
-          "slug": "sandbox-network"
-        },
-        {
-          "title": "Rotating Credentials",
-          "source": "docs/security/credential-rotation.md",
-          "slug": "credential-rotation"
         }
       ]
     }

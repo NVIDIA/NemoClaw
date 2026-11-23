@@ -9,12 +9,7 @@ Every deployment needs a bundle and an agent image built from the same source re
 
 ## Choosing This Guide
 
-No NemoClaw release is published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
-Release candidates are draft releases that only users with push access to this repository can see, and their images are in internal packages.
-Until a release is published, everyone else builds NemoClaw from source with this guide.
-Maintainers can instead [install a draft release's CLI](../get-started/install.md).
-
-After a release is published, [install its CLI](../get-started/install.md) and use the images that the release lists by digest.
+For v0.1.0 on an archive target, [install the CLI bundle](../get-started/install.md) and use the images listed by digest in that release.
 Build from source instead in the following situations:
 
 | Situation | What to Build |
@@ -121,7 +116,7 @@ To build a bundle for the host's platform and check its CLI, perform the followi
    Verified inputs assembled at dist/linux_arm64 (VERSION)
    ```
 
-   `VERSION` is the release version at a clean release tag, and otherwise a development version derived from the source, such as `0.1.0-dev.5db7cd2995277923`.
+   Local builds report a development version derived from the source, such as `0.1.0-dev.5db7cd2995277923`. The release CI run for the tag supplies the release version.
 
 2. Optional: Copy `dist/PLATFORM` to a dedicated directory, and use the copy in the following steps.
 
@@ -198,7 +193,7 @@ Before you operate it with a bundle built from a different pin, refer to [the ch
 ## Building Agent Images
 
 Every sandbox requires `image.ref`: an agent image pinned by its immutable digest.
-No default agent image is published, so build one for each harness that the deployment runs.
+When building from source, build an image for each harness that the deployment runs.
 
 Before you build an agent image, check the following:
 

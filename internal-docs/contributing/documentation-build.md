@@ -4,7 +4,7 @@
 # Building and Publishing Documentation
 
 Edit repository Markdown; Cargo generates the Fern pages and navigation from those sources.
-Fern's version selector offers **Latest (main)** and **v1 (Development)** in one site.
+Fern's version selector offers **Latest (main)** and **v1 (Agent Configs)** in one site.
 Latest remains the default at its existing routes; v1 uses `/nemoclaw/v1/`.
 Publication does not qualify the procedures or product configurations they describe.
 
@@ -172,7 +172,7 @@ The [staging build for c7e8e116c8](https://github.com/NVIDIA/NemoClaw/actions/ru
 | `/nemoclaw/v1/overview` and main's `/nemoclaw/user-guide/openclaw/home` | HTTP 200 with the expected page titles |
 | `/nemoclaw/v1/overview.md` and `/nemoclaw/v1/get-started.md` | Markdown includes the v1 procedure, qualification TBDs, and revision-pinned source links |
 | `/nemoclaw/v1/reference/configuration.md` | Markdown includes configuration fields and tables, with source links pinned to `c7e8e116c8cb81ed64a0625f5b632398607c1d96` |
-| `/nemoclaw/v1/llms.txt` | Identifies `v1 (Development)` and lists 31 page links under `/nemoclaw/v1/` |
+| `/nemoclaw/v1/llms.txt` | Identifies `v1 (Agent Configs)` and lists v1 page links under `/nemoclaw/v1/`, including `onboard` |
 | Unversioned `/nemoclaw/llms.txt` | Indexes the default main version; use the version-specific index for v1 discovery |
 
 The preview moves with successful publication; repeat these checks for the release candidate.

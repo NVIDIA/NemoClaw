@@ -10,7 +10,7 @@ You reach them through OpenShell commands, not published host ports.
 ## Selecting the Gateway and Workspace
 
 Use an OpenShell CLI matching the deployment implementation revision on the client host.
-For the [source-pinned tutorial](../get-started/first-deployment.md), use the OpenShell version its [prerequisites](../get-started/prerequisites.md#before-the-first-deployment) name.
+For the [first-deployment tutorial](../get-started/first-deployment.md), use the OpenShell version its [prerequisites](../get-started/prerequisites.md#before-the-first-deployment) name.
 These selectors choose an existing OpenShell gateway and deployment.
 They don't create services or provision credentials.
 Run them in every terminal used for forwarding or sandbox commands, from any directory.

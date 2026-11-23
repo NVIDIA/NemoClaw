@@ -3,9 +3,7 @@
 
 # Documentation Index
 
-These guides describe NemoClaw Agent Configs, a release candidate built from the `v1` branch. Use a bundle, example, and image built from the implementation revision you operate. The [first-deployment tutorial](get-started/first-deployment.md) is an exception: it pins `1636069b91f402242a35714fde1011042c3f1f70` and OpenShell 0.1.9. Follow that worktree's build instructions and generated schema for the exercise, not this checkout's newer build guide.
-
-The [field reference](reference/configuration.md) and JSON Schema are generated from this checkout's SDK, not from the tutorial's pinned worktree. [Current Limits](resources/limits.md) lists unimplemented or untested paths. Do not treat contracts from different revisions as interchangeable.
+Find a task guide for NemoClaw Agent Configs v0.1.0. Use the bundle, example, schema, and images from the same release. For source builds, match them to the implementation revision. [Current Limits](resources/limits.md) lists unimplemented or untested paths.
 
 ## About
 
@@ -26,8 +24,9 @@ Check the prerequisites before following the first deployment; migration is a se
 |---|---|
 | Check client, runtime, and model-host requirements | [Prerequisites](get-started/prerequisites.md) |
 | Install, upgrade, or uninstall a release's CLI | [Installing the CLI](get-started/install.md) |
-| Deploy OpenClaw with existing gateway and inference services | [First deployment](get-started/first-deployment.md) |
-| Assess a move from an earlier version | [Migration](get-started/migration.md) |
+| Deploy OpenClaw with existing services and verify a reply | [First Deployment](get-started/first-deployment.md) |
+| Write YAML for a separate deployment | [Authoring Deployment YAML With Onboarding](get-started/onboard.md) |
+| Evaluate Classic settings without changing the original deployment | [Migration](get-started/migration.md) |
 
 ## Building and Deploying
 
@@ -66,6 +65,16 @@ Use operation output and runtime evidence to identify where a deployment or agen
 |---|---|
 | Collect operation output, sandbox logs, native artifacts, and available traces; distinguish readiness from a reply | [Troubleshooting](observability/troubleshooting.md) |
 
+## Security
+
+Review trust boundaries before configuring sandbox access or rotating credentials.
+
+| Reader Goal | Guide |
+|---|---|
+| Understand credential storage and trust boundaries | [Security](security/security.md), [Threat Model](security/threat-model.md) |
+| Configure isolation and egress | [Sandbox Policy](security/sandbox-network.md) |
+| Revoke or rotate credentials | [Credential Rotation](security/credential-rotation.md) |
+
 ## References
 
 Look up the interface contract of your source revision before adapting a command, configuration, or SDK call.
@@ -88,14 +97,4 @@ Use these sources to find help, development status, currently documented limits,
 | Find unimplemented or unqualified paths | [Current limits](resources/limits.md) |
 | Find what Agent Configs leaves to other components by design | [Out of Scope](resources/out-of-scope.md) |
 
-## Security
-
-Review trust boundaries before configuring sandbox access or rotating credentials.
-
-| Reader goal | Guide |
-|---|---|
-| Understand credential storage and trust boundaries | [Security](security/security.md), [threat model](security/threat-model.md) |
-| Configure isolation and egress | [Sandbox policy](security/sandbox-network.md) |
-| Revoke or rotate credentials | [Credential rotation](security/credential-rotation.md) |
-
-Maintainers can find contribution procedures, design records, and artifact provenance in the [repository-only maintainer index](../internal-docs/README.md). These pages are not part of the published v1 guide.
+For release history, refer to [Release Notes](changelog/overview.md).

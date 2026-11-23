@@ -4,17 +4,14 @@
 # NemoClaw
 
 > [!TIP]
-> :rocket: **New:** NemoClaw Agent Configs — the next evolution of NemoClaw, with a simpler, more flexible way to configure and run agents. All new development will focus on Agent Configs, and we recommend it for new projects. [Explore Agent Configs](docs/about/overview.md) and [follow the first-deployment tutorial](docs/get-started/first-deployment.md) to get started.
->
-> Already using NemoClaw? [The existing experience](https://github.com/NVIDIA/NemoClaw/tree/main) remains available. Review the [migration guide](docs/get-started/migration.md) for compatibility details and instructions for moving your existing NemoClaw setup to Agent Configs.
+> This branch documents NemoClaw Agent Configs v0.1.0. [NemoClaw Classic](https://github.com/NVIDIA/NemoClaw/tree/main) remains available. If you already use Classic, [evaluate Agent Configs separately](docs/get-started/migration.md); there is no in-place migration.
 
 ## NemoClaw Agent Configs
 
 Configure and deploy sandboxed AI agents from a YAML file.
 Choose agents, models, tools, and network access, then preview and apply deployment changes through the CLI or Rust SDK.
 
-NemoClaw Agent Configs is a release candidate.
-Until its first release, [build it from source](docs/build-deploy/build.md).
+[Install the v0.1.0 CLI](docs/get-started/install.md) and follow the [first-deployment tutorial](docs/get-started/first-deployment.md) to verify an OpenClaw reply.
 
 ### What You Can Do
 
@@ -49,14 +46,14 @@ Check [current limits](docs/resources/limits.md) before choosing a configuration
 
 [![Watch NemoClaw plan, apply, and destroy a deployment with verbose output](docs/assets/terminal-lifecycle-verbose.png)](docs/assets/terminal-lifecycle-verbose.mp4)
 
-[Watch the 43-second demo](docs/assets/terminal-lifecycle-verbose.mp4): a real OpenShell gateway and OpenClaw sandbox lifecycle with `--verbose`.
-Images are cached; no inference requests are sent, and only the plan-review pause is shortened.
+The [43-second lifecycle recording](docs/assets/terminal-lifecycle-verbose.mp4) shows plan, apply, and destroy with `--verbose`. Images are cached, and the plan-review pause is shortened. The recording does not send an inference request.
 
 ## Start Here
 
 - [Understand NemoClaw](docs/about/overview.md).
 - [Get started with NemoClaw Agent Configs](docs/get-started/first-deployment.md).
-- [Build NemoClaw from source](docs/build-deploy/build.md) until the first release, or to build a revision that has no release.
+- [Author deployment YAML with onboarding](docs/get-started/onboard.md).
+- [Build NemoClaw from source](docs/build-deploy/build.md) for a custom revision or build-only target.
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).

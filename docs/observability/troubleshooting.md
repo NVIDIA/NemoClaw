@@ -159,6 +159,8 @@ kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
 
 ## Inference and Agent Readiness
 
+Identify the last check that passed. A successful plan previews resource changes; it does not prove service readiness. A successful apply establishes the configured readiness checks, not an inference result. For an end-to-end check, [send a native request and inspect its reply](../get-started/first-deployment.md#sending-a-verification-request).
+
 Use [inference verification](../agents-inference/inference.md#verifying-the-result) to distinguish configuration readiness from a successful reply.
 For stopped Ollama, use [the managed Ollama procedure](../agents-inference/inference.md#running-managed-ollama).
 A failed inventory must not be treated as an absent model.

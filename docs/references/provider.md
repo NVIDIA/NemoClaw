@@ -702,7 +702,7 @@ Onboarding offers the observed identifiers as model suggestions for an endpoint 
 
 Credentials remain a direct SDK concern: `observe_credentials` reports whether each selected reference resolves, separately from remote authentication.
 Gateway and resource discovery reuse the existing strict lifecycle reads that the following sections describe, and preserve bindings when refresh fails.
-Refer to [SDK discovery](sdk.md#discovering-before-authoring-or-planning) and [onboarding target checks](../../crates/nemoclaw-onboarding/README.md#target-checks).
+Refer to [SDK discovery](sdk.md#discovering-before-authoring-or-planning) and [onboarding target checks](../get-started/onboard.md#target-checks).
 
 ## Gateway Capabilities
 
