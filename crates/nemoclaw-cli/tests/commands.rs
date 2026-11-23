@@ -434,6 +434,53 @@ fn stdin_configuration_requires_environment_credentials_without_prompting() {
     assert!(!stderr.contains("Credential for"), "{stderr}");
 }
 
+/// Plan reads no inference credential, so it neither requires nor asks for
+/// one: without the variable, each form of plan gets as far as the bundle.
+#[test]
+fn plan_neither_requires_nor_asks_for_an_inference_credential() {
+    use std::{ffi::OsStr, io::Write, process::Stdio};
+
+    let directory = tempfile::tempdir().unwrap();
+    let document = write_credential_document(directory.path());
+    let state = directory.path().join("state-must-not-exist");
+    let plan = |arguments: &[&OsStr], input: &[u8]| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+            .arg("plan")
+            .args(arguments)
+            .arg("--bundle")
+            .arg(directory.path().join("missing-bundle"))
+            .arg("--state-dir")
+            .arg(&state)
+            .env_remove("STORY_CREDENTIAL_KEY")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(input).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(!output.status.success());
+        String::from_utf8(output.stderr).unwrap()
+    };
+    let yaml = fs::read(&document).unwrap();
+    for stderr in [
+        plan(
+            &[document.as_os_str(), OsStr::new("--non-interactive")],
+            b"",
+        ),
+        // Input that ends at once answers any prompt with nothing.
+        plan(&[document.as_os_str()], b""),
+        plan(&[OsStr::new("-")], &yaml),
+    ] {
+        assert!(
+            stderr.contains("bundle directory is unavailable"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("STORY_CREDENTIAL_KEY"), "{stderr}");
+    }
+    assert!(!state.exists());
+}
+
 #[test]
 fn desired_state_reaches_plan_and_apply_unchanged() {
     qualify_lifecycle_boundary();
