@@ -514,6 +514,8 @@ const PLATFORM_VARIABLES: &[&str] = &[
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
     "SSH_AUTH_SOCK",
+    // The provider sets a managed gateway's OpenShell telemetry from it.
+    crate::telemetry::DISABLE_ENV,
 ];
 
 /// The caller's variables a child inherits: the platform set above, names
@@ -571,6 +573,7 @@ mod environment_tests {
             ("HTTPS_PROXY", "http://proxy.example:3128"),
             ("SSL_CERT_FILE", "/etc/ssl/ca.pem"),
             ("SSH_AUTH_SOCK", "/run/ssh.sock"),
+            ("NEMOCLAW_DISABLE_TELEMETRY", "1"),
             ("AWS_PROFILE", "dev"),
             ("NVIDIA_INFERENCE_API_KEY", "nvapi-unrelated"),
             ("GITHUB_TOKEN", "x"),
@@ -586,7 +589,8 @@ mod environment_tests {
                 "HOME",
                 "HTTPS_PROXY",
                 "SSL_CERT_FILE",
-                "SSH_AUTH_SOCK"
+                "SSH_AUTH_SOCK",
+                "NEMOCLAW_DISABLE_TELEMETRY"
             ]
         );
     }
