@@ -17,9 +17,3 @@ fn an_author_can_install_or_reuse_ollama_after_environment_discovery() {
 fn an_author_can_install_or_reuse_vllm_after_environment_discovery() {
     panic!("missing offline catalog for a complete managed vLLM document");
 }
-
-#[test]
-#[ignore = "V1 Sandbox has no CPU or RAM resource-sizing fields"]
-fn an_author_can_choose_a_resource_profile_or_custom_cpu_and_ram() {
-    panic!("missing V1 sandbox resource contract");
-}
