@@ -31,13 +31,15 @@ The `firstRun` and `previousVersion` fields, which come from the [install ID fil
 
 The CLI sends nothing in these cases:
 
-- `NEMOCLAW_DISABLE_TELEMETRY` is exactly `1`.
+- `NEMOCLAW_DISABLE_TELEMETRY` is set.
 - One of these CI variables is set: `CI`, `GITHUB_ACTIONS`, `TF_BUILD`, `BUILD_ID`, `TEAMCITY_VERSION`, `CODEBUILD_BUILD_ID`.
-  A variable counts as set when it is present, not empty, and not `false` or `0` in any letter case.
-  For example, `CI=true` and `BUILD_ID=8812` stop the record, and `CI=false` does not.
 - `NEMOCLAW_TELEMETRY_TEST_LABEL` is set but is not a valid test label (refer to [Field Rules](#field-rules)).
 - The sender is a unit-test build (`cfg(test)`).
   Tests that run the built CLI set `NEMOCLAW_DISABLE_TELEMETRY=1` or a loopback endpoint through the shared test helper, and a guard test proves that the test suite posts nowhere else.
+
+`NEMOCLAW_DISABLE_TELEMETRY` and the CI variables count as set when they are present, not empty, and not `false` or `0` in any letter case.
+For example, `NEMOCLAW_DISABLE_TELEMETRY=1`, `NEMOCLAW_DISABLE_TELEMETRY=yes`, `NEMOCLAW_DISABLE_TELEMETRY=TRUE`, `CI=true`, and `BUILD_ID=8812` stop the record; `NEMOCLAW_DISABLE_TELEMETRY=false` and `CI=0` do not.
+Someone who sets the off switch wants telemetry off, so any other value, including a typo, turns it off.
 
 Telemetry is on by default, and the CLI does not prompt for consent.
 
