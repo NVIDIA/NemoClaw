@@ -70,7 +70,7 @@ impl Document {
             require(
                 self.spec.gateway.compute_driver().is_kubernetes()
                     || sandbox.image.metadata.is_none(),
-                "image.metadata is available only for Kubernetes and OpenShift; Docker and Podman use engine image inspection",
+                super::constraints::IMAGE_METADATA_TARGETS,
             )?;
             if let Some(metadata) = &sandbox.image.metadata {
                 schema::validate_definition("FileRef", metadata)?;

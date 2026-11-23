@@ -84,6 +84,8 @@ zip = { version = "9.0", default-features = false, features = ["deflate"] }
 flate2 = "1.1"
 schemars = "=1.2.3"
 jsonschema = { version = "=0.61.2", default-features = false }
+# Suggests the declared field closest to an unknown one in configuration errors.
+strsim = "0.11"
 pulldown-cmark = { version = "=0.13.6", default-features = false }
 pulldown-cmark-to-cmark = "=23.0.1"
 crossterm = "0.29"

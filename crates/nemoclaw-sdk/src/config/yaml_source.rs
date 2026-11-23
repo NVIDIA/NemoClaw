@@ -89,16 +89,34 @@ fn positioned(message: &str, line: usize, column: usize) -> ConfigError {
 }
 
 enum Frame {
-    Mapping { path: String, key: Option<String> },
-    Sequence { path: String, next: usize },
+    /// A mapping and, after a key, that key and its position.
+    Mapping {
+        path: String,
+        key: Option<(String, (usize, usize))>,
+    },
+    Sequence {
+        path: String,
+        next: usize,
+    },
 }
 
 /// Locate a validated JSON pointer using the same YAML parser's node positions.
 /// This runs only after bounded deserialization, and never renders source text.
 pub(super) fn position(text: &str, pointer: &str) -> Option<(usize, usize)> {
+    locate(text, pointer, false)
+}
+
+/// Locate the mapping key that holds the value at a validated JSON pointer, or
+/// the value itself when a sequence holds it.
+pub(super) fn key_position(text: &str, pointer: &str) -> Option<(usize, usize)> {
+    locate(text, pointer, true)
+}
+
+fn locate(text: &str, pointer: &str, at_key: bool) -> Option<(usize, usize)> {
     let mut frames = Vec::new();
     for event in Parser::new_from_str(text) {
         let (event, span) = event.ok()?;
+        let start = (span.start.line(), span.start.col() + 1);
         match event {
             Event::MappingEnd | Event::SequenceEnd => {
                 frames.pop();
@@ -107,24 +125,25 @@ pub(super) fn position(text: &str, pointer: &str) -> Option<(usize, usize)> {
                 if matches!(frames.last(), Some(Frame::Mapping { key: None, .. })) =>
             {
                 if let Some(Frame::Mapping { key, .. }) = frames.last_mut() {
-                    *key = Some(value.to_string());
+                    *key = Some((value.to_string(), start));
                 }
             }
             Event::Scalar(..) | Event::MappingStart(..) | Event::SequenceStart(..) => {
-                let path = match frames.last_mut() {
+                let (path, key_start) = match frames.last_mut() {
                     Some(Frame::Mapping { path, key }) => {
-                        let key = key.take()?.replace('~', "~0").replace('/', "~1");
-                        format!("{path}/{key}")
+                        let (key, key_start) = key.take()?;
+                        let key = key.replace('~', "~0").replace('/', "~1");
+                        (format!("{path}/{key}"), Some(key_start))
                     }
                     Some(Frame::Sequence { path, next }) => {
                         let path = format!("{path}/{next}");
                         *next += 1;
-                        path
+                        (path, None)
                     }
-                    None => String::new(),
+                    None => (String::new(), None),
                 };
                 if path == pointer {
-                    return Some((span.start.line(), span.start.col() + 1));
+                    return Some(key_start.filter(|_| at_key).unwrap_or(start));
                 }
                 match event {
                     Event::MappingStart(..) => frames.push(Frame::Mapping { path, key: None }),
