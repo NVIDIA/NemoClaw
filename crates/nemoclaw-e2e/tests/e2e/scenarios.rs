@@ -306,15 +306,16 @@ struct Bound {
 fn bind(row: &Row, mut document: Value, inputs: Inputs<'_>) -> Result<Bound, String> {
     let spec = &mut document["spec"];
     let gateway = &mut spec["gateway"];
-    if gateway["management"] != "managed" || gateway["runtime"]["provider"] != "docker" {
+    if gateway["management"] != "managed" || !gateway["target"]["docker"].is_object() {
         return Err(format!(
             "the runner deploys only managed Docker gateways; this example's gateway is {} on {}",
-            gateway["management"], gateway["runtime"]["provider"]
+            gateway["management"], gateway["target"]
         ));
     }
-    gateway["endpoint"] = json!(format!("http://127.0.0.1:{}", (inputs.ports)()?));
-    gateway["engine"] = json!(inputs.engine);
-    gateway["networkCIDR"] = json!(inputs.subnet);
+    let docker = &mut gateway["target"]["docker"];
+    docker["port"] = json!((inputs.ports)()?);
+    docker["engine"] = json!(inputs.engine);
+    docker["networkCIDR"] = json!(inputs.subnet);
     let host = inputs
         .subnet
         .strip_suffix(".0/24")
@@ -827,9 +828,10 @@ mod tests {
         let row = by_id("T-144");
         let bound = bound(&row, &row.example).unwrap();
         let spec = &bound.document["spec"];
-        assert_eq!(spec["gateway"]["endpoint"], "http://127.0.0.1:20001");
-        assert_eq!(spec["gateway"]["engine"], "unix:///engine.sock");
-        assert_eq!(spec["gateway"]["networkCIDR"], "172.30.201.0/24");
+        assert_eq!(
+            spec["gateway"]["target"]["docker"],
+            json!({"port": 20001, "engine": "unix:///engine.sock", "networkCIDR": "172.30.201.0/24"})
+        );
         assert_eq!(bound.stub_port, 20002);
         for provider in spec["inferenceProviders"].as_object().unwrap().values() {
             assert_eq!(provider["endpoint"], "http://172.30.201.1:20002/v1");
