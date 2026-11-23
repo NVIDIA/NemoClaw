@@ -1087,34 +1087,19 @@ fn a_catalog_without_workflow_targets_leaves_the_workflow_unverified() {
     );
 }
 
-/// A workflow on an adapter that takes no workflow targets fails the plan on
-/// the target, rather than asking for an image that registers it.
+/// Whether a registered target suits the selected adapter is Fabric's rule:
+/// NOOA's target on the bench adapter fails the plan on the target.
 #[test]
-fn planning_rejects_a_workflow_on_an_adapter_that_takes_none() {
+fn fabric_rejects_a_registered_target_of_another_adapter() {
     let report = assess_nooa_example(&FabricCatalog::bundled(), |sandbox| {
         sandbox["harness"]["kind"] = "nvidia.fabric.nooa.bench-agent".into();
     });
     let reasons = unsupported_reasons(&report);
-    assert_eq!(
-        reasons,
-        [
-            "spec.sandboxes[assistant].agent.workflow.target_id: the selected adapter takes no workflow targets"
-        ],
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.starts_with("spec.sandboxes[assistant].agent.workflow.target_id:")),
         "{:?}",
         report.checks
     );
-}
-
-/// Whether a catalog predates workflow targets is decided per adapter: an
-/// image that registers targets only for other adapters leaves this one's
-/// workflow unverified.
-#[test]
-fn targets_of_other_adapters_leave_the_workflow_unverified() {
-    use nemoclaw_sdk::fabric_capabilities::Support;
-    let mut catalog = FabricCatalog::bundled();
-    for target in &mut catalog.targets {
-        target["descriptor"]["adapter_id"] = "org.fixture.other-adapter".into();
-    }
-    let report = assess_nooa_example(&catalog, |_| {});
-    assert_eq!(report.status, Support::Unknown, "{:?}", report.checks);
 }

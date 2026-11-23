@@ -495,7 +495,7 @@ These changes between the `v0.1.0-rc10` and `v0.1.0-rc11` tags affect existing d
   This covers harness settings, model fields, tool settings, and extensions that NemoClaw didn't check before, such as a setting the adapter's schema doesn't declare.
   Each error names the field you wrote.
   Agent images register their workflow targets, so plan checks a sandbox with a `workflow` too, and fails naming `workflow.target_id` when the image doesn't register that target.
-  When an image's catalog lists no workflow targets for the adapter, as in images built before this change, plan reports the image's Fabric capabilities as unverified and Fabric checks the configuration when the agent starts.
+  When an image's catalog lists no workflow targets, as in images built before this change, plan reports the image's Fabric capabilities as unverified and Fabric checks the configuration when the agent starts.
 - With Fabric at NVIDIA/NeMo-Fabric `main` `135147a0`, an OpenClaw agent's `skills.bundled` also selects the skills that OpenClaw's own extensions ship, such as `canvas`.
   An extension skill that the selection leaves out no longer loads.
   An agent doesn't start when `nvidia.fabric.nooa` has no `workflow.target_id`, or when the Deep Agents `local_shell` backend has neither `tools.enabled` nor `execute` in `tools.blocked`.
