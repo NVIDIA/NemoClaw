@@ -4,13 +4,16 @@
 /** Exercises the DGX Spark and Station Express vLLM paths on physical hardware. */
 
 import assert from "node:assert/strict";
+import { networkInterfaces } from "node:os";
 import {
   boundedSparkVllmProfilePlan,
   SPARK_EXTRA_ARGS,
 } from "../../../tools/e2e/spark-vllm-qualification.mts";
 import {
   SPARK_EGRESS_PROBE,
+  SPARK_INTERFACE_QUERY,
   vllmPublicationCurlArgs,
+  vllmPublicationProbeUrls,
 } from "../../../tools/e2e/spark-vllm-probes.mts";
 
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
@@ -34,6 +37,7 @@ import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clie
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   assertLocalDockerEnvironment,
   classifyDockerContainerInspection,
@@ -41,7 +45,6 @@ import {
   inspectDockerContainerIdentity,
   inspectSandboxIdentity,
   listedSandboxNames,
-  vllmPublicationProbeUrls,
 } from "../support/spark-express-vllm-safety.ts";
 import {
   cleanupSandbox,
@@ -72,8 +75,13 @@ interface VllmContainerInspection {
 }
 
 function e2eEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const fixture = Object.fromEntries(
+    Object.entries(buildAvailabilityProbeEnv()).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
   return {
-    ...buildAvailabilityProbeEnv(),
+    ...buildAvailabilityProbeEnv(buildLocalManagedVllmDockerEnv(fixture)),
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_AGENT: "openclaw",
     NEMOCLAW_SERVING_PRESET: "",
@@ -162,16 +170,7 @@ async function removePresentExactSandbox(
     currentSandboxId,
     `Refusing to remove replacement sandbox ${sandboxName}; expected ${sandboxId}, got ${currentSandboxId}`,
   ).toBe(sandboxId);
-  await cleanupSandbox(host, sandbox, sandboxName, { strict: true });
-  const list = await host.command("openshell", ["sandbox", "list", "--names"], {
-    artifactName: "cleanup-spark-express-sandbox-list",
-    env: e2eEnv(),
-    timeoutMs: 30_000,
-  });
-  expect(
-    listedSandboxNames(list).has(sandboxName),
-    `Sandbox ${sandboxName} still exists after cleanup.`,
-  ).toBe(false);
+  await cleanupSandbox(host, sandbox, sandboxName, { strict: true, env: e2eEnv() });
 }
 
 async function captureOnboardFailureDiagnostics(
@@ -259,7 +258,7 @@ test.for([
       ],
     },
   },
-  async ([target, variant], { artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+  async ([target, variant], { artifacts, cleanup, host, progress, skip, sandbox }) => {
     validateSandboxName(SANDBOX_NAME);
     assertLocalDockerEnvironment(process.env);
     const { detectVllmProfile } = await import("../../../src/lib/inference/vllm.ts");
@@ -302,7 +301,7 @@ test.for([
     });
 
     progress.phase("qualify the physical DGX Spark host");
-    await requireLivePrerequisites(host, runtimeProvider);
+    await requireLivePrerequisites(host, new RuntimeProviderPrerequisite(host, skip, installEnv));
     const platform = await host.command(
       "bash",
       [
@@ -469,11 +468,20 @@ test.for([
     const publicationEnv = e2eEnv();
     const network = await host.command("docker", [...MANAGED_VLLM_BRIDGE_INSPECT_ARGS], {
       artifactName: "spark-express-vllm-bridge-inspect",
-      env: buildLocalManagedVllmDockerEnv({}, publicationEnv),
+      env: publicationEnv,
       timeoutMs: 10_000,
     });
     expect(network.exitCode, resultText(network)).toBe(0);
-    const probes = vllmPublicationProbeUrls(parseManagedVllmBridgeHost(network.stdout));
+    const inventory = await host.command("node", ["-p", SPARK_INTERFACE_QUERY], {
+      artifactName: "spark-express-vllm-interfaces",
+      env: publicationEnv,
+      timeoutMs: 10_000,
+    });
+    expect(inventory.exitCode, resultText(inventory)).toBe(0);
+    const probes = vllmPublicationProbeUrls(
+      parseManagedVllmBridgeHost(network.stdout),
+      JSON.parse(inventory.stdout),
+    );
     await artifacts.writeJson("spark-express-vllm-publication-probes", probes);
     const allowed = await host.command("curl", vllmPublicationCurlArgs(probes.allowed), {
       artifactName: "spark-express-vllm-publication-allowed",
@@ -552,6 +560,7 @@ test(
       verifyPublication: async (env) => {
         const probes = vllmPublicationProbeUrls(
           resolveManagedVllmBridgeHost(undefined, buildLocalManagedVllmDockerEnv({}, env)),
+          networkInterfaces(),
         );
         await artifacts.writeJson("station-express-vllm-publication-probes", probes);
         const allowed = await host.command("curl", vllmPublicationCurlArgs(probes.allowed), {

@@ -20,6 +20,7 @@ import {
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   SPARK_EGRESS_PROBE,
+  SPARK_INTERFACE_QUERY,
   vllmPublicationCurlArgs,
 } from "../../../tools/e2e/spark-vllm-probes.mts";
 import { buildRiskSignal } from "../../../tools/e2e/risk-signal.ts";
@@ -48,8 +49,19 @@ const identity = {
 };
 const probes = {
   allowed: ["http://127.0.0.1:8000/health", "http://172.18.0.1:8000/health"],
-  denied: ["http://192.0.2.1:8000/health", "http://[::1]:8000/health"],
+  denied: [
+    "http://192.0.2.1:8000/health",
+    "http://192.0.2.2:8000/health",
+    "http://[::1]:8000/health",
+  ],
   ipv6: "configured",
+};
+const interfaces = {
+  eth0: [
+    { family: "IPv4", address: "192.0.2.1", internal: false },
+    { family: "IPv4", address: "192.0.2.2", internal: false },
+  ],
+  lo: [{ family: "IPv6", address: "::1", internal: true, scopeid: 0 }],
 };
 const exec = ["openshell", "sandbox", "exec", "-n", "e2e-spark-vllm", "--"];
 const chatUrl = "https://inference.local/v1/chat/completions";
@@ -59,6 +71,11 @@ const chatBody = {
   max_tokens: 1024,
 };
 const observations = {
+  "vllm-interfaces": {
+    command: ["node", "-p", SPARK_INTERFACE_QUERY],
+    exitCode: 0,
+    stdout: JSON.stringify(interfaces),
+  },
   "vllm-bridge-inspect": {
     command: [
       "docker",
@@ -79,7 +96,7 @@ const observations = {
   "vllm-publication-denied": {
     command: ["curl", ...vllmPublicationCurlArgs(probes.denied)],
     exitCode: 7,
-    stdout: "7 000\n7 000\n",
+    stdout: probes.denied.map(() => "7 000\n").join(""),
   },
   "inference-local-chat": {
     command: [
@@ -243,6 +260,25 @@ it("requires an unintended IPv4 refusal even if the denied result has no replies
   await artifacts.writeJson(probeFile("vllm-publication-denied"), { exitCode: 7, stdout: "" });
   await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow();
 });
+
+it.each(["http://192.0.2.2:8000/health", "http://[::1]:8000/health"])(
+  "rejects omission of discovered refusal endpoint %s",
+  async (omitted) => {
+    const { directory, env, artifacts } = await fixture();
+    const denied = probes.denied.filter((url) => url !== omitted);
+    await artifacts.writeJson("spark-express-vllm-publication-probes", {
+      ...probes,
+      denied,
+      ipv6: denied.some((url) => url.includes("[")) ? "configured" : "unconfigured",
+    });
+    await artifacts.writeJson(probeFile("vllm-publication-denied"), {
+      command: ["curl", ...vllmPublicationCurlArgs(denied)],
+      exitCode: 7,
+      stdout: denied.map(() => "7 000\n").join(""),
+    });
+    await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(/interface/i);
+  },
+);
 
 it.each(Object.entries(observations))(
   "rejects a valid output from a different %s command",

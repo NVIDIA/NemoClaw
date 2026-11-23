@@ -4,12 +4,16 @@
 import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { isIP } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { createPrivateRegularFile, readPrivateRegularFile } from "./private-file.mts";
-import { SPARK_EGRESS_PROBE, vllmPublicationCurlArgs } from "./spark-vllm-probes.mts";
+import {
+  SPARK_EGRESS_PROBE,
+  SPARK_INTERFACE_QUERY,
+  vllmPublicationCurlArgs,
+  vllmPublicationProbeUrls,
+} from "./spark-vllm-probes.mts";
 
 const { MANAGED_IMAGE_REPOSITORIES, parseManagedImageContractV1 } = createRequire(import.meta.url)(
   "../../src/lib/onboard/managed-image/contract.ts",
@@ -55,9 +59,6 @@ async function verifySparkProbes(scenario: string, sandbox: string, model: strin
     );
     return { command, stdout: stdout.trim() };
   }
-  const { allowed, denied, ipv6 } = readJson(
-    path.join(scenario, "spark-express-vllm-publication-probes"),
-  );
   const { MANAGED_VLLM_BRIDGE_INSPECT_ARGS, parseManagedVllmBridgeHost } =
     await import("../../src/lib/inference/serving/vllm-host-local-network.ts");
   const network = observation("vllm-bridge-inspect", 0);
@@ -67,33 +68,21 @@ async function verifySparkProbes(scenario: string, sandbox: string, model: strin
     "bridge inspection command differs",
   );
   const bridge = parseManagedVllmBridgeHost(network.stdout);
-  const healthUrls = ["http://127.0.0.1:8000/health", `http://${bridge}:8000/health`];
+  const inventory = observation("vllm-interfaces", 0);
   assert.deepEqual(
-    allowed,
-    healthUrls,
-    "health probes must match loopback and the inspected bridge",
+    inventory.command,
+    ["node", "-p", SPARK_INTERFACE_QUERY],
+    "interface discovery command differs",
   );
-  assert(
-    Array.isArray(denied) && denied.length > 0 && new Set(denied).size === denied.length,
-    "missing or duplicate refusal probes",
+  const probes = vllmPublicationProbeUrls(bridge, JSON.parse(inventory.stdout));
+  assert.deepEqual(
+    readJson(path.join(scenario, "spark-express-vllm-publication-probes")),
+    probes,
+    "publication probes differ from inspected bridge or discovered interfaces",
   );
-  const deniedHosts = denied.map((url) => {
-    const match = /^http:\/\/(?:\[([^\]]+)\]|([0-9.]+)):8000\/health$/u.exec(String(url));
-    const host = match?.[1] ?? match?.[2];
-    assert(
-      host && isIP(host) === (match?.[1] ? 6 : 4) && !healthUrls.includes(url),
-      "invalid refusal probe",
-    );
-    return host;
-  });
-  assert(
-    deniedHosts.some((host) => isIP(host) === 4 && !host.startsWith("127.")),
-    "missing unintended IPv4 refusal probe",
-  );
-  assert.equal(ipv6, deniedHosts.some((host) => isIP(host) === 6) ? "configured" : "unconfigured");
   for (const [name, urls, exit, line] of [
-    ["allowed", healthUrls, 0, "0 200"],
-    ["denied", denied, 7, "7 000"],
+    ["allowed", probes.allowed, 0, "0 200"],
+    ["denied", probes.denied, 7, "7 000"],
   ] as const) {
     const { command, stdout } = observation(`vllm-publication-${name}`, exit);
     assert.deepEqual(

@@ -1,12 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  boundedSparkVllmProfilePlan,
+  SPARK_EXTRA_ARGS,
+} from "../../../tools/e2e/spark-vllm-qualification.mts";
+import { materializeHostLocalVllmModel } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
+import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
 import { MANAGED_IMAGE_REPOSITORIES } from "../../../src/lib/onboard/managed-image/contract.ts";
 import {
   REVISION,
@@ -29,13 +36,22 @@ vi.mock("../fixtures/e2e-test.ts", async () => ({
     },
   }),
 }));
-vi.mock("../live/inference-routing-helpers.ts", () => ({
-  requireLivePrerequisites: vi.fn(),
+vi.mock("../live/inference-routing-helpers.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../live/inference-routing-helpers.ts")>()),
   cleanupSandbox: vi.fn(),
   expectOpenAiChatThroughSandbox: vi.fn(),
 }));
 const SPARK_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-spark-vllm";
 const directories: string[] = [];
+function persistRemoteContext(home: string) {
+  fs.mkdirSync(path.join(home, ".docker"));
+  fs.writeFileSync(
+    path.join(home, ".docker/config.json"),
+    JSON.stringify({ currentContext: "remote-spark" }),
+  );
+  vi.stubEnv("HOME", home);
+  vi.stubEnv("DOCKER_CONTEXT", undefined);
+}
 afterEach(() => {
   vi.unstubAllEnvs();
   for (const directory of directories.splice(0))
@@ -46,8 +62,8 @@ import {
   classifyDockerContainerInspection,
   inspectSandboxIdentity,
   listedSandboxNames,
-  vllmPublicationProbeUrls,
 } from "./spark-express-vllm-safety.ts";
+import { vllmPublicationProbeUrls } from "../../../tools/e2e/spark-vllm-probes.mts";
 
 const result = (exitCode: number, stdout = "", stderr = "") => ({
   command: ["docker"],
@@ -189,11 +205,17 @@ describe("DGX Spark callback safety", () => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cleanup-"));
       directories.push(directory);
       const marker = path.join(directory, "removed");
+      persistRemoteContext(directory);
       const id = "a".repeat(64);
       fs.writeFileSync(
         path.join(directory, "docker"),
         `#!/bin/bash
 set -eu
+if [[ "$1" == context ]]; then
+  if [[ -n "\${DOCKER_CONTEXT:-}" ]]; then echo "$DOCKER_CONTEXT"; else node -p 'require(process.env.HOME + "/.docker/config.json").currentContext'; fi
+  exit 0
+fi
+[[ "$DOCKER_CONTEXT" == default ]] || exit 98
 case "$1" in
 inspect)
   case "$CLEANUP_STATE" in
@@ -216,9 +238,10 @@ esac
         { mode: 0o700 },
       );
       vi.stubEnv("DOCKER_HOST", "");
-      vi.stubEnv("DOCKER_CONTEXT", "");
       const cleanup = new CleanupRegistry();
       const responses = {
+        "prereq-docker-info-inference-routing": result(0),
+        "prereq-openshell-version-inference-routing": result(0),
         "spark-express-platform": result(0, "DGX Spark"),
         "spark-express-nvidia-smi": result(0),
         "spark-extra-arguments-physical-memory": result(0, "63082733568"),
@@ -246,11 +269,12 @@ esac
         "failure-spark-express-vllm-container-logs": result(0),
         "failure-spark-express-sandbox-get": result(0),
       };
-      const executeCleanup = (command: string, args: string[]) => {
+      const executeCleanup = (command: string, args: string[], env: NodeJS.ProcessEnv) => {
         const child = spawnSync(command, args, {
           encoding: "utf8",
           timeout: 5_000,
           env: {
+            ...env,
             PATH: `${directory}:${process.env.PATH}`,
             CLEANUP_STATE: state,
             CREATED_ID: id,
@@ -263,10 +287,14 @@ esac
       };
       const host = {
         command: vi.fn(
-          async (command: string, args: string[], options: { artifactName: string }) =>
+          async (
+            command: string,
+            args: string[],
+            options: { artifactName: string; env: NodeJS.ProcessEnv },
+          ) =>
             options.artifactName.startsWith("cleanup-") &&
             options.artifactName !== "cleanup-spark-express-sandbox-inspect"
-              ? executeCleanup(command, args)
+              ? executeCleanup(command, args, options.env)
               : (responses[options.artifactName as keyof typeof responses] ??
                 Promise.reject(new Error(`Unexpected command: ${options.artifactName}`))),
         ),
@@ -281,7 +309,6 @@ esac
           cleanup,
           host,
           sandbox: {},
-          runtimeProvider: {},
           progress: { phase: vi.fn() },
         }),
       ).rejects.toThrow(
@@ -290,6 +317,16 @@ esac
           : "interrupted onboarding",
       );
       const receipt = await cleanup.runAll();
+      const dockerContexts = await Promise.all(
+        host.command.mock.calls
+          .filter(([command]) => ["docker", "bash"].includes(command))
+          .map(async ([, , { env }]) =>
+            (
+              await executeCleanup(path.join(directory, "docker"), ["context", "show"], env)
+            ).stdout.trim(),
+          ),
+      );
+      expect(new Set(dockerContexts)).toEqual(new Set(["default"]));
       expect(receipt.failures.map(({ name }) => name)).toEqual(
         state === "sandbox-capture-failed-present"
           ? ["remove sandbox e2e-spark-vllm"]
@@ -367,7 +404,7 @@ esac
     directories.push(home);
     writeManagedImageRegistry(home, workload(), "openclaw", SPARK_SANDBOX_NAME);
     const selected: NodeJS.ProcessEnv = environment(home);
-    vi.stubEnv("HOME", home);
+    persistRemoteContext(home);
     vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", selected.E2E_MANAGED_IMAGE_REVISION ?? "");
     vi.stubEnv("E2E_MANAGED_IMAGE_COHORT_RECEIPT", selected.E2E_MANAGED_IMAGE_COHORT_RECEIPT ?? "");
     vi.stubEnv(
@@ -379,23 +416,76 @@ esac
     vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
     vi.stubEnv("GITHUB_ACTIONS", "true");
     vi.stubEnv("DOCKER_HOST", "");
-    vi.stubEnv("DOCKER_CONTEXT", "");
     const result = (stdout = "", exitCode = 0, stderr = "") => ({ stdout, exitCode, stderr });
+    const plan = await boundedSparkVllmProfilePlan();
+    assert(plan?.recipe.spec.serve.directInstall, "missing bounded Spark recipe");
+    const { runtime } = plan.recipe.spec;
+    const cmd = buildVllmServeCommand(
+      materializeHostLocalVllmModel(plan.recipe, plan.recipe.spec.serve.directInstall, "spark"),
+      { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: SPARK_EXTRA_ARGS },
+    );
     const responses: Record<string, ReturnType<typeof result>> = {
+      "prereq-docker-info-inference-routing": result(),
+      "prereq-openshell-version-inference-routing": result(),
       "spark-express-platform": result("DGX Spark"),
       "spark-express-nvidia-smi": result(),
       "spark-extra-arguments-physical-memory": result("63082733568"),
       "preflight-spark-express-vllm-container": result("", 1, "No such container"),
       "preflight-spark-express-sandbox-list": result(),
       "spark-express-vllm-onboard": result(),
-      "spark-express-vllm-container-inspect": result(JSON.stringify([{ Id: "a".repeat(64) }])),
+      "spark-express-vllm-container-inspect": result(
+        JSON.stringify([
+          {
+            Id: "a".repeat(64),
+            Config: {
+              Image: runtime.image,
+              Entrypoint: ["/bin/bash"],
+              Cmd: ["-lc", cmd],
+              Labels: { "com.nvidia.nemoclaw.managed-vllm": "true" },
+            },
+            HostConfig: {
+              NetworkMode: runtime.networkMode,
+              IpcMode: runtime.ipcMode,
+              ShmSize: runtime.sharedMemoryBytes,
+              DeviceRequests: [{ Count: -1, Capabilities: [["gpu"]] }],
+            },
+            Mounts: [{ Destination: `${runtime.modelCache.target}/hub`, RW: false, Type: "bind" }],
+          },
+        ]),
+      ),
+      "spark-express-vllm-publication-allowed": result("0 200\n0 200"),
+      "spark-express-vllm-bridge-inspect": result('[{"Gateway":"172.18.0.1"}]'),
+      "spark-express-vllm-publication-denied": result("7 000", 7),
       "spark-express-vllm-sandbox-inspect": result(
         JSON.stringify({ id: "05d120e4-484c-47d4-9a59-77a08cbb6e67", name: SPARK_SANDBOX_NAME }),
       ),
     };
+    const probes: Record<
+      string,
+      (command: string, args: string[], env: NodeJS.ProcessEnv) => ReturnType<typeof result>
+    > = {
+      "spark-express-vllm-interfaces": (command, args, env) => {
+        expect([command, args[0]]).toEqual(["node", "-p"]);
+        const child = spawnSync(
+          process.execPath,
+          [
+            "-p",
+            `require('node:os').networkInterfaces = () => ({eth0:[{family:'IPv4', address:'192.0.2.1', internal:false}]}); ${args[1]}`,
+          ],
+          { env, encoding: "utf8", timeout: 5000 },
+        );
+        expect(child.status, child.stderr).toBe(0);
+        return result(child.stdout);
+      },
+    };
     const host = {
       command: vi.fn(
-        async (_command: string, _args: string[], options: { artifactName: string }) =>
+        async (
+          command: string,
+          args: string[],
+          options: { artifactName: string; env: NodeJS.ProcessEnv },
+        ) =>
+          probes[options.artifactName]?.(command, args, options.env) ??
           responses[options.artifactName] ??
           Promise.reject(new Error(`Unexpected probe: ${options.artifactName}`)),
       ),
@@ -409,16 +499,22 @@ esac
       cleanup: { add: vi.fn() },
       host,
       sandbox: {},
-      runtimeProvider: {},
       progress: {
         phase: (phase: string) => {
           expect(phase, "selected managed image accepted").not.toBe(
-            "verify selected vLLM runtime configuration",
+            "prove sandbox inference and unrelated egress denial",
           );
         },
       },
     });
     await expect(execution).rejects.toThrow(expected);
+    expect(
+      new Set(
+        host.command.mock.calls
+          .filter(([command]) => command === "docker")
+          .map(([, , { env }]) => env.DOCKER_CONTEXT),
+      ),
+    ).toEqual(new Set(["default"]));
     expect(host.command).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "get", "-o", "json", SPARK_SANDBOX_NAME],
