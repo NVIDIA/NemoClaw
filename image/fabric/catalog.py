@@ -131,17 +131,18 @@ def records(adapters):
     ]
 
 
-def snapshot(revision, source_sha256, adapter_ids, targets):
+def snapshot(revision, source_sha256, adapter_ids, targets=None):
     """Return the bundled catalog: the listed adapters' descriptors and their targets.
 
-    targets maps adapter IDs to their declarations, as in /opt/nemoclaw/adapters.json.
+    targets maps adapter IDs to their declarations, as in /opt/nemoclaw/adapters.json;
+    without it, the catalog lists no targets.
     """
     return {
         "schema_version": 2,
         "fabric_revision": revision,
         "source_sha256": source_sha256,
         "adapters": records(adapter_ids),
-        "targets": target_records(targets),
+        "targets": target_records(targets or {}),
     }
 
 
