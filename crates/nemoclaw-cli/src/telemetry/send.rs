@@ -4,7 +4,7 @@
 //! Sends one record: one HTTP POST with a 3-second limit. Every error is
 //! ignored, so sending never changes a command's output or exit code.
 
-use super::record::Record;
+use super::record::{Os, Record};
 use reqwest::Url;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -83,10 +83,11 @@ fn envelope(record: &Record, now: &str) -> Value {
         "deviceGdprBehOptIn": "None",
         "deviceGdprFuncOptIn": "Temp",
         "deviceGdprTechOptIn": "None",
+        // Anonymous schema: the collector refuses a device ID; `installId` carries it.
         "deviceId": PLACEHOLDER,
         "deviceMake": PLACEHOLDER,
         "deviceModel": PLACEHOLDER,
-        "deviceOS": word(record.os),
+        "deviceOS": device_os(record.os),
         "deviceOSVersion": PLACEHOLDER,
         "deviceType": PLACEHOLDER,
         "eventProtocol": "1.6",
@@ -105,6 +106,16 @@ fn envelope(record: &Record, now: &str) -> Value {
         "userId": PLACEHOLDER,
         "events": [{ "ts": now, "name": EVENT, "parameters": record }],
     })
+}
+
+/// The collector's own case-sensitive list; it refuses any other word.
+fn device_os(os: Os) -> &'static str {
+    match os {
+        Os::Linux => "Linux",
+        Os::Macos => "MacOS",
+        Os::Windows => "Windows",
+        Os::Other => PLACEHOLDER,
+    }
 }
 
 fn word(value: impl serde::Serialize) -> Value {
@@ -161,12 +172,20 @@ mod tests {
         assert_eq!(envelope["eventSchemaVer"], "5.0");
         assert_eq!(envelope["eventSysVer"], "nemoclaw-telemetry/5.0");
         assert_eq!(envelope["clientVer"], "1.0.0-412");
-        assert_eq!(envelope["deviceOS"], "linux");
+        assert_eq!(envelope["deviceOS"], "Linux");
+        assert_eq!(envelope["clientVariant"], "Release");
         assert_eq!(envelope["cpuArchitecture"], "arm64");
         assert_eq!(envelope["deviceId"], PLACEHOLDER);
         let event = &envelope["events"][0];
         assert_eq!(event["name"], EVENT);
         assert_eq!(event["parameters"], serde_json::to_value(&record).unwrap());
+    }
+
+    #[test]
+    fn device_os_uses_the_collector_words() {
+        assert_eq!(device_os(Os::Macos), "MacOS");
+        assert_eq!(device_os(Os::Windows), "Windows");
+        assert_eq!(device_os(Os::Other), PLACEHOLDER);
     }
 
     #[test]
