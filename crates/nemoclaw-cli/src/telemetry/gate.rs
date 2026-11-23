@@ -5,6 +5,9 @@
 
 use super::record::{TEST_LABEL_PATTERN, matches};
 
+/// The off switch. It, or any of [`CI_VARIABLES`], set stops the record.
+const OFF_SWITCH: &str = "NEMOCLAW_DISABLE_TELEMETRY";
+
 /// Any of these, set, means the run is in CI and nothing is sent.
 const CI_VARIABLES: [&str; 6] = [
     "CI",
@@ -25,12 +28,14 @@ pub fn check() -> Option<String> {
 }
 
 fn decide(var: impl Fn(&str) -> Option<String>) -> Option<String> {
-    if var("NEMOCLAW_DISABLE_TELEMETRY").as_deref() == Some("1") {
-        return None;
-    }
+    // Set means present, not empty, and not `false` or `0` in any letter case,
+    // so `1`, `yes`, and `TRUE` all turn telemetry off.
     let set =
         |value: String| !value.is_empty() && !value.eq_ignore_ascii_case("false") && value != "0";
-    if CI_VARIABLES.iter().any(|name| var(name).is_some_and(set)) {
+    if std::iter::once(&OFF_SWITCH)
+        .chain(&CI_VARIABLES)
+        .any(|name| var(name).is_some_and(set))
+    {
         return None;
     }
     // A label that is set must be valid; an empty one is not, as in Classic.
@@ -59,13 +64,13 @@ mod tests {
     }
 
     #[test]
-    fn off_switch_is_exactly_one() {
-        assert_eq!(decide_with(&[("NEMOCLAW_DISABLE_TELEMETRY", "1")]), None);
-        for value in ["0", "true", "", " 1"] {
-            assert!(
-                decide_with(&[("NEMOCLAW_DISABLE_TELEMETRY", value)]).is_some(),
-                "{value:?}"
-            );
+    fn any_set_off_switch_stops_the_record() {
+        let var = OFF_SWITCH;
+        for value in ["1", "yes", "true", "TRUE", "on", "no", "off", "ture"] {
+            assert_eq!(decide_with(&[(var, value)]), None, "{value:?}");
+        }
+        for value in ["", "0", "false", "FALSE", "False"] {
+            assert!(decide_with(&[(var, value)]).is_some(), "{value:?}");
         }
     }
 
