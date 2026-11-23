@@ -56,6 +56,18 @@ const chatBody = {
   max_tokens: 1024,
 };
 const observations = {
+  "vllm-bridge-inspect": {
+    command: [
+      "docker",
+      "network",
+      "inspect",
+      "--format",
+      "{{json .IPAM.Config}}",
+      "openshell-docker",
+    ],
+    exitCode: 0,
+    stdout: JSON.stringify([{ Gateway: "172.18.0.1" }]),
+  },
   "vllm-publication-allowed": {
     command: ["curl", ...vllmPublicationCurlArgs(probes.allowed)],
     exitCode: 0,
@@ -89,6 +101,8 @@ const observations = {
   },
 };
 const probeFile = (name: string) => `shell/spark-express-${name}.result.json`;
+const memoryFile = "shell/spark-extra-arguments-physical-memory.result.json";
+const memoryCommand = ["node", "-e", "console.log(require('node:os').totalmem())"];
 const boundedCommand = buildVllmServeCommand(
   materializeHostLocalVllmModel(recipe, recipe.spec.serve.directInstall, "spark"),
   {
@@ -127,11 +141,13 @@ async function fixture(
     passed: ["remove nemoclaw-vllm", "remove sandbox e2e-spark-vllm"],
     failures: [],
   });
-  await artifacts.writeJson("shell/spark-extra-arguments-physical-memory.result.json", {
+  await artifacts.writeJson(memoryFile, {
+    command: memoryCommand,
     exitCode: 0,
     stdout: "63082733568\n",
   });
-  await artifacts.writeJson("shell/spark-express-vllm-container-inspect.result.json", {
+  await artifacts.writeJson(probeFile("vllm-container-inspect"), {
+    command: ["docker", "inspect", "nemoclaw-vllm"],
     exitCode: 0,
     stdout: JSON.stringify([{ Id: "d".repeat(64), Config: config }]),
   });
@@ -237,6 +253,43 @@ it.each(Object.entries(observations))(
   },
 );
 
+it.each([
+  ["203.0.113.1", "203.0.113.1"],
+  ["172.18.0.1", "10.0.0.1"],
+])(
+  "rejects unbound Spark evidence: inspected gateway %s, successful health at %s",
+  async (gateway, host) => {
+    const { directory, env, artifacts } = await fixture();
+    const allowed = [probes.allowed[0]!, `http://${host}:8000/health`];
+    await artifacts.writeJson(probeFile("vllm-bridge-inspect"), {
+      ...observations["vllm-bridge-inspect"],
+      stdout: JSON.stringify([{ Gateway: gateway }]),
+    });
+    await artifacts.writeJson("spark-express-vllm-publication-probes", { ...probes, allowed });
+    await artifacts.writeJson(probeFile("vllm-publication-allowed"), {
+      ...observations["vllm-publication-allowed"],
+      command: ["curl", ...vllmPublicationCurlArgs(allowed)],
+    });
+    await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(/bridge/i);
+  },
+);
+
+it.each([
+  [memoryFile, undefined],
+  [memoryFile, ["node", "-e", "console.log(63082733568)"]],
+  [probeFile("vllm-container-inspect"), undefined],
+  [probeFile("vllm-container-inspect"), ["docker", "inspect", "other"]],
+  [
+    probeFile("vllm-bridge-inspect"),
+    ["docker", "network", "inspect", "--format", "{{json .IPAM.Config}}", "other"],
+  ],
+] as const)("rejects unbound Spark evidence: %s with command %j", async (file, command) => {
+  const { directory, scenario, env, artifacts } = await fixture();
+  const observed = JSON.parse(readFileSync(path.join(scenario, file), "utf8"));
+  await artifacts.writeJson(file, { ...observed, command });
+  await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(/command/i);
+});
+
 const chatProbe = observations["inference-local-chat"];
 const lookalike = "https://inference.local.example.invalid/v1/chat/completions";
 const wrongDestination = chatProbe.command.map((arg) => (arg === chatUrl ? lookalike : arg));
@@ -339,7 +392,8 @@ it.each([
   [0, "6.1e10"],
 ])("rejects an unsuccessful or out-of-tier memory probe (%s, %s)", async (exitCode, stdout) => {
   const { artifacts, directory, env } = await fixture();
-  await artifacts.writeJson("shell/spark-extra-arguments-physical-memory.result.json", {
+  await artifacts.writeJson(memoryFile, {
+    command: memoryCommand,
     exitCode,
     stdout,
   });

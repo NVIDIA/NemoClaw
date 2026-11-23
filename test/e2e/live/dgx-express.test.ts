@@ -11,7 +11,11 @@ import {
 
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
-import { resolveManagedVllmBridgeHost } from "../../../src/lib/inference/serving/vllm-host-local-network.ts";
+import {
+  MANAGED_VLLM_BRIDGE_INSPECT_ARGS,
+  parseManagedVllmBridgeHost,
+  resolveManagedVllmBridgeHost,
+} from "../../../src/lib/inference/serving/vllm-host-local-network.ts";
 import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
 import { buildLocalManagedVllmDockerEnv } from "../../../src/lib/inference/vllm-docker-env.ts";
 import {
@@ -425,9 +429,8 @@ test.for([
     await artifacts.writeJson("spark-sandbox-image.json", workload);
 
     progress.phase("verify selected vLLM runtime configuration");
-    expect(inspectionResult.exitCode, resultText(inspectionResult)).toBe(0);
+    expect(createdContainerId, resultText(inspectionResult)).not.toBeNull();
     const [inspection] = JSON.parse(inspectionResult.stdout) as VllmContainerInspection[];
-    expect(inspection.Id).toBe(createdContainerId);
     expect(inspection.Config.Image).toBe(plan.recipe.spec.runtime.image);
     expect(inspection.Config.Entrypoint).toEqual(["/bin/bash"]);
     expect(inspection.Config.Cmd[0]).toBe("-lc");
@@ -462,9 +465,13 @@ test.for([
     );
 
     const publicationEnv = e2eEnv();
-    const probes = vllmPublicationProbeUrls(
-      resolveManagedVllmBridgeHost(undefined, buildLocalManagedVllmDockerEnv({}, publicationEnv)),
-    );
+    const network = await host.command("docker", [...MANAGED_VLLM_BRIDGE_INSPECT_ARGS], {
+      artifactName: "spark-express-vllm-bridge-inspect",
+      env: buildLocalManagedVllmDockerEnv({}, publicationEnv),
+      timeoutMs: 10_000,
+    });
+    expect(network.exitCode, resultText(network)).toBe(0);
+    const probes = vllmPublicationProbeUrls(parseManagedVllmBridgeHost(network.stdout));
     await artifacts.writeJson("spark-express-vllm-publication-probes", probes);
     const allowed = await host.command("curl", vllmPublicationCurlArgs(probes.allowed), {
       artifactName: "spark-express-vllm-publication-allowed",

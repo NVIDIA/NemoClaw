@@ -5,6 +5,15 @@ import net from "node:net";
 
 import { dockerCapture } from "../../adapters/docker/local-model-runtime";
 import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
+
+export const MANAGED_VLLM_BRIDGE_INSPECT_ARGS = [
+  "network",
+  "inspect",
+  "--format",
+  "{{json .IPAM.Config}}",
+  "openshell-docker",
+] as const;
+
 export function validateManagedVllmBridgeHost(value: string): string {
   const [first, second] = value.split(".").map(Number);
   const privateIpv4 =
@@ -32,15 +41,17 @@ export function resolveManagedVllmBridgeHost(
   capture: typeof dockerCapture = dockerCapture,
   dockerEnv: Record<string, string> = buildLocalManagedVllmDockerEnv(),
 ): string {
-  const raw = capture(
-    ["network", "inspect", "--format", "{{json .IPAM.Config}}", "openshell-docker"],
-    {
+  return parseManagedVllmBridgeHost(
+    capture(MANAGED_VLLM_BRIDGE_INSPECT_ARGS, {
       env: dockerEnv,
       replaceEnv: true,
       ignoreError: true,
       timeout: 10_000,
-    },
-  ).trim();
+    }),
+  );
+}
+
+export function parseManagedVllmBridgeHost(raw: string): string {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);

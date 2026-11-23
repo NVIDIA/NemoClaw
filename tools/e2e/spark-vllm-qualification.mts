@@ -42,7 +42,7 @@ function readJson(file: string): RecordValue {
   return record(JSON.parse(readPrivateRegularFile(file, { maxBytes: 1024 * 1024 })!));
 }
 
-function verifySparkProbes(scenario: string, sandbox: string, model: string): void {
+async function verifySparkProbes(scenario: string, sandbox: string, model: string): Promise<void> {
   function observation(name: string, exitCode: number) {
     const {
       command,
@@ -61,12 +61,21 @@ function verifySparkProbes(scenario: string, sandbox: string, model: string): vo
   const { allowed, denied, ipv6 } = readJson(
     path.join(scenario, "spark-express-vllm-publication-probes"),
   );
-  assert(
-    Array.isArray(allowed) && allowed.length === 2 && allowed[0] === "http://127.0.0.1:8000/health",
-    "missing loopback or bridge health probe",
+  const { MANAGED_VLLM_BRIDGE_INSPECT_ARGS, parseManagedVllmBridgeHost } =
+    await import("../../src/lib/inference/serving/vllm-host-local-network.ts");
+  const network = observation("vllm-bridge-inspect", 0);
+  assert.deepEqual(
+    network.command,
+    ["docker", ...MANAGED_VLLM_BRIDGE_INSPECT_ARGS],
+    "bridge inspection command differs",
   );
-  const bridge = /^http:\/\/([0-9.]+):8000\/health$/u.exec(String(allowed[1]))?.[1];
-  assert(bridge && isIP(bridge) === 4 && !bridge.startsWith("127."), "invalid bridge health probe");
+  const bridge = parseManagedVllmBridgeHost(network.stdout);
+  const healthUrls = ["http://127.0.0.1:8000/health", `http://${bridge}:8000/health`];
+  assert.deepEqual(
+    allowed,
+    healthUrls,
+    "health probes must match loopback and the inspected bridge",
+  );
   assert(
     Array.isArray(denied) && denied.length > 0 && new Set(denied).size === denied.length,
     "missing or duplicate refusal probes",
@@ -75,7 +84,7 @@ function verifySparkProbes(scenario: string, sandbox: string, model: string): vo
     const match = /^http:\/\/(?:\[([^\]]+)\]|([0-9.]+)):8000\/health$/u.exec(String(url));
     const host = match?.[1] ?? match?.[2];
     assert(
-      host && isIP(host) === (match?.[1] ? 6 : 4) && !allowed.includes(url),
+      host && isIP(host) === (match?.[1] ? 6 : 4) && !healthUrls.includes(url),
       "invalid refusal probe",
     );
     return host;
@@ -86,7 +95,7 @@ function verifySparkProbes(scenario: string, sandbox: string, model: string): vo
   );
   assert.equal(ipv6, deniedHosts.some((host) => isIP(host) === 6) ? "configured" : "unconfigured");
   for (const [name, urls, exit, line] of [
-    ["allowed", allowed, 0, "0 200"],
+    ["allowed", healthUrls, 0, "0 200"],
     ["denied", denied, 7, "7 000"],
   ] as const) {
     const { command, stdout } = observation(`vllm-publication-${name}`, exit);
@@ -317,6 +326,11 @@ export async function sparkVllmQualificationReceipt(directory: string, env: Node
     path.join(scenario, "shell", "spark-extra-arguments-physical-memory.result.json"),
   );
   assert.equal(memory.exitCode, 0, "physical memory probe failed");
+  assert.deepEqual(
+    memory.command,
+    ["node", "-e", "console.log(require('node:os').totalmem())"],
+    "physical memory command differs",
+  );
   assert(
     typeof memory.stdout === "string" && /^[0-9]+$/u.test(memory.stdout.trim()),
     "physical memory probe must report bytes in decimal",
@@ -329,8 +343,13 @@ export async function sparkVllmQualificationReceipt(directory: string, env: Node
   const inspected = readJson(
     path.join(scenario, "shell", "spark-express-vllm-container-inspect.result.json"),
   );
-  const [container] = JSON.parse(String(inspected.stdout)) as unknown[];
   assert.equal(inspected.exitCode, 0, "container inspection failed");
+  assert.deepEqual(
+    inspected.command,
+    ["docker", "inspect", "nemoclaw-vllm"],
+    "container inspection command differs",
+  );
+  const [container] = JSON.parse(String(inspected.stdout)) as unknown[];
   const config = record(record(container).Config);
   assert.deepEqual(config.Entrypoint, ["/bin/bash"], "inspected entrypoint must be /bin/bash");
   const { materializeHostLocalVllmModel } =
@@ -349,7 +368,7 @@ export async function sparkVllmQualificationReceipt(directory: string, env: Node
     "qualification requires the installed container identity",
   );
   const { imageAuthority, workload } = sparkImageAuthority(env, candidateSha);
-  verifySparkProbes(scenario, target.sandboxName, recipe.spec.model.servedName);
+  await verifySparkProbes(scenario, target.sandboxName, recipe.spec.model.servedName);
   assert.deepEqual(
     readJson(path.join(scenario, "spark-sandbox-image.json")),
     workload,
