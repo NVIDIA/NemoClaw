@@ -25,7 +25,12 @@ use std::{
 /// The page, relative to the repository root.
 const PAGE: &str = "examples/scenarios.md";
 /// The columns, in order, that every table on the page has.
-const HEADER: [&str; 6] = ["Scenario", "Example", "Needs", "Model", "Ask", "Expect"];
+const HEADER: [&str; 8] = [
+    "On", "ID", "Scenario", "Example", "Needs", "Model", "Ask", "Expect",
+];
+/// The On cell that lets a row run, and the one that pauses it.
+const ON: &str = "✅";
+const PAUSED: &str = "⏸";
 /// The reply the stub model gives, which `lifecycle` configures.
 const STUB_REPLY: &str = "nemoclaw-stub-reply";
 /// The credential variable a stub row's providers read when the example names
@@ -36,6 +41,8 @@ const STUB_KEY_ENV: &str = "NEMOCLAW_SCENARIO_MODEL_KEY";
 struct Row {
     id: String,
     title: String,
+    /// Whether the page lets the row run, by its On cell; a paused row never runs.
+    on: bool,
     /// The example, relative to the page's directory.
     example: String,
     needs: Vec<Need>,
@@ -166,6 +173,9 @@ impl Host {
 
     /// Why this machine cannot run `row`, or none when it can.
     fn skip_reason(&self, row: &Row) -> Option<String> {
+        if !row.on {
+            return Some("paused on the page".to_owned());
+        }
         let lacking: Vec<_> = row.needs.iter().filter_map(|n| n.lacking(self)).collect();
         (!lacking.is_empty()).then(|| format!("needs {}", lacking.join(", ")))
     }
@@ -219,7 +229,12 @@ fn parse(page: &str) -> Result<Vec<Row>, String> {
         }
         for cells in lines {
             let row = row(&cells).map_err(|error| {
-                format!("the row `{}` {error}", cells.first().map_or("", |c| &c.0))
+                format!(
+                    "the row `{}` {error}",
+                    cells
+                        .get(HEADER.iter().position(|c| *c == "ID").unwrap())
+                        .map_or("", |c| &c.0)
+                )
             })?;
             if !ids.insert(row.id.clone()) {
                 return Err(format!("the scenario {} appears twice", row.id));
@@ -240,10 +255,18 @@ fn row(cells: &[Cell]) -> Result<Row, String> {
             Ok((text.as_str(), links))
         }
     };
-    let (scenario, _) = column("Scenario")?;
-    let (id, title) = scenario
-        .split_once(' ')
-        .ok_or("names no scenario ID before its title")?;
+    let (id, _) = column("ID")?;
+    let (title, _) = column("Scenario")?;
+    // The emoji may carry the emoji-presentation selector.
+    let on = match column("On")?.0.trim_end_matches('\u{fe0f}') {
+        ON => true,
+        PAUSED => false,
+        other => {
+            return Err(format!(
+                "has `{other}` in On: write {ON} or {PAUSED}\u{fe0f}"
+            ));
+        }
+    };
     let example = match column("Example")?.1.as_slice() {
         [link] => link.clone(),
         links => return Err(format!("links {} examples, not one", links.len())),
@@ -261,6 +284,7 @@ fn row(cells: &[Cell]) -> Result<Row, String> {
     Ok(Row {
         id: id.to_owned(),
         title: title.trim().to_owned(),
+        on,
         example,
         needs,
         stub: column("Model")?.0 == "stub",
@@ -675,8 +699,7 @@ fn page() {
 mod tests {
     use super::*;
 
-    const TABLE: &str =
-        "| Scenario | Example | Needs | Model | Ask | Expect |\n|---|---|---|---|---|---|\n";
+    const TABLE: &str = "| On | ID | Scenario | Example | Needs | Model | Ask | Expect |\n|---|---|---|---|---|---|---|---|\n";
 
     fn host(os: &'static str, arch: &'static str, gpus: &[&str]) -> Host {
         Host {
@@ -695,6 +718,15 @@ mod tests {
 
     fn by_id(id: &str) -> Row {
         rows().into_iter().find(|row| row.id == id).unwrap()
+    }
+
+    /// The page's row, switched on, so that a decision depends only on its
+    /// needs whatever its status on the page.
+    fn on(id: &str) -> Row {
+        Row {
+            on: true,
+            ..by_id(id)
+        }
     }
 
     #[test]
@@ -717,7 +749,7 @@ mod tests {
     #[test]
     fn an_unknown_need_fails_the_page_with_its_name() {
         let page = format!(
-            "{TABLE}| T-1 x | [a](a.yaml) | docker, gpus GB10 | stub | Hi. | any reply |\n"
+            "{TABLE}| ✅ | T-1 | x | [a](a.yaml) | docker, gpus GB10 | stub | Hi. | any reply |\n"
         );
         let error = parse(&page).unwrap_err();
         assert!(
@@ -728,19 +760,20 @@ mod tests {
 
     #[test]
     fn an_example_cell_without_a_link_fails_the_page() {
-        let page = format!("{TABLE}| T-1 x | a.yaml | docker | stub | Hi. | any reply |\n");
+        let page = format!("{TABLE}| ✅ | T-1 | x | a.yaml | docker | stub | Hi. | any reply |\n");
         assert!(parse(&page).unwrap_err().contains("0 examples"));
     }
 
     #[test]
     fn an_empty_cell_fails_the_page() {
-        let page = format!("{TABLE}| T-1 x | [a](a.yaml) | docker | stub |  | any reply |\n");
+        let page =
+            format!("{TABLE}| ✅ | T-1 | x | [a](a.yaml) | docker | stub |  | any reply |\n");
         assert!(parse(&page).unwrap_err().contains("no Ask"));
     }
 
     #[test]
     fn a_repeated_scenario_fails_the_page() {
-        let line = "| T-1 x | [a](a.yaml) | docker | stub | Hi. | any reply |\n";
+        let line = "| ✅ | T-1 | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n";
         assert!(
             parse(&format!("{TABLE}{line}{line}"))
                 .unwrap_err()
@@ -751,9 +784,9 @@ mod tests {
     #[test]
     fn a_laptop_runs_the_stub_row_and_says_why_it_skips_a_spark_row() {
         let mac = host("macos", "aarch64", &[]);
-        assert_eq!(mac.skip_reason(&by_id("T-144")), None);
+        assert_eq!(mac.skip_reason(&on("T-144")), None);
         assert_eq!(
-            mac.skip_reason(&by_id("T-172")).unwrap(),
+            mac.skip_reason(&on("T-172")).unwrap(),
             "needs a Linux host, an NVIDIA GPU named like `GB10`"
         );
     }
@@ -762,19 +795,31 @@ mod tests {
     fn a_dgx_spark_runs_its_rows_and_skips_the_station_and_kubernetes_rows() {
         let spark = host("linux", "aarch64", &["NVIDIA GB10"]);
         for id in ["T-144", "T-172", "T-359", "T-019"] {
-            assert_eq!(spark.skip_reason(&by_id(id)), None, "{id}");
+            assert_eq!(spark.skip_reason(&on(id)), None, "{id}");
         }
-        assert!(
-            spark
-                .skip_reason(&by_id("T-439"))
-                .unwrap()
-                .contains("`GB300`")
-        );
-        let kubernetes = spark.skip_reason(&by_id("T-528")).unwrap();
+        assert!(spark.skip_reason(&on("T-439")).unwrap().contains("`GB300`"));
+        let kubernetes = spark.skip_reason(&on("T-528")).unwrap();
         assert!(
             kubernetes.contains("NEMOCLAW_CLUSTER_KUBECONFIG")
                 && kubernetes.contains("$NVIDIA_INFERENCE_API_KEY")
         );
+    }
+
+    #[test]
+    fn a_paused_row_is_skipped_on_a_machine_that_has_its_needs() {
+        let page =
+            format!("{TABLE}| ⏸️ | T-1 | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n");
+        let row = parse(&page).unwrap().remove(0);
+        let mac = host("macos", "aarch64", &[]);
+        assert_eq!(mac.skip_reason(&row).unwrap(), "paused on the page");
+    }
+
+    #[test]
+    fn an_unknown_on_cell_fails_the_page_with_its_row() {
+        let page =
+            format!("{TABLE}| on | T-1 | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n");
+        let error = parse(&page).unwrap_err();
+        assert!(error.contains("T-1") && error.contains("`on`"), "{error}");
     }
 
     /// A digest reference that names the local image it stands for.
