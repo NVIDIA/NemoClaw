@@ -596,6 +596,42 @@ fn agents_keep_their_state_where_the_adapter_accepts_it() {
     assert!(remote["runtime"].get("keep_state").is_none(), "{remote}");
 }
 
+/// An image built from another Fabric revision can carry an adapter that
+/// doesn't keep its state in an agent-named folder, although the CLI's bundled
+/// one does (#14798). Planning against that image passes: the agent runs
+/// without kept state instead of failing on a field the user never wrote.
+#[test]
+fn an_image_whose_adapter_keeps_no_state_runs_without_kept_state() {
+    use nemoclaw_sdk::{
+        discovery::{DiscoveryQuery, plan_queries},
+        fabric_capabilities::{Support, assess_fabric},
+    };
+    let mut image = FabricCatalog::bundled_ref().clone();
+    for adapter in &mut image.adapters {
+        if let Some(accepts) = adapter.descriptor["config"]["accepts"].as_array_mut() {
+            accepts.retain(|field| field != "runtime.keep_state");
+        }
+    }
+    let document = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../examples/fabric-hermes.yaml").as_slice(),
+    )
+    .unwrap();
+    let mut checked = 0;
+    for query in plan_queries(&document).unwrap() {
+        let DiscoveryQuery::Fabric(request) = query else {
+            continue;
+        };
+        assert_eq!(
+            request.requirements.configuration["runtime"]["keep_state"],
+            true
+        );
+        let report = assess_fabric(&image, &request.requirements);
+        assert_eq!(report.status, Support::Supported, "{:?}", report.checks);
+        checked += 1;
+    }
+    assert!(checked > 0);
+}
+
 #[test]
 fn generated_base_urls_go_only_to_adapters_that_accept_them() {
     // Fabric rejects a normalized field an adapter does not accept, so the SDK
