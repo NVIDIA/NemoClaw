@@ -318,8 +318,7 @@ Connections the sandbox opened under the previous rules close, so a request in p
 If the sandbox fails to load the new revision, apply restores the previous policy and reports `OpenShell configuration rejected`; correct the policy and apply again.
 
 OpenShell applies filesystem, Landlock, and process settings only when a sandbox starts, as its [policy guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/policies/manage-policies.mdx#how-changes-take-effect) describes.
-Changing them replaces the sandbox, deleting its files and conversations (except on [mounted volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes)).
-So does any change to a policy APF governs.
+Changing them, or any part of a policy APF governs, replaces the sandbox, deleting its files and conversations (except on [mounted volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes)).
 Back them up first.
 External OpenShell policy edits conflict with the declared policy and stop export.
 Change the policy in the YAML instead.
