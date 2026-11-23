@@ -43,6 +43,7 @@ Telemetry is on by default, and the CLI does not prompt for consent.
 
 The sender makes one HTTP POST request with a 3-second timeout.
 It ignores every send error and never changes the command's output or exit code.
+It never retries, and in particular never retries after an HTTP 400, because the collector can store a record and still answer 400.
 It posts only to the fixed collector endpoint, `https://events.telemetry.data.nvidia.com/v1.1/events/json`, which is a constant in the sender and the same endpoint NemoClaw Classic uses.
 For tests, `NEMOCLAW_TELEMETRY_ENDPOINT` can point the sender at a local receiver.
 The sender honors it only when it is `http://127.0.0.1:<port>` or `http://[::1]:<port>` and ignores any other value.
@@ -59,9 +60,10 @@ Each record has these envelope keys:
 | `eventSysVer` | `nemoclaw-telemetry/5.0` | Constant |
 | `eventProtocol` | `1.6` | Constant |
 | `clientVer` | The `version` value | Bundle version stamp |
-| `deviceOS` | The `os` value | Command host |
+| `clientVariant` | `Release` | Constant |
+| `deviceOS` | The `os` value in the collector's spelling: `linux` is `Linux`, `macos` is `MacOS`, `windows` is `Windows`, and `other` is `undefined` | Command host |
 | `cpuArchitecture` | The `arch` value | Command host |
-| `deviceId` | The `installId` value if the collector stores it, otherwise the collector's placeholder; the TEST probe, [#14029](https://github.com/NVIDIA/NemoClaw/issues/14029), decides which | Install ID file |
+| `deviceId` | Always `undefined`; the collector refuses device details for this anonymous record, and `installId` carries the install ID | Constant |
 | Other identity keys | The collector's placeholder; the TEST signup, [#14676](https://github.com/NVIDIA/NemoClaw/issues/14676), records the collector's list of these keys | Constant |
 
 ## Parameters
@@ -176,10 +178,8 @@ Host detection, which [#14681](https://github.com/NVIDIA/NemoClaw/issues/14681) 
   These are the exceptions: `os` and `arch` are fixed at build time and send `other` for an unlisted value, `deploymentSource` sends `none`, and an unread configuration sends the values in [Field Rules](#field-rules).
 - For `harnesses`, `models`, and `inferenceHosts`, the sender first replaces each value as the field rules say (with `other` or `unknown`), then removes duplicates, then sorts the list.
   The collector does not enforce unique list items, so the sender must.
-  If the collector does not index lists, the sender sends each list as one value: its only value, or `mixed` when the list has more than one value.
-  An empty list stays empty.
-  The TEST probe, [#14029](https://github.com/NVIDIA/NemoClaw/issues/14029), decides whether this fallback ships.
-  If it ships, `mixed` joins the values of each list field.
+  The collector stores each list item as a separate value, so each value can be counted.
+  An empty list stays empty; the collector then stores no value for that field.
 - Changes are additive only.
   A 5.x minor version can add fields.
   It never renames a field, removes a field, or changes a field's meaning.
