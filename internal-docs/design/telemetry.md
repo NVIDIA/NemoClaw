@@ -225,7 +225,7 @@ Unique-install counts leave out `unknown`.
 ## OpenShell Telemetry
 
 The OpenShell gateway that NemoClaw manages has its own telemetry, separate from this record.
-When NemoClaw manages the gateway, the gateway's telemetry follows NemoClaw's: it is on unless `NEMOCLAW_DISABLE_TELEMETRY=1`.
+When NemoClaw manages the gateway, the gateway's telemetry follows NemoClaw's: it is off when `NEMOCLAW_DISABLE_TELEMETRY` is set, that is, present, not empty, and not `false` or `0` in any letter case, such as `1`, `yes`, or `TRUE`, and on otherwise.
 NemoClaw sets `OPENSHELL_TELEMETRY_ENABLED` for Docker and Podman, and `server.telemetryEnabled` on Kubernetes.
 NemoClaw leaves an external gateway's telemetry alone.
 The OpenShell library inside the CLI is built without telemetry.

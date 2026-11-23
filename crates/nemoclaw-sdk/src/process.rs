@@ -515,7 +515,7 @@ const PLATFORM_VARIABLES: &[&str] = &[
     "SSL_CERT_DIR",
     "SSH_AUTH_SOCK",
     // The provider sets a managed gateway's OpenShell telemetry from it.
-    "NEMOCLAW_DISABLE_TELEMETRY",
+    crate::telemetry::DISABLE_ENV,
 ];
 
 /// The caller's variables a child inherits: the platform set above, names

@@ -75,8 +75,14 @@ fn managed_gateways_follow_nemoclaw_telemetry() {
     }
     let test = "managed_gateways_follow_nemoclaw_telemetry";
     in_child(test, &[(CHILD, "true")]);
-    in_child(
-        test,
-        &[(CHILD, "false"), ("NEMOCLAW_DISABLE_TELEMETRY", "1")],
-    );
+    // Any set value turns it off, as it turns off the CLI's own record.
+    for off in ["1", "yes", "TRUE", "ture"] {
+        in_child(
+            test,
+            &[(CHILD, "false"), ("NEMOCLAW_DISABLE_TELEMETRY", off)],
+        );
+    }
+    for on in ["", "0", "false", "FALSE"] {
+        in_child(test, &[(CHILD, "true"), ("NEMOCLAW_DISABLE_TELEMETRY", on)]);
+    }
 }
