@@ -634,7 +634,7 @@ This procedure applies to managed Kubernetes and OpenShift deployments.
 NemoClaw installs the gateway release atomically: when the install fails or Helm's 600-second wait times out, Helm uninstalls the release before the apply returns, and the apply's error carries Helm's reason.
 The namespace, credential key, and the gateway's volume claims stay.
 Helm removes the gateway's pods with the release, so to see why the gateway didn't become ready, read its pods' events and logs while the apply waits.
-Correct the cause, such as a missing default StorageClass or an unreachable OIDC issuer, then apply again.
+Correct the cause, such as a missing StorageClass or an unreachable OIDC issuer, then apply again.
 
 After a first interrupt, the apply waits for the install to finish or for Helm to uninstall it.
 A second interrupt, a crash, or a killed process can stop the install before then, which leaves the release `pending-install` in the cluster without a binding in the state.

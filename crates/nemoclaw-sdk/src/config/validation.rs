@@ -195,6 +195,31 @@ impl super::ManagedGateway {
             };
             crate::managed::gateway_config::check(config, driver).map_err(ConfigError)?;
         }
+        // Kubernetes refuses a request above its limit only when Helm
+        // creates the gateway's StatefulSet, after apply has created the
+        // namespace and issuer; plan refuses it before anything changes.
+        if let Some(super::GatewayResources {
+            requests: Some(requests),
+            limits: Some(limits),
+        }) = self.cluster().and_then(|target| target.resources.as_ref())
+        {
+            let target = match self.target {
+                super::ManagedTarget::OpenShift(_) => "openshift",
+                _ => "kubernetes",
+            };
+            for (name, request, limit) in [
+                ("cpu", requests.millicores(), limits.millicores()),
+                ("memory", requests.mebibytes(), limits.mebibytes()),
+            ] {
+                if let (Some(request), Some(limit)) = (request, limit)
+                    && request > limit
+                {
+                    return Err(ConfigError(format!(
+                        "spec.gateway.target.{target}.resources.requests.{name} must not exceed resources.limits.{name}"
+                    )));
+                }
+            }
+        }
         let Some(local) = self.local() else {
             return match self.endpoint() {
                 Some(endpoint) => validate_endpoint(&endpoint, true),

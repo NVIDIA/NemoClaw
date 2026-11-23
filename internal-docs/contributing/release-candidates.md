@@ -45,6 +45,15 @@ Plan and apply:
 - Plan and the `nemoclaw onboard` review report an agent image that the engine doesn't hold as not present, and link the [agent image build instructions](../../docs/build-deploy/build.md#building-agent-images).
   See [pulling from private registries](../../docs/build-deploy/usage.md#pulling-from-private-registries).
 
+Gateways:
+
+- A managed `kubernetes` or `openshift` gateway takes `dataStorageClass`, the StorageClass of its data volume, and `resources`, its container's CPU and memory requests and limits, which the chart takes as written ([#14588](https://github.com/NVIDIA/NemoClaw/issues/14588)).
+  See [Choosing the Gateway's StorageClass and Resources](../../docs/build-deploy/kubernetes.md#choosing-the-gateways-storageclass-and-resources).
+  Plan refuses a changed `dataStorageClass` on an existing deployment, memory in units other than whole `Mi` or `Gi`, and a request above its limit.
+  Before, the volume took the cluster's default StorageClass, and the gateway always requested 250m CPU and 256Mi and was limited to 1 CPU and 2Gi.
+- On the `openshift` target, the shared supervisor that `supervisor_topology = "gateway"` selects also leaves its UID, group, and `fsGroup` to OpenShift, as the gateway does.
+  Before, the chart ran it as UID and group 65534, which `restricted-v2` refuses.
+
 ### Changes in v0.1.0-rc12
 
 These changes reached `v1` between the `v0.1.0-rc11` and `v0.1.0-rc12` tags.
@@ -355,7 +364,11 @@ See [migration](../../docs/get-started/migration.md) for where each earlier task
 
 ### Breaking Changes Since v0.1.0-rc12
 
-No change since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affects existing deployments or documents yet.
+These changes since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affect existing deployments or documents:
+
+- The intent record is now version 32, so this release refuses any deployment that `v0.1.0-rc12` or an earlier build of this branch created, without changing its state.
+  Destroy each one with the bundle that created it, then create it again with this release.
+  See [compatibility](../../docs/references/compatibility.md#deployment-state).
 
 ### Breaking Changes in v0.1.0-rc12
 
