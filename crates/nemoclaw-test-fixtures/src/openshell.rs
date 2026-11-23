@@ -48,6 +48,8 @@ pub struct State {
     /// The statuses sandboxes report for the next revisions UpdateConfig
     /// stores, in order; once they run out, each revision loads.
     pub policy_loads: std::collections::VecDeque<p::PolicyStatus>,
+    /// Lose the reply to the next policy UpdateConfig after storing it.
+    pub lose_policy_update: bool,
     /// Sandbox-scoped UpdateConfig requests, in order.
     pub config_updates: Vec<p::UpdateConfigRequest>,
     /// Rewrites a sandbox as an UpdateConfig without a policy reaches it, as
@@ -1255,6 +1257,9 @@ fn update_policy(
         ..Default::default()
     });
     state.effects += 1;
+    if std::mem::take(&mut state.lose_policy_update) {
+        return Err(Status::unavailable("secret-sentinel: update reply lost"));
+    }
     Ok(p::UpdateConfigResponse {
         version,
         policy_hash,

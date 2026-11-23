@@ -455,17 +455,24 @@ impl Backend for OpenShell {
         {
             verify_identity(prior, row)?;
             // The loaded policy, as recorded when it was applied, must not
-            // have changed since, unless APF issued the change.
+            // have changed since, unless APF issued the change. NemoClaw
+            // changes it only with the policy input the sandbox records, so
+            // both changed after an update whose reply was lost; the
+            // observation has checked the loaded rules against that input.
             if !policy_unchanged(prior, row) {
                 if value(row, crate::POLICY_AUTHORITY) != "apf" {
-                    return Err(ObservationError::BindingMismatch);
+                    if value(prior, "policy_json") == value(row, "policy_json") {
+                        return Err(ObservationError::BindingMismatch);
+                    }
+                } else {
+                    // APF issues a policy with a new token. A change under the
+                    // token it recorded is not APF's, so APF is asked again, and
+                    // a change already found unproven stays so until APF's
+                    // reissue records its policy.
+                    let recorded = value(prior, crate::POLICY_PROVENANCE);
+                    unproven =
+                        recorded.is_empty() || value(row, crate::POLICY_PROVENANCE) == recorded;
                 }
-                // APF issues a policy with a new token. A change under the
-                // token it recorded is not APF's, so APF is asked again, and
-                // a change already found unproven stays so until APF's
-                // reissue records its policy.
-                let recorded = value(prior, crate::POLICY_PROVENANCE);
-                unproven = recorded.is_empty() || value(row, crate::POLICY_PROVENANCE) == recorded;
             }
             match self.check_sandbox_phase(row).await {
                 Ok(()) => {}

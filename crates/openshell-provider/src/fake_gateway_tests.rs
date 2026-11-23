@@ -1655,6 +1655,46 @@ async fn a_policy_the_sandbox_cannot_load_is_restored() {
     assert!(!plan_policy(&recorded, &changed).2);
 }
 
+/// An update whose reply is lost after the gateway stored the new policy
+/// fails, and OpenTofu keeps the binding as it was. The next observation
+/// finds the new policy input and the revision the sandbox loaded for it
+/// together, so it records them instead of reporting drift, and the change
+/// then plans nothing more.
+#[tokio::test]
+async fn an_update_whose_reply_was_lost_reads_back_as_applied() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let bound = create_sandbox(&client, "explicit-policy").await;
+    let changed = with_policy(&bound, |policy| {
+        documentation(policy)["endpoints"][0]["rules"][0]["allow"]["path"] = "/reference/**".into()
+    });
+    let (_, desired, _) = plan_policy(&bound, &changed);
+    fixture.state.lock().unwrap().lose_policy_update = true;
+    let (state, error) = client
+        .update("sandbox", &desired, &bound)
+        .await
+        .into_parts();
+    assert!(error.is_some());
+    assert!(state.is_none(), "{state:?}");
+    let observed = client
+        .read("sandbox", &bound, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed["id"], bound["id"]);
+    assert_eq!(observed["policy_json"], changed["policy_json"]);
+    assert!(!observed[POLICY_HASH].is_empty());
+    assert_ne!(observed[POLICY_HASH], bound[POLICY_HASH]);
+    let (planned, _, replaced) = plan_policy(&observed, &changed);
+    assert!(!replaced);
+    assert_eq!(
+        planned.get(POLICY_HASH),
+        Some(&tf_provider::value::Value::Value(
+            observed[POLICY_HASH].clone()
+        ))
+    );
+}
+
 /// A sandbox that is still starting when it is created records its loaded
 /// policy's hash before the apply returns, so a path added to the policy after
 /// the first apply is drift, as it is after the second.
