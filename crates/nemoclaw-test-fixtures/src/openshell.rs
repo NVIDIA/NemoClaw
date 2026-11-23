@@ -353,6 +353,8 @@ impl State {
                 .collect();
             let driver_config = spec.template.as_ref().and_then(|template| template.driver_config.as_ref())
                 .map(openshell_core::proto_struct::struct_to_json_value);
+            let resources = spec.template.as_ref().and_then(|template| template.resources.as_ref())
+                .map(openshell_core::proto_struct::struct_to_json_value);
             let middlewares: BTreeMap<_, _> = spec.policy.iter()
                 .flat_map(|policy| &policy.network_middlewares)
                 .map(|(key, entry)| {
@@ -365,7 +367,7 @@ impl State {
                 .collect();
             json!({"id": meta.id, "name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
                 "providers": spec.providers, "command": spec.command, "policy_endpoints": endpoints,
-                "policy_middlewares": middlewares, "driver_config": driver_config,
+                "policy_middlewares": middlewares, "driver_config": driver_config, "resources": resources,
                 "gpu_count": spec.resource_requirements.and_then(|resources| resources.gpu).map(|gpu| gpu.count.unwrap_or(1))})
         }).collect();
         let profiles: BTreeMap<_, _> = self

@@ -544,6 +544,46 @@ fn adding_a_sandbox_that_sorts_first_leaves_existing_sandboxes_unchanged() {
 }
 
 #[test]
+fn sandboxes_request_the_cpu_and_memory_their_author_chose() {
+    let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    let sandbox = &graph["resource"]["openshell_sandbox"]["assistant"];
+    assert!(
+        sandbox.get("cpu").is_none(),
+        "omitted CPU must request none"
+    );
+    assert!(
+        sandbox.get("memory").is_none(),
+        "omitted memory must request none"
+    );
+
+    value["spec"]["sandboxes"]["assistant"]["cpu"] = "1500m".into();
+    value["spec"]["sandboxes"]["assistant"]["memory"] = "4Gi".into();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("cpu and memory must parse");
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    let sandbox = &graph["resource"]["openshell_sandbox"]["assistant"];
+    assert_eq!(
+        sandbox["cpu"], "1500m",
+        "OpenShell must receive the CPU quantity as written"
+    );
+    assert_eq!(
+        sandbox["memory"], "4Gi",
+        "OpenShell must receive the memory quantity as written"
+    );
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc,
+        "the document must round-trip with its sizes"
+    );
+}
+
+#[test]
 fn sandboxes_pass_driver_configuration_through() {
     let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
