@@ -47,7 +47,6 @@ import {
   listedSandboxNames,
 } from "../support/spark-express-vllm-safety.ts";
 import {
-  cleanupSandbox,
   expectOpenAiChatThroughSandbox,
   requireLivePrerequisites,
 } from "./inference-routing-helpers.ts";
@@ -143,34 +142,16 @@ async function inspectSandbox(host: HostCliClient, sandboxName: string, artifact
   return inspectSandboxIdentity(result, sandboxName);
 }
 
-async function removeExactSandbox(
+async function verifySparkSandboxCleanup(
   host: HostCliClient,
-  sandbox: Parameters<typeof cleanupSandbox>[1],
   sandboxName: string,
   sandboxId: string | null,
 ): Promise<void> {
   const current = await inspectSandbox(host, sandboxName, "cleanup-spark-express-sandbox-inspect");
-  await cleanupCapturedSparkResource(
-    `sandbox ${sandboxName}`,
-    sandboxId,
-    current,
-    (captured, observed) =>
-      removePresentExactSandbox(host, sandbox, sandboxName, captured, observed),
-  );
-}
-
-async function removePresentExactSandbox(
-  host: HostCliClient,
-  sandbox: Parameters<typeof cleanupSandbox>[1],
-  sandboxName: string,
-  sandboxId: string,
-  currentSandboxId: string,
-): Promise<void> {
   expect(
-    currentSandboxId,
-    `Refusing to remove replacement sandbox ${sandboxName}; expected ${sandboxId}, got ${currentSandboxId}`,
-  ).toBe(sandboxId);
-  await cleanupSandbox(host, sandbox, sandboxName, { strict: true, env: e2eEnv() });
+    current,
+    `${sandboxId ? `Captured ID: ${sandboxId}.` : "Cannot establish ownership."} OpenShell deletes by name, not by ID; leaving sandbox ${sandboxName} for runner-owner reconciliation.`,
+  ).toEqual({ kind: "absent" });
 }
 
 async function captureOnboardFailureDiagnostics(
@@ -361,7 +342,7 @@ test.for([
       removeExactVllmContainer(host, createdContainerId, "cleanup-spark-express-vllm-container"),
     );
     cleanup.add(`remove sandbox ${SANDBOX_NAME}`, () =>
-      removeExactSandbox(host, sandbox, SANDBOX_NAME, createdSandboxId),
+      verifySparkSandboxCleanup(host, SANDBOX_NAME, createdSandboxId),
     );
     const onboard = await host.command(
       "bash",

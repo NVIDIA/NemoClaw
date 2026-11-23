@@ -71,6 +71,7 @@ The controller runs default-enabled jobs for empty selectors. This procedure req
 The `spark-vllm-extra-arguments` job or target requires selection alone,
 `allow_dgx_spark_runner_queue=true`, a prepared physical 60-to-under-64-GB Spark, and protected
 environment approval for reviewed candidate-code execution. Follow its [execution contract](../../../../test/e2e/README.md#dgx-spark-express-vllm) for runner prerequisites and retained proof.
+Do not dispatch unattended while the gateway supports only name-based sandbox deletion. A cleanup failure requires runner-owner reconciliation and cannot qualify that attempt.
 The workflow, ARM64 publication selection and receipt consumer must already exist on trusted `main`. For image-changing PRs, verify that the successful managed-images PR run published ARM64 contracts for the selected revision. Both selector forms use those contracts. PRs eligible for the base cohort use its ARM64 OpenClaw image.
 
 Jetson and Launchable runs require a branch in `NVIDIA/NemoClaw`. Jetson also requires

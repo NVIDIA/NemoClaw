@@ -142,7 +142,6 @@ async function requireLivePrerequisites(
 
 interface CleanupSandboxOptions {
   readonly strict?: boolean;
-  readonly env?: NodeJS.ProcessEnv;
 }
 
 function isExpectedPreOnboardCleanupMiss(text: string): boolean {
@@ -182,19 +181,18 @@ async function cleanupSandbox(
   sandboxName: string,
   options: CleanupSandboxOptions = {},
 ): Promise<void> {
-  const env = options.env ?? buildAvailabilityProbeEnv();
   if (!options.strict) {
     await optionalCleanupStep("nemoclaw destroy", () =>
       host.command(process.execPath, [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"], {
         artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
-        env,
+        env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       }),
     );
     await optionalCleanupStep("openshell sandbox delete", () =>
       sandbox.openshell(["sandbox", "delete", sandboxName], {
         artifactName: `cleanup-openshell-sandbox-delete-${sandboxName}`,
-        env,
+        env: buildAvailabilityProbeEnv(),
         timeoutMs: 60_000,
       }),
     );
@@ -210,7 +208,7 @@ async function cleanupSandbox(
       [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"],
       {
         artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
-        env,
+        env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       },
     );
@@ -224,7 +222,7 @@ async function cleanupSandbox(
   try {
     const deletion = await sandbox.openshell(["sandbox", "delete", sandboxName], {
       artifactName: `cleanup-openshell-sandbox-delete-${sandboxName}`,
-      env,
+      env: buildAvailabilityProbeEnv(),
       timeoutMs: 60_000,
     });
     cleanupEvidence.push(probeSummary("openshell sandbox delete", deletion));
@@ -242,7 +240,7 @@ async function cleanupSandbox(
 
   const inventory = await sandbox.list({
     artifactName: `cleanup-openshell-sandbox-list-${sandboxName}`,
-    env,
+    env: buildAvailabilityProbeEnv(),
     timeoutMs: 30_000,
   });
   cleanupEvidence.push(probeSummary("openshell sandbox list", inventory));

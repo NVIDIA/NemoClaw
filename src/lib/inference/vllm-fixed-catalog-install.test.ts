@@ -509,7 +509,7 @@ describe("fixed catalog vLLM installs", () => {
    * paths below run the real selection guard rather than a canned result.
    */
   async function withActualSelectionGuard(
-    readinessReports: ReturnType<typeof vllmInstallTestReadiness>,
+    readinessReports?: ReturnType<typeof vllmInstallTestReadiness>,
   ): Promise<void> {
     const actualSelection = await vi.importActual<
       typeof import("./serving/host-local-vllm-selection")
@@ -646,35 +646,45 @@ describe("fixed catalog vLLM installs", () => {
   );
 
   it.each([
-    "--trust-remote-code",
-    "--trust_remote_code",
-    "--trust-remote-code=true",
-    "--trust_remote_code=true",
-    "--trust-remote-c",
-    "--trust_remote_c=true",
-    "--t",
-    "--config",
-    "--config=/tmp/vllm.yaml",
-    "--conf",
-  ])("rejects the remote-code override %s before Docker work", async (argument) => {
-    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([argument, "/tmp/vllm.yaml"]);
+    ...[
+      "--trust-remote-code",
+      "--trust_remote_code",
+      "--trust-remote-code=true",
+      "--trust_remote_code=true",
+      "--trust-remote-c",
+      "--trust_remote_c=true",
+      "--t",
+      "--config",
+      "--config=/tmp/vllm.yaml",
+      "--conf",
+    ].map((argument) => ({
+      raw: JSON.stringify([argument, "/tmp/vllm.yaml"]),
+      message: "must not enable remote model code",
+    })),
+    { raw: "not JSON", message: "must be a JSON array" },
+    { raw: '["--gpu-memory-utilization=2"]', message: "must be a decimal number" },
+    { raw: '["--served-model-name"]', message: "must specify exactly one safe model ID" },
+  ])("rejects $raw before managed dispatch or Docker work", async ({ raw, message }) => {
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = raw;
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    const readinessReports = vllmInstallTestReadinessAtMemory(profile, 63_082_733_568);
-    await withActualSelectionGuard(readinessReports);
-    mockSuccessfulVllmInstall(mocks, profile.containerName);
+    await withActualSelectionGuard();
+    const collector = vi
+      .spyOn(await import("../readiness/host"), "createHostReadinessReport")
+      .mockImplementation(() => {
+        throw new Error("unexpected readiness collection");
+      });
 
     const result = await installVllm(profile, {
       hasImage: true,
       nonInteractive: true,
       promptFn: vi.fn(),
-      readinessReports,
     });
 
     expect(result).toEqual({ ok: false });
-    expect(spies.errSpy).toHaveBeenCalledWith(
-      expect.stringContaining("must not enable remote model code"),
-    );
+    expect(spies.errSpy).toHaveBeenCalledWith(expect.stringContaining(message));
     expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(collector).not.toHaveBeenCalled();
+    expect(mocks.tryInstallManagedClusterManagedVllm).not.toHaveBeenCalled();
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
     expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
   });

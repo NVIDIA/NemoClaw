@@ -2483,7 +2483,7 @@ The target accepts only a local Docker socket and the default Docker context, re
 Neither case runs the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
 Separate installer tests own those earlier boundaries.
 The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` container.
-It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
+It preserves the shared Hugging Face cache and removes only the captured managed container, by ID. Sandbox cleanup passes only if OpenShell reports the sandbox absent. The pinned OpenShell API deletes by name, not by ID, so the scenario leaves a present sandbox untouched and records a cleanup failure, even if its ID still matches. The runner owner must exclude other clients, reconcile the recorded ID, and verify absence before reuse. Manual recovery does not turn a failed attempt into a pass.
 If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
 The standard E2E artifacts retain bounded command output.
 After onboarding, both physical-host cases request vLLM health on loopback and the private OpenShell bridge.
@@ -2534,13 +2534,13 @@ The Spark runner must be a prepared ARM64 GB10 host with Docker GPU support, the
 public image/model access, adequate model-cache storage, and no pre-existing `nemoclaw-vllm` container or `e2e-spark-vllm` sandbox.
 Candidate dependency manifests must match the trusted workflow revision.
 No provider or registry credentials are supplied to the scenario.
-The job retains the existing real-memory requirement, 65-minute scenario and identity-bound cleanup within its 95-minute setup/execution/upload deadline.
+The job retains the real-memory requirement and 65-minute scenario within its 95-minute setup/execution/upload deadline. Do not dispatch unattended qualification until the runner can guarantee identity-bound sandbox removal. Serializing GitHub jobs does not exclude other OpenShell clients.
 If onboarding is interrupted before an identity can be captured, cleanup rechecks the named resource. It records a failure if ownership or absence cannot be established. Reconcile the named resource before another run.
 
 The `spark-vllm-observations-<run-id>-<attempt>` artifact contains raw installation, inspected-command, health, sandbox inference,
 publication-denial and egress-denial results, `risk-signal.json`, and `cleanup.json`.
 A separate GitHub-hosted job checks out the validator at the workflow SHA and downloads the observations for that run and attempt.
-It checks the target against the trusted catalog, the memory tier, the exact launch command, and the ARM64 sandbox image against the selected publication.
+It checks the target against the trusted catalog, the memory tier, the inspected vLLM server image and launch command against the recipe, and the ARM64 sandbox image against the selected publication.
 It requires the recorded health and refusal probes, sandbox chat and unrelated-egress denial, the candidate-bound test result, and cleanup before publishing `spark-vllm-qualification.json`
 in `spark-vllm-receipt-<run-id>-<attempt>`. A failed-job rerun needs fresh observations from the physical job for the new attempt.
 The normal result reporter includes the selected job; missing or skipped results remain unresolved.

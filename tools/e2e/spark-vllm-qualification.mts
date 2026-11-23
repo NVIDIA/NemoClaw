@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import { parseManagedImageCohortReceipt } from "./managed-image-cohort-contract.mts";
 import { createPrivateRegularFile, readPrivateRegularFile } from "./private-file.mts";
 import {
   SPARK_EGRESS_PROBE,
@@ -15,7 +16,7 @@ import {
   vllmPublicationProbeUrls,
 } from "./spark-vllm-probes.mts";
 
-const { MANAGED_IMAGE_REPOSITORIES, parseManagedImageContractV1 } = createRequire(import.meta.url)(
+const { parseManagedImageContractV1 } = createRequire(import.meta.url)(
   "../../src/lib/onboard/managed-image/contract.ts",
 ) as typeof import("../../src/lib/onboard/managed-image/contract.ts");
 
@@ -199,19 +200,8 @@ function sparkImageAuthority(env: NodeJS.ProcessEnv, candidateSha: string) {
       },
     };
   }
-  assert(revision && /^[a-f0-9]{40}$/u.test(revision) && cohort, "missing Spark cohort authority");
-  const receipt = record(JSON.parse(cohort));
-  assert.equal(receipt.kind, "nemoclaw-managed-image-cohort-receipt-v1");
-  assert.equal(receipt.revision, revision, "qualification image authority mismatch");
-  assert.equal(receipt.cohort, `ghrun-${receipt.runId}-${receipt.runAttempt}`);
-  const reference = record(record(receipt.images)[agent])[platform];
-  const prefix = `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:`;
-  assert(
-    typeof reference === "string" &&
-      reference.startsWith(prefix) &&
-      /^[a-f0-9]{64}$/u.test(reference.slice(prefix.length)),
-    "invalid ARM64 OpenClaw image",
-  );
+  const receipt = parseManagedImageCohortReceipt(cohort ?? "", revision ?? "");
+  const reference = receipt.images[agent][platform];
   return {
     imageAuthority: receipt,
     workload: {
@@ -219,7 +209,7 @@ function sparkImageAuthority(env: NodeJS.ProcessEnv, candidateSha: string) {
       platform,
       reference,
       sourceCohort: receipt.cohort,
-      sourceRevision: revision,
+      sourceRevision: receipt.revision,
     },
   };
 }
@@ -337,6 +327,11 @@ export async function sparkVllmQualificationReceipt(directory: string, env: Node
   );
   const [container] = JSON.parse(String(inspected.stdout)) as unknown[];
   const config = record(record(container).Config);
+  assert.equal(
+    config.Image,
+    recipe.spec.runtime.image,
+    "inspected vLLM server image differs from the selected recipe",
+  );
   assert.deepEqual(config.Entrypoint, ["/bin/bash"], "inspected entrypoint must be /bin/bash");
   const { materializeHostLocalVllmModel } =
     await import("../../src/lib/inference/serving/host-local-vllm-selection.ts");

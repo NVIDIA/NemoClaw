@@ -18,6 +18,7 @@ import {
   selectedEnvironment,
 } from "./managed-image-receipt-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { selectedE2eManagedImageReference } from "../fixtures/managed-image-receipt.ts";
 import {
   SPARK_EGRESS_PROBE,
   SPARK_INTERFACE_QUERY,
@@ -135,7 +136,7 @@ afterEach(() => {
 });
 
 async function fixture(
-  config: { Entrypoint?: string[]; Cmd: string[] } = {
+  config: { Image?: string; Entrypoint?: string[]; Cmd: string[] } = {
     Entrypoint: ["/bin/bash"],
     Cmd: ["-lc", boundedCommand],
   },
@@ -169,7 +170,9 @@ async function fixture(
   await artifacts.writeJson(probeFile("vllm-container-inspect"), {
     command: ["docker", "inspect", "nemoclaw-vllm"],
     exitCode: 0,
-    stdout: JSON.stringify([{ Id: "d".repeat(64), Config: config }]),
+    stdout: JSON.stringify([
+      { Id: "d".repeat(64), Config: { Image: recipe.spec.runtime.image, ...config } },
+    ]),
   });
   const signal = buildRiskSignal(
     {
@@ -207,6 +210,13 @@ async function fixture(
 
 it("consumes actual target-writer and risk-reporter artifacts with independent run and image identities", async () => {
   const { directory, env } = await fixture();
+  expect(
+    selectedE2eManagedImageReference({
+      environment: env,
+      expectedAgent: "openclaw",
+      nodeArchitecture: "arm64",
+    }),
+  ).toBe(ARM64_REFERENCE);
   const receipt = await sparkVllmQualificationReceipt(directory, env);
   expect(receipt).toMatchObject({
     kind: "nemoclaw-spark-vllm-qualification-v1",
@@ -474,6 +484,41 @@ it.each([{}, { Entrypoint: ["/bin/sh"] }, { Entrypoint: ["/bin/bash", "-n"] }])(
     await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(/entrypoint/i);
   },
 );
+
+it.each([undefined, "other/vllm:latest"])(
+  "rejects inspected server image %s despite an exact command",
+  async (Image) => {
+    const { directory, env } = await fixture({
+      Image,
+      Entrypoint: ["/bin/bash"],
+      Cmd: ["-lc", boundedCommand],
+    });
+    await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(/server image/);
+  },
+);
+
+it.each([
+  { runId: "32707920950" },
+  { runId: undefined },
+  { runAttempt: "1" },
+  { runAttempt: undefined },
+  { cohort: "ghrun-32707920950-2" },
+  { images: { openclaw: { "linux/arm64": ARM64_REFERENCE } } },
+])("rejects incomplete cohort authority on both sides: %j", async (overrides) => {
+  const { directory, env } = await fixture();
+  env.E2E_MANAGED_IMAGE_COHORT_RECEIPT = JSON.stringify({
+    ...JSON.parse(env.E2E_MANAGED_IMAGE_COHORT_RECEIPT!),
+    ...overrides,
+  });
+  expect(() =>
+    selectedE2eManagedImageReference({
+      environment: env,
+      expectedAgent: "openclaw",
+      nodeArchitecture: "arm64",
+    }),
+  ).toThrow();
+  await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow();
+});
 
 type Proof = Awaited<ReturnType<typeof fixture>>;
 it.each<[string, (proof: Proof) => void | Promise<unknown>]>([

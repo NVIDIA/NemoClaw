@@ -13,6 +13,7 @@ export { resolveVllmInstallModel } from "../vllm-prompt.js";
 export {
   type MaterializedHostLocalVllmSelection,
   resolveHostLocalVllmSelection,
+  vllmPresetConflict,
 } from "./host-local-vllm-selection.js";
 export {
   NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV,

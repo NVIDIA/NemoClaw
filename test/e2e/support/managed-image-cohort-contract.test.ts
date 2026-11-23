@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   main,
+  parseManagedImageCohortReceipt,
   validateManagedImageCohort,
 } from "../../../tools/e2e/managed-image-cohort-contract.mts";
 
@@ -222,6 +223,9 @@ describe("managed-image cohort publication contract", () => {
         receipt: JSON.stringify(expectedReceipt()),
         revision: REVISION,
       });
+      expect(parseManagedImageCohortReceipt(outputs.receipt, outputs.revision)).toEqual(
+        expectedReceipt(),
+      );
     } finally {
       fs.rmSync(temporaryRoot, { force: true, recursive: true });
     }

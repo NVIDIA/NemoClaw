@@ -38,7 +38,6 @@ vi.mock("../fixtures/e2e-test.ts", async () => ({
 }));
 vi.mock("../live/inference-routing-helpers.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../live/inference-routing-helpers.ts")>()),
-  cleanupSandbox: vi.fn(),
   expectOpenAiChatThroughSandbox: vi.fn(),
 }));
 const SPARK_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-spark-vllm";
@@ -180,10 +179,13 @@ describe("DGX Spark callback safety", () => {
   it.each([
     {
       state: "sandbox-capture-failed-present",
+      sandboxFailure: true,
       failure: false,
       removalAttempted: true,
       lostOwnership: ["remove sandbox e2e-spark-vllm"],
     },
+    { state: "sandbox-present", sandboxFailure: true, failure: false, removalAttempted: true },
+    { state: "sandbox-replaced", sandboxFailure: true, failure: false, removalAttempted: true },
     {
       state: "capture-failed-present",
       failure: true,
@@ -201,7 +203,7 @@ describe("DGX Spark callback safety", () => {
     { state: "remove-failure", failure: true, removalAttempted: true },
   ])(
     "records $state without hiding inspection or removal failures",
-    async ({ state, failure, removalAttempted, lostOwnership = [] }) => {
+    async ({ state, failure, removalAttempted, sandboxFailure = false, lostOwnership = [] }) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cleanup-"));
       directories.push(directory);
       const marker = path.join(directory, "removed");
@@ -239,6 +241,10 @@ esac
       );
       vi.stubEnv("DOCKER_HOST", "");
       const cleanup = new CleanupRegistry();
+      const deleteByName = vi.fn((identity: string) => result(0, identity));
+      const observedSandbox = (id: string) =>
+        result(0, JSON.stringify({ name: SPARK_SANDBOX_NAME, id }));
+      const originalSandbox = observedSandbox("05d120e4-484c-47d4-9a59-77a08cbb6e67");
       const responses = {
         "prereq-docker-info-inference-routing": result(0),
         "prereq-openshell-version-inference-routing": result(0),
@@ -251,21 +257,23 @@ esac
         "spark-express-vllm-container-inspect": state.startsWith("capture-failed")
           ? result(1, "", "inspection interrupted")
           : result(0, JSON.stringify([{ Id: id }])),
-        "spark-express-vllm-sandbox-inspect": result(
-          1,
-          "",
-          state === "sandbox-capture-failed-present" ? "gateway unavailable" : "sandbox not found",
-        ),
+        "spark-express-vllm-sandbox-inspect": ["sandbox-present", "sandbox-replaced"].includes(
+          state,
+        )
+          ? originalSandbox
+          : result(
+              1,
+              "",
+              state === "sandbox-capture-failed-present"
+                ? "gateway unavailable"
+                : "sandbox not found",
+            ),
         "cleanup-spark-express-sandbox-inspect":
-          state === "sandbox-capture-failed-present"
-            ? result(
-                0,
-                JSON.stringify({
-                  name: SPARK_SANDBOX_NAME,
-                  id: "05d120e4-484c-47d4-9a59-77a08cbb6e67",
-                }),
-              )
-            : result(1, "", "sandbox not found"),
+          state === "sandbox-replaced"
+            ? observedSandbox("05d120e4-484c-47d4-9a59-77a08cbb6e68")
+            : sandboxFailure
+              ? originalSandbox
+              : result(1, "", "sandbox not found"),
         "failure-spark-express-vllm-container-logs": result(0),
         "failure-spark-express-sandbox-get": result(0),
       };
@@ -292,11 +300,13 @@ esac
             args: string[],
             options: { artifactName: string; env: NodeJS.ProcessEnv },
           ) =>
-            options.artifactName.startsWith("cleanup-") &&
-            options.artifactName !== "cleanup-spark-express-sandbox-inspect"
-              ? executeCleanup(command, args, options.env)
-              : (responses[options.artifactName as keyof typeof responses] ??
-                Promise.reject(new Error(`Unexpected command: ${options.artifactName}`))),
+            args.includes("destroy")
+              ? deleteByName("original")
+              : options.artifactName.startsWith("cleanup-") &&
+                  options.artifactName !== "cleanup-spark-express-sandbox-inspect"
+                ? executeCleanup(command, args, options.env)
+                : (responses[options.artifactName as keyof typeof responses] ??
+                  Promise.reject(new Error(`Unexpected command: ${options.artifactName}`))),
         ),
       };
       const run = capturedDgx.run as (
@@ -308,7 +318,10 @@ esac
           artifacts: { target: { declare: vi.fn() } },
           cleanup,
           host,
-          sandbox: {},
+          sandbox: {
+            openshell: () => deleteByName("replacement after destroy"),
+            list: () => result(0),
+          },
           progress: { phase: vi.fn() },
         }),
       ).rejects.toThrow(
@@ -328,15 +341,14 @@ esac
       );
       expect(new Set(dockerContexts)).toEqual(new Set(["default"]));
       expect(receipt.failures.map(({ name }) => name)).toEqual(
-        state === "sandbox-capture-failed-present"
+        sandboxFailure
           ? ["remove sandbox e2e-spark-vllm"]
           : failure
             ? ["remove nemoclaw-vllm"]
             : [],
       );
-      expect(receipt.passed.includes("remove sandbox e2e-spark-vllm")).toBe(
-        state !== "sandbox-capture-failed-present",
-      );
+      expect(receipt.passed.includes("remove sandbox e2e-spark-vllm")).toBe(!sandboxFailure);
+      expect(deleteByName.mock.calls).toEqual([]);
       expect(
         receipt.failures
           .filter(({ message }) => message.includes("Cannot establish ownership"))

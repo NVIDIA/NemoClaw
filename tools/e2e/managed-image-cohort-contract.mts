@@ -2,17 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { appendFileSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
+import type {
+  ManagedImagePlatform,
+  ShippedManagedImageAgent,
+} from "../../src/lib/onboard/managed-image/contract.ts";
+const {
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   SHIPPED_MANAGED_IMAGE_AGENTS,
-  type ManagedImagePlatform,
-  type ShippedManagedImageAgent,
-} from "../../src/lib/onboard/managed-image/contract.ts";
+} = createRequire(import.meta.url)(
+  "../../src/lib/onboard/managed-image/contract.ts",
+) as typeof import("../../src/lib/onboard/managed-image/contract.ts");
 
 // The `validate_managed_cohort` step in `.github/workflows/e2e.yaml` invokes this trust boundary.
 // `operations-workflow-boundary.mts` verifies that the workflow retains the step and its inputs.
@@ -308,6 +313,55 @@ export function validateManagedImageCohort(
 function requiredInteger(value: string | undefined, label: string): number {
   if (!value || !/^[1-9][0-9]*$/u.test(value)) throw new Error(`${label} is required`);
   return positiveInteger(Number(value), label);
+}
+
+export function parseManagedImageCohortReceipt(
+  raw: string,
+  revision: string,
+): ManagedImageCohortReceipt {
+  if (!SHA_PATTERN.test(revision) || !raw || Buffer.byteLength(raw) > 8 * 1024) {
+    throw new Error("stock onboarding requires the complete selected managed-image cohort receipt");
+  }
+  const receipt = record(JSON.parse(raw), "managed-image cohort receipt");
+  exactKeys(
+    receipt,
+    ["cohort", "images", "kind", "revision", "runAttempt", "runId"],
+    "managed-image cohort receipt",
+  );
+  const kind = "nemoclaw-managed-image-cohort-receipt-v1";
+  exactString(receipt.kind, kind, "managed-image receipt kind");
+  exactString(receipt.revision, revision, "managed-image receipt revision");
+  const runId = positiveInteger(receipt.runId, "receipt run id");
+  const runAttempt = positiveInteger(receipt.runAttempt, "receipt run attempt");
+  const cohort = `ghrun-${runId}-${runAttempt}`;
+  exactString(receipt.cohort, cohort, "managed-image receipt cohort");
+  const images = record(receipt.images, "receipt images");
+  exactKeys(images, SHIPPED_MANAGED_IMAGE_AGENTS, "receipt agents");
+  for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
+    const platforms = record(images[agent], `${agent} receipt images`);
+    exactKeys(platforms, MANAGED_IMAGE_PLATFORMS, `${agent} receipt platforms`);
+    for (const platform of MANAGED_IMAGE_PLATFORMS) {
+      const reference = platforms[platform];
+      const prefix = `${MANAGED_IMAGE_REPOSITORIES[agent]}@`;
+      if (
+        typeof reference !== "string" ||
+        !reference.startsWith(prefix) ||
+        !DIGEST_PATTERN.test(reference.slice(prefix.length))
+      ) {
+        throw new Error(
+          `${agent} ${platform} must use the exact agent image from the selected cohort`,
+        );
+      }
+    }
+  }
+  return {
+    kind,
+    cohort,
+    revision,
+    runId,
+    runAttempt,
+    images: images as ManagedImageCohortReceipt["images"],
+  };
 }
 
 export function main(argv = process.argv.slice(2), env = process.env): void {

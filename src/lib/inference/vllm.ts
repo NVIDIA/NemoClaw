@@ -47,6 +47,7 @@ import {
   recoverHostLocalManagedVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
   resolveHostLocalVllmSelection,
+  vllmPresetConflict,
   resolveManagedVllmBridgeHost,
   resolveNvidiaSmiCommand,
   resolveVllmInstallModel,
@@ -2002,7 +2003,10 @@ export function imageIsCached(
   );
 }
 
-export function resolveVllmServedModelId(modelId: string, extraServeArgs: string[]): string {
+export function resolveVllmServedModelId<T extends string | undefined>(
+  modelId: T,
+  extraServeArgs: string[],
+): string | T {
   let override: string | null = null;
   for (let index = 0; index < extraServeArgs.length; index += 1) {
     const arg = extraServeArgs[index];
@@ -2104,6 +2108,19 @@ async function runVllmInstall(
       );
       return { ok: false };
     }
+  }
+  let extraServeArgs: string[];
+  let servedModelOverride: string | undefined;
+  let memoryOverride: number | undefined;
+  try {
+    const conflict = selectionEnv[VLLM_EXTRA_ARGS_ENV]?.trim() && vllmPresetConflict(selectionEnv);
+    if (conflict) throw new Error(conflict);
+    extraServeArgs = parseVllmExtraServeArgs(selectionEnv);
+    servedModelOverride = resolveVllmServedModelId(undefined, extraServeArgs);
+    memoryOverride = resolveVllmGpuMemoryUtilization(undefined, extraServeArgs);
+  } catch (error) {
+    console.error(`  vLLM install failed: ${(error as Error).message}`);
+    return { ok: false };
   }
   if (shouldTryManagedClusterInstall(hostLocalSelection, fixedServeCommand, requestedGpuDevice)) {
     const managedCluster = await tryInstallManagedClusterManagedVllm(
@@ -2292,18 +2309,13 @@ async function runVllmInstall(
     }
   }
 
-  let extraServeArgs: string[];
-  let servedModelId: string;
-  try {
-    if (model.fixedServeCommand && String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
-      throw new Error(`this managed vLLM recipe does not accept ${VLLM_EXTRA_ARGS_ENV}`);
-    }
-    extraServeArgs = parseVllmExtraServeArgs();
-    servedModelId = resolveVllmServedModelId(model.servedModelId ?? model.id, extraServeArgs);
-  } catch (err) {
-    console.error(`  vLLM install failed: ${(err as Error).message}`);
+  if (model.fixedServeCommand && selectionEnv[VLLM_EXTRA_ARGS_ENV]?.trim()) {
+    console.error(
+      `  vLLM install failed: this managed vLLM recipe does not accept ${VLLM_EXTRA_ARGS_ENV}`,
+    );
     return { ok: false };
   }
+  let servedModelId = servedModelOverride ?? model.servedModelId ?? model.id;
 
   if (profile.platform === "station" && usesStationPair) {
     if (!dualStationPlan) {
@@ -2340,8 +2352,8 @@ async function runVllmInstall(
     runtimeProfile = {
       ...runtimeProfile,
       gpuMemoryUtilization: resolveVllmGpuMemoryUtilization(
-        runtimeProfile.gpuMemoryUtilization,
-        extraServeArgs,
+        memoryOverride ?? runtimeProfile.gpuMemoryUtilization,
+        [],
       ),
     };
   } catch (error) {

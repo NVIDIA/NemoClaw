@@ -177,6 +177,15 @@ export function materializeHostLocalVllmSelection(
   };
 }
 
+export function vllmPresetConflict(env: NodeJS.ProcessEnv): string | null {
+  if (!env.NEMOCLAW_SERVING_PRESET?.trim()) return null;
+  if (env.NEMOCLAW_VLLM_MODEL?.trim())
+    return "NEMOCLAW_SERVING_PRESET conflicts with NEMOCLAW_VLLM_MODEL";
+  if (env[VLLM_EXTRA_ARGS_ENV]?.trim())
+    return `NEMOCLAW_SERVING_PRESET conflicts with ${VLLM_EXTRA_ARGS_ENV}`;
+  return null;
+}
+
 export function resolveHostLocalVllmSelection(
   baseProfile: VllmProfile,
   env: NodeJS.ProcessEnv = process.env,
@@ -188,18 +197,8 @@ export function resolveHostLocalVllmSelection(
   const presetId = String(env.NEMOCLAW_SERVING_PRESET ?? "").trim();
   const model = String(env.NEMOCLAW_VLLM_MODEL ?? "").trim();
   if (!presetId && !model && !options.automatic) return { kind: "not-selected" };
-  if (presetId && model) {
-    return {
-      kind: "rejected",
-      reason: "NEMOCLAW_SERVING_PRESET conflicts with NEMOCLAW_VLLM_MODEL",
-    };
-  }
-  if (presetId && String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
-    return {
-      kind: "rejected",
-      reason: `NEMOCLAW_SERVING_PRESET conflicts with ${VLLM_EXTRA_ARGS_ENV}`,
-    };
-  }
+  const conflict = vllmPresetConflict(env);
+  if (conflict) return { kind: "rejected", reason: conflict };
   // Operator-owned serve arguments are appended to a catalog recipe's
   // arguments, so they must not hide the recipe the host would otherwise get
   // (#14016). A fixed recipe cannot take them, and a host the catalog cannot
