@@ -108,12 +108,23 @@ function verifySparkProbes(scenario: string, sandbox: string, model: string): vo
     return { command: command.slice(6), stdout };
   }
   const chat = sandboxObservation("inference-local-chat");
-  assert.equal(chat.command[0], "curl");
-  assert(chat.command.includes("https://inference.local/v1/chat/completions"));
-  const payload = chat.command.indexOf("--data-raw");
   assert(
-    payload > 0 && record(JSON.parse(chat.command[payload + 1])).model === model,
-    "chat did not request the selected model",
+    isDeepStrictEqual(chat.command, [
+      "curl",
+      "-sS",
+      "--max-time",
+      "60",
+      "https://inference.local/v1/chat/completions",
+      "-H",
+      "Content-Type: application/json",
+      "--data-raw",
+      JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+        max_tokens: 1024,
+      }),
+    ]),
+    "sandbox chat probe differs",
   );
   const { choices, error } = record(JSON.parse(chat.stdout));
   assert(

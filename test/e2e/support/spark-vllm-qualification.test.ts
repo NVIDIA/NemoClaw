@@ -49,6 +49,12 @@ const probes = {
   ipv6: "configured",
 };
 const exec = ["openshell", "sandbox", "exec", "-n", "e2e-spark-vllm", "--"];
+const chatUrl = "https://inference.local/v1/chat/completions";
+const chatBody = {
+  model: recipe.spec.model.servedName,
+  messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+  max_tokens: 1024,
+};
 const observations = {
   "vllm-publication-allowed": {
     command: ["curl", ...vllmPublicationCurlArgs(probes.allowed)],
@@ -67,15 +73,11 @@ const observations = {
       "-sS",
       "--max-time",
       "60",
-      "https://inference.local/v1/chat/completions",
+      chatUrl,
       "-H",
       "Content-Type: application/json",
       "--data-raw",
-      JSON.stringify({
-        model: recipe.spec.model.servedName,
-        messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-        max_tokens: 1024,
-      }),
+      JSON.stringify(chatBody),
     ],
     exitCode: 0,
     stdout: JSON.stringify({ choices: [{ message: { content: "PONG" } }] }),
@@ -234,6 +236,31 @@ it.each(Object.entries(observations))(
     await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow();
   },
 );
+
+const chatProbe = observations["inference-local-chat"];
+const lookalike = "https://inference.local.example.invalid/v1/chat/completions";
+const wrongDestination = chatProbe.command.map((arg) => (arg === chatUrl ? lookalike : arg));
+it.each([
+  ["a lookalike host", wrongDestination],
+  ["the expected URL only as a header value", [...wrongDestination, "-H", chatUrl]],
+  ["a second destination", [...chatProbe.command, lookalike]],
+  ["an unexpected curl option", [...chatProbe.command, "--location"]],
+  [
+    "a different header",
+    chatProbe.command.map((arg) =>
+      arg === "Content-Type: application/json" ? "Content-Type: text/plain" : arg,
+    ),
+  ],
+  [
+    "a different model",
+    [...chatProbe.command.slice(0, -1), JSON.stringify({ ...chatBody, model: "different" })],
+  ],
+  ["no prompt", [...chatProbe.command.slice(0, -1), JSON.stringify({ ...chatBody, messages: [] })]],
+] as const)("rejects a successful sandbox chat with %s", async (_case, command) => {
+  const { directory, env, artifacts } = await fixture();
+  await artifacts.writeJson(probeFile("inference-local-chat"), { ...chatProbe, command });
+  await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow();
+});
 
 async function candidateFixture(platform: "linux/arm64" | "linux/amd64") {
   const { directory, artifacts, env, workload } = await fixture();
