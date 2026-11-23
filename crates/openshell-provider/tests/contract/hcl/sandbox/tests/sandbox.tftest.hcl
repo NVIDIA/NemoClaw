@@ -200,11 +200,11 @@ run "change_memory" {
     memory   = "8Gi"
   }
   assert {
-    condition     = length(local.openshell.created_sandboxes) == 5 && length(local.openshell.sandboxes) == 3
+    condition     = length(local.openshell.created_sandboxes) == 6 && length(local.openshell.sandboxes) == 3
     error_message = "A changed memory limit must replace the sandbox."
   }
   assert {
-    condition     = [for sandbox in local.openshell.created_sandboxes : sandbox.resources.limits.memory if sandbox.name == "researcher"][2] == "8Gi"
+    condition     = [for sandbox in local.openshell.created_sandboxes : sandbox.resources.limits.memory if sandbox.name == "researcher"][3] == "8Gi"
     error_message = "The replacement must request the new memory limit: ${jsonencode(local.openshell.created_sandboxes)}"
   }
 }
