@@ -382,6 +382,38 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(deps.createSandbox).toHaveBeenCalledOnce();
   });
 
+  it.each([false, true])(
+    "persists unsettled recovery before stderr can fail (ambiguous=%s)",
+    async (ambiguous) => {
+      let nonce = "";
+      const input = createVerifiedNoGpuInput();
+      const deps = createDeps();
+      deps.createSandbox = vi.fn(async (request) => {
+        nonce = request.labels?.[NEMOCLAW_CREATE_ATTEMPT_LABEL] ?? "";
+        return { status: 0, output: "safe diagnostic", sawProgress: true, ambiguous };
+      });
+      vi.mocked(deps.runCaptureOpenshell).mockReturnValue("[]");
+      vi.spyOn(performance, "now")
+        .mockReturnValueOnce(0)
+        .mockReturnValueOnce(0)
+        .mockReturnValueOnce(30_000);
+      const writeFailure = new Error("stderr unavailable");
+      vi.spyOn(console, "error").mockImplementation(() => {
+        throw writeFailure;
+      });
+
+      await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toBe(writeFailure);
+
+      expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+        expect.stringContaining(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`),
+        undefined,
+        nonce,
+      );
+      expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+      expect(deps.createSandbox).toHaveBeenCalledOnce();
+    },
+  );
+
   it("bounds the streamed sandbox readiness probe", async () => {
     const deps = createDeps();
     mocks.streamSandboxCreate.mockImplementationOnce(async (...args) => {

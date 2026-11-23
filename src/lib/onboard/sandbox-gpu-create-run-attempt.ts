@@ -669,8 +669,8 @@ export function createSandboxGpuCreateAttemptRunner(
       try {
         sandboxId = settleCreatedIdentity();
       } catch (error) {
-        printUnconfirmedCreateOutput(createResult?.output);
         persistIdentitySettlementRecovery();
+        printUnconfirmedCreateOutput(createResult?.output);
         throw new Error(
           unconfirmedCreateMessage(
             input.sandboxName,
@@ -986,8 +986,8 @@ export function createSandboxGpuCreateAttemptRunner(
       try {
         sandboxId = settledAmbiguousSandboxId ?? settleCreatedIdentity();
       } catch (error) {
-        printUnconfirmedCreateOutput(createResult?.output);
         persistIdentitySettlementRecovery();
+        printUnconfirmedCreateOutput(createResult?.output);
         throw new Error(
           unconfirmedCreateMessage(
             input.sandboxName,
