@@ -328,6 +328,24 @@ pub(super) fn command_environment(
     credential_environment(document.credential_names(), secrets, directory)
 }
 
+/// Plan reads the gateway's and the cluster's credentials and image metadata
+/// files, never an inference or integration credential: only apply registers
+/// their providers. Keep the document and resource graph intact; narrow only
+/// the subprocess secrets to its `plan_credential_names`.
+pub(super) fn plan_environment(document: &Document) -> Document {
+    let mut environment = document.clone();
+    for provider in environment.provider_definitions_mut() {
+        provider.credential = None;
+    }
+    for sandbox in environment.spec.sandboxes.values_mut() {
+        sandbox.integrations.clear();
+        sandbox.agent.integrations.clear();
+        sandbox.agent.integration_refs.clear();
+    }
+    environment.spec.integrations.clear();
+    environment
+}
+
 pub(super) fn gateway_environment(
     document: &Document,
     secrets: &dyn Secrets,

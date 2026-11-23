@@ -362,6 +362,9 @@ pub fn definitions() -> serde_json::Map<String, Value> {
     let mut generator = schemars::generate::SchemaSettings::draft2020_12().into_generator();
     generator.subschema_for::<ExplicitPolicy>();
     let mut defs = generator.take_definitions(true);
+    // As the configuration schema does, so these stay equal to its definitions.
+    defs.values_mut()
+        .for_each(nemoclaw_runtime::schema::bound_integers);
     constrain(&mut defs);
     defs
 }

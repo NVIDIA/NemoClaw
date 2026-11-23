@@ -41,6 +41,15 @@ pub struct State {
     pub providers: HashMap<String, p::Provider>,
     pub sandboxes: HashMap<String, p::Sandbox>,
     pub active_policy: Option<p::SandboxPolicy>,
+    /// Each sandbox's policy revisions after its first, by sandbox ID, as a
+    /// sandbox-scoped UpdateConfig with a policy stores them. The first is the
+    /// policy the sandbox was created with.
+    pub policy_revisions: HashMap<String, Vec<p::SandboxPolicyRevision>>,
+    /// The statuses sandboxes report for the next revisions UpdateConfig
+    /// stores, in order; once they run out, each revision loads.
+    pub policy_loads: std::collections::VecDeque<p::PolicyStatus>,
+    /// Lose the reply to the next policy UpdateConfig after storing it.
+    pub lose_policy_update: bool,
     /// Sandbox-scoped UpdateConfig requests, in order.
     pub config_updates: Vec<p::UpdateConfigRequest>,
     /// Rewrites a sandbox as an UpdateConfig without a policy reaches it, as
@@ -343,19 +352,18 @@ impl State {
                 "credentials": provider.credentials.iter()
                     .map(|(name, value)| (name.clone(), source(value))).collect::<BTreeMap<_, _>>()})
         }).collect();
-        let sandboxes: Vec<_> = self.created_sandboxes.iter().map(|sandbox| {
-            let meta = sandbox.metadata.clone().unwrap_or_default();
-            let spec = sandbox.spec.clone().unwrap_or_default();
-            let endpoints: Vec<String> = spec.policy.iter()
+        // A policy's endpoints and middleware bindings.
+        let endpoints = |policy: Option<&p::SandboxPolicy>| -> Vec<String> {
+            policy
+                .into_iter()
                 .flat_map(|policy| policy.network_policies.values())
                 .flat_map(|rule| &rule.endpoints)
                 .map(|endpoint| format!("{}:{}{}", endpoint.host, endpoint.port, endpoint.path))
-                .collect();
-            let driver_config = spec.template.as_ref().and_then(|template| template.driver_config.as_ref())
-                .map(openshell_core::proto_struct::struct_to_json_value);
-            let resources = spec.template.as_ref().and_then(|template| template.resources.as_ref())
-                .map(openshell_core::proto_struct::struct_to_json_value);
-            let middlewares: BTreeMap<_, _> = spec.policy.iter()
+                .collect()
+        };
+        let middlewares =
+            |policy: Option<&p::SandboxPolicy>| -> BTreeMap<String, serde_json::Value> {
+                policy.into_iter()
                 .flat_map(|policy| &policy.network_middlewares)
                 .map(|(key, entry)| {
                     let selector = entry.endpoints.clone().unwrap_or_default();
@@ -364,12 +372,53 @@ impl State {
                         "config": entry.config.as_ref().map(openshell_core::proto_struct::struct_to_json_value),
                         "include": selector.include, "exclude": selector.exclude}))
                 })
-                .collect();
+                .collect()
+            };
+        let sandboxes: Vec<_> = self.created_sandboxes.iter().map(|sandbox| {
+            let meta = sandbox.metadata.clone().unwrap_or_default();
+            let spec = sandbox.spec.clone().unwrap_or_default();
+            let driver_config = spec.template.as_ref().and_then(|template| template.driver_config.as_ref())
+                .map(openshell_core::proto_struct::struct_to_json_value);
+            let resources = spec.template.as_ref().and_then(|template| template.resources.as_ref())
+                .map(openshell_core::proto_struct::struct_to_json_value);
             json!({"id": meta.id, "name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
-                "providers": spec.providers, "command": spec.command, "policy_endpoints": endpoints,
-                "policy_middlewares": middlewares, "driver_config": driver_config, "resources": resources,
+                "providers": spec.providers, "command": spec.command,
+                "policy_endpoints": endpoints(spec.policy.as_ref()),
+                "policy_middlewares": middlewares(spec.policy.as_ref()), "driver_config": driver_config,
+                "resources": resources,
                 "gpu_count": spec.resource_requirements.and_then(|resources| resources.gpu).map(|gpu| gpu.count.unwrap_or(1))})
         }).collect();
+        // The policy each sandbox holds now, by workspace and name: its latest
+        // revision, numbered from the one it was created with.
+        let policies: BTreeMap<_, _> = self
+            .sandboxes
+            .iter()
+            .map(|(key, sandbox)| {
+                let latest = sandbox
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| self.policy_revisions.get(&metadata.id))
+                    .and_then(|revisions| revisions.last());
+                let policy = match latest {
+                    Some(revision) => revision.policy.clone(),
+                    None => sandbox
+                        .spec
+                        .as_ref()
+                        .and_then(|spec| spec.policy.as_ref())
+                        .map(started),
+                };
+                let policy = policy.as_ref();
+                let filesystem = policy
+                    .and_then(|policy| policy.filesystem.clone())
+                    .unwrap_or_default();
+                (
+                    key,
+                    json!({"version": latest.map_or(1, |revision| revision.version),
+                "read_only": filesystem.read_only, "read_write": filesystem.read_write,
+                "endpoints": endpoints(policy), "middlewares": middlewares(policy)}),
+                )
+            })
+            .collect();
         let profiles: BTreeMap<_, _> = self
             .profiles
             .values()
@@ -488,10 +537,11 @@ impl State {
             "effects": self.effects,
             "peak_sandbox_creates": self.peak_sandbox_creates,
             "sandbox_deletes": self.delete_calls,
-            // What the gateway holds now: sandbox IDs by name, service endpoints
-            // by workspace, sandbox, and name, registration names and their
-            // credentials' sources, and provider profiles by ID.
-            "sandboxes": live, "services": services, "registrations": registrations,
+            // What the gateway holds now: sandbox IDs by name, sandbox policies
+            // and service endpoints by workspace, sandbox, and name, registration
+            // names and their credentials' sources, and provider profiles by ID.
+            "sandboxes": live, "policies": policies, "services": services,
+            "registrations": registrations,
             "registration_credentials": registration_credentials, "profiles": profiles,
             "profile_mcp_rules": profile_mcp_rules,
         })
@@ -1118,17 +1168,20 @@ fn get_service(
         .clone();
     Ok(service_response(endpoint))
 }
-/// A sandbox-scoped configuration update. Only an update without a policy is
-/// modelled: the configured rewrite stands in for the interceptor that fills it.
+/// A sandbox-scoped configuration update: a complete policy, or none. Without
+/// one, the configured rewrite stands in for the interceptor that fills it.
 fn update_config(
     state: &mut State,
     q: p::UpdateConfigRequest,
 ) -> Result<p::UpdateConfigResponse, Status> {
     let key = format!("{}/{}", workspace(&q.workspace_scope)?, q.sandbox);
-    if q.global || q.policy.is_some() || !q.merge_operations.is_empty() {
-        return Err(Status::unimplemented("only a policy-less sandbox update"));
+    if q.global || !q.merge_operations.is_empty() {
+        return Err(Status::unimplemented("only a sandbox-scoped update"));
     }
-    state.config_updates.push(q);
+    state.config_updates.push(q.clone());
+    if let Some(policy) = q.policy {
+        return update_policy(state, &key, policy, q.annotations);
+    }
     let rewrite = state.config_update.clone();
     let sandbox = state
         .sandboxes
@@ -1138,6 +1191,106 @@ fn update_config(
     rewrite(sandbox);
     state.active_policy = None;
     Ok(p::UpdateConfigResponse::default())
+}
+/// A running sandbox's new policy, which keeps the settings it started with,
+/// as OpenShell's check does: it may add filesystem paths, but not remove
+/// any, and may not change Landlock or process settings. The gateway stores
+/// it as the sandbox's next revision with the update's annotations, which it
+/// also records on the sandbox.
+fn update_policy(
+    state: &mut State,
+    key: &str,
+    policy: p::SandboxPolicy,
+    annotations: HashMap<String, String>,
+) -> Result<p::UpdateConfigResponse, Status> {
+    let sandbox = state
+        .sandboxes
+        .get_mut(key)
+        .ok_or_else(|| Status::not_found("absent"))?;
+    let created = sandbox
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.policy.clone())
+        .unwrap_or_default();
+    if created.landlock != policy.landlock {
+        return Err(Status::invalid_argument(
+            "landlock policy cannot be changed on a live sandbox (applied at startup)",
+        ));
+    }
+    if created.process != policy.process {
+        return Err(Status::invalid_argument(
+            "process policy cannot be changed on a live sandbox (applied at startup)",
+        ));
+    }
+    if let Some(started) = &created.filesystem {
+        let kept = policy.filesystem.as_ref().is_some_and(|new| {
+            new.include_workdir == started.include_workdir
+                && started
+                    .read_only
+                    .iter()
+                    .all(|path| new.read_only.contains(path))
+                && started
+                    .read_write
+                    .iter()
+                    .all(|path| new.read_write.contains(path))
+        });
+        if !kept {
+            return Err(Status::invalid_argument(
+                "filesystem paths cannot be removed on a live sandbox",
+            ));
+        }
+    }
+    let metadata = sandbox.metadata.as_mut().unwrap();
+    metadata.annotations.extend(annotations);
+    let annotations = metadata.annotations.clone();
+    let revisions = state
+        .policy_revisions
+        .entry(metadata.id.clone())
+        .or_default();
+    let version = revisions.last().map_or(2, |revision| revision.version + 1);
+    let policy_hash = policy_hash(&policy);
+    revisions.push(p::SandboxPolicyRevision {
+        version,
+        policy_hash: policy_hash.clone(),
+        policy: Some(policy),
+        status: state
+            .policy_loads
+            .pop_front()
+            .unwrap_or(p::PolicyStatus::Loaded) as i32,
+        ..Default::default()
+    });
+    state.effects += 1;
+    if std::mem::take(&mut state.lose_policy_update) {
+        return Err(Status::unavailable("secret-sentinel: update reply lost"));
+    }
+    Ok(p::UpdateConfigResponse {
+        version,
+        policy_hash,
+        annotations,
+        ..Default::default()
+    })
+}
+/// The policy a sandbox loads when it starts: the one it was created with,
+/// plus a baseline path that OpenShell adds when the policy allows network
+/// access.
+fn started(created: &p::SandboxPolicy) -> p::SandboxPolicy {
+    let mut policy = created.clone();
+    if !policy.network_policies.is_empty()
+        && let Some(fs) = &mut policy.filesystem
+        && !fs
+            .read_only
+            .iter()
+            .chain(&fs.read_write)
+            .any(|p| p == "/var/log")
+    {
+        fs.read_only.push("/var/log".into());
+    }
+    policy
+}
+/// OpenShell's hash of a policy's content, which ignores the order of its
+/// maps' entries.
+fn policy_hash(policy: &p::SandboxPolicy) -> String {
+    openshell_core::policy_identity::deterministic_policy_hash(policy)
 }
 /// The gateway exposes a live sandbox's service, or updates an exposed one in
 /// place.
@@ -1241,30 +1394,30 @@ fn policy_status(
         .sandboxes
         .get(&format!("{}/{}", workspace(&q.workspace_scope)?, q.sandbox))
         .ok_or_else(|| Status::not_found("absent"))?;
-    let policy = state.active_policy.clone().or_else(|| {
-        let mut policy = sandbox.spec.as_ref().unwrap().policy.clone()?;
-        if !policy.network_policies.is_empty()
-            && let Some(fs) = &mut policy.filesystem
-            && !fs
-                .read_only
-                .iter()
-                .chain(&fs.read_write)
-                .any(|p| p == "/var/log")
-        {
-            fs.read_only.push("/var/log".into());
-        }
-        Some(policy)
-    });
-    // Like OpenShell's, the hash identifies the loaded policy's content.
-    let policy_hash = policy
-        .as_ref()
-        .map(|policy| {
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::hash::DefaultHasher::new();
-            prost::Message::encode_to_vec(policy).hash(&mut hasher);
-            format!("fixture:{:016x}", hasher.finish())
-        })
-        .unwrap_or_default();
+    // The latest revision an update stored, with the last one the sandbox
+    // loaded as its active version.
+    let revisions = state
+        .policy_revisions
+        .get(&sandbox.metadata.as_ref().unwrap().id)
+        .filter(|_| state.active_policy.is_none());
+    if let Some(latest) = revisions.and_then(|revisions| revisions.last()) {
+        let active_version = revisions
+            .into_iter()
+            .flatten()
+            .filter(|revision| revision.status == p::PolicyStatus::Loaded as i32)
+            .map(|revision| revision.version)
+            .max()
+            .unwrap_or(1);
+        return Ok(p::GetSandboxPolicyStatusResponse {
+            active_version,
+            revision: Some(latest.clone()),
+        });
+    }
+    let policy = state
+        .active_policy
+        .clone()
+        .or_else(|| sandbox.spec.as_ref().unwrap().policy.as_ref().map(started));
+    let policy_hash = policy.as_ref().map(policy_hash).unwrap_or_default();
     Ok(p::GetSandboxPolicyStatusResponse {
         active_version: 1,
         revision: Some(p::SandboxPolicyRevision {

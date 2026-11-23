@@ -226,6 +226,12 @@
           "slug": "resources"
         },
         {
+          "title": "Engineer Documentation for AI Agents",
+          "source": "docs/resources/engineer-agentic-documentation.mdx",
+          "slug": "resources/engineer-agentic-documentation",
+          "from-main": true
+        },
+        {
           "title": "Current Limits",
           "source": "docs/resources/limits.md",
           "slug": "limits"

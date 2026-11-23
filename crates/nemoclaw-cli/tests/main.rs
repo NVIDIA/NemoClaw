@@ -5,5 +5,10 @@
 
 #[path = "commands.rs"]
 mod commands;
+#[cfg(unix)]
+#[path = "../../test-support/executable.rs"]
+mod executable;
+#[path = "exit_guards.rs"]
+mod exit_guards;
 #[path = "output_modes.rs"]
 mod output_modes;

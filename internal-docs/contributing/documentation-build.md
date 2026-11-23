@@ -25,6 +25,9 @@ Links to examples, code, notices, and unpublished design pages point to GitHub a
 External URLs are retained without network validation.
 Generated files are ignored by Git; do not edit them.
 
+Both versions publish **Engineer Documentation for AI Agents** from `docs/resources/engineer-agentic-documentation.mdx` on main.
+The v1 renderer reads the revision in `fern/main-source.json` and links to the referenced guides at that same revision on GitHub.
+
 The [upstream notice](../../fern/NOTICE.md) records the main revision used for the publishing integration.
 The publisher extracts main's documentation and generators at an immutable Git revision without changing another worktree.
 It installs only the [locked docs dependency](../../tools/docs/main/package.json), `yaml`, in that extracted directory and runs the original generators with Node's TypeScript support.
