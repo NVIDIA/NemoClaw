@@ -23,11 +23,12 @@ pub async fn send(record: &Record) {
     let Some(endpoint) = endpoint(local.as_deref()) else {
         return;
     };
-    deliver(endpoint, envelope(record, &timestamp())).await;
+    deliver(endpoint, envelope(record, &timestamp()), TIMEOUT).await;
 }
 
-async fn deliver(endpoint: Url, body: Value) {
-    let _ = tokio::time::timeout(TIMEOUT, post(endpoint, body)).await;
+/// Posts `body`, giving up after `limit` however far the request got.
+async fn deliver(endpoint: Url, body: Value, limit: Duration) {
+    let _ = tokio::time::timeout(limit, post(endpoint, body)).await;
 }
 
 /// The fixed collector, or a local receiver when `local` is
@@ -53,9 +54,8 @@ fn endpoint(local: Option<&str>) -> Option<Url> {
 }
 
 async fn post(endpoint: Url, body: Value) -> Result<(), reqwest::Error> {
-    let mut client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(TIMEOUT);
+    // `deliver` bounds the whole request, connection included.
+    let mut client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     // A proxy would take loopback traffic off the machine. The real collector
     // must stay behind the standard proxy settings: the exit-guard tests rely on it.
     if endpoint.scheme() == "http" {
@@ -257,18 +257,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_silent_receiver_is_given_up_on_after_three_seconds() {
+    async fn a_silent_receiver_is_given_up_on_at_the_limit() {
         let (listener, url) = receiver().await;
         let _held = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             tokio::time::sleep(Duration::from_secs(30)).await;
             drop(stream);
         });
+        let limit = Duration::from_millis(300);
         let started = std::time::Instant::now();
-        deliver(endpoint(Some(&url)).unwrap(), envelope(&sample(), "now")).await;
+        deliver(
+            endpoint(Some(&url)).unwrap(),
+            envelope(&sample(), "now"),
+            limit,
+        )
+        .await;
         let elapsed = started.elapsed();
-        assert!(elapsed >= Duration::from_millis(2900), "{elapsed:?}");
-        assert!(elapsed < Duration::from_secs(4), "{elapsed:?}");
+        assert!(elapsed >= limit, "{elapsed:?}");
+        assert!(elapsed < limit + Duration::from_secs(1), "{elapsed:?}");
     }
 
     #[tokio::test]
