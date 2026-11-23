@@ -26,6 +26,16 @@ This documentation candidate starts at `4044274395279f5d0d2852a5e31290df3708bc87
 
 - `cargo test --locked -p nemoclaw-cli args::tests --bin nemoclaw` exited 0: 11 passed, including the checked-in OpenClaw example's engine field and the onboarding and lifecycle parser tests. These tests do not use a release archive or invoke an agent.
 
+## Pre-Release Base Refresh
+
+Merged `origin/v1` at `16c31be663f5415d95242be739352966179fb5a1` into the workflow branch without conflicts or history rewrites. GitHub returned no proposal for this workflow branch, and the remote branch lookup returned no head. The related [first-reply PR](https://github.com/NVIDIA/NemoClaw/pull/14569) and [shared documentation guide PR](https://github.com/NVIDIA/NemoClaw/pull/14795) are merged. The former's token-lifetime finding is already addressed: the terminal UI exits before the reader clears its token. Its comments concern the earlier tutorial, not this candidate.
+
+- The lifecycle guide and CLI reference explain which credentials plan reads and which it can defer. The sources are CLI `dispatch.rs` and `credentials.rs`, SDK `config/mod.rs`, and `crates/nemoclaw-sdk/tests/plan_credentials.rs`.
+- Security and lifecycle guidance reflect the in-place network policy updates from [#14774](https://github.com/NVIDIA/NemoClaw/pull/14774), including the connection interruption and replacement exceptions. See `crates/openshell-provider/src/{lib,mutation,network}.rs` and the sandbox contract tests.
+- The refreshed base updates the generated schema and configuration reference and adds the main-sourced public agentic documentation guide. This candidate preserves those upstream changes and adds onboarding without replacing an existing route.
+- After the merge, Fern, schema, whitespace, and all 11 focused CLI parser tests passed. The last Fern run reported zero errors and two warnings per pass. Logs: `/tmp/nc-refresh-final-fern.log` and `/tmp/nc-refresh-parser.log`. Inspected generated navigation for onboarding, Observability before Security, and the shared guide in both versions. No browser preview ran.
+- The final tag still returned no match, GitHub reported `release not found`, and the release page returned HTTP 404. The hosted v1 check failed with a connection reset. This is a pre-release review candidate; final-release verification remains a separate step.
+
 ## Release Evidence Still Needed
 
 `git ls-remote --tags origin refs/tags/v0.1.0` returned no match. The final release page returned HTTP 404. The v1 hosted overview first returned 404 and later failed to connect. The API request was rate-limited. These observations do not establish the contents of a private release. No draft RC assets were substituted and nothing was published.

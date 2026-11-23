@@ -16,6 +16,9 @@ See [engine connection limits](../../internal-docs/design/execution-targets.md#c
 ## Planning and Applying
 
 A preview observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
+Plan requires only the credential references it reads for the gateway, cluster, and image metadata.
+If an inference, web search, or API integration credential is missing, plan reports it as deferred work.
+Apply requires every referenced credential. See [credential resolution](../references/cli.md#credential-resolution).
 
 1. Preview the changes from the directory containing your YAML.
 

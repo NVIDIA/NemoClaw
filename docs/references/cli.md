@@ -40,6 +40,8 @@ The saved file holds only the template's values and your answers.
 Known engine incompatibility or conflicting image platform, manifest digest, or NVIDIA NeMo Fabric adapter requirements blocks onboarding review and saving.
 The [onboarding guide](../get-started/onboard.md) describes how to run it, what it reads from the target, and what to do with the saved file.
 
+## Credential Resolution
+
 Plan and apply derive credential requirements from the parsed document.
 Apply requires every credential reference.
 Plan requires only the gateway, cluster, and image metadata references, which it reads.
