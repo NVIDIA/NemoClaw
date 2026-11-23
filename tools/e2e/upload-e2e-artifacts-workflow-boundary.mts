@@ -7,7 +7,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
-import { SPARK_OBSERVATIONS_ARTIFACT, SPARK_RECEIPT_UPLOAD } from "./spark-vllm-qualification.mts";
 import {
   CLI_ARTIFACT_PUBLISH_STEP,
   CLI_ARTIFACT_RESTORE_STEP,
@@ -157,7 +156,6 @@ function isExactOpenShellSdkE2ePackageUpload(jobName: string, step: WorkflowStep
 }
 
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
-  ["spark-vllm-extra-arguments", { name: SPARK_OBSERVATIONS_ARTIFACT }],
   [
     "dgx-station-express",
     {
@@ -577,7 +575,6 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         !isExactOpenShellSdkE2ePackageUpload(jobName, step) &&
         !isExactNativeRuntimeAggregateUpload(jobName, step) &&
         !isExactPortablePodmanToolchainUpload(jobName, step) &&
-        !(jobName === "spark-vllm-receipt" && isDeepStrictEqual(step, SPARK_RECEIPT_UPLOAD)) &&
         !isExactReviewQueueResultUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);

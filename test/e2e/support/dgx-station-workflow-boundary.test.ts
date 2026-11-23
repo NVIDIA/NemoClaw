@@ -140,7 +140,6 @@ it.each(["jobs", "targets"] as const)(
       "external-gateway-health",
       "mcp-bridge-dev",
       "portable-hermes-finalization",
-      "spark-vllm-extra-arguments",
       "dgx-station-express",
     ]);
     expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("dgx-station-express");

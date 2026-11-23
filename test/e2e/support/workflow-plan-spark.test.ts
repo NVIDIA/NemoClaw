@@ -10,22 +10,16 @@ import {
 
 const target = "spark-vllm-extra-arguments";
 
-it.each(["jobs", "targets"] as const)(
-  "selects only the physical Spark scenario through %s",
-  (selector) => {
-    const plan = buildE2eWorkflowPlan({ [selector]: target });
-    expect(selectedWorkflowJobs(plan)).toEqual([target, "spark-vllm-receipt"]);
-    expect(plan.explicitOnlyJobs).toContain(target);
-    expect(selectedWorkflowJobs(buildE2eWorkflowPlan())).not.toContain(target);
-    expect(releaseRequiredWorkflowJobs()).not.toContain(target);
-  },
-);
-
 it.each([
-  { jobs: `${target},cloud-onboard` },
-  { targets: `${target},dgx-station-express` },
-  { jobs: target, targets: target },
-  { jobs: `${target},${target}` },
-])("rejects mixed or repeated Spark dispatch %j", (selectors) => {
-  expect(() => buildE2eWorkflowPlan(selectors)).toThrow(/must be selected by itself|Duplicate/);
+  ["jobs", target],
+  ["targets", target],
+  ["jobs", "spark-vllm-receipt"],
+  ["targets", "spark-vllm-receipt"],
+])("rejects %s selector %s for hosted qualification", (selector, id) => {
+  expect(() => buildE2eWorkflowPlan({ [selector]: id })).toThrow();
+});
+
+it.each([target, "spark-vllm-receipt"])("does not publish %s by default or for release", (id) => {
+  expect(selectedWorkflowJobs(buildE2eWorkflowPlan())).not.toContain(id);
+  expect(releaseRequiredWorkflowJobs()).not.toContain(id);
 });

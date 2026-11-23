@@ -34,14 +34,6 @@ describe.skipIf(process.platform === "win32")("manual PR dispatch recovery", () 
       prepare: "",
       dispatch: candidate,
       count: 0,
-      field: "ALLOW_DGX_SPARK_RUNNER_QUEUE" as const,
-      value: "true",
-    },
-    {
-      phase: "candidate",
-      prepare: "",
-      dispatch: candidate,
-      count: 0,
       field: "E2E_TARGETS" as const,
       value: "unauthorized-target",
     },
@@ -85,17 +77,6 @@ describe.skipIf(process.platform === "win32")("manual PR dispatch recovery", () 
     },
     30000,
   );
-
-  it("forwards the recorded Spark resource flag only after persisting candidate intent", () => {
-    const { file, service, run } = manualPrDispatchFixture(undefined, true);
-    const result = run(candidate);
-    expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(JSON.parse(readCheckpoint(file).operations[0]!.action)).toMatchObject({
-      targets: "spark-vllm-extra-arguments",
-      allowDgxSparkRunnerQueue: true,
-    });
-    expect(JSON.parse(readFileSync(service, "utf8"))).toHaveLength(1);
-  }, 30000);
 
   it("stops before dispatch when checkpoint functions have not been loaded", () => {
     const { file, service, env, runWithoutFunctions } = manualPrDispatchFixture();

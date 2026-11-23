@@ -105,8 +105,7 @@ function validHostedCandidateContext(env: ReportEnv, context: ReportContext): bo
     env.MATRIX_RESULT === "success" &&
     Array.isArray(selectedJobs) &&
     (selectedJobs.includes("catalogue-hosted-inference") ||
-      selectedJobs.includes("llama-cpp-dgx-spark-qualification") ||
-      selectedJobs.includes("spark-vllm-extra-arguments")) &&
+      selectedJobs.includes("llama-cpp-dgx-spark-qualification")) &&
     env.JOB_CHECKOUT_REPOSITORY === "NVIDIA/NemoClaw" &&
     Boolean(env.JOB_PR_NUMBER) &&
     [env.JOB_CHECKOUT_SHA, env.JOB_BASE_SHA, env.JOB_WORKFLOW_SHA].every((sha) =>
@@ -245,12 +244,7 @@ export function renderE2eReport(input: {
     .split(",")
     .map((testId) => testId.trim())
     .filter(Boolean);
-  const requiredTestIds = new Set(
-    requestedTestIdsCsv === "spark-vllm-extra-arguments" ||
-      requestedTargets === "spark-vllm-extra-arguments"
-      ? ["spark-vllm-extra-arguments", "spark-vllm-receipt"]
-      : requestedTestIds,
-  );
+  const requestedTestIdSet = new Set(requestedTestIds);
   const selectiveDispatch =
     requestedTestIds.length > 0 || Boolean(requestedTargets) || targetsRejected || testIdsRejected;
   const emoji: Record<string, string> = {
@@ -371,7 +365,7 @@ export function renderE2eReport(input: {
     .map(([name, value]) => [
       name,
       {
-        result: TERMINAL_CONCLUSIONS.includes(value.result ?? "") ? value.result : "unknown",
+        ...value,
         jobUrl: jobLinks.get(name)?.url,
         wallClockRange: wallClockRanges.get(name),
       },
@@ -390,27 +384,27 @@ export function renderE2eReport(input: {
   }
   allEntries.sort(([a], [b]) => a.localeCompare(b));
   const missingRequestedTestIds = selectorValidationPassed
-    ? [...requiredTestIds].filter((testId) => !allEntries.some(([name]) => name === testId))
-    : [];
-  const candidateSelectedJobs: string[] = validHostedCandidateContext(env, context)
-    ? (JSON.parse(env.SELECTED_WORKFLOW_JOBS || "[]") as string[])
+    ? requestedTestIds.filter((testId) => !allEntries.some(([name]) => name === testId))
     : [];
   const isSelectiveReportEntry = ([name, { result }]: [string, ReportEntry]) =>
-    candidateSelectedJobs.includes(name) ||
+    (name === "catalogue-hosted-inference" && validHostedCandidateContext(env, context)) ||
     (result !== "skipped" &&
       (name !== "generate-matrix" || result === "failure" || result === "cancelled"));
   const sparkSelected =
-    requiredTestIds.has("llama-cpp-dgx-spark-qualification") ||
-    candidateSelectedJobs.includes("llama-cpp-dgx-spark-qualification");
+    requestedTestIdSet.has("llama-cpp-dgx-spark-qualification") ||
+    (validHostedCandidateContext(env, context) &&
+      (JSON.parse(env.SELECTED_WORKFLOW_JOBS || "[]") as string[]).includes(
+        "llama-cpp-dgx-spark-qualification",
+      ));
   const selectedEntries =
     requestedTestIds.length > 0
       ? allEntries.filter(
           ([name]) =>
-            requiredTestIds.has(name) ||
+            requestedTestIdSet.has(name) ||
             (sparkSelected &&
               (name === "llama-cpp-dgx-spark-plan" ||
                 name === "llama-cpp-dgx-spark-qualification")) ||
-            candidateSelectedJobs.includes(name),
+            (name === "catalogue-hosted-inference" && validHostedCandidateContext(env, context)),
         )
       : selectiveDispatch
         ? allEntries.filter(isSelectiveReportEntry)

@@ -2483,12 +2483,12 @@ The target accepts only a local Docker socket and the default Docker context, re
 Neither case runs the hosted installer bootstrap, clone or ref selection, dependency installation, CLI exposure, or the real terminal prompt.
 Separate installer tests own those earlier boundaries.
 The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` container.
-It preserves the shared Hugging Face cache and removes only the captured managed container, by ID. Sandbox cleanup passes only if OpenShell reports the sandbox absent. The pinned OpenShell API deletes by name, not by ID, so the scenario leaves a present sandbox untouched and records a cleanup failure, even if its ID still matches. The runner owner must exclude other clients, reconcile the recorded ID, and verify absence before reuse. Manual recovery does not turn a failed attempt into a pass.
+Run these diagnostics from a foreground terminal on a gateway reserved exclusively for the attempt. Before onboarding, the test asks the runner owner to confirm the reservation. Without confirmation, it creates nothing.
+It preserves the shared Hugging Face cache and removes only the captured managed container, by ID. OpenShell deletes sandboxes by name, so the test never issues a sandbox delete. If the captured sandbox still exists, the owner must verify its ID and remove it from a separate management terminal while other clients are excluded. Enter the captured ID at the prompt after removal. The test rechecks absence. A changed ID, lost ownership, timeout, or remaining sandbox fails cleanup; do not retry deletion or reuse the host until reconciled.
 If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
 The standard E2E artifacts retain bounded command output.
 After onboarding, both physical-host cases request vLLM health on loopback and the private OpenShell bridge.
-Each case also checks connection refusal on every discovered unintended IPv4 and IPv6 address.
-Spark and Station retain their own probe targets and request results.
+Spark and Station record the TCP result for every unintended IPv4 and IPv6 address in `*-publication-denied.json`. Only `ECONNREFUSED` passes.
 
 Before either standalone Spark command, select independently verified managed-image authority.
 Set `verified_image_revision` to the publication's 40-character source commit and `verified_cohort_receipt_file` to its complete cohort receipt JSON file.
@@ -2505,11 +2505,7 @@ Clear `E2E_MANAGED_IMAGE_REVISION` and `E2E_MANAGED_IMAGE_COHORT_RECEIPT` before
 For a file catalog, set `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG` to its filename and `NEMOCLAW_E2E_MANAGED_IMAGE_REVISION` to the verified publication source commit.
 For inline JSON, set `NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON` to the catalog contents instead; do not set both catalog variables.
 Verify that the catalog contains the shipped agents' `linux/arm64` contracts and that each source revision matches the requested managed-image revision.
-For an image-changing PR, the protected Spark dispatch obtains these contracts from the successful managed-images PR run for that revision.
-Check the run and attempt, the `managed-pr-contract-arm64-<run-id>-<agent>` artifacts and the immutable OpenClaw image reference before approving the hardware run.
-A missing ARM64 publication blocks qualification. The regular AMD64 catalog cannot qualify a Spark.
-On a standalone host outside that Actions context, use the cohort receipt above.
-Both Spark variants require the durable sandbox workload receipt to match the selected authority before runtime and inference probes.
+An AMD64 image cannot verify an ARM64 sandbox. Both Spark variants check the installed sandbox image against the independently selected ARM64 publication before running inference probes.
 
 Run the target from a clean candidate checkout on the Spark host with that authority exported:
 
@@ -2518,34 +2514,11 @@ E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SAND
 ```
 
 A passing `spark-express-vllm` target establishes that option 2 selects the fixed vLLM preset and recipe.
-The extra-arguments case compares the real container command with the bounded recipe and appended sequence override.
-Fast installer tests own the selected-profile output, 32,768-token context and argument-order assertions.
-Each case keeps the existing 65-minute test deadline and identity-bound cleanup.
-The fixed-profile variant remains standalone.
-The extra-arguments variant also has an explicit-only hosted job and target, `spark-vllm-extra-arguments`.
-After this workflow and receipt consumer land on trusted `main`, use the [manual PR procedure](../../.agents/skills/nemoclaw-maintainer-e2e/references/manual-pr.md)
-with that exact job or target alone, `allow_dgx_spark_runner_queue=true`, and the exact candidate, base, workflow and managed-image identities.
-The protected environment `approve-dgx-spark-image-qualification` approves execution of the reviewed candidate CLI and scenario on
-`linux-arm64-gpu-dgx-spark-gb10-protected-1`. Review the candidate before granting that approval.
-This expands that environment beyond the existing inert-data llama.cpp qualification; the llama.cpp job remains unchanged.
-Both jobs share one non-cancelling hardware concurrency group.
+The extra-arguments case checks the inspected command for a 32,768-token context and a final `--max-num-seqs 2` after the recipe default of `1`.
+Both cases are standalone diagnostics. Neither `jobs` nor `targets` selects a hosted vLLM Spark qualification. Candidate-written observations cannot independently establish physical execution or cleanup. Do not publish a qualification receipt from them.
 
-The Spark runner must be a prepared ARM64 GB10 host with Docker GPU support, the reviewed OpenShell CLI and gateway,
-public image/model access, adequate model-cache storage, and no pre-existing `nemoclaw-vllm` container or `e2e-spark-vllm` sandbox.
-Candidate dependency manifests must match the trusted workflow revision.
-No provider or registry credentials are supplied to the scenario.
-The job retains the real-memory requirement and 65-minute scenario within its 95-minute setup/execution/upload deadline. Do not dispatch unattended qualification until the runner can guarantee identity-bound sandbox removal. Serializing GitHub jobs does not exclude other OpenShell clients.
-If onboarding is interrupted before an identity can be captured, cleanup rechecks the named resource. It records a failure if ownership or absence cannot be established. Reconcile the named resource before another run.
+For #14016, the physical requirement remains open until a trusted runner outside the candidate's control observes the bounded-memory installation, actual command, network probes, inference and teardown of the exact published revision. Keep the run and attempt with the result. The Station and llama.cpp lanes do not cover that contract.
 
-The `spark-vllm-observations-<run-id>-<attempt>` artifact contains raw installation, inspected-command, health, sandbox inference,
-publication-denial and egress-denial results, `risk-signal.json`, and `cleanup.json`.
-A separate GitHub-hosted job checks out the validator at the workflow SHA and downloads the observations for that run and attempt.
-It checks the target against the trusted catalog, the memory tier, the inspected vLLM server image and launch command against the recipe, and the ARM64 sandbox image against the selected publication.
-It requires the recorded health and refusal probes, sandbox chat and unrelated-egress denial, the candidate-bound test result, and cleanup before publishing `spark-vllm-qualification.json`
-in `spark-vllm-receipt-<run-id>-<attempt>`. A failed-job rerun needs fresh observations from the physical job for the new attempt.
-The normal result reporter includes the selected job; missing or skipped results remain unresolved.
-These are reviewed-run artifacts, not authenticated hardware attestation.
-A local check or standalone run cannot replace the required post-publication physical receipt or the other jobs in the generated risk plan.
 The command below runs the extra-arguments case directly on a physical Spark reporting at least 60 GB and less than 64 GB.
 A standalone result does not establish hosted qualification.
 Keep the independently verified image authority exported before running this standalone command:

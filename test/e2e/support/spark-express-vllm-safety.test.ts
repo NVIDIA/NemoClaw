@@ -3,17 +3,18 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { text } from "node:stream/consumers";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   boundedSparkVllmProfilePlan,
-  SPARK_EXTRA_ARGS,
-} from "../../../tools/e2e/spark-vllm-qualification.mts";
-import { materializeHostLocalVllmModel } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
-import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
+  vllmPublicationProbes,
+} from "../../../tools/e2e/spark-vllm-probes.mts";
 import { MANAGED_IMAGE_REPOSITORIES } from "../../../src/lib/onboard/managed-image/contract.ts";
 import {
   REVISION,
@@ -40,6 +41,11 @@ vi.mock("../live/inference-routing-helpers.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../live/inference-routing-helpers.ts")>()),
   expectOpenAiChatThroughSandbox: vi.fn(),
 }));
+const ownerAction = vi.hoisted(() => vi.fn(async (_prompt: string, _expected: string) => {}));
+vi.mock("./spark-express-vllm-safety.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./spark-express-vllm-safety.ts")>()),
+  confirmSparkOwnerAction: ownerAction,
+}));
 const SPARK_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-spark-vllm";
 const directories: string[] = [];
 function persistRemoteContext(home: string) {
@@ -52,6 +58,8 @@ function persistRemoteContext(home: string) {
   vi.stubEnv("DOCKER_CONTEXT", undefined);
 }
 afterEach(() => {
+  vi.restoreAllMocks();
+  ownerAction.mockReset();
   vi.unstubAllEnvs();
   for (const directory of directories.splice(0))
     fs.rmSync(directory, { recursive: true, force: true });
@@ -62,7 +70,6 @@ import {
   inspectSandboxIdentity,
   listedSandboxNames,
 } from "./spark-express-vllm-safety.ts";
-import { vllmPublicationProbeUrls } from "../../../tools/e2e/spark-vllm-probes.mts";
 
 const result = (exitCode: number, stdout = "", stderr = "") => ({
   command: ["docker"],
@@ -74,6 +81,30 @@ const result = (exitCode: number, stdout = "", stderr = "") => ({
 });
 
 describe("DGX Spark Express vLLM qualification safety", () => {
+  it("rejects a piped confirmation without a controlling terminal", async () => {
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "-e",
+        `
+      const { confirmSparkOwnerAction } = require("./test/e2e/support/spark-express-vllm-safety.ts");
+      confirmSparkOwnerAction("Reserve the gateway", "reserved").then(
+        () => { process.exitCode = 1; },
+        error => { console.log(error.message); },
+      );
+    `,
+      ],
+      { detached: true, stdio: "pipe", timeout: 4000, killSignal: "SIGKILL" },
+    );
+    const result = Promise.all([once(child, "close"), text(child.stdout), text(child.stderr)]);
+    child.stdin.end("reserved\n");
+    const [[code], stdout, stderr] = await result;
+    expect(code, stderr).toBe(0);
+    expect(stdout).toContain("Spark owner confirmation unavailable");
+  });
+
   it("probes both allowed addresses and every unintended IPv4 and IPv6 address (#14083)", () => {
     const ipv4 = (address: string, internal = false) => ({
       address,
@@ -93,19 +124,14 @@ describe("DGX Spark Express vLLM qualification safety", () => {
       cidr: null,
     });
     expect(
-      vllmPublicationProbeUrls("172.18.0.1", {
+      vllmPublicationProbes("172.18.0.1", {
         lo: [ipv4("127.0.0.1", true), ipv6("::1")],
         openshell: [ipv4("172.18.0.1")],
         eth0: [ipv4("192.0.2.10"), ipv6("2001:db8::10"), ipv6("fe80::10", 2)],
       }),
     ).toEqual({
       allowed: ["http://127.0.0.1:8000/health", "http://172.18.0.1:8000/health"],
-      denied: [
-        "http://[::1]:8000/health",
-        "http://192.0.2.10:8000/health",
-        "http://[2001:db8::10]:8000/health",
-        "http://[fe80::10%25eth0]:8000/health",
-      ],
+      denied: ["::1", "192.0.2.10", "2001:db8::10", "fe80::10%eth0"],
       ipv6: "configured",
     });
   });
@@ -119,8 +145,8 @@ describe("DGX Spark Express vLLM qualification safety", () => {
       mac: "",
       cidr: null,
     };
-    expect(vllmPublicationProbeUrls("172.18.0.1", { eth0: [entry] }).ipv6).toBe("unconfigured");
-    expect(() => vllmPublicationProbeUrls("172.18.0.1", {})).toThrow("unintended non-loopback");
+    expect(vllmPublicationProbes("172.18.0.1", { eth0: [entry] }).ipv6).toBe("unconfigured");
+    expect(() => vllmPublicationProbes("172.18.0.1", {})).toThrow("unintended non-loopback");
   });
 
   it("accepts only local Docker selectors (#8379)", () => {
@@ -176,6 +202,22 @@ describe("DGX Spark Express vLLM qualification safety", () => {
 });
 
 describe("DGX Spark callback safety", () => {
+  it("stops before any host command or cleanup registration without an owner", async () => {
+    vi.stubEnv("DOCKER_HOST", "");
+    vi.stubEnv("DOCKER_CONTEXT", "");
+    ownerAction.mockRejectedValueOnce(new Error("no runner owner"));
+    const host = { command: vi.fn() };
+    const cleanup = { add: vi.fn() };
+    const run = capturedDgx.run as (
+      selection: readonly string[],
+      fixtures: object,
+    ) => Promise<void>;
+    await expect(
+      run(["spark-vllm-extra-arguments", "extra-arguments"], { host, cleanup }),
+    ).rejects.toThrow("no runner owner");
+    expect(host.command).not.toHaveBeenCalled();
+    expect(cleanup.add).not.toHaveBeenCalled();
+  });
   it.each([
     {
       state: "sandbox-capture-failed-present",
@@ -184,8 +226,20 @@ describe("DGX Spark callback safety", () => {
       removalAttempted: true,
       lostOwnership: ["remove sandbox e2e-spark-vllm"],
     },
-    { state: "sandbox-present", sandboxFailure: true, failure: false, removalAttempted: true },
-    { state: "sandbox-replaced", sandboxFailure: true, failure: false, removalAttempted: true },
+    { state: "sandbox-present", sandboxFailure: false, failure: false, removalAttempted: true },
+    {
+      state: "sandbox-replaced",
+      sandboxFailure: true,
+      failure: false,
+      removalAttempted: true,
+      lostOwnership: ["remove sandbox e2e-spark-vllm"],
+    },
+    {
+      state: "sandbox-replaced-after",
+      sandboxFailure: true,
+      failure: false,
+      removalAttempted: true,
+    },
     {
       state: "capture-failed-present",
       failure: true,
@@ -207,6 +261,13 @@ describe("DGX Spark callback safety", () => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark-cleanup-"));
       directories.push(directory);
       const marker = path.join(directory, "removed");
+      let removedSandbox = false;
+      ownerAction
+        .mockResolvedValueOnce(undefined)
+        .mockImplementation(async (_prompt, confirmation) => {
+          expect(confirmation).toBe("05d120e4-484c-47d4-9a59-77a08cbb6e67");
+          removedSandbox = true;
+        });
       persistRemoteContext(directory);
       const id = "a".repeat(64);
       fs.writeFileSync(
@@ -257,9 +318,11 @@ esac
         "spark-express-vllm-container-inspect": state.startsWith("capture-failed")
           ? result(1, "", "inspection interrupted")
           : result(0, JSON.stringify([{ Id: id }])),
-        "spark-express-vllm-sandbox-inspect": ["sandbox-present", "sandbox-replaced"].includes(
-          state,
-        )
+        "spark-express-vllm-sandbox-inspect": [
+          "sandbox-present",
+          "sandbox-replaced",
+          "sandbox-replaced-after",
+        ].includes(state)
           ? originalSandbox
           : result(
               1,
@@ -271,7 +334,7 @@ esac
         "cleanup-spark-express-sandbox-inspect":
           state === "sandbox-replaced"
             ? observedSandbox("05d120e4-484c-47d4-9a59-77a08cbb6e68")
-            : sandboxFailure
+            : sandboxFailure || state === "sandbox-present"
               ? originalSandbox
               : result(1, "", "sandbox not found"),
         "failure-spark-express-vllm-container-logs": result(0),
@@ -300,13 +363,17 @@ esac
             args: string[],
             options: { artifactName: string; env: NodeJS.ProcessEnv },
           ) =>
-            args.includes("destroy")
-              ? deleteByName("original")
-              : options.artifactName.startsWith("cleanup-") &&
-                  options.artifactName !== "cleanup-spark-express-sandbox-inspect"
-                ? executeCleanup(command, args, options.env)
-                : (responses[options.artifactName as keyof typeof responses] ??
-                  Promise.reject(new Error(`Unexpected command: ${options.artifactName}`))),
+            options.artifactName === "cleanup-spark-express-sandbox-verify"
+              ? removedSandbox && state !== "sandbox-replaced-after"
+                ? result(1, "", "sandbox not found")
+                : observedSandbox("05d120e4-484c-47d4-9a59-77a08cbb6e68")
+              : args.includes("destroy")
+                ? deleteByName("original")
+                : options.artifactName.startsWith("cleanup-") &&
+                    options.artifactName !== "cleanup-spark-express-sandbox-inspect"
+                  ? executeCleanup(command, args, options.env)
+                  : (responses[options.artifactName as keyof typeof responses] ??
+                    Promise.reject(new Error(`Unexpected command: ${options.artifactName}`))),
         ),
       };
       const run = capturedDgx.run as (
@@ -329,7 +396,26 @@ esac
           ? "sandbox inspection failed"
           : "interrupted onboarding",
       );
+      expect(
+        host.command.mock.calls.filter(([, , options]) =>
+          options.artifactName.startsWith("failure-spark-"),
+        ),
+      ).toEqual([
+        [
+          "docker",
+          ["logs", "--tail", "300", "nemoclaw-vllm"],
+          expect.objectContaining({ timeoutMs: 30_000 }),
+        ],
+        [
+          "openshell",
+          ["sandbox", "get", SPARK_SANDBOX_NAME],
+          expect.objectContaining({ timeoutMs: 30_000 }),
+        ],
+      ]);
       const receipt = await cleanup.runAll();
+      expect(removedSandbox).toBe(
+        state === "sandbox-present" || state === "sandbox-replaced-after",
+      );
       const dockerContexts = await Promise.all(
         host.command.mock.calls
           .filter(([command]) => ["docker", "bash"].includes(command))
@@ -365,7 +451,39 @@ esac
     platform: "linux/arm64",
     reference: ARM64_REFERENCE,
   });
+  const boundedCommand = [
+    "export HF_HOME=/root/.cache/huggingface && export HF_HUB_OFFLINE=1 && export TRANSFORMERS_OFFLINE=1 &&",
+    "pip install vllm[fastsafetensors] && vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4",
+    "--tensor-parallel-size 1 --pipeline-parallel-size 1 --data-parallel-size 1 --port 8000",
+    "--max-model-len 32768 --revision 491c2f1ea524c639598bf8fa787a93fed5a6fbce",
+    "--served-model-name nvidia/Qwen3.6-35B-A3B-NVFP4 --gpu-memory-utilization 0.5 --dtype auto",
+    "--quantization modelopt --kv-cache-dtype fp8 --attention-backend flashinfer --moe-backend marlin",
+    "--max-num-seqs 1 --max-num-batched-tokens 4096 --enable-chunked-prefill --async-scheduling",
+    "--enable-prefix-caching --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3",
+    "--load-format safetensors --safetensors-load-strategy lazy --max-num-seqs 2",
+  ].join(" ");
   it.each([
+    ...[
+      ["missing override", boundedCommand.replace(/ --max-num-seqs 2$/u, "")],
+      [
+        "reversed override",
+        boundedCommand.replace("--max-num-seqs 1", "--max-num-seqs 2").replace(/2$/u, "1"),
+      ],
+      ["wrong context", boundedCommand.replace("32768", "65536")],
+    ].map(([evidence, command]) => ({
+      evidence,
+      command,
+      workload: () => armWorkload(),
+      environment: selectedEnvironment,
+      expected: "inspected vLLM command",
+    })),
+    ...["ENETUNREACH", "EHOSTUNREACH", "timeout", "connect"].map((event) => ({
+      evidence: event,
+      event,
+      workload: () => armWorkload(),
+      environment: selectedEnvironment,
+      expected: "unintended vLLM addresses",
+    })),
     {
       evidence: "cohort",
       workload: () => armWorkload(),
@@ -411,7 +529,8 @@ esac
       environment: (home: string) => ({ HOME: home }),
       expected: "one exact managed-image cohort revision",
     },
-  ])("checks $evidence before runtime probes", async ({ workload, environment, expected }) => {
+  ])("checks $evidence before sandbox inference", async (scenario) => {
+    const { workload, environment, expected } = scenario;
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "spark-managed-image-"));
     directories.push(home);
     writeManagedImageRegistry(home, workload(), "openclaw", SPARK_SANDBOX_NAME);
@@ -432,10 +551,7 @@ esac
     const plan = await boundedSparkVllmProfilePlan();
     assert(plan?.recipe.spec.serve.directInstall, "missing bounded Spark recipe");
     const { runtime } = plan.recipe.spec;
-    const cmd = buildVllmServeCommand(
-      materializeHostLocalVllmModel(plan.recipe, plan.recipe.spec.serve.directInstall, "spark"),
-      { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: SPARK_EXTRA_ARGS },
-    );
+    const cmd = "command" in scenario ? scenario.command : boundedCommand;
     const responses: Record<string, ReturnType<typeof result>> = {
       "prereq-docker-info-inference-routing": result(),
       "prereq-openshell-version-inference-routing": result(),
@@ -467,29 +583,48 @@ esac
       ),
       "spark-express-vllm-publication-allowed": result("0 200\n0 200"),
       "spark-express-vllm-bridge-inspect": result('[{"Gateway":"172.18.0.1"}]'),
-      "spark-express-vllm-publication-denied": result("7 000", 7),
       "spark-express-vllm-sandbox-inspect": result(
         JSON.stringify({ id: "05d120e4-484c-47d4-9a59-77a08cbb6e67", name: SPARK_SANDBOX_NAME }),
       ),
     };
-    const probes: Record<
-      string,
-      (command: string, args: string[], env: NodeJS.ProcessEnv) => ReturnType<typeof result>
-    > = {
-      "spark-express-vllm-interfaces": (command, args, env) => {
-        expect([command, args[0]]).toEqual(["node", "-p"]);
-        const child = spawnSync(
-          process.execPath,
-          [
-            "-p",
-            `require('node:os').networkInterfaces = () => ({eth0:[{family:'IPv4', address:'192.0.2.1', internal:false}]}); ${args[1]}`,
-          ],
-          { env, encoding: "utf8", timeout: 5000 },
+    vi.spyOn(os, "networkInterfaces").mockReturnValue({
+      eth0: [
+        {
+          address: "192.0.2.1",
+          family: "IPv4",
+          internal: false,
+          netmask: "255.255.255.0",
+          mac: "00:00:00:00:00:00",
+          cidr: "192.0.2.1/24",
+        },
+        {
+          address: "fe80::a",
+          family: "IPv6",
+          scopeid: 2,
+          internal: false,
+          netmask: "ffff:ffff:ffff:ffff::",
+          mac: "",
+          cidr: null,
+        },
+      ],
+    });
+    const event = "event" in scenario ? scenario.event : "ECONNREFUSED";
+    const connect = vi
+      .spyOn(net, "connect")
+      .mockImplementation((options: net.NetConnectOpts | string | number) => {
+        const socket = new net.Socket();
+        const outcome =
+          typeof options === "object" && "host" in options && options.host === "fe80::a%eth0"
+            ? event
+            : "ECONNREFUSED";
+        queueMicrotask(() =>
+          outcome === "connect" || outcome === "timeout"
+            ? socket.emit(outcome)
+            : socket.emit("error", Object.assign(new Error(outcome), { code: outcome })),
         );
-        expect(child.status, child.stderr).toBe(0);
-        return result(child.stdout);
-      },
-    };
+        return socket;
+      });
+    const writeJson = vi.fn();
     const host = {
       command: vi.fn(
         async (
@@ -497,7 +632,6 @@ esac
           args: string[],
           options: { artifactName: string; env: NodeJS.ProcessEnv },
         ) =>
-          probes[options.artifactName]?.(command, args, options.env) ??
           responses[options.artifactName] ??
           Promise.reject(new Error(`Unexpected probe: ${options.artifactName}`)),
       ),
@@ -507,7 +641,7 @@ esac
       fixtures: object,
     ) => Promise<void>;
     const execution = run(["spark-vllm-extra-arguments", "extra-arguments"], {
-      artifacts: { target: { declare: vi.fn() }, writeJson: vi.fn() },
+      artifacts: { target: { declare: vi.fn() }, writeJson },
       cleanup: { add: vi.fn() },
       host,
       sandbox: {},
@@ -520,6 +654,30 @@ esac
       },
     });
     await expect(execution).rejects.toThrow(expected);
+    const reachesNetwork = expected === "selected managed image accepted" || "event" in scenario;
+    expect(connect.mock.calls).toEqual(
+      reachesNetwork
+        ? [[{ host: "192.0.2.1", port: 8000 }], [{ host: "fe80::a%eth0", port: 8000 }]]
+        : [],
+    );
+    const refusalReceipts = writeJson.mock.calls
+      .filter(([name]) => name === "spark-express-vllm-publication-denied.json")
+      .map(([, rows]) => rows);
+    expect(refusalReceipts).toEqual(
+      reachesNetwork
+        ? [
+            [
+              { address: "192.0.2.1", port: 8000, result: "ECONNREFUSED" },
+              {
+                address: "fe80::a%eth0",
+                port: 8000,
+                result:
+                  event === "timeout" ? "ETIMEDOUT" : event === "connect" ? "connected" : event,
+              },
+            ],
+          ]
+        : [],
+    );
     expect(
       new Set(
         host.command.mock.calls

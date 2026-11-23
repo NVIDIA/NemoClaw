@@ -622,7 +622,6 @@ export function releaseRequiredWorkflowJobs(): string[] {
 
 export function selectedWorkflowJobs(plan: E2eWorkflowPlan): string[] {
   const jobs = new Set(plan.selectedJobs);
-  if (jobs.has("spark-vllm-extra-arguments")) jobs.add("spark-vllm-receipt");
   if (plan.matrix.length > 0) jobs.add("live");
   if (plan.testMatrix.length > 0) jobs.add(SHARED_E2E_JOB_ID);
   for (const profile of E2E_EXECUTION_PROFILES) {
@@ -641,16 +640,14 @@ export function buildE2eWorkflowPlan(
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
 
-  for (const exclusiveTarget of [DGX_STATION_DISPATCH_TARGET, "spark-vllm-extra-arguments"]) {
-    if (
-      (jobs.includes(exclusiveTarget) || targets.includes(exclusiveTarget)) &&
-      !(
-        (selectors.jobs === exclusiveTarget && !selectors.targets) ||
-        (selectors.targets === exclusiveTarget && !selectors.jobs)
-      )
-    ) {
-      throw new Error(`${exclusiveTarget} must be selected by itself`);
-    }
+  if (
+    (jobs.includes(DGX_STATION_DISPATCH_TARGET) || targets.includes(DGX_STATION_DISPATCH_TARGET)) &&
+    !(
+      (selectors.jobs === DGX_STATION_DISPATCH_TARGET && !selectors.targets) ||
+      (selectors.targets === DGX_STATION_DISPATCH_TARGET && !selectors.jobs)
+    )
+  ) {
+    throw new Error(`${DGX_STATION_DISPATCH_TARGET} must be selected by itself`);
   }
 
   if (jobs.includes(STAGING_BREV_IDENTITY_JOB_ID) && (jobs.length !== 1 || targets.length !== 0)) {

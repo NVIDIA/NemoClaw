@@ -12,7 +12,6 @@ import {
 } from "../helpers/vitest-watch-triggers";
 
 const E2E_WORKFLOW_CONTRACTS = [
-  "test/e2e/support/spark-vllm-qualification.test.ts",
   "test/e2e/support/workflow-plan-spark.test.ts",
   "test/e2e/support/manual-pr-concurrency.test.ts",
   "test/e2e/support/base-image-publication-workflow-boundary.test.ts",

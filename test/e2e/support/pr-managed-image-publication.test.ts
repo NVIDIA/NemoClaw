@@ -20,7 +20,6 @@ import {
   type ManagedImagePlatform,
 } from "../../../src/lib/onboard/managed-image/contract";
 import { githubRequest } from "../../../tools/e2e/base-image-publication.mts";
-import { readLiveE2eManagedImageCatalogContracts } from "../../../src/lib/onboard/workload/preparation";
 import {
   assembleManagedImageCatalog,
   main,
@@ -121,7 +120,7 @@ function workflowRun(overrides: Record<string, unknown> = {}) {
 
 function candidateRequest(options: {
   readonly candidateRepository?: string;
-  readonly changedPath?: string | readonly string[];
+  readonly changedPath?: string;
   readonly imageChanged: boolean;
   readonly run?: unknown;
   readonly runPages?: readonly unknown[];
@@ -131,14 +130,14 @@ function candidateRequest(options: {
   readonly platform?: ManagedImagePlatform;
 }) {
   const candidateRepository = options.candidateRepository ?? CANONICAL_REPOSITORY;
-  const changedPaths = [options.changedPath ?? "Dockerfile.base"].flat();
+  const changedPath = options.changedPath ?? "Dockerfile.base";
   const artifactRunId = options.artifactRunId ?? RUN_ID;
   const baseEntries = [
-    ...changedPaths.map((p) => treeEntry(p, "3".repeat(40))),
+    treeEntry(changedPath, "3".repeat(40)),
     treeEntry("docs/guide.mdx", "4".repeat(40)),
   ];
   const candidateEntries = [
-    ...changedPaths.map((p) => treeEntry(p, (options.imageChanged ? "5" : "3").repeat(40))),
+    treeEntry(changedPath, (options.imageChanged ? "5" : "3").repeat(40)),
     treeEntry("docs/guide.mdx", "4".repeat(40)),
   ];
   const responses = new Map<string, unknown>([
@@ -279,33 +278,6 @@ describe("exact PR managed-image publication", () => {
   const trustedWorkflowSource = fs.readFileSync(
     new URL("../../../.github/workflows/base-image.yaml", import.meta.url),
     "utf8",
-  );
-
-  it.each(["jobs", "targets"] as const)(
-    "resolves ARM64 Spark publication through %s for image-changing candidates",
-    async (selector) => {
-      const input = {
-        ...resolverInput(),
-        [selector]: "spark-vllm-extra-arguments",
-        workflowSource: trustedWorkflowSource,
-      };
-      const download = vi.fn(downloadContract);
-      const result = await resolvePrManagedImageCatalog(
-        input,
-        candidateRequest({
-          changedPath: ["Dockerfile", "scripts/dev-setup.sh"],
-          imageChanged: true,
-          platform: "linux/arm64",
-        }),
-        download,
-      );
-      expect(result).toBe("candidate-catalog");
-      const contracts = readLiveE2eManagedImageCatalogContracts({
-        path: input.outputPath,
-        revision: CANDIDATE_SHA,
-      });
-      expect(contracts.get("openclaw")).toEqual(contract("openclaw", 0, "linux/arm64"));
-    },
   );
 
   it.each(dependencyInputs)(

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
   type CredentialFreeTestMatrixRow,
@@ -1139,46 +1139,3 @@ it.each(["failure", "skipped"])(
     expect(report.body).not.toContain("All requested tests passed");
   },
 );
-
-describe.each(["JOBS", "JOB_TARGETS"] as const)("Spark selection via %s", (selector) => {
-  const physical = "spark-vllm-extra-arguments";
-  const receipt = "spark-vllm-receipt";
-  const env = {
-    ...HOSTED_CANDIDATE_ENV,
-    SELECTED_WORKFLOW_JOBS: JSON.stringify([physical, receipt]),
-    JOB_TARGETS: "",
-    [selector]: physical,
-  };
-  const render = (needs: ReportNeeds) =>
-    renderE2eReport({
-      context: REPORT_CONTEXT,
-      env,
-      apiJobs: [],
-      apiJobsLoaded: true,
-      needs: { "generate-matrix": { result: "success" }, ...needs },
-    }).body;
-  it.each([
-    [physical, receipt],
-    [receipt, physical],
-  ])("does not pass when %s succeeds but %s is absent", (present, missing) => {
-    const body = render({ [present]: { result: "success" } });
-    expect(body).toContain(`| ${missing} | ❓ not reported |`);
-    expect(body).not.toMatch(/All .*tests passed/);
-  });
-
-  it.each(["success", "failure", "skipped", "unknown", undefined])(
-    "reports exact-candidate Spark vLLM %s without hiding missing proof",
-    async (result) => {
-      const core = { info: vi.fn(), setFailed: vi.fn(), warning: vi.fn() };
-      const github = reportGithub({ get: vi.fn(async () => ({ data: hostedCandidatePr() })) });
-      expect(await resolveReportPr({ github, context: REPORT_CONTEXT, core, env })).toBe(12886);
-      const body = render({ [physical]: { result: "success" }, [receipt]: { result } });
-      expect(body).toContain(physical);
-      expect(body).toContain(receipt);
-      expect(body).toContain(` ${result ?? "unknown"} |`);
-      expect(body).toContain(`**Candidate commit:** \`${"a".repeat(40)}\``);
-      expect(/All (requested|selected) tests passed/.test(body)).toBe(result === "success");
-      expect(core.setFailed).not.toHaveBeenCalled();
-    },
-  );
-});

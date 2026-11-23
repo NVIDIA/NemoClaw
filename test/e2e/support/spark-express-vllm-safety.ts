@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { openSync, writeSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { ReadStream } from "node:tty";
+
 import type { CommandExitResult } from "../fixtures/clients/command.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 
@@ -12,6 +16,35 @@ const SANDBOX_ID_PATTERN = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/u;
 export type SandboxInspection =
   | { readonly kind: "absent" }
   | { readonly kind: "present"; readonly id: string };
+
+export async function confirmSparkOwnerAction(prompt: string, expected: string): Promise<void> {
+  let cause: unknown;
+  try {
+    const descriptor = openSync("/dev/tty", "r+");
+    const terminal = new ReadStream(descriptor);
+    try {
+      const lines = createInterface({
+        input: terminal,
+        terminal: false,
+        signal: AbortSignal.timeout(180_000),
+      });
+      try {
+        const reply = lines[Symbol.asyncIterator]().next();
+        writeSync(descriptor, `${prompt}\nType ${expected} to confirm: `);
+        if ((await reply).value === expected) return;
+      } finally {
+        lines.close();
+      }
+    } finally {
+      terminal.destroy();
+    }
+  } catch (error) {
+    cause = error;
+  }
+  throw new Error(`Spark owner confirmation unavailable, declined or timed out: ${prompt}`, {
+    cause,
+  });
+}
 
 export async function cleanupCapturedSparkResource(
   resource: string,

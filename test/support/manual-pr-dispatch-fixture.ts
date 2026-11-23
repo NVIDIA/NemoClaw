@@ -24,7 +24,7 @@ const headResult = blockContaining('HEAD_RUN_ID="$RUN_ID"');
 const base = blockContaining('BASE_CORRELATION_ID="$(python3');
 const baseResult = blockContaining('BASE_RUN_ID="$RUN_ID"');
 
-export function manualPrDispatchFixture(baseTargets = "sandbox-operations", spark = false) {
+export function manualPrDispatchFixture(baseTargets = "sandbox-operations") {
   const root = mkdtempSync(join(tmpdir(), "manual-pr-checkpoint-"));
   roots.push(root);
   const file = join(root, "state.json");
@@ -62,8 +62,7 @@ export function manualPrDispatchFixture(baseTargets = "sandbox-operations", spar
     workflowSha: "c".repeat(40),
     repository: "NVIDIA/NemoClaw",
     jobs: "",
-    targets: spark ? "spark-vllm-extra-arguments" : "sandbox-operations",
-    ...(spark ? { allowDgxSparkRunnerQueue: true } : {}),
+    targets: "sandbox-operations",
     cleanupOwner: state.owner,
     cleanupObligation: "Remove fixture-owned resources",
     costBounds: "Fake service; no external cost",
@@ -115,7 +114,6 @@ if (args[0] === 'workflow' && args[1] === 'run') {
   assert.equal(context.jobs, fields.jobs);
   assert.equal(context.targets, fields.targets);
   assert.equal(String(context.allowJetsonDispatch), fields.allow_jetson_dispatch);
-  assert.equal(String(context.allowDgxSparkRunnerQueue ?? false), fields.allow_dgx_spark_runner_queue);
   assert.equal(String(context.includeStagingBrevLaunchable), fields.include_staging_brev_launchable);
   assert.equal(context.inferenceMode, fields.inference_mode);
   assert.equal(context.budgetKey, operation.budget);
@@ -170,9 +168,8 @@ if (args[0] === 'workflow' && args[1] === 'run') {
     HEAD_OWNER: "NVIDIA",
     HEAD_OWNER_TYPE: "Organization",
     E2E_JOBS: "",
-    E2E_TARGETS: spark ? "spark-vllm-extra-arguments" : "sandbox-operations",
+    E2E_TARGETS: "sandbox-operations",
     ALLOW_JETSON_DISPATCH: "false",
-    ALLOW_DGX_SPARK_RUNNER_QUEUE: String(spark),
     INCLUDE_STAGING_BREV_LAUNCHABLE: "false",
     E2E_CANDIDATE_BUDGET: "candidate-dispatch",
     E2E_BASE_BUDGET: "base-comparison",

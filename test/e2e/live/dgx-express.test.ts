@@ -4,16 +4,14 @@
 /** Exercises the DGX Spark and Station Express vLLM paths on physical hardware. */
 
 import assert from "node:assert/strict";
-import { networkInterfaces } from "node:os";
+import os from "node:os";
 import {
   boundedSparkVllmProfilePlan,
+  observeVllmConnection,
   SPARK_EXTRA_ARGS,
-} from "../../../tools/e2e/spark-vllm-qualification.mts";
-import {
   SPARK_EGRESS_PROBE,
-  SPARK_INTERFACE_QUERY,
   vllmPublicationCurlArgs,
-  vllmPublicationProbeUrls,
+  vllmPublicationProbes,
 } from "../../../tools/e2e/spark-vllm-probes.mts";
 
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
@@ -31,6 +29,7 @@ import {
   resolveLocalModelProfilePlan,
 } from "../../../src/lib/onboard/local-model-profile/plan.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { type CommandExitResult, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -41,6 +40,7 @@ import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   assertLocalDockerEnvironment,
   classifyDockerContainerInspection,
+  confirmSparkOwnerAction,
   cleanupCapturedSparkResource,
   inspectDockerContainerIdentity,
   inspectSandboxIdentity,
@@ -91,7 +91,7 @@ function e2eEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_POLICY_TIER: "balanced",
     NEMOCLAW_PROVIDER: "",
-    NEMOCLAW_RECREATE_SANDBOX: "1",
+    NEMOCLAW_RECREATE_SANDBOX: "",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_VLLM_EXTRA_ARGS_JSON: "",
     NEMOCLAW_VLLM_MODEL: "",
@@ -99,6 +99,30 @@ function e2eEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     OPENSHELL_GATEWAY: "nemoclaw",
     ...extra,
   };
+}
+
+async function verifyVllmPublication(
+  host: HostCliClient,
+  artifacts: ArtifactSink,
+  prefix: string,
+  env: NodeJS.ProcessEnv,
+  bridge: string,
+) {
+  const probes = vllmPublicationProbes(bridge, os.networkInterfaces());
+  await artifacts.writeJson(`${prefix}-publication-probes`, probes);
+  const allowed = await host.command("curl", vllmPublicationCurlArgs(probes.allowed), {
+    artifactName: `${prefix}-publication-allowed`,
+    env,
+    timeoutMs: 30_000,
+  });
+  expect(allowed.exitCode, resultText(allowed)).toBe(0);
+  expect(allowed.stdout.trim().split("\n")).toEqual(["0 200", "0 200"]);
+  const observations = await Promise.all(probes.denied.map(observeVllmConnection));
+  await artifacts.writeJson(`${prefix}-publication-denied.json`, observations);
+  expect(
+    observations.filter(({ result }) => result !== "ECONNREFUSED"),
+    "unintended vLLM addresses must refuse TCP connections",
+  ).toEqual([]);
 }
 
 function vllmProfilePlan() {
@@ -142,16 +166,36 @@ async function inspectSandbox(host: HostCliClient, sandboxName: string, artifact
   return inspectSandboxIdentity(result, sandboxName);
 }
 
-async function verifySparkSandboxCleanup(
+async function reconcileSparkSandbox(
   host: HostCliClient,
   sandboxName: string,
   sandboxId: string | null,
 ): Promise<void> {
   const current = await inspectSandbox(host, sandboxName, "cleanup-spark-express-sandbox-inspect");
-  expect(
+  await cleanupCapturedSparkResource(
+    sandboxName,
+    sandboxId,
     current,
-    `${sandboxId ? `Captured ID: ${sandboxId}.` : "Cannot establish ownership."} OpenShell deletes by name, not by ID; leaving sandbox ${sandboxName} for runner-owner reconciliation.`,
-  ).toEqual({ kind: "absent" });
+    async (capturedId, observedId) => {
+      expect(
+        observedId,
+        `Cannot establish ownership of sandbox ${sandboxName} (${observedId}); leave it untouched.`,
+      ).toBe(capturedId);
+      await confirmSparkOwnerAction(
+        `On the reserved gateway, remove only sandbox ${sandboxName} with ID ${capturedId} from your management terminal. If you cannot exclude other clients or the identity changed, stop.`,
+        capturedId,
+      );
+      const remaining = await inspectSandbox(
+        host,
+        sandboxName,
+        "cleanup-spark-express-sandbox-verify",
+      );
+      expect(
+        remaining.kind,
+        `Sandbox ${sandboxName} is still present; do not retry deletion.`,
+      ).toBe("absent");
+    },
+  );
 }
 
 async function captureOnboardFailureDiagnostics(
@@ -242,6 +286,10 @@ test.for([
   async ([target, variant], { artifacts, cleanup, host, progress, skip, sandbox }) => {
     validateSandboxName(SANDBOX_NAME);
     assertLocalDockerEnvironment(process.env);
+    await confirmSparkOwnerAction(
+      `Reserve exclusive access to the local Spark gateway for this diagnostic. Keep a separate management terminal available to remove ${SANDBOX_NAME} when prompted. Do not continue on a shared gateway.`,
+      "reserved",
+    );
     const { detectVllmProfile } = await import("../../../src/lib/inference/vllm.ts");
     const extraArguments = variant === "extra-arguments";
     const installEnv = e2eEnv(
@@ -342,7 +390,7 @@ test.for([
       removeExactVllmContainer(host, createdContainerId, "cleanup-spark-express-vllm-container"),
     );
     cleanup.add(`remove sandbox ${SANDBOX_NAME}`, () =>
-      verifySparkSandboxCleanup(host, SANDBOX_NAME, createdSandboxId),
+      reconcileSparkSandbox(host, SANDBOX_NAME, createdSandboxId),
     );
     const onboard = await host.command(
       "bash",
@@ -380,21 +428,25 @@ test.for([
       },
     );
 
-    const inspectionResult = await host.command("docker", ["inspect", VLLM_CONTAINER], {
-      artifactName: "spark-express-vllm-container-inspect",
-      env: e2eEnv(),
-      timeoutMs: 30_000,
-    });
-    createdContainerId = capturedVllmContainerId(inspectionResult);
-    const sandboxInspection = await inspectSandbox(
-      host,
-      SANDBOX_NAME,
-      "spark-express-vllm-sandbox-inspect",
-    );
-    createdSandboxId = sandboxInspection.kind === "present" ? sandboxInspection.id : null;
-    await (onboard.exitCode !== 0
-      ? captureOnboardFailureDiagnostics(host, SANDBOX_NAME)
-      : Promise.resolve());
+    let inspectionResult: CommandExitResult;
+    try {
+      inspectionResult = await host.command("docker", ["inspect", VLLM_CONTAINER], {
+        artifactName: "spark-express-vllm-container-inspect",
+        env: e2eEnv(),
+        timeoutMs: 30_000,
+      });
+      createdContainerId = capturedVllmContainerId(inspectionResult);
+      const sandboxInspection = await inspectSandbox(
+        host,
+        SANDBOX_NAME,
+        "spark-express-vllm-sandbox-inspect",
+      );
+      createdSandboxId = sandboxInspection.kind === "present" ? sandboxInspection.id : null;
+    } finally {
+      await (onboard.exitCode !== 0
+        ? captureOnboardFailureDiagnostics(host, SANDBOX_NAME)
+        : Promise.resolve());
+    }
 
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
     expect(
@@ -415,9 +467,22 @@ test.for([
     const [inspection] = JSON.parse(inspectionResult.stdout) as VllmContainerInspection[];
     expect(inspection.Config.Image).toBe(plan.recipe.spec.runtime.image);
     expect(inspection.Config.Entrypoint).toEqual(["/bin/bash"]);
-    expect(inspection.Config.Cmd[0]).toBe("-lc");
-    const command = inspection.Config.Cmd[1];
-    expect(command).toBe(buildVllmServeCommand(materialized.model, installEnv));
+    const recipeCommand = buildVllmServeCommand(materialized.model, {});
+    const override = extraArguments ? " --max-num-seqs 2" : "";
+    expect(inspection.Config.Cmd, "inspected vLLM command").toEqual([
+      "-lc",
+      recipeCommand + override,
+    ]);
+    const inspectedRecipe = inspection.Config.Cmd[1]!.slice(0, recipeCommand.length);
+    const expectedLimits = extraArguments
+      ? ["--max-model-len 32768", "--max-num-seqs 1"]
+      : plan.recipe.spec.serve.arguments
+          .filter(({ name }) => name === "--max-model-len" || name === "--max-num-seqs")
+          .map(({ name, value }) => `${name} ${value}`);
+    expect(
+      inspectedRecipe.match(/(?<= )--(?:max-model-len|max-num-seqs)(?: |=)\S+/gu),
+      "inspected vLLM command limits",
+    ).toEqual(expectedLimits);
     expect(inspection.Config.Labels).toMatchObject({
       "com.nvidia.nemoclaw.managed-vllm": "true",
     });
@@ -453,31 +518,13 @@ test.for([
       timeoutMs: 10_000,
     });
     expect(network.exitCode, resultText(network)).toBe(0);
-    const inventory = await host.command("node", ["-p", SPARK_INTERFACE_QUERY], {
-      artifactName: "spark-express-vllm-interfaces",
-      env: publicationEnv,
-      timeoutMs: 10_000,
-    });
-    expect(inventory.exitCode, resultText(inventory)).toBe(0);
-    const probes = vllmPublicationProbeUrls(
+    await verifyVllmPublication(
+      host,
+      artifacts,
+      "spark-express-vllm",
+      publicationEnv,
       parseManagedVllmBridgeHost(network.stdout),
-      JSON.parse(inventory.stdout),
     );
-    await artifacts.writeJson("spark-express-vllm-publication-probes", probes);
-    const allowed = await host.command("curl", vllmPublicationCurlArgs(probes.allowed), {
-      artifactName: "spark-express-vllm-publication-allowed",
-      env: publicationEnv,
-      timeoutMs: 30_000,
-    });
-    expect(allowed.exitCode, resultText(allowed)).toBe(0);
-    expect(allowed.stdout.trim().split("\n")).toEqual(["0 200", "0 200"]);
-    const refused = await host.command("curl", vllmPublicationCurlArgs(probes.denied), {
-      artifactName: "spark-express-vllm-publication-denied",
-      env: publicationEnv,
-      timeoutMs: 60_000,
-    });
-    expect(refused.exitCode, resultText(refused)).toBe(7);
-    expect(refused.stdout.trim().split("\n")).toEqual(probes.denied.map(() => "7 000"));
 
     progress.phase("prove sandbox inference and unrelated egress denial");
     await expectOpenAiChatThroughSandbox(
@@ -539,25 +586,13 @@ test(
         cleanup: () => progress.phase("clean up the job runtime"),
       },
       verifyPublication: async (env) => {
-        const probes = vllmPublicationProbeUrls(
+        await verifyVllmPublication(
+          host,
+          artifacts,
+          "station-express-vllm",
+          env,
           resolveManagedVllmBridgeHost(undefined, buildLocalManagedVllmDockerEnv({}, env)),
-          networkInterfaces(),
         );
-        await artifacts.writeJson("station-express-vllm-publication-probes", probes);
-        const allowed = await host.command("curl", vllmPublicationCurlArgs(probes.allowed), {
-          artifactName: "station-express-vllm-publication-allowed",
-          env,
-          timeoutMs: 30_000,
-        });
-        expect(allowed.exitCode, resultText(allowed)).toBe(0);
-        expect(allowed.stdout.trim().split("\n")).toEqual(["0 200", "0 200"]);
-        const refused = await host.command("curl", vllmPublicationCurlArgs(probes.denied), {
-          artifactName: "station-express-vllm-publication-denied",
-          env,
-          timeoutMs: 60_000,
-        });
-        expect(refused.exitCode, resultText(refused)).toBe(7);
-        expect(refused.stdout.trim().split("\n")).toEqual(probes.denied.map(() => "7 000"));
       },
       writeEvidence: (name, value) => artifacts.writeJson(name, value),
     });
