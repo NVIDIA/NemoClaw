@@ -3,29 +3,36 @@
 
 """Publish what an agent image provides for Fabric.
 
-The catalog pairs the adapters the image build installed with their descriptors
-from Fabric's own adapter catalog package. Each harness stage declares its
-adapters, their files, and their executables in /opt/nemoclaw/adapters.json;
-Fabric's package supplies the descriptors, unmodified. An adapter Fabric's
-package does not publish, such as NemoClaw's test-only adapter, declares the
-descriptor file its package installed. Run with the interpreter
-that has the matching nemo-fabric-adapter-catalog installed.
+The catalog pairs the adapters and workflow targets the image build installed
+with their descriptors from Fabric's own adapter catalog package. Each harness
+stage declares its adapters, their files, their executables, and the targets it
+installs for them in /opt/nemoclaw/adapters.json; Fabric's package supplies the
+descriptors, unmodified. An adapter or target Fabric's package does not
+publish, such as NemoClaw's test-only adapter, declares the descriptor file its
+package installed. Run with the interpreter that has the matching
+nemo-fabric-adapter-catalog installed.
 """
 
 import argparse
 import json
 from pathlib import Path
 
-from nemo_fabric_adapter_catalog import get_adapter_descriptor
+from nemo_fabric_adapter_catalog import get_adapter_descriptor, get_target_descriptor
 
 ADAPTERS = Path("/opt/nemoclaw/adapters.json")
 RUNTIME_MANIFEST = Path("/opt/nemoclaw/runtime.json")
 PROVENANCE = [{"source": "nemo-fabric-adapter-catalog"}]
 
 
+def absolute_path(value):
+    """Whether value is an absolute path without parent references."""
+    return isinstance(value, str) and value.startswith("/") and ".." not in value.split("/")
+
+
 def read_adapters(path):
-    """Return the adapters a harness stage declared: their files, executables, and
-    the paths their harness writes beyond the image's default policy."""
+    """Return the adapters a harness stage declared: their files, executables,
+    the paths their harness writes beyond the image's default policy, and the
+    workflow targets installed for them."""
     if not path.exists():
         raise ValueError(f"{path} must declare the image's adapters")
     declared = json.loads(path.read_text())
@@ -37,16 +44,23 @@ def read_adapters(path):
             or not isinstance(entry, dict)
             or not {"files", "binaries"}
             <= set(entry)
-            <= {"files", "binaries", "descriptor", "read_write"}
+            <= {"files", "binaries", "descriptor", "read_write", "targets"}
         ):
             raise ValueError(f"{path} must give {adapter_id!r} its files and binaries")
         descriptor = entry.get("descriptor")
-        if descriptor is not None and not (
-            isinstance(descriptor, str)
-            and descriptor.startswith("/")
-            and ".." not in descriptor.split("/")
-        ):
+        if descriptor is not None and not absolute_path(descriptor):
             raise ValueError(f"{path} must give {adapter_id!r} an absolute descriptor path")
+        targets = entry.get("targets", {})
+        if not isinstance(targets, dict) or not all(
+            target_id
+            and isinstance(target, dict)
+            and set(target) <= {"descriptor"}
+            and absolute_path(target.get("descriptor", "/"))
+            for target_id, target in targets.items()
+        ):
+            raise ValueError(
+                f"{path} must map {adapter_id!r} target IDs to an optional absolute descriptor path"
+            )
         files, binaries = entry["files"], entry["binaries"]
         for paths in (files, entry.get("read_write", [])):
             if not isinstance(paths, list) or not all(
@@ -74,6 +88,34 @@ def record(adapter_id, descriptor_path=None):
     }
 
 
+def target_record(adapter_id, target_id, descriptor_path=None):
+    """Return a workflow target's descriptor: Fabric's, or the file its package
+    installed. The target must belong to the adapter that declares it."""
+    if descriptor_path is None:
+        descriptor = get_target_descriptor(target_id)
+        provenance = PROVENANCE
+    else:
+        descriptor = json.loads(Path(descriptor_path).read_text())
+        provenance = [{"source": "explicit_local", "path": descriptor_path}]
+    if descriptor.get("id") != target_id or descriptor.get("adapter_id") != adapter_id:
+        raise ValueError(f"{target_id} is not a target of {adapter_id}")
+    return {"descriptor": descriptor, "provenance": provenance}
+
+
+def target_records(adapters):
+    """Return the targets each adapter declares, in target ID order."""
+    declared = {}
+    for adapter_id, entry in adapters.items():
+        for target_id, target in entry.get("targets", {}).items():
+            if target_id in declared:
+                raise ValueError(f"{target_id} is declared by more than one adapter")
+            declared[target_id] = (adapter_id, target.get("descriptor"))
+    return [
+        target_record(adapter_id, target_id, path)
+        for target_id, (adapter_id, path) in sorted(declared.items())
+    ]
+
+
 def records(adapters):
     """Return each adapter's descriptor, in ID order.
 
@@ -89,14 +131,18 @@ def records(adapters):
     ]
 
 
-def snapshot(revision, source_sha256, adapter_ids):
-    """Return the bundled catalog: the listed adapters' descriptors only."""
+def snapshot(revision, source_sha256, adapter_ids, targets=None):
+    """Return the bundled catalog: the listed adapters' descriptors and their targets.
+
+    targets maps adapter IDs to their declarations, as in /opt/nemoclaw/adapters.json;
+    without it, the catalog lists no targets.
+    """
     return {
         "schema_version": 2,
         "fabric_revision": revision,
         "source_sha256": source_sha256,
         "adapters": records(adapter_ids),
-        "targets": [],
+        "targets": target_records(targets or {}),
     }
 
 
@@ -106,7 +152,7 @@ def installed(revision, source_sha256, *, adapters=ADAPTERS, runtime_manifest=RU
     from runtime_metadata import read_runtime
 
     declared = read_adapters(adapters)
-    catalog = snapshot(revision, source_sha256, declared)
+    catalog = snapshot(revision, source_sha256, declared, declared)
     catalog["runtime"] = read_runtime(
         runtime_manifest,
         {adapter_id: entry["binaries"] for adapter_id, entry in declared.items()},
@@ -135,6 +181,13 @@ def main():
     parser.add_argument(
         "--adapter", action="append", default=[], help="bundled snapshot: an adapter ID to include"
     )
+    parser.add_argument(
+        "--target",
+        action="append",
+        default=[],
+        metavar="ADAPTER_ID=TARGET_ID",
+        help="bundled snapshot: a workflow target, from Fabric's package, to include",
+    )
     parser.add_argument("--adapters", type=Path, default=ADAPTERS)
     parser.add_argument("--runtime-manifest", type=Path, default=RUNTIME_MANIFEST)
     parser.add_argument("--output", type=Path)
@@ -149,6 +202,14 @@ def main():
         parser.error("provide --provenance or both --revision and --source-sha256")
     if args.installed == bool(args.adapter):
         parser.error("provide either --installed or at least one --adapter")
+    if args.installed and args.target:
+        parser.error("an installed catalog takes its targets from --adapters")
+    targets = {}
+    for target in args.target:
+        adapter_id, _, target_id = target.partition("=")
+        if adapter_id not in args.adapter or not target_id:
+            parser.error(f"--target {target!r} must name a listed --adapter and a target ID")
+        targets.setdefault(adapter_id, {"targets": {}})["targets"][target_id] = {}
     catalog = (
         installed(
             args.revision,
@@ -157,7 +218,7 @@ def main():
             runtime_manifest=args.runtime_manifest,
         )
         if args.installed
-        else snapshot(args.revision, args.source_sha256, args.adapter)
+        else snapshot(args.revision, args.source_sha256, args.adapter, targets)
     )
     encoded = json.dumps(catalog, indent=2, sort_keys=True) + "\n"
     if args.output:

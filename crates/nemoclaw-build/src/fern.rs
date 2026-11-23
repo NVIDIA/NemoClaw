@@ -264,14 +264,45 @@ fn run_main_script(directory: &Path, script: &str, arguments: &[&str]) -> Result
     Ok(())
 }
 
-/// Import main's documentation at its pinned revision, regenerating only when
-/// the revision or its locked generator dependency changes.
-fn prepare_main(root: &Path) -> Result<()> {
+fn main_revision(root: &Path) -> Result<String> {
     let revision = read_json(&root.join("fern/main-source.json"))?["revision"]
         .as_str()
         .unwrap_or("")
         .to_owned();
     validate_revision(&revision)?;
+    Ok(revision)
+}
+
+fn ensure_main_revision(root: &Path, revision: &str) -> Result<()> {
+    let present = git(root)
+        .args(["cat-file", "-e", &format!("{revision}^{{commit}}")])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if !present {
+        status(
+            git(root).args(["fetch", "--no-tags", "--depth=1", "origin", revision]),
+            "git fetch of main's documentation revision",
+        )?;
+    }
+    Ok(())
+}
+
+/// Read the same source used by the main docs build, including in a shallow v1 checkout.
+pub(crate) fn main_guide(root: &Path, source: &str) -> Result<(String, String)> {
+    let revision = main_revision(root)?;
+    ensure_main_revision(root, &revision)?;
+    let mdx = output(
+        git(root).args(["show", &format!("{revision}:{source}")]),
+        source,
+    )?;
+    Ok((revision, mdx))
+}
+
+/// Import main's documentation at its pinned revision, regenerating only when
+/// the revision or its locked generator dependency changes.
+fn prepare_main(root: &Path) -> Result<()> {
+    let revision = main_revision(root)?;
     let dependencies = root.join("tools/docs/main");
     let lock = fs::read(dependencies.join("package-lock.json"))
         .map_err(|_| "cannot read the main docs lock file")?;
@@ -283,17 +314,7 @@ fn prepare_main(root: &Path) -> Result<()> {
     let destination = root.join("fern/_main");
     let stamp = destination.join(".source.json");
     if read_json(&stamp).ok() != Some(identity.clone()) {
-        let present = git(root)
-            .args(["cat-file", "-e", &format!("{revision}^{{commit}}")])
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
-        if !present {
-            status(
-                git(root).args(["fetch", "--no-tags", "--depth=1", "origin", &revision]),
-                "git fetch of main's documentation revision",
-            )?;
-        }
+        ensure_main_revision(root, &revision)?;
         let staging = tempfile::tempdir_in(root.join("fern"))
             .map_err(|_| "cannot create a staging directory")?;
         let archive = git(root)

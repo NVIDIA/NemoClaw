@@ -51,6 +51,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             deployment = credentials::attach(
                 deployment,
                 &document,
+                document.plan_credential_names(),
                 non_interactive,
                 file != Path::new("-"),
                 &mut lines,
@@ -69,6 +70,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             deployment = credentials::attach(
                 deployment,
                 &document,
+                document.credential_names(),
                 non_interactive,
                 file != Path::new("-"),
                 &mut lines,

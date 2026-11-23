@@ -13,6 +13,7 @@ mod connected;
 mod driver_config;
 mod gateway_source;
 mod gpu;
+mod limits;
 mod network;
 mod profile;
 mod provider;
@@ -284,6 +285,7 @@ fn sandbox_row(
     let template = spec.template.ok_or(ObservationError::Incomplete)?;
     let driver_config = driver_config::observed(template.driver_config.as_ref());
     let gpu_count = gpu::observed(spec.resource_requirements.as_ref());
+    let (cpu, memory) = limits::observed(template.resources.as_ref());
     let image = template.image;
     let environment: Row = spec.environment.into_iter().collect();
     let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
@@ -357,6 +359,8 @@ fn sandbox_row(
     row.insert("image".into(), image);
     row.insert("driver_config_json".into(), driver_config);
     row.insert("gpu_count".into(), gpu_count);
+    row.insert("cpu".into(), cpu);
+    row.insert("memory".into(), memory);
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
     row.insert(POLICY_AUTHORITY.into(), authority.into());
@@ -687,6 +691,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 "provider_names_json",
                 "driver_config_json",
                 "gpu_count",
+                "cpu",
+                "memory",
                 POLICY_AUTHORITY,
                 services::FIELD,
             ],
@@ -704,6 +710,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
             "provider_names_json",
             "driver_config_json",
             "gpu_count",
+            "cpu",
+            "memory",
             services::FIELD,
             POLICY_HASH,
             POLICY_PROVENANCE,

@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Sandbox settings reach the gateway as written and report their service URLs.
 # Changed, added, and removed service exposures, network rules, and middleware
-# bindings update the sandbox in place; a changed filesystem path or mount
-# replaces it.
+# bindings update the sandbox in place; a changed filesystem path, mount, or
+# memory limit replaces it.
 
 run "deploy" {
   assert {
@@ -13,6 +13,14 @@ run "deploy" {
   assert {
     condition     = alltrue([for sandbox in local.openshell.created_sandboxes : sandbox.gpu_count == null if sandbox.name != "researcher"])
     error_message = "Omitting a GPU request must leave the sandbox without one."
+  }
+  assert {
+    condition     = [for sandbox in local.openshell.created_sandboxes : sandbox.resources if sandbox.name == "researcher"] == [{ limits = { cpu = "1500m", memory = "4Gi" } }]
+    error_message = "OpenShell must receive the CPU and memory limits as written: ${jsonencode(local.openshell.created_sandboxes)}"
+  }
+  assert {
+    condition     = alltrue([for sandbox in local.openshell.created_sandboxes : sandbox.resources == null if sandbox.name != "researcher"])
+    error_message = "Omitting CPU and memory must leave the sandbox without limits."
   }
   assert {
     condition = [for sandbox in local.openshell.created_sandboxes : sandbox.driver_config if sandbox.name == "researcher"] == [{
@@ -184,11 +192,29 @@ run "change_mount" {
   }
 }
 
+# OpenShell can't resize a running sandbox, so a new memory limit replaces it.
+run "change_memory" {
+  variables {
+    services = {}
+    target   = "/sandbox/other"
+    memory   = "8Gi"
+  }
+  assert {
+    condition     = length(local.openshell.created_sandboxes) == 5 && length(local.openshell.sandboxes) == 3
+    error_message = "A changed memory limit must replace the sandbox."
+  }
+  assert {
+    condition     = [for sandbox in local.openshell.created_sandboxes : sandbox.resources.limits.memory if sandbox.name == "researcher"][2] == "8Gi"
+    error_message = "The replacement must request the new memory limit: ${jsonencode(local.openshell.created_sandboxes)}"
+  }
+}
+
 # Teardown mode lets the test's cleanup delete the workspace.
 run "teardown" {
   variables {
     services   = {}
     target     = "/sandbox/other"
+    memory     = "8Gi"
     destroying = true
   }
 }

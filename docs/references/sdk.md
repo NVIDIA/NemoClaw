@@ -190,7 +190,7 @@ Always inspect the operation's `deferred` list before treating the resource prev
 These source entries describe intent and can precede resource creation.
 They contain no credential references or values.
 `DiscoveryReport::deferred()` reports unresolved engine, hardware, image, and gateway prerequisites.
-Missing credential references are added to `OperationResult.deferred`.
+Plan adds each missing inference, web search, or API integration credential reference to `OperationResult.deferred`; see [Resolving Credentials in an Application](#resolving-credentials-in-an-application).
 `DiscoveryReport::unverified()` reports service readiness not confirmed by plan.
 The SDK copies those advisories into `OperationResult.unverified`, retaining full statuses and reasons in `discovery.observations`.
 A complete resource plan does not establish healthy services or working inference.
@@ -203,6 +203,8 @@ The default resolves nonempty environment variables.
 The resolver receives reference names, including gateway TLS references whose values must be file paths.
 Resolved values are supplied to the SDK and, as required, its provider subprocess.
 OpenTofu initialization and JSON inspection do not resolve deployment credentials.
+Plan resolves only the gateway, cluster, and image metadata references that `Document::plan_credential_names` lists, and fails when one is missing.
+Apply resolves every reference that `Document::credential_names` lists before it changes anything.
 Export resolves gateway authentication references for provider refresh, without requiring inference or search credentials.
 Keep them out of application logs and return typed authentication errors without attaching the secret.
 

@@ -379,10 +379,13 @@ impl State {
             let spec = sandbox.spec.clone().unwrap_or_default();
             let driver_config = spec.template.as_ref().and_then(|template| template.driver_config.as_ref())
                 .map(openshell_core::proto_struct::struct_to_json_value);
+            let resources = spec.template.as_ref().and_then(|template| template.resources.as_ref())
+                .map(openshell_core::proto_struct::struct_to_json_value);
             json!({"id": meta.id, "name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
                 "providers": spec.providers, "command": spec.command,
                 "policy_endpoints": endpoints(spec.policy.as_ref()),
                 "policy_middlewares": middlewares(spec.policy.as_ref()), "driver_config": driver_config,
+                "resources": resources,
                 "gpu_count": spec.resource_requirements.and_then(|resources| resources.gpu).map(|gpu| gpu.count.unwrap_or(1))})
         }).collect();
         // The policy each sandbox holds now, by workspace and name: its latest

@@ -154,6 +154,7 @@ resource openshell_podman_gateway (version 0)
   running: string, computed
 
 resource openshell_sandbox (version 2)
+  cpu: string, optional, computed
   driver_config: string, optional
   exited: string, computed
   gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
@@ -162,6 +163,7 @@ resource openshell_sandbox (version 2)
   id: string, computed
   image: string, required
   launch_json: string, required
+  memory: string, optional, computed
   name: string, required
   owner: string, optional, computed
   policy_authority: string, optional, computed

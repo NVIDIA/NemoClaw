@@ -60,7 +60,8 @@
           },
           "description": "Named integration definitions attached directly to this agent. Names must not collide with definitions in enclosing scopes.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         },
@@ -336,6 +337,8 @@
         "ulimits": {
           "additionalProperties": {
             "format": "int64",
+            "maximum": 9223372036854775807,
+            "minimum": -9223372036854775808,
             "type": "integer"
           },
           "description": "Process limits by Docker limit name. Each value sets both soft and hard limits; -1 means unlimited.",
@@ -519,6 +522,7 @@
           "const": 1,
           "description": "Policy format version; currently 1.",
           "format": "uint32",
+          "maximum": 4294967295,
           "minimum": 0,
           "type": "integer"
         }
@@ -711,6 +715,7 @@
         "size": {
           "description": "Expected file length in bytes; zero is rejected.",
           "format": "uint64",
+          "maximum": 18446744073709551615,
           "minimum": 1,
           "type": "integer"
         }
@@ -2115,6 +2120,8 @@
           "default": 5,
           "description": "Consecutive low-memory samples before the watchdog stops the owned process.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -2131,6 +2138,8 @@
           "default": 12,
           "description": "Available-memory gate in GiB for minFreeGiB. Must be at least minAvailableGiB after defaults.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -2162,6 +2171,8 @@
           "default": 32,
           "description": "Host memory reserve in GiB excluded from the serving budget. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile or a recipe.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -2169,6 +2180,7 @@
           "default": 8,
           "description": "KV cache allocation in GiB on each selected GPU for ordinary vLLM, passed as --kv-cache-memory-bytes. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.",
           "format": "int64",
+          "maximum": 9223372036854775807,
           "minimum": 0,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache."
@@ -2186,6 +2198,8 @@
           "default": 8,
           "description": "Available-memory threshold in GiB that contributes a low-memory sample.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -2202,6 +2216,8 @@
           "default": 3,
           "description": "Free-memory threshold in GiB, used when available memory is below freeGateGiB.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         }
@@ -2463,6 +2479,8 @@
           "default": 5,
           "description": "Consecutive low-memory samples before stopping the owned process.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -2479,6 +2497,8 @@
           "default": 12,
           "description": "Available-memory gate for the free-memory threshold.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -2495,6 +2515,8 @@
           "default": 0,
           "description": "Fixed serving budget in GiB for each selected GPU when utilization is omitted. Omission or zero selects 16 GiB.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB."
         },
@@ -2518,6 +2540,8 @@
           "default": 32,
           "description": "Host memory reserve excluded from serving. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -2534,6 +2558,8 @@
           "default": 8,
           "description": "Available-memory threshold used by the bounded runtime watchdog.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -2550,6 +2576,8 @@
           "default": 3,
           "description": "Free-memory threshold used below freeGateGiB.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         }
@@ -2594,6 +2622,8 @@
           "default": 32768,
           "description": "Maximum model context length.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -2610,6 +2640,8 @@
           "default": 1,
           "description": "Maximum concurrent sequences.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -2626,6 +2658,8 @@
           "default": 18888,
           "description": "Inference listening port.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -2642,6 +2676,8 @@
           "default": 1800,
           "description": "Seconds allowed for model loading and readiness.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         }
@@ -3171,6 +3207,8 @@
         "order": {
           "description": "Position among attachments that select the same host; lower values run first. Orders must be unique within the policy; omission means 0.",
           "format": "int32",
+          "maximum": 2147483647,
+          "minimum": -2147483648,
           "type": "integer"
         }
       },
@@ -3431,6 +3469,14 @@
           "$ref": "#/$defs/Agent",
           "description": "The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes."
         },
+        "cpu": {
+          "description": "CPU limit OpenShell gives the sandbox, as a quantity such as 500m or 2, passed to its resources.limits.cpu: Docker and Podman apply it as a runtime limit, Kubernetes as the container's request and limit. OpenShell validates it. Changing it replaces the sandbox; omission sets no limit.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "driverConfig": {
           "additionalProperties": true,
           "description": "OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.",
@@ -3439,6 +3485,7 @@
         "gpus": {
           "description": "GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none.",
           "format": "uint32",
+          "maximum": 4294967295,
           "minimum": 1,
           "type": "integer"
         },
@@ -3457,7 +3504,8 @@
           },
           "description": "Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         },
@@ -3472,7 +3520,8 @@
           },
           "description": "Named inference definitions visible to this sandbox's routes through providerRef. Names must not shadow deployment definitions.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         },
@@ -3482,7 +3531,8 @@
           },
           "description": "Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         },
@@ -3492,9 +3542,18 @@
           },
           "description": "Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
+        },
+        "memory": {
+          "description": "Memory limit OpenShell gives the sandbox, as a quantity such as 512Mi or 4Gi, passed to its resources.limits.memory: Docker and Podman apply it as a runtime limit, Kubernetes as the container's request and limit. OpenShell validates it. Changing it replaces the sandbox; omission sets no limit.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "network": {
           "$ref": "#/$defs/Network",
@@ -4661,6 +4720,8 @@
           "default": 1024,
           "description": "Maximum tokens in a scheduled batch.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -4677,6 +4738,8 @@
           "default": 32768,
           "description": "Maximum model context length in tokens.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -4706,6 +4769,8 @@
           "default": 1,
           "description": "Maximum concurrent sequences.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -4743,6 +4808,8 @@
           "default": 18888,
           "description": "Inference listening port. Explicit publication must use this port.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -4773,6 +4840,8 @@
           "default": 1800,
           "description": "Seconds allowed for backend readiness before startup fails.",
           "format": "int64",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
@@ -5043,7 +5112,8 @@
           },
           "description": "Named network grants available to sandbox networks through grantRefs. Each selected grant becomes a policy rule with its definition's name; unselected grants are validated but grant nothing.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         },
@@ -5053,7 +5123,8 @@
           },
           "description": "Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         },
@@ -5063,7 +5134,8 @@
           },
           "description": "Named inference definitions available to sandbox routes through providerRef. Unselected definitions create no resources or credential requirements.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         },
@@ -5073,7 +5145,8 @@
           },
           "description": "Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         },
@@ -5083,7 +5156,8 @@
           },
           "description": "Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         },
@@ -5093,7 +5167,8 @@
           },
           "description": "Named complete OpenShell sandbox policies available to sandbox networks through policyRef. Unselected policies are validated but apply to no sandbox.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         },
@@ -5112,7 +5187,8 @@
           "description": "Named sandboxes: one to 256 with a kubernetes or openshift gateway target, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent.",
           "minProperties": 1,
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         },
@@ -5122,7 +5198,8 @@
           },
           "description": "Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef.",
           "propertyNames": {
-            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "x-nemoclaw-error": "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters"
           },
           "type": "object"
         }
@@ -5207,7 +5284,8 @@
                             ]
                           }
                         ]
-                      }
+                      },
+                      "x-nemoclaw-error": "image.metadata is available only for Kubernetes and OpenShift; Docker and Podman use engine image inspection"
                     }
                   }
                 }

@@ -41,6 +41,7 @@ pub(super) fn create_sandbox_request(
             template: Some(proto::SandboxTemplate {
                 image: value(want, "image").into(),
                 driver_config: crate::driver_config::request(value(want, "driver_config_json"))?,
+                resources: crate::limits::request(value(want, "cpu"), value(want, "memory")),
                 ..Default::default()
             }),
             resource_requirements: crate::gpu::request(value(want, "gpu_count"))?,

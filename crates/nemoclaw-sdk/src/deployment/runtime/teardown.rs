@@ -6,18 +6,11 @@ use super::*;
 // Teardown uses gateway authentication but never invokes inference. Keep the
 // retained document and resource graph intact; narrow only subprocess secrets.
 pub(super) fn destroy_environment(document: &Document) -> Document {
-    let mut environment = document.clone();
-    for provider in environment.provider_definitions_mut() {
-        provider.credential = None;
-    }
+    let mut environment = crate::deployment::opentofu::plan_environment(document);
     for sandbox in environment.spec.sandboxes.values_mut() {
         // Destroy never reads the image, so it needs no metadata path.
         sandbox.image.metadata = None;
-        sandbox.integrations.clear();
-        sandbox.agent.integrations.clear();
-        sandbox.agent.integration_refs.clear();
     }
-    environment.spec.integrations.clear();
     environment
 }
 

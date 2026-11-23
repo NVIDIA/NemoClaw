@@ -81,7 +81,7 @@ The following inference limits apply:
 | Hermes does not reject a managed Ollama window below its 64,000-token minimum. Refer to [sizing the context for Hermes](../agents-inference/inference.md#sizing-the-context-for-hermes). | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) | [`cb8ef25`][v1-cb8ef25]: Hermes, issue |
 | Native NVIDIA NIM's full tool inventory, default 8K context, general task reliability, cross-host cache restoration, and other model and profile combinations remain unqualified. Use the [bounded BF16 candidate configuration](../agents-inference/models.md#native-nim-candidate). | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556), [NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679) | Refer to the [source-specific qualification record](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) |
 | llama.cpp bearer authentication protects inference. Native model inventory and health remain public. A key does not provide inventory confidentiality. | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) | Refer to the [source-specific qualification record](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) |
-| Model Router. | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
+| Model Router. | By design: the deprecated `llm-router` was retired ([#14066](https://github.com/NVIDIA/NemoClaw/issues/14066)); configure Switchyard routing through [Hermes Relay](../agents-inference/agents.md#hermes-relay-tracing) | [`5b83ffc`][v1-5b83ffc]: code, docs |
 | A provider that uses Gemini's native API. Onboarding's Google Gemini preset connects through Gemini's OpenAI-compatible endpoint. | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous. | No open issue | [`cb8ef25`][v1-cb8ef25]: docs |
 | More than 32 providers attached to one sandbox: OpenShell refuses more, and its inference providers, its web search and each `api` integration count one each. | By design: OpenShell's limit per sandbox | [`cb8ef25`][v1-cb8ef25]: code, OpenShell |
@@ -177,6 +177,7 @@ Managed [llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-lla
 General tool use, multimodal input, other models and Classic host parity need separate qualification.
 Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006).
 
+[v1-5b83ffc]: https://github.com/NVIDIA/NemoClaw/tree/5b83ffc8e6ae46c4e5eec2466ed847cb223addad
 [v1-cb8ef25]: https://github.com/NVIDIA/NemoClaw/tree/cb8ef25252ffffbca051787adb4711c96ebfcf28
 [v1-c30c3f1]: https://github.com/NVIDIA/NemoClaw/tree/c30c3f1b3fbf9d825d13fd4497c98b35ef33f1ee
 [v1-291723b]: https://github.com/NVIDIA/NemoClaw/tree/291723b41b77dbd502f5418b9b0a9b7c1a322dc9
