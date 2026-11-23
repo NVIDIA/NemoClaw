@@ -58,20 +58,18 @@ describe("managed tool-disclosure export", () => {
   it("exports direct tools when the registry and managed profile agree", async () => {
     const observed = directToolsSnapshot();
     const result = await exportSnapshots([observed]);
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     expect(result.read).toHaveBeenCalledTimes(2);
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const document = asExportedConfig(YAML.parse(yaml));
-    expect(document.spec.sandboxes[0]!.agent).toHaveProperty("tools", {
-      disclosure: "direct",
-    });
-    expect(document.spec.sandboxes[0]!.network.policy.explicit).toMatchObject({
-      process: { run_as_user: "1000", run_as_group: "1000" },
-      filesystem_policy: {
-        read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/app"]),
-      },
-    });
+    // v1 has no tool-disclosure field; the control is adapter-native, so it is not exported.
+    expect(document.spec.sandboxes.alpha!.agent).not.toHaveProperty("tools");
+    // The V0 image's process and filesystem sections are left out (#14580).
+    expect(document.spec.sandboxes.alpha!.network.policy.explicit).not.toHaveProperty("process");
+    expect(document.spec.sandboxes.alpha!.network.policy.explicit).not.toHaveProperty(
+      "filesystem_policy",
+    );
     expect(Object.isFrozen(verifiedSource(verify(observed)).tools)).toBe(true);
   });
 
@@ -86,12 +84,12 @@ describe("managed tool-disclosure export", () => {
         ),
       }),
     ]);
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    const sandbox = asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!;
+    const sandbox = asExportedConfig(YAML.parse(yaml)).spec.sandboxes.alpha!;
     expect("agent" in sandbox).toBe(true);
-    expect(sandbox.agent).toHaveProperty("tools", { disclosure: "direct" });
-    expect(sandbox.network.proxy).toEqual({ host: "proxy.internal", port: 3129 });
+    expect(sandbox.agent).not.toHaveProperty("tools");
+    expect(sandbox.network).not.toHaveProperty("proxy");
   });
 
   it.each([undefined, "progressive"] as const)(
@@ -100,7 +98,7 @@ describe("managed tool-disclosure export", () => {
       const result = await exportSnapshots([snapshot({ registry: entry({ toolDisclosure }) })]);
       expect(result.outcome.ok).toBe(true);
       const [yaml] = result.writeStdout.mock.calls[0]!;
-      expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agent).not.toHaveProperty(
+      expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes.alpha!.agent).not.toHaveProperty(
         "tools",
       );
     },
@@ -198,9 +196,9 @@ describe("managed tool-disclosure export", () => {
     expect(result.outcome.ok).toBe(true);
     expect(result.read).toHaveBeenCalledTimes(4);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.agent).toHaveProperty("tools", {
-      disclosure: "direct",
-    });
+    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes.alpha!.agent).not.toHaveProperty(
+      "tools",
+    );
   });
 
   it("does not publish when tool selection changes during both observations", async () => {

@@ -441,7 +441,7 @@ describe("sandbox base security packages", () => {
           "download https://deb.debian.org/debian/pool/main/v/vim/vim-common_9.2.0858-1_all.deb",
         );
         expect(calls).toContain(
-          `download https://deb.debian.org/debian/pool/main/v/vim/vim-tiny_9.2.0858-1_${architecture}.deb`,
+          `download https://snapshot-cloudflare.debian.org/archive/debian/20260811T082421Z/pool/main/v/vim/vim-tiny_9.2.0858-1_${architecture}.deb`,
         );
         expect(fs.readFileSync(prepared.inventory, "utf-8")).toBe(
           securityInventory(architecture, image.expectedInventory),

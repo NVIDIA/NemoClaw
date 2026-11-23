@@ -6,7 +6,7 @@ import {
   parseNemoClawConfigDocumentName,
   parseNemoClawConfigDocumentUid,
 } from "../../config/model";
-import { buildExportConfig } from "./export-document";
+import { buildExportConfig, V1_IMAGE_REF_PLACEHOLDER } from "./export-document";
 import type { VerifiedExportSource } from "./export-evidence";
 
 const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -73,7 +73,7 @@ describe("export config builder", () => {
         { ...source, policy: original as unknown as VerifiedExportSource["policy"] },
         { documentName: alphaDocumentName, documentUid: firstUid },
       );
-      expect(result.spec.sandboxes[0]?.network.policy.explicit.network_policies).toEqual({
+      expect(result.spec.sandboxes.alpha?.network.policy.explicit.network_policies).toEqual({
         api: { ...policy.network_policies.api, endpoints: [endpoint] },
       });
       expect(original.network_policies.api.endpoints[0]?.provider_credentialed).toBe(
@@ -107,7 +107,7 @@ describe("export config builder", () => {
         { documentName: alphaDocumentName, documentUid: firstUid },
       );
 
-      expect(result.spec.sandboxes[0]?.network.policy.explicit.network_policies).toEqual({
+      expect(result.spec.sandboxes.alpha?.network.policy.explicit.network_policies).toEqual({
         ...observedPolicy.network_policies,
         api: { ...observedPolicy.network_policies.api, endpoints: [endpoint] },
       });
@@ -115,23 +115,19 @@ describe("export config builder", () => {
     },
   );
 
-  it.each([
-    { compatibility: "strict", expected: "hard_requirement" },
-    { compatibility: "best_effort", expected: "best_effort" },
-  ])(
-    "exports Landlock $compatibility as $expected without changing source policy",
-    ({ compatibility, expected }) => {
-      const original = { ...policy, landlock: { compatibility } };
-      const result = buildExportConfig(
-        { ...source, policy: original as unknown as VerifiedExportSource["policy"] },
-        { documentName: alphaDocumentName, documentUid: firstUid },
-      );
-      expect(result.spec.sandboxes[0]?.network.policy.explicit).toMatchObject({
-        landlock: { compatibility: expected },
-      });
-      expect(original.landlock.compatibility).toBe(compatibility);
-    },
-  );
+  it("leaves out the V0 image's filesystem, process and Landlock sections without changing source policy (#14580)", () => {
+    const original = { ...policy, landlock: { compatibility: "strict" } };
+    const before = structuredClone(original);
+    const result = buildExportConfig(
+      { ...source, policy: original as unknown as VerifiedExportSource["policy"] },
+      { documentName: alphaDocumentName, documentUid: firstUid },
+    );
+    expect(result.spec.sandboxes.alpha?.network.policy.explicit).toEqual({
+      version: 1,
+      network_policies: policy.network_policies,
+    });
+    expect(original).toEqual(before);
+  });
 
   it.each(["openclaw", "hermes"] as const)(
     "emits one singular %s agent for the v1alpha1 consumer (#12131)",
@@ -140,7 +136,7 @@ describe("export config builder", () => {
         { ...source, agent, interfaces: undefined },
         { documentName: alphaDocumentName, documentUid: firstUid },
       );
-      const sandbox = result.spec.sandboxes[0]!;
+      const sandbox = result.spec.sandboxes.alpha!;
 
       expect(sandbox).toHaveProperty("agent");
       expect(sandbox).not.toHaveProperty("agents");
@@ -153,41 +149,35 @@ describe("export config builder", () => {
       documentUid: firstUid,
     });
 
-    expect(result.spec.sandboxes[0]?.harness).not.toHaveProperty("observability");
+    expect(result.spec.sandboxes.alpha?.harness).not.toHaveProperty("observability");
     expect(result).toMatchObject({
       apiVersion: "nemoclaw.nvidia.com/v1alpha1",
       kind: "NemoClawConfig",
       metadata: { name: "work-agents", uid: firstUid },
       spec: {
-        gateway: { management: "managed", endpoint: "http://127.0.0.1:8080" },
-        inferenceProviders: [
-          {
-            name: "hosted-openai-api",
+        gateway: {
+          management: "managed",
+          runtime: { provider: "docker" },
+          endpoint: "http://127.0.0.1:8080",
+        },
+        inferenceProviders: {
+          "hosted-openai-api": {
             provider: "openai",
             api: "openai-responses",
             endpoint: "https://api.openai.com/v1",
             credential: { env: "OPENAI_API_KEY" },
           },
-        ],
-        sandboxes: [
-          {
-            name: "alpha",
-            runtime: {
-              provider: "docker",
-            },
+        },
+        sandboxes: {
+          alpha: {
             network: {
               policy: {
-                explicit: {
-                  ...policy,
-                  process: { run_as_user: "1000", run_as_group: "1000" },
-                  filesystem_policy: {
-                    ...policy.filesystem_policy,
-                    read_only: ["/usr", "/opt/fabric", "/opt/nemoclaw", "/app"],
-                  },
-                },
+                // The V0 image's filesystem and process sections are left out (#14580).
+                explicit: { version: 1, network_policies: policy.network_policies },
               },
             },
-            harness: { kind: "openclaw" },
+            harness: { kind: "nvidia.fabric.openclaw" },
+            image: { ref: V1_IMAGE_REF_PLACEHOLDER },
             agent: {
               name: "primary",
               inference: {
@@ -201,9 +191,10 @@ describe("export config builder", () => {
               },
             },
           },
-        ],
+        },
       },
     });
+    expect(result.spec.sandboxes.alpha).not.toHaveProperty("name");
   });
 
   it("emits a verified Brave integration without another inference provider (#10904)", () => {
@@ -219,21 +210,21 @@ describe("export config builder", () => {
         documentUid: firstUid,
       },
     );
-    expect(document.spec.sandboxes[0]!.integrations).toEqual({
+    expect(document.spec.integrations).toEqual({
       "brave-search": {
         kind: "webSearch",
         provider: "brave",
         credential: { env: "BRAVE_API_KEY" },
       },
     });
-    const sandbox = document.spec.sandboxes[0]!;
+    const sandbox = document.spec.sandboxes.alpha!;
     expect("agent" in sandbox).toBe(true);
     expect(sandbox.agent.integrationRefs).toEqual(["brave-search"]);
-    expect(document.spec.inferenceProviders).toHaveLength(1);
+    expect(Object.keys(document.spec.inferenceProviders)).toHaveLength(1);
     expect(
-      buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
-        .sandboxes[0],
+      buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec,
     ).not.toHaveProperty("integrations");
+    expect(sandbox).not.toHaveProperty("integrations");
   });
 
   it.each(["openclaw", "hermes"] as const)(
@@ -252,9 +243,10 @@ describe("export config builder", () => {
         },
         { documentName: alphaDocumentName, documentUid: firstUid },
       );
-      const sandbox = document.spec.sandboxes[0]!;
-      expect(sandbox.harness.kind).toBe(agent);
-      expect(sandbox.integrations).toEqual({
+      const sandbox = document.spec.sandboxes.alpha!;
+      expect(sandbox.harness.kind).toBe(`nvidia.fabric.${agent}`);
+      expect(sandbox).not.toHaveProperty("integrations");
+      expect(document.spec.integrations).toEqual({
         "tavily-search": {
           kind: "webSearch",
           provider: "tavily",
@@ -263,12 +255,12 @@ describe("export config builder", () => {
       });
       expect(sandbox.agent.integrationRefs).toEqual(["tavily-search"]);
       expect(sandbox.agent.name).toBe("primary");
-      expect(document.spec.inferenceProviders).toHaveLength(1);
+      expect(Object.keys(document.spec.inferenceProviders)).toHaveLength(1);
       expect(sandbox.agent.inference).toEqual(
         buildExportConfig(source, {
           documentName: alphaDocumentName,
           documentUid: firstUid,
-        }).spec.sandboxes[0]!.agent.inference,
+        }).spec.sandboxes.alpha!.agent.inference,
       );
     },
   );
@@ -286,8 +278,8 @@ describe("export config builder", () => {
     expect(second.metadata.uid).toBe(secondUid);
     expect(second.metadata.uid).not.toBe(first.metadata.uid);
     expect(second.spec).toEqual(first.spec);
-    expect(second.spec.inferenceProviders[0]?.name).toBe("hosted-openai-api");
-    const sandbox = second.spec.sandboxes[0]!;
+    expect(Object.keys(second.spec.inferenceProviders)).toEqual(["hosted-openai-api"]);
+    const sandbox = second.spec.sandboxes.alpha!;
     expect("agent" in sandbox).toBe(true);
     expect(sandbox.agent.inference.routes[0]?.providerRef).toBe("hosted-openai-api");
   });
@@ -301,14 +293,12 @@ describe("export config builder", () => {
       },
     );
 
-    expect(result.spec.sandboxes[0]?.harness.kind).toBe("hermes");
-    expect(result.spec.sandboxes[0]).not.toHaveProperty("image");
-    expect(result.spec.sandboxes[0]?.harness).not.toHaveProperty("observability");
-    expect(result.spec.sandboxes[0]?.network.policy.explicit).toMatchObject({
-      process: { run_as_user: "1000", run_as_group: "1000" },
-      filesystem_policy: {
-        read_only: ["/usr", "/opt/fabric", "/opt/nemoclaw", "/opt/hermes"],
-      },
+    expect(result.spec.sandboxes.alpha?.harness.kind).toBe("nvidia.fabric.hermes");
+    expect(result.spec.sandboxes.alpha?.image).toEqual({ ref: V1_IMAGE_REF_PLACEHOLDER });
+    expect(result.spec.sandboxes.alpha?.harness).not.toHaveProperty("observability");
+    expect(result.spec.sandboxes.alpha?.network.policy.explicit).toEqual({
+      version: 1,
+      network_policies: policy.network_policies,
     });
   });
 
@@ -333,7 +323,7 @@ describe("export config builder", () => {
       },
     );
 
-    const sandbox = result.spec.sandboxes[0]!;
+    const sandbox = result.spec.sandboxes.alpha!;
     expect("agent" in sandbox).toBe(true);
     expect(sandbox.agent.auth).toEqual({
       method: "api-key",
@@ -350,9 +340,8 @@ describe("export config builder", () => {
       buildExportConfig(credentialless, {
         documentName: alphaDocumentName,
         documentUid: firstUid,
-      }).spec.inferenceProviders[0],
+      }).spec.inferenceProviders["hosted-openai-api"],
     ).toEqual({
-      name: "hosted-openai-api",
       provider: "openai",
       api: "openai-responses",
       endpoint: "https://api.openai.com/v1",
@@ -388,18 +377,13 @@ describe("export config builder", () => {
         },
       );
 
-      expect(result.spec.inferenceProviders).toEqual([
-        {
-          name: "local",
-          provider: "openai",
-          api: "openai-completions",
-          serviceRef: "ollama-auth",
-        },
-      ]);
+      expect(result.spec.inferenceProviders).toEqual({
+        local: { provider: "openai", api: "openai-completions", serviceRef: "ollama-auth" },
+      });
       expect(result.spec.services).toEqual({
         "ollama-auth": {
           kind: "ollamaProxy",
-          image: null,
+          image: `REPLACE-ME@sha256:${"0".repeat(64)}`,
           endpoint: `http://172.30.154.1:${proxyPort}/v1`,
           upstream: {
             endpoint: `http://127.0.0.1:${daemonPort}/v1`,
@@ -410,12 +394,13 @@ describe("export config builder", () => {
           },
         },
       });
-      expect(result.spec.inferenceProviders[0]).not.toHaveProperty("credential");
-      const sandbox = result.spec.sandboxes[0]!;
+      expect(result.spec.inferenceProviders.local).not.toHaveProperty("credential");
+      const sandbox = result.spec.sandboxes.alpha!;
       expect(sandbox.agent.inference.routes[0]).toEqual({
         name: "primary",
         providerRef: "local",
-        overrides: { model, contextWindow: 32_768, maxTokens: 4096 },
+        // v1 overrides keep maxTokens; contextWindow has no home there.
+        overrides: { model, maxTokens: 4096 },
       });
     },
   );
@@ -453,14 +438,9 @@ describe("export config builder", () => {
       { documentName: alphaDocumentName, documentUid: firstUid },
     );
 
-    expect(result.spec.inferenceProviders).toEqual([
-      {
-        name: "managed-vllm",
-        provider: "openai",
-        api: "openai-completions",
-        serviceRef: "vllm",
-      },
-    ]);
+    expect(result.spec.inferenceProviders).toEqual({
+      "managed-vllm": { provider: "openai", api: "openai-completions", serviceRef: "vllm" },
+    });
     expect(result.spec.services).toEqual({
       vllm: {
         kind: "vllm",
@@ -472,7 +452,7 @@ describe("export config builder", () => {
           minDriverMajor: 580,
         },
         container: { ipc: "host", sharedMemoryGiB: 32 },
-        image: null,
+        image: `REPLACE-ME@sha256:${"0".repeat(64)}`,
         model: {
           repository: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
           revision: "0dcd680e5585c791728c83342b311d0a0026dbeb",

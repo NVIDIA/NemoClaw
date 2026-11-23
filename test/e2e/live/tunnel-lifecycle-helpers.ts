@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { parseLiveSandboxEntries } from "../../../src/lib/runtime-recovery.ts";
 import { resolveNemoclawStateDir } from "../../../src/lib/state/paths.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -75,6 +76,18 @@ export function cloudflaredTargetsRegisteredPort(
     target.search === "" &&
     target.hash === ""
   );
+}
+
+export function tunnelSandboxObservation(
+  inventory: Pick<ShellProbeResult, "exitCode" | "stdout">,
+  sandboxName: string,
+): { exitCode: number | null; phases: Array<string | null> } {
+  return {
+    exitCode: inventory.exitCode,
+    phases: parseLiveSandboxEntries(inventory.stdout)
+      .filter((sandbox) => sandbox.name === sandboxName)
+      .map((sandbox) => sandbox.phase),
+  };
 }
 
 function assertTestOwnedSandboxName(): void {
@@ -300,6 +313,7 @@ export async function runTunnelLifecycleContract({
       "nemoclaw tunnel start/status/stop CLI commands",
       "local dashboard origin readiness before tunnel attribution",
       "public trycloudflare HTTP probe with dashboard marker assertion",
+      "tunnel stop preserves the Ready sandbox and its working OpenClaw gateway",
       "sandbox destroy preserves host cloudflared ownership and status",
       "cloudflared.log classification for NemoClaw-vs-Cloudflare failures",
     ],
@@ -539,29 +553,6 @@ export async function runTunnelLifecycleContract({
     `Public tunnel must serve OpenClaw; ps exit ${cloudflaredCommand.exitCode}: ${cloudflaredCommand.stdout.trim()} ${resultText(cloudflaredCommand)}`,
   ).toBe(true);
 
-  const tunnelPid = extractTunnelPid(lastStatusText);
-  expect(tunnelPid, "status must report the managed cloudflared PID before destroy").toBeTruthy();
-
-  progress.phase("destroy the sandbox without stopping the host tunnel");
-  const destroy = await host.nemoclaw([SANDBOX_NAME, "destroy", "--no-cleanup-gateway"], {
-    artifactName: "destroy-with-active-tunnel",
-    env: tunnelLifecycleCommandEnv(),
-    timeoutMs: 15 * 60_000,
-  });
-  expect(destroy.exitCode, resultText(destroy)).toBe(0);
-
-  const statusAfterDestroy = await host.nemoclaw(["tunnel", "status"], {
-    artifactName: "tunnel-status-after-sandbox-destroy",
-    env: tunnelLifecycleCommandEnv(),
-    timeoutMs: COMMAND_TIMEOUT_MS,
-  });
-  const statusAfterDestroyText = resultText(statusAfterDestroy);
-  expect(
-    extractTunnelPid(statusAfterDestroyText) === tunnelPid &&
-      extractTunnelUrl(statusAfterDestroyText) === tunnelUrl,
-    "destroy must preserve the managed cloudflared PID and public URL",
-  ).toBe(true);
-
   progress.phase("stop the tunnel and confirm status removal");
   const stop = await host.nemoclaw(["tunnel", "stop"], {
     artifactName: "tunnel-stop",
@@ -592,4 +583,80 @@ export async function runTunnelLifecycleContract({
       ? "tunnel URL must be absent after nemoclaw tunnel stop"
       : "nemoclaw tunnel status must be readable after tunnel stop",
   ).toBeUndefined();
+
+  progress.phase("verify the sandbox survives tunnel stop");
+  // The gateway is the native sandbox's main process. Observe beyond the delayed
+  // Error transition from #14321 before any connect command can attempt recovery.
+  for (let observation = 0; observation < 5; observation += 1) {
+    if (observation > 0) await sleep(15_000);
+    const inventory = await host.command(
+      host.openshellCommandPath,
+      ["--gateway", TUNNEL_GATEWAY_NAME, "sandbox", "list"],
+      {
+        artifactName: `sandbox-after-tunnel-stop-${observation}`,
+        env: tunnelLifecycleCommandEnv(),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      },
+    );
+    expect(tunnelSandboxObservation(inventory, SANDBOX_NAME), resultText(inventory)).toEqual({
+      exitCode: 0,
+      phases: ["Ready"],
+    });
+  }
+  const probe = await host.nemoclaw([SANDBOX_NAME, "connect", "--probe-only"], {
+    artifactName: "gateway-after-tunnel-stop",
+    env: tunnelLifecycleCommandEnv(),
+    timeoutMs: COMMAND_TIMEOUT_MS,
+  });
+  expect(probe.exitCode, resultText(probe)).toBe(0);
+
+  progress.phase("restart the tunnel before sandbox destruction");
+  const restart = await host.nemoclaw(["tunnel", "start"], {
+    artifactName: "tunnel-restart-before-destroy",
+    env: tunnelLifecycleCommandEnv(),
+    timeoutMs: 90_000,
+  });
+  if (restart.exitCode !== 0 && isCloudflareTransientText(resultText(restart))) {
+    skip("[Cloudflare fault] Quick-tunnel registration failed during restart before destroy.");
+  }
+  expect(restart.exitCode, resultText(restart)).toBe(0);
+  let restartedStatus: ShellProbeResult | undefined;
+  let tunnelPid: number | undefined;
+  let restartedUrl: string | undefined;
+  for (let attempt = 1; attempt <= 15; attempt += 1) {
+    restartedStatus = await host.nemoclaw(["tunnel", "status"], {
+      artifactName: `tunnel-status-before-destroy-${attempt}`,
+      env: tunnelLifecycleCommandEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    const restartedStatusText = resultText(restartedStatus);
+    tunnelPid = extractTunnelPid(restartedStatusText);
+    restartedUrl = extractTunnelUrl(restartedStatusText);
+    if (restartedStatus.exitCode === 0 && tunnelPid && restartedUrl) break;
+    await sleep(1_000);
+  }
+  expect(
+    restartedStatus?.exitCode === 0 && tunnelPid && restartedUrl,
+    "status must report the restarted cloudflared PID and public URL before destroy",
+  ).toBeTruthy();
+
+  progress.phase("destroy the sandbox without stopping the host tunnel");
+  const destroy = await host.nemoclaw([SANDBOX_NAME, "destroy", "--no-cleanup-gateway"], {
+    artifactName: "destroy-with-active-tunnel",
+    env: tunnelLifecycleCommandEnv(),
+    timeoutMs: 15 * 60_000,
+  });
+  expect(destroy.exitCode, resultText(destroy)).toBe(0);
+
+  const statusAfterDestroy = await host.nemoclaw(["tunnel", "status"], {
+    artifactName: "tunnel-status-after-sandbox-destroy",
+    env: tunnelLifecycleCommandEnv(),
+    timeoutMs: COMMAND_TIMEOUT_MS,
+  });
+  const statusAfterDestroyText = resultText(statusAfterDestroy);
+  expect(
+    extractTunnelPid(statusAfterDestroyText) === tunnelPid &&
+      extractTunnelUrl(statusAfterDestroyText) === restartedUrl,
+    "destroy must preserve the managed cloudflared PID and public URL",
+  ).toBe(true);
 }
