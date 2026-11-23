@@ -36,6 +36,8 @@ struct Page {
     slug: String,
     #[serde(default)]
     changelog: bool,
+    #[serde(default, rename = "from-main")]
+    from_main: bool,
 }
 
 /// The Markdown extensions the pages use; the writer must know them to round-trip.
@@ -305,6 +307,59 @@ impl Renderer<'_> {
     }
 }
 
+/// Preserve the original Fern MDX, including its frontmatter and examples. Relative
+/// inline links in a shared guide still refer to the guide where it was authored.
+fn shared_guide(root: &Path, page: &Page) -> Result<String> {
+    if page.changelog
+        || !page.source.starts_with("docs/")
+        || !page.source.ends_with(".mdx")
+        || page
+            .source
+            .split('/')
+            .any(|part| matches!(part, "" | "." | ".."))
+        || page.source.contains('\\')
+    {
+        return Err(format!("invalid shared MDX source: {}", page.source).into());
+    }
+    let (revision, source) = crate::fern::main_guide(root, &page.source)?;
+    let base = url::Url::parse(&format!(
+        "https://github.com/NVIDIA/NemoClaw/blob/{revision}/{}",
+        page.source
+    ))?;
+    let mut rendered = String::new();
+    let mut cursor = 0;
+    for (event, range) in parser(&source).into_offset_iter() {
+        let Event::Start(Tag::Link {
+            link_type: LinkType::Inline,
+            dest_url,
+            ..
+        }) = event
+        else {
+            continue;
+        };
+        if dest_url.starts_with('#') || url::Url::parse(&dest_url).is_ok() {
+            continue;
+        }
+        let inline = &source[range.clone()];
+        let (_, destination) = inline.rsplit_once("](").ok_or("invalid inline link")?;
+        let destination = destination.trim_start().trim_start_matches('<');
+        if !destination.starts_with(dest_url.as_ref()) {
+            return Err(format!("unsupported link spelling in {}: {inline}", page.source).into());
+        }
+        let start = range.end - destination.len();
+        rendered.push_str(&source[cursor..start]);
+        let mut target = base.join(&dest_url)?;
+        // Main's extensionless guide links name MDX files.
+        if Path::new(target.path()).extension().is_none() {
+            target.set_path(&format!("{}.mdx", target.path()));
+        }
+        rendered.push_str(target.as_str());
+        cursor = start + dest_url.len();
+    }
+    rendered.push_str(&source[cursor..]);
+    Ok(rendered)
+}
+
 fn output_files(root: &Path) -> Result<BTreeSet<PathBuf>> {
     fn visit(base: &Path, path: &Path, files: &mut BTreeSet<PathBuf>) -> Result<()> {
         for entry in fs::read_dir(path)? {
@@ -353,6 +408,7 @@ pub fn generate(root: &Path, check: bool, revision: Option<&str>) -> Result<()> 
         revision: &revision,
         routes: BTreeMap::new(),
     };
+    let mut files = BTreeMap::new();
     let mut slugs = BTreeSet::new();
     let mut sections = Vec::new();
     for section in &navigation.sections {
@@ -367,6 +423,17 @@ pub fn generate(root: &Path, check: bool, revision: Option<&str>) -> Result<()> 
                 })
             {
                 return Err(format!("invalid route: {}", page.slug).into());
+            }
+            if page.from_main {
+                if !slugs.insert(page.slug.clone()) {
+                    return Err(format!("duplicate route: {}", page.slug).into());
+                }
+                let path = format!("shared/{}.mdx", page.slug);
+                files.insert(PathBuf::from(&path), shared_guide(&root, page)?);
+                contents.push(
+                    json!({"page": page.title, "slug": page.slug, "path": format!("./{path}")}),
+                );
+                continue;
             }
             if !page.source.starts_with("docs/") || !page.source.ends_with(".md") {
                 return Err("pages must be docs/*.md sources".into());
@@ -391,7 +458,6 @@ pub fn generate(root: &Path, check: bool, revision: Option<&str>) -> Result<()> 
         }
         sections.push(json!({"section": section.title, "skip-slug": true, "contents": contents}));
     }
-    let mut files = BTreeMap::new();
     for source in renderer.routes.keys() {
         let destination = Path::new("pages")
             .join(source.strip_prefix(root.join("docs"))?)
