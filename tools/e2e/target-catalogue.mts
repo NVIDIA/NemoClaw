@@ -1736,6 +1736,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "test/e2e/support/skill-agent-classifiers.ts",
       "test/e2e/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh",
       "test/e2e/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh",
     ],
