@@ -419,6 +419,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set up the pinned v1 protoc
+        if: ${{ inputs.catalogue_id == 'security-posture-hermes' }}
+        run: bash .github/actions/setup-v1-protoc/install.sh "${{ runner.os }}-${{ runner.arch }}"
+
       - name: Authenticate to Docker Hub
         uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f
         with:

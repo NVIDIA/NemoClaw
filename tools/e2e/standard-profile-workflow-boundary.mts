@@ -393,6 +393,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Validate catalogue execution plan",
     "Provision trusted Hermes E2E swap",
     undefined,
+    "Set up the pinned v1 protoc",
     "Authenticate to Docker Hub",
     "Install target host dependencies",
     "Download reviewed OpenShell SDK archive",
@@ -509,6 +510,17 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     workflowSteps.indexOf(checkout ?? {}) !== 2
   ) {
     errors.push("standard E2E profile must check out checkout_sha without credentials");
+  }
+
+  const protoc = requireStep(errors, workflowSteps, "Set up the pinned v1 protoc");
+  if (
+    !isDeepStrictEqual(protoc, {
+      name: "Set up the pinned v1 protoc",
+      if: "${{ inputs.catalogue_id == 'security-posture-hermes' }}",
+      run: 'bash .github/actions/setup-v1-protoc/install.sh "${{ runner.os }}-${{ runner.arch }}"',
+    })
+  ) {
+    errors.push("standard E2E profile must install pinned protoc for Hermes security");
   }
 
   const auth = requireStep(errors, workflowSteps, "Authenticate to Docker Hub");

@@ -1078,6 +1078,9 @@ any earlier successful launcher result. A diagnostic containing encoded credenti
 with a fixed non-sensitive message. Support tests cover exceptions from each alias, redaction,
 bounded evidence, private-file cleanup, and parsed-document mismatches.
 
+The Hermes security catalogue profile installs the checksum-verified pinned V1 `protoc` before
+Docker Hub authentication. The pinned consumer compiler finds this binary through `PATH`.
+
 The `hermes-discord` target owns the live messaging refusal boundary for #12987. After Discord
 onboarding, it requires the persisted sandbox state to contain the configured Discord channel, then
 uses the shared Hermes export fixture to run both real CLI launchers. Both must refuse the unsupported

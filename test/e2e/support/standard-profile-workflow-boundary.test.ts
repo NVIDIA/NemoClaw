@@ -26,6 +26,54 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it.each<[string, (steps: Array<Record<string, unknown>>, index: number) => void]>([
+    [
+      "missing",
+      (steps, index) => {
+        steps.splice(index, 1);
+      },
+    ],
+    [
+      "disabled",
+      (steps, index) => {
+        steps[index]!.if = "${{ false }}";
+      },
+    ],
+    [
+      "unconditional",
+      (steps, index) => {
+        delete steps[index]!.if;
+      },
+    ],
+    [
+      "different installer",
+      (steps, index) => {
+        steps[index]!.run = "protoc --version";
+      },
+    ],
+    [
+      "late",
+      (steps, index) => {
+        steps.push(...steps.splice(index, 1));
+      },
+    ],
+  ])("rejects %s pinned protoc setup for Hermes security", (_scenario, mutate) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    );
+    const steps = profile.jobs.run.steps as Array<Record<string, unknown>>;
+    const index = steps.findIndex((step) => step.name === "Set up the pinned v1 protoc");
+    mutate(steps, index);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-protoc-profile-"));
+    try {
+      const profilePath = path.join(directory, "profile.yaml");
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).not.toEqual([]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each<
     [string, (steps: Array<{ name: string; with?: Record<string, string>; if?: string }>) => void]
   >([
