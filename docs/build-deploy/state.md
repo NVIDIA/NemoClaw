@@ -63,7 +63,9 @@ Only one runtime can use the folder at a time.
 To discard the state, delete the folder or the volume.
 The table covers the harness targets in the [image build matrix](../../docker-bake.hcl).
 A descriptor in the image catalog alone doesn't establish that a harness is installed or qualified on a platform.
-Replacing or deleting the sandbox, as any agent configuration change does, deletes files in its writable layer.
+Replacing or deleting the sandbox deletes files in its writable layer.
+Changing either [sandbox CPU or memory limits](../agents-inference/agents.md#cpu-and-memory-limits) replaces the sandbox.
+Before applying a size change, back up writable-layer files you need to keep.
 Use mounted volumes for files that must survive replacement.
 Retaining files doesn't by itself resume a native conversation.
 Each declared agent runs in its own NVIDIA OpenShell sandbox.

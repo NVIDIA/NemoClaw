@@ -3,7 +3,10 @@
 
 # Documentation Index
 
-Find a task guide for NemoClaw Agent Configs v0.1.0. Use the bundle, example, schema, and images from the same release. For source builds, match them to the implementation revision. [Current Limits](resources/limits.md) lists unimplemented or untested paths.
+Find a task guide for NemoClaw Agent Configs v0.1.0.
+Use the bundle, example, schema, and images from the same release.
+For source builds, match them to the implementation revision.
+[Current Limits](resources/limits.md) lists unimplemented or untested paths.
 
 ## About
 
@@ -11,8 +14,8 @@ Start with the product overview, then use the architecture and ecosystem guides 
 
 | Reader goal | Guide |
 |---|---|
-| Understand the product and choose an interface | [NemoClaw overview](about/overview.md) |
-| Follow the components and deployment flow | [Architecture overview](about/architecture-overview.md) |
+| Understand the product and choose an interface | [NemoClaw Overview](about/overview.md) |
+| Follow the components and deployment flow | [Architecture Overview](about/architecture-overview.md) |
 | Distinguish upstream responsibilities | [Ecosystem](about/ecosystem.md) |
 | Track v1 releases | [Release Notes](changelog/overview.md) |
 
@@ -34,14 +37,14 @@ Choose the guide for the artifact or deployment operation you need to perform.
 
 | Reader goal | Guide |
 |---|---|
-| Build a matched bundle and runtime image | [Build local artifacts](build-deploy/build.md) |
-| Extend an agent image with your own tools | [Derived agent images](build-deploy/derived-images.md) |
-| Configure, apply, export, recover, and destroy | [Use desired state](build-deploy/usage.md) |
-| Run the providers from your own OpenTofu project and pipelines | [Your own OpenTofu project](build-deploy/opentofu-project.md) |
-| Deploy on Kubernetes or OpenShift | [Cluster deployment](build-deploy/kubernetes.md) |
-| Share or inline definitions | [Definitions and references](build-deploy/configuration-references.md) |
-| Retain data and clean up safely | [Deployment state](build-deploy/state.md) |
-| Run an application-owned container on managed Docker | [Container service](build-deploy/container-services.md) |
+| Build a matched bundle and runtime image | [Build Local Artifacts](build-deploy/build.md) |
+| Extend an agent image with your own tools | [Derived Agent Images](build-deploy/derived-images.md) |
+| Configure, apply, export, recover, and destroy | [Use Desired State](build-deploy/usage.md) |
+| Run the providers from your own OpenTofu project and pipelines | [Your Own OpenTofu Project](build-deploy/opentofu-project.md) |
+| Deploy on Kubernetes or OpenShift | [Cluster Deployment](build-deploy/kubernetes.md) |
+| Share or inline definitions | [Definitions and References](build-deploy/configuration-references.md) |
+| Retain data and clean up safely | [Deployment State](build-deploy/state.md) |
+| Run an application-owned container on managed Docker | [Container Service](build-deploy/container-services.md) |
 
 ## Agents and Inference
 
@@ -49,13 +52,13 @@ Configure the agent and its inference connection, then verify a reply through a 
 
 | Reader goal | Guide |
 |---|---|
-| Select and invoke an agent | [Agent runtimes](agents-inference/agents.md) |
-| Reach a native interface | [Agent interfaces](agents-inference/interfaces.md) |
+| Select and invoke an agent | [Agent Runtimes](agents-inference/agents.md) |
+| Reach a native interface | [Agent Interfaces](agents-inference/interfaces.md) |
 | Configure model connections and verify a request | [Inference](agents-inference/inference.md) |
 | Select a managed model | [Models](agents-inference/models.md) |
 | Package model preparation | [Recipes](agents-inference/recipes.md) |
-| Place inference over SSH | [SSH model service](agents-inference/remote-service.md) |
-| Attach an operator-managed refresh credential | [OAuth-refresh providers](agents-inference/oauth-refresh.md) |
+| Place inference over SSH | [SSH Model Service](agents-inference/remote-service.md) |
+| Attach an operator-managed refresh credential | [OAuth-Refresh Providers](agents-inference/oauth-refresh.md) |
 
 ## Observability
 
@@ -69,7 +72,7 @@ Use operation output and runtime evidence to identify where a deployment or agen
 
 Review trust boundaries before configuring sandbox access or rotating credentials.
 
-| Reader Goal | Guide |
+| Reader goal | Guide |
 |---|---|
 | Understand credential storage and trust boundaries | [Security](security/security.md), [Threat Model](security/threat-model.md) |
 | Configure isolation and egress | [Sandbox Policy](security/sandbox-network.md) |
@@ -82,9 +85,9 @@ Look up the interface contract of your source revision before adapting a command
 | Reader goal | Guide |
 |---|---|
 | Look up commands and options | [CLI](references/cli.md) |
-| Look up configuration fields | [YAML configuration reference](reference/configuration.md) |
-| Compare harness descriptors and examples | [Fabric harnesses](references/fabric-harnesses.md) |
-| Integrate with the Rust API or OpenTofu | [SDK](references/sdk.md), [provider](references/provider.md) |
+| Look up configuration fields | [YAML Configuration Reference](reference/configuration.md) |
+| Compare harness descriptors and examples | [Fabric Harnesses](references/fabric-harnesses.md) |
+| Integrate with the Rust API or OpenTofu | [SDK](references/sdk.md), [Provider](references/provider.md) |
 | Check release guarantees | [Compatibility](references/compatibility.md) |
 
 ## Resources
@@ -93,8 +96,9 @@ Use these sources to find help, development status, currently documented limits,
 
 | Reader goal | Guide |
 |---|---|
-| Find version-matched documentation and reporting channels | [Project resources](resources/resources.md) |
-| Find unimplemented or unqualified paths | [Current limits](resources/limits.md) |
+| Find version-matched documentation and reporting channels | [Project Resources](resources/resources.md) |
+| Make documentation useful to coding agents | [Engineer Documentation for AI Agents](https://github.com/NVIDIA/NemoClaw/blob/f5c05a0e6a59bd5133c50e31becbff25af274c33/docs/resources/engineer-agentic-documentation.mdx) |
+| Find unimplemented or unqualified paths | [Current Limits](resources/limits.md) |
 | Find what Agent Configs leaves to other components by design | [Out of Scope](resources/out-of-scope.md) |
 
 For release history, refer to [Release Notes](changelog/overview.md).

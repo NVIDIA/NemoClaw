@@ -46,11 +46,12 @@ These checks aren't a conversion mechanism.
 ## Starting From the Earlier Export
 
 The earlier product's `nemoclaw config export` writes v1 YAML for one sandbox.
-That YAML can't be planned as written: its image is a placeholder, and it reuses the earlier deployment's identity and gateway port.
+The report-capable exporter assigns a new UUID but keeps the earlier gateway port and writes an image placeholder.
+Before planning, replace the placeholder and select a port that doesn't conflict with the Classic deployment.
 The [V0 migration skill](../../.agents/skills/nemoclaw-v0-migration/SKILL.md) completes it; an assistant with this checkout can follow it, or you can follow its steps yourself.
 It leaves the earlier deployment untouched and moves no native data.
 
-1. On the earlier deployment's host, export the sandbox with the CLI of a V0 release with the export report:
+1. On the Classic host, export the sandbox with a Classic CLI that includes the [report-capable exporter](https://github.com/NVIDIA/NemoClaw/pull/14602) from revision `7892283831683e8b8b7a167b5cf1006d7bc262a5`:
 
    ```sh
    nemoclaw config export SANDBOX --output v0-export.yaml

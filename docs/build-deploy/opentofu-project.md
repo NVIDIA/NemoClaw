@@ -55,7 +55,7 @@ To install the providers, perform the following steps from your project's root d
    jq -r .Version /absolute/path/to/bundle/manifest.json
    ```
 
-   The v0.1.0 archive reports `nemoclaw 0.1.0`.
+   The v0.1.0 bundle manifest reports `0.1.0`.
    Another CI build reports a version numbered by its run, such as `0.1.0-3011`, and a bundle you build reports `-dev.` and a hash of its sources, such as `0.1.0-dev.9be3917c1bbe5321`, so the version changes with every build or source change.
 
 2. Pin each NVIDIA provider to that exact version.

@@ -36,6 +36,17 @@ Merged `origin/v1` at `16c31be663f5415d95242be739352966179fb5a1` into the workfl
 - After the merge, Fern, schema, whitespace, and all 11 focused CLI parser tests passed. The last Fern run reported zero errors and two warnings per pass. Logs: `/tmp/nc-refresh-final-fern.log` and `/tmp/nc-refresh-parser.log`. Inspected generated navigation for onboarding, Observability before Security, and the shared guide in both versions. No browser preview ran.
 - The final tag still returned no match, GitHub reported `release not found`, and the release page returned HTTP 404. The hosted v1 check failed with a connection reset. This is a pre-release review candidate; final-release verification remains a separate step.
 
+## Independent Review Corrections
+
+Merged `origin/v1` at `105e002500daaacb90ffcadaf59d8ea80268a91c` without conflicts. No remote workflow head or PR was found. The independent review of `e920acfad93bf55e31eba85ae4c940c9e684b14f` requested changes; it did not approve that commit for publication.
+
+- Fixed the generated configuration reference by marking the placeholder as literal code in SDK `config/integrations.rs` and regenerating the schema and field reference.
+- Corrected the OpenTofu provider version example using `crates/nemoclaw-build/src/{main,version}.rs`: the manifest gives `0.1.0`, not the CLI banner.
+- Verified the Classic exporter against `src/commands/config/export.ts` and `src/lib/domain/config/export-document.ts` at `7892283831683e8b8b7a167b5cf1006d7bc262a5`: it creates a UUID, preserves the gateway port, and emits an image placeholder.
+- Moved the installed-CLI procedure out of the onboarding crate README. The public guide now names the review keys and links to plan credential requirements. The task index includes the shared engineering guide. The state guide warns readers to preserve writable-layer files before applying sandbox sizing changes.
+- Regeneration, schema freshness, whitespace, and all 11 focused CLI parser tests passed. Fern reported zero errors and one warning per pass. The expanded diagnostics confirmed that only the unauthenticated redirect check remains. Logs: `/tmp/nc-r3-schema.log`, `/tmp/nc-r3-parser.log`, `/tmp/nc-r3-fern.log`, and `/tmp/nc-r3-fern-warnings.log`.
+- The final release lookup still returned no tag or release. The corrections do not establish a shipped archive, a live native reply, or hosted rendering.
+
 ## Release Evidence Still Needed
 
 `git ls-remote --tags origin refs/tags/v0.1.0` returned no match. The final release page returned HTTP 404. The v1 hosted overview first returned 404 and later failed to connect. The API request was rate-limited. These observations do not establish the contents of a private release. No draft RC assets were substituted and nothing was published.
