@@ -7,19 +7,13 @@
 // contract exists, then replace the failure with an outside-in journey.
 
 #[test]
-#[ignore = "V1 has no managed model-router or model-pool lifecycle"]
-fn an_author_can_choose_the_experimental_model_router() {
-    panic!("missing V1 model-router contract");
-}
-
-#[test]
-#[ignore = "managed Ollama authoring needs a qualified runtime image, hardware profile, and immutable model digest catalog"]
+#[ignore = "managed Ollama authoring needs published runtime images (#13516) and a qualified model catalog (#14776)"]
 fn an_author_can_install_or_reuse_ollama_after_environment_discovery() {
     panic!("missing offline catalog for a complete managed Ollama document");
 }
 
 #[test]
-#[ignore = "managed vLLM authoring needs qualified runtime images, hardware profiles, and immutable model revisions"]
+#[ignore = "managed vLLM authoring needs published runtime images (#13516) and a qualified model catalog (#14776)"]
 fn an_author_can_install_or_reuse_vllm_after_environment_discovery() {
     panic!("missing offline catalog for a complete managed vLLM document");
 }
@@ -28,16 +22,4 @@ fn an_author_can_install_or_reuse_vllm_after_environment_discovery() {
 #[ignore = "V1 Sandbox has no CPU or RAM resource-sizing fields"]
 fn an_author_can_choose_a_resource_profile_or_custom_cpu_and_ram() {
     panic!("missing V1 sandbox resource contract");
-}
-
-#[test]
-#[ignore = "desired state preserves isolated or explicit policy, but has no policy-tier and composable-preset intent"]
-fn an_author_can_choose_a_policy_tier_then_customize_presets_and_access() {
-    panic!("missing V1 guided policy-preset contract");
-}
-
-#[test]
-#[ignore = "V1 cannot preserve trusted-private-host intent or endpoint qualification evidence"]
-fn an_author_can_trust_a_private_compatible_endpoint_after_validation() {
-    panic!("missing V1 trusted-private-endpoint contract");
 }
