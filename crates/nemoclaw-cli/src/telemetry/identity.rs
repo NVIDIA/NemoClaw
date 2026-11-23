@@ -6,7 +6,7 @@
 
 use super::record::{INSTALL_ID_PATTERN, matches};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 const FILE: &str = "telemetry.json";
@@ -60,37 +60,61 @@ pub fn load(directory: Option<&Path>, version: &str) -> Identity {
         return unknown;
     };
     let path = directory.join(FILE);
-    let stored = std::fs::read(&path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Stored>(&bytes).ok())
-        .filter(|stored| {
-            stored.install_id != UNKNOWN && matches(INSTALL_ID_PATTERN, &stored.install_id)
-        });
-    let identity = match stored {
-        Some(stored) => Identity {
-            previous_version: previous(&stored.last_version, version),
-            install_id: stored.install_id,
-            first_run: false,
-        },
-        None => match new_install_id() {
-            Some(install_id) => Identity {
-                install_id,
-                first_run: true,
-                previous_version: NONE.into(),
-            },
-            None => return unknown,
-        },
+    let found = read(&path);
+    if let Ok(Some(stored)) = found {
+        return seen(directory, &path, stored, version);
+    }
+    let Some(install_id) = new_install_id() else {
+        return unknown;
     };
     let stored = Stored {
-        install_id: identity.install_id.clone(),
+        install_id,
         last_version: version.into(),
     };
-    let written = write(directory, &path, &stored).is_ok();
-    // A new ID that cannot be kept would count this install again next run.
-    if identity.first_run && !written {
-        return unknown;
+    // Create a missing file only if it is still missing, so two first runs at
+    // the same moment keep one install ID. An invalid file is replaced.
+    let missing = matches!(&found, Err(error) if error.kind() == ErrorKind::NotFound);
+    match write(directory, &path, &stored, !missing) {
+        Ok(()) => Identity {
+            install_id: stored.install_id,
+            first_run: true,
+            previous_version: NONE.into(),
+        },
+        // Another run created the file first: use its install ID.
+        Err(_) if missing => match read(&path) {
+            Ok(Some(stored)) => seen(directory, &path, stored, version),
+            _ => unknown,
+        },
+        // A new ID that cannot be kept would count this install again next run.
+        Err(_) => unknown,
+    }
+}
+
+/// The identity from a valid stored file, which then records `version`.
+fn seen(directory: &Path, path: &Path, stored: Stored, version: &str) -> Identity {
+    let identity = Identity {
+        install_id: stored.install_id.clone(),
+        first_run: false,
+        previous_version: previous(&stored.last_version, version),
+    };
+    if stored.last_version != version {
+        let stored = Stored {
+            install_id: stored.install_id,
+            last_version: version.into(),
+        };
+        let _ = write(directory, path, &stored, true);
     }
     identity
+}
+
+/// The stored file, `Ok(None)` when it exists but is not valid.
+fn read(path: &Path) -> std::io::Result<Option<Stored>> {
+    let bytes = std::fs::read(path)?;
+    Ok(serde_json::from_slice::<Stored>(&bytes)
+        .ok()
+        .filter(|stored| {
+            stored.install_id != UNKNOWN && matches(INSTALL_ID_PATTERN, &stored.install_id)
+        }))
 }
 
 fn previous(last: &str, version: &str) -> String {
@@ -102,12 +126,17 @@ fn previous(last: &str, version: &str) -> String {
     }
 }
 
-/// Writes the whole file or nothing, so a reader never sees half of it.
-fn write(directory: &Path, path: &Path, stored: &Stored) -> std::io::Result<()> {
+/// Writes the whole file or nothing, so a reader never sees half of it. With
+/// `replace` false, fails if the file already exists.
+fn write(directory: &Path, path: &Path, stored: &Stored, replace: bool) -> std::io::Result<()> {
     std::fs::create_dir_all(directory)?;
     let mut file = tempfile::NamedTempFile::new_in(directory)?;
     file.write_all(&serde_json::to_vec(stored)?)?;
-    file.persist(path)?;
+    if replace {
+        file.persist(path)?;
+    } else {
+        file.persist_noclobber(path)?;
+    }
     Ok(())
 }
 
@@ -191,6 +220,23 @@ mod tests {
             assert!(!identity.first_run);
             assert_eq!(identity.previous_version, NONE);
         }
+    }
+
+    #[test]
+    fn first_runs_at_the_same_moment_keep_one_install_id() {
+        let home = tempfile::tempdir().unwrap();
+        let directory = home.path().join("nemoclaw");
+        let runs: Vec<Identity> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| scope.spawn(|| load(Some(&directory), "1.0.0")))
+                .collect();
+            handles.into_iter().map(|run| run.join().unwrap()).collect()
+        });
+        let stored = read(&directory.join(FILE)).unwrap().unwrap();
+        for run in &runs {
+            assert_eq!(run.install_id, stored.install_id);
+        }
+        assert_eq!(runs.iter().filter(|run| run.first_run).count(), 1);
     }
 
     #[test]

@@ -202,32 +202,58 @@ mod tests {
         (listener, url)
     }
 
+    /// Reads the headers, then the body to its declared length.
+    async fn read_request(stream: &mut tokio::net::TcpStream) -> (String, serde_json::Value) {
+        let mut request = Vec::new();
+        let mut buffer = [0u8; 8192];
+        let mut read = async |request: &mut Vec<u8>| {
+            let count = stream.read(&mut buffer).await.unwrap();
+            assert!(count > 0, "the connection closed early");
+            request.extend_from_slice(&buffer[..count]);
+        };
+        let end = loop {
+            if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                break end + 4;
+            }
+            read(&mut request).await;
+        };
+        let head = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+        let length: usize = head
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .expect("a content length")
+            .trim()
+            .parse()
+            .unwrap();
+        while request.len() < end + length {
+            read(&mut request).await;
+        }
+        let body = serde_json::from_slice(&request[end..end + length]).unwrap();
+        (head, body)
+    }
+
     #[tokio::test]
     async fn posts_one_record_to_a_local_receiver() {
         let (listener, url) = receiver().await;
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            let mut buffer = [0u8; 8192];
-            while !String::from_utf8_lossy(&request).contains("\"events\"") {
-                let read = stream.read(&mut buffer).await.unwrap();
-                request.extend_from_slice(&buffer[..read]);
-            }
+            let request = tokio::time::timeout(Duration::from_secs(5), read_request(&mut stream))
+                .await
+                .expect("the whole request arrives");
             let _ = stream
                 .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
                 .await;
-            String::from_utf8_lossy(&request).into_owned()
+            request
         });
         let posted = post(endpoint(Some(&url)).unwrap(), envelope(&sample(), "now")).await;
-        let request = server.await.unwrap();
+        let (head, body) = server.await.unwrap();
         assert!(posted.is_ok());
-        assert!(request.starts_with("POST /v1.1/events/json"), "{request}");
-        assert!(
-            request
-                .to_ascii_lowercase()
-                .contains("x-event-protocol: 1.6")
+        assert!(head.starts_with("post /v1.1/events/json"), "{head}");
+        assert!(head.contains("x-event-protocol: 1.6"), "{head}");
+        assert_eq!(
+            body["events"][0]["parameters"]["installId"],
+            "0f8fad5b-d9cb-469f-a165-70867728950e"
         );
-        assert!(request.contains(r#""installId":"0f8fad5b-d9cb-469f-a165-70867728950e""#));
     }
 
     #[tokio::test]
