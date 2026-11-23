@@ -609,6 +609,7 @@ export function reduceOpenClawToolEvidence(
       // Native persistence can replace the entire prompt with a redaction marker.
       // An unobservable latest context also invalidates an earlier observation.
       if (
+        data === null ||
         typeof prompt !== "string" ||
         prompt === "[Oversized diagnostic JSON redacted]" ||
         prompt === "[Malformed diagnostic JSON redacted]" ||
