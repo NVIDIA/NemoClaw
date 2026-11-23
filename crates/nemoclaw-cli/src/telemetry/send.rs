@@ -56,7 +56,8 @@ async fn post(endpoint: Url, body: Value) -> Result<(), reqwest::Error> {
     let mut client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(TIMEOUT);
-    // A proxy would take loopback traffic off the machine.
+    // A proxy would take loopback traffic off the machine. The real collector
+    // must stay behind the standard proxy settings: the exit-guard tests rely on it.
     if endpoint.scheme() == "http" {
         client = client.no_proxy();
     }
