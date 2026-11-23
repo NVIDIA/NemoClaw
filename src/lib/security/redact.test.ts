@@ -49,7 +49,7 @@ describe("redactFullWithUrls", () => {
 
   it.each(
     ["passphrase", "SSH_PASSPHRASE", "sshPassphrase"].flatMap((key) =>
-      ["=", ": ", " "].map((separator) => [key, separator]),
+      ["=", ": ", " ", " = ", " : "].map((separator) => [key, separator]),
     ),
   )("redacts complete unquoted %s values separated by %s", (key, separator) => {
     const input = `${key}${separator}correct horse battery staple\nnext diagnostic`;
@@ -58,6 +58,20 @@ describe("redactFullWithUrls", () => {
     expect(redactFullWithUrls(input)).toBe(expected);
     expect(redactFullWithUrls(expected)).toBe(expected);
   });
+
+  it.each(
+    ["passphrase", "SSH_PASSPHRASE", "sshPassphrase"].flatMap((key) =>
+      [" = ", " : "].flatMap((separator) => ["'", '"'].map((quote) => [key, separator, quote])),
+    ),
+  )(
+    "preserves diagnostics after quoted %s assignments with separator %s and quote %s",
+    (key, separator, quote) => {
+      const input = `${key}${separator}${quote}synthetic multiword phrase${quote} safe diagnostic`;
+      const expected = `${key}${separator}${quote}<REDACTED>${quote} safe diagnostic`;
+      expect(redactFull(input)).toBe(expected);
+      expect(redactFullWithUrls(input)).toBe(expected);
+    },
+  );
 });
 
 describe("redact", () => {

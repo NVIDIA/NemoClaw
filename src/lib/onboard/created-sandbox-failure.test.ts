@@ -410,6 +410,15 @@ describe("unconfirmed create reporting (#14323)", () => {
     );
   });
 
+  it.each(["\u200b", "\u202e", "\u2028", "\u2029"])(
+    "removes Unicode display control %j before redacting credential names",
+    (control) => {
+      expect(
+        formatCreateOutputTail(`pass${control}phrase=opaquePhraseValue\nsafe diagnostic`),
+      ).toBe("passphrase=<REDACTED>\nsafe diagnostic");
+    },
+  );
+
   it("retains no words of an unquoted passphrase", () => {
     expect(
       formatCreateOutputTail("passphrase: correct horse battery staple\nnext diagnostic"),

@@ -46,7 +46,7 @@ export function formatCreateOutputTail(output: string | null | undefined): strin
   if (!output) return null;
   // Normalize display controls before redaction so they cannot split credential names.
   const visibleOutput = stripVTControlCharacters(output).replace(
-    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu,
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]/gu,
     "",
   );
   const lines = redactFullWithUrls(visibleOutput)

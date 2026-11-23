@@ -26,6 +26,7 @@ export type DestroyHarness = {
   cleanupGatewaySpy: MockInstance;
   captureOpenshellSpy: MockInstance;
   getActiveSandboxSessionsSpy: MockInstance;
+  getLatestBackupSpy: MockInstance;
   compareAndSwapSessionSpy: MockInstance;
   destroySandbox: DestroySandbox;
   prepareSandboxDestroy: typeof import("../../src/lib/actions/sandbox/destroy-preflight").prepareSandboxDestroy;
@@ -286,6 +287,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     "../../state/mcp-lifecycle-lock.js",
   ) as typeof import("../../src/lib/state/mcp-lifecycle-lock");
   const registry = requireSource("../../state/registry.js");
+  const sandboxState = requireSource(
+    "../../state/sandbox.js",
+  ) as typeof import("../../src/lib/state/sandbox");
+  const getLatestBackupSpy = vi.spyOn(sandboxState, "getLatestBackup").mockReturnValue(null);
   const removedImmutabilityMigration = requireSource(
     "../../state/migrations/removed-immutability.js",
   );
@@ -787,6 +792,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     cleanupGatewaySpy,
     captureOpenshellSpy,
     getActiveSandboxSessionsSpy,
+    getLatestBackupSpy,
     compareAndSwapSessionSpy,
     dockerCaptureSpy,
     dockerRunSpy,

@@ -908,10 +908,42 @@ describe("destroySandbox retained recovery flow", () => {
     },
   );
 
-  it(
-    "refuses destroy when observed Docker identity matches multiple retained records (#10547)",
+  const backupPath = "/tmp/rebuild-backups/alpha/2026-11-23";
+  it.each([
+    {
+      backupState: "present",
+      lookup: () => ({
+        version: 2,
+        sandboxName: "alpha",
+        timestamp: "2026-11-23T00:00:00.000Z",
+        agentType: "openclaw",
+        agentVersion: null,
+        expectedVersion: null,
+        nativeState: { root: "/sandbox", archive: "native-home.tar", sha256: "a".repeat(64) },
+        backupPath,
+        blueprintDigest: null,
+        backupComplete: true,
+      }),
+      expectedMessage: `  Latest backup found at: ${backupPath} (native-home.tar should hold the agent home and workspace). NemoClaw has not checked that the archive is intact. Copy the directory somewhere safe and verify it before any manual cleanup.`,
+    },
+    {
+      backupState: "absent",
+      lookup: () => null,
+      expectedMessage:
+        "  No complete backup was found for 'alpha' under the NemoClaw rebuild-backups directory.",
+    },
+    {
+      backupState: "unreadable",
+      lookup: () => {
+        throw new Error("permission denied");
+      },
+      expectedMessage:
+        "  NemoClaw could not read the rebuild-backups directory for 'alpha', so it cannot say whether a backup exists. Check the directory permissions before any manual cleanup.",
+    },
+  ])(
+    "refuses ambiguous retained recovery and reports the $backupState backup state (#10547, #14323)",
     { timeout: 30_000 },
-    async () => {
+    async ({ lookup, expectedMessage }) => {
       const firstRecovery = retainedRecoveryRecord();
       const secondRecovery = {
         ...firstRecovery,
@@ -927,6 +959,7 @@ describe("destroySandbox retained recovery flow", () => {
         },
         retainedRecoveryRecords: [firstRecovery, secondRecovery],
       });
+      harness.getLatestBackupSpy.mockImplementation(lookup);
 
       await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
         "process.exit(1)",
@@ -935,13 +968,17 @@ describe("destroySandbox retained recovery flow", () => {
       expect(harness.errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("could not select exactly one recovery record"),
       );
-      // The refusal must say where the user's backup is (or that none exists), #14323.
-      expect(harness.errorSpy).toHaveBeenCalledWith(expect.stringMatching(/backup/i));
+      expect(harness.getLatestBackupSpy).toHaveBeenCalledWith("alpha");
+      const backupMessages = harness.errorSpy.mock.calls
+        .map(([message]) => String(message))
+        .filter((message) => /backup/i.test(message));
+      expect(backupMessages).toEqual([expectedMessage]);
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
         expect.anything(),
       );
       expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     },
   );
 });
