@@ -353,6 +353,8 @@ impl State {
                 .collect();
             let driver_config = spec.template.as_ref().and_then(|template| template.driver_config.as_ref())
                 .map(openshell_core::proto_struct::struct_to_json_value);
+            let resources = spec.template.as_ref().and_then(|template| template.resources.as_ref())
+                .map(openshell_core::proto_struct::struct_to_json_value);
             let middlewares: BTreeMap<_, _> = spec.policy.iter()
                 .flat_map(|policy| &policy.network_middlewares)
                 .map(|(key, entry)| {
@@ -365,7 +367,7 @@ impl State {
                 .collect();
             json!({"id": meta.id, "name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
                 "providers": spec.providers, "command": spec.command, "policy_endpoints": endpoints,
-                "policy_middlewares": middlewares, "driver_config": driver_config,
+                "policy_middlewares": middlewares, "driver_config": driver_config, "resources": resources,
                 "gpu_count": spec.resource_requirements.and_then(|resources| resources.gpu).map(|gpu| gpu.count.unwrap_or(1))})
         }).collect();
         let profiles: BTreeMap<_, _> = self
@@ -1665,10 +1667,10 @@ pub fn contract_rows(
         .unwrap_or_default()
         .to_owned();
     let mut rows = Vec::new();
-    // Inference and web search resources expand to the profile and
-    // registration they own; registrations follow every profile.
+    // Inference and API resources expand to the profile and registration
+    // they own; registrations follow every profile.
     let mut registrations = Vec::new();
-    for kind in ["workspace", "inference", "web_search", "sandbox"] {
+    for kind in ["workspace", "inference", "api", "sandbox"] {
         if kind == "sandbox" {
             rows.append(&mut registrations);
         }
@@ -1753,7 +1755,7 @@ pub fn contract_rows(
             }
             let pair = match kind {
                 "inference" => nemoclaw_openshell::pairs::inference_rows(&row),
-                "web_search" => nemoclaw_openshell::pairs::web_search_rows(&row),
+                "api" => Some(nemoclaw_openshell::pairs::api_rows(&row)),
                 _ => {
                     rows.push((kind, row));
                     continue;

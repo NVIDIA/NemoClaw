@@ -3,6 +3,11 @@
 
 # NemoClaw
 
+> [!TIP]
+> :rocket: **New:** NemoClaw Agent Configs — the next evolution of NemoClaw, with a simpler, more flexible way to configure and run agents. All new development will focus on Agent Configs, and we recommend it for new projects. [Explore Agent Configs](docs/about/overview.md) and [follow the first-deployment tutorial](docs/get-started/first-deployment.md) to get started.
+>
+> Already using NemoClaw? [The existing experience](https://github.com/NVIDIA/NemoClaw/tree/main) remains available. Review the [migration guide](docs/get-started/migration.md) for compatibility details and instructions for moving your existing NemoClaw setup to Agent Configs.
+
 ## NemoClaw Agent Configs
 
 Configure and deploy sandboxed AI agents from a YAML file.
@@ -40,8 +45,6 @@ Support depends on the selected agent, image, model, and platform.
 Check [current limits](docs/resources/limits.md) before choosing a configuration.
 [Out of Scope](docs/resources/out-of-scope.md) explains what Agent Configs leaves to other components by design.
 
-**Coming from NemoClaw Classic?** Use the [migration guide](docs/get-started/migration.md) to assess your workflows and evaluate a separate deployment while keeping your existing setup available.
-
 ### Watching a Deployment
 
 [![Watch NemoClaw plan, apply, and destroy a deployment with verbose output](docs/assets/terminal-lifecycle-verbose.png)](docs/assets/terminal-lifecycle-verbose.mp4)
@@ -53,7 +56,7 @@ Images are cached; no inference requests are sent, and only the plan-review paus
 
 - [Understand NemoClaw](docs/about/overview.md).
 - [Get started with NemoClaw Agent Configs](docs/get-started/first-deployment.md).
-- [Build a native bundle](docs/build-deploy/build.md).
+- [Build NemoClaw from source](docs/build-deploy/build.md) until the first release, or to build a revision that has no release.
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).

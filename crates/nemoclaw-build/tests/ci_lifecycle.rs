@@ -159,6 +159,15 @@ exit "${CARGO_RESULT:-0}"
             .env_remove("GITHUB_ENV")
             .env_remove("GITHUB_PATH")
             .env_remove("GITHUB_STEP_SUMMARY");
+        // A CI run's numbered version needs the checkout's history.
+        for name in [
+            "GITHUB_REPOSITORY",
+            "GITHUB_WORKFLOW_REF",
+            "GITHUB_RUN_NUMBER",
+            "GITHUB_RUN_ATTEMPT",
+        ] {
+            command.env_remove(name);
+        }
         command
     }
 
@@ -393,6 +402,39 @@ fn lifecycle_partition_reaches_nextest_without_changing_the_selected_suite() {
     assert_eq!(inputs[1..3], ["unset", "unset"]);
 }
 
+/// CI runs the unit tests in partitions on separate runners. Each partition
+/// gives nextest its slice; the doctests, which nextest doesn't run, run once,
+/// with the first partition.
+#[test]
+fn unit_test_partitions_reach_nextest_and_only_the_first_runs_the_doctests() {
+    for (partition, doctests) in [("slice:1/2", true), ("slice:2/2", false)] {
+        let fixture = Fixture::new();
+        let output = fixture.run(&["test", "--partition", partition]);
+        assert!(
+            output.status.success(),
+            "{partition}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let invocations = fixture.invocations();
+        let nextest = invocations
+            .iter()
+            .find(|call| call.starts_with("nextest\nrun\n"))
+            .unwrap_or_else(|| panic!("{partition}: no nextest run in {invocations:?}"));
+        assert!(
+            nextest.contains(&format!("--partition\n{partition}\n")),
+            "{nextest}"
+        );
+        assert!(nextest.contains("--profile\nci\n"), "{nextest}");
+        assert_eq!(
+            invocations
+                .iter()
+                .any(|call| call.starts_with("test\n") && call.contains("--doc\n")),
+            doctests,
+            "{partition}: {invocations:?}"
+        );
+    }
+}
+
 /// Tests started from another package find the fixture executables in the
 /// directory the runner names, where Cargo leaves a build's executables.
 #[test]
@@ -476,14 +518,13 @@ fn archived_lifecycle_uses_the_checkout_without_building_again() {
 
 #[test]
 fn lifecycle_options_cannot_silently_narrow_default_or_other_ci_steps() {
-    let partition = "--partition requires ci contract or integration";
+    let partition = "--partition requires ci test, contract, or integration";
     let archive = "--archive-file requires ci contract, integration, live-docker, or live-kind";
     let images = "--images requires ci live-docker or live-kind";
     for (args, expected) in [
         (vec!["integration", "--images", "images.tar.zst"], images),
         (vec!["--images", "images.tar.zst"], images),
         (vec!["--partition", "hash:1/2"], partition),
-        (vec!["test", "--partition", "hash:1/2"], partition),
         (vec!["live-docker", "--partition", "hash:1/2"], partition),
         (vec!["fmt", "--archive-file", "tests.tar.zst"], archive),
         (vec!["--archive-file", "tests.tar.zst"], archive),
@@ -712,46 +753,62 @@ fn live_images_also_save_the_agent_image_alone() {
     );
 }
 
-/// CI saves the live images' layers on v1 only; every build imports them.
-#[test]
-fn live_images_import_cached_layers_and_save_them_only_when_ci_asks() {
-    for save in [None, Some("false"), Some("true")] {
-        let fixture = Fixture::new();
-        fixture.fake_container_tools();
-        fixture.seed_image_sources();
-        let mut command = fixture.command(&["live-images"]);
-        command.env_remove("NEMOCLAW_SAVE_GHA_CACHE");
-        if let Some(save) = save {
-            command.env("NEMOCLAW_SAVE_GHA_CACHE", save);
-        }
-        let output = command.output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let log = fixture.docker_log();
-        for name in ["openclaw", "hermes", "dummy"] {
-            let builds: Vec<&str> = log
-                .lines()
-                .filter(|line| line.starts_with(&format!("buildx bake {name} ")))
-                .collect();
-            assert_eq!(builds.len(), 2, "{log}");
-            let scope = format!("type=gha,scope=live-images-{name}-arm64");
-            for build in &builds {
-                assert!(
-                    build.contains(&format!("{name}.cache-from={scope}")),
-                    "{build}"
-                );
-            }
-            assert_eq!(
-                builds[1].contains(&format!("{name}.cache-to={scope},")),
-                save == Some("true"),
-                "NEMOCLAW_SAVE_GHA_CACHE={save:?}: {}",
-                builds[1]
+/// Builds the live images with `NEMOCLAW_SAVE_GHA_CACHE` set to `save`, or
+/// unset, and checks that every build imports the cached layers and that the
+/// second build saves them only when CI asks.
+fn assert_live_images_cache(save: Option<&str>) {
+    let fixture = Fixture::new();
+    fixture.fake_container_tools();
+    fixture.seed_image_sources();
+    let mut command = fixture.command(&["live-images"]);
+    command.env_remove("NEMOCLAW_SAVE_GHA_CACHE");
+    if let Some(save) = save {
+        command.env("NEMOCLAW_SAVE_GHA_CACHE", save);
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = fixture.docker_log();
+    for name in ["openclaw", "hermes", "dummy"] {
+        let builds: Vec<&str> = log
+            .lines()
+            .filter(|line| line.starts_with(&format!("buildx bake {name} ")))
+            .collect();
+        assert_eq!(builds.len(), 2, "{log}");
+        let scope = format!("type=gha,scope=live-images-{name}-arm64");
+        for build in &builds {
+            assert!(
+                build.contains(&format!("{name}.cache-from={scope}")),
+                "{build}"
             );
         }
+        assert_eq!(
+            builds[1].contains(&format!("{name}.cache-to={scope},")),
+            save == Some("true"),
+            "NEMOCLAW_SAVE_GHA_CACHE={save:?}: {}",
+            builds[1]
+        );
     }
+}
+
+// CI saves the live images' layers on v1 only; every build imports them. One
+// test per setting keeps each within the unit test budget.
+#[test]
+fn live_images_import_cached_layers_without_saving_them_by_default() {
+    assert_live_images_cache(None);
+}
+
+#[test]
+fn live_images_import_cached_layers_without_saving_them_when_ci_declines() {
+    assert_live_images_cache(Some("false"));
+}
+
+#[test]
+fn live_images_import_cached_layers_and_save_them_when_ci_asks() {
+    assert_live_images_cache(Some("true"));
 }
 
 #[test]
@@ -784,39 +841,55 @@ fn live_images_report_each_build_duration() {
     }
 }
 
-#[test]
-fn live_images_report_failed_build_duration_and_stop() {
-    let images = ["openclaw", "hermes", "dummy"];
-    for (index, image) in images.iter().enumerate() {
-        let fixture = Fixture::new();
-        fixture.fake_container_tools();
-        fixture.seed_image_sources();
-        let output = fixture
-            .command(&["live-images"])
-            .env("DOCKER_FAIL_IMAGE", image)
-            .output()
-            .unwrap();
-        let report = String::from_utf8_lossy(&output.stderr);
-        assert!(!output.status.success(), "{report}");
-        let failure = format!("Failed to build live image nc-live-images:{image} after ");
-        let duration = report
-            .lines()
-            .find_map(|line| line.strip_prefix(&failure))
-            .unwrap_or_else(|| panic!("missing failed duration: {report}"));
-        let seconds: f64 = duration.strip_suffix('s').unwrap().parse().unwrap();
-        assert!(seconds.is_finite() && seconds >= 0.0, "{report}");
+const LIVE_IMAGES: [&str; 3] = ["openclaw", "hermes", "dummy"];
+
+/// Fails the build of `LIVE_IMAGES[index]` and checks that the report gives
+/// its duration and that no later image starts.
+fn assert_failed_live_image_build_stops(index: usize) {
+    let image = LIVE_IMAGES[index];
+    let fixture = Fixture::new();
+    fixture.fake_container_tools();
+    fixture.seed_image_sources();
+    let output = fixture
+        .command(&["live-images"])
+        .env("DOCKER_FAIL_IMAGE", image)
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{report}");
+    let failure = format!("Failed to build live image nc-live-images:{image} after ");
+    let duration = report
+        .lines()
+        .find_map(|line| line.strip_prefix(&failure))
+        .unwrap_or_else(|| panic!("missing failed duration: {report}"));
+    let seconds: f64 = duration.strip_suffix('s').unwrap().parse().unwrap();
+    assert!(seconds.is_finite() && seconds >= 0.0, "{report}");
+    assert!(
+        !report.contains(&format!("Built live image nc-live-images:{image} in ")),
+        "{report}"
+    );
+    for later in &LIVE_IMAGES[index + 1..] {
         assert!(
-            !report.contains(&format!("Built live image nc-live-images:{image} in ")),
+            !report.contains(&format!("Building live image nc-live-images:{later}")),
             "{report}"
         );
-        for later in &images[index + 1..] {
-            assert!(
-                !report.contains(&format!("Building live image nc-live-images:{later}")),
-                "{report}"
-            );
-        }
-        assert!(!fixture.0.path().join("containerd.log").exists());
     }
+    assert!(!fixture.0.path().join("containerd.log").exists());
+}
+
+#[test]
+fn live_images_report_a_failed_first_build_and_stop() {
+    assert_failed_live_image_build_stops(0);
+}
+
+#[test]
+fn live_images_report_a_failed_middle_build_and_stop() {
+    assert_failed_live_image_build_stops(1);
+}
+
+#[test]
+fn live_images_report_a_failed_last_build() {
+    assert_failed_live_image_build_stops(2);
 }
 
 #[test]
@@ -938,7 +1011,12 @@ fn bundle_executables_compile_only_those_with_the_whole_bundles_features() {
     let version = fs::read_to_string(fixture.0.path().join("bundle-version-env")).unwrap();
     assert!(
         version.starts_with("0.1.0-dev."),
-        "an untagged part names the sources' version: {version}"
+        "a local part names the sources' version: {version}"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.0.path().join("target/bundle-version")).unwrap(),
+        version.trim_end(),
+        "the part records the version it compiled for the assembly"
     );
 }
 

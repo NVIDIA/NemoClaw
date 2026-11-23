@@ -164,6 +164,8 @@ mod network_references;
 mod observability;
 #[path = "ollama_proxy.rs"]
 mod ollama_proxy;
+#[path = "plan_credentials.rs"]
+mod plan_credentials;
 #[path = "provider_references.rs"]
 mod provider_references;
 #[path = "reference_combinations.rs"]

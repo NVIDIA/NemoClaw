@@ -26,12 +26,12 @@ Until every package exists, `v1` pushes skip pushing images with a warning, and 
 
 ## Staging From a Tag
 
-Push a semver tag on a `v1` commit, starting with `v0.1.0-rc1`; the `v1` branch ships 0.1 releases.
+Push a semver tag on a `v1` commit, starting with `v0.1.0-rc.1`; the `v1` branch ships 0.1 releases.
 Version tags are permanent: a repository rule forbids deleting them.
 
 ```sh
-git tag v0.1.0-rc1 <commit>
-git push origin v0.1.0-rc1
+git tag v0.1.0-rc.1 <commit>
+git push origin v0.1.0-rc.1
 ```
 
 The [staging workflow](../../.github/workflows/release.yml):
@@ -39,7 +39,7 @@ The [staging workflow](../../.github/workflows/release.yml):
 1. Finds the latest commit in the tag's `v1` history with per-commit images, and checks with `nemoclaw-build changes images` that nothing since could change them; otherwise it builds and checks the images at the tag.
 2. Builds the vLLM, Ollama, and llama.cpp runtime images on each native platform; their builds are reproducible.
 3. Joins each image's ARM64 and AMD64 images into one index at `ghcr.io/nvidia/nemoclaw/v1/<image>:<tag>`, without rebuilding.
-4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the [CLI bundles](#cli-bundles), their [evidence record](#evidence-record), and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
+4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the [CLI bundles](#cli-bundles), their [evidence record](#evidence-record), the [version pins](#version-pins), and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
 
 Only users with push access see a draft release, and the `v1` packages stay internal.
 
@@ -52,16 +52,24 @@ CI / Images still builds, checks, and pushes it to `v1-ci` with the other agent 
 Pushing the tag also starts [CI / Bundle](../../.github/workflows/rust.yml) at the tag, and staging waits for it.
 Staging attaches each platform's bundle as the latest push or manual run of CI / Bundle at the tag built and checked it, without rebuilding: `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, `darwin_arm64`, and `windows_amd64`, which extracts to `dist/<platform>`.
 `SHA256SUMS` lists their SHA-256 checksums.
-A bundle built from a clean checkout of a version tag reports the tag without its `v` as its version, in `nemoclaw --version` and its `manifest.json`, so the bundles of a run at the same commit without the tag don't count.
-Any other bundle reports `0.1.0-dev.<hash>`, where the hash names its source files.
+Each bundle reports its version in `nemoclaw --version` and its `manifest.json`:
+
+- Every attempt of CI / Bundle's run for the push of a tag `vX.Y.Z` or `vX.Y.Z-rc.N`, at a clean checkout of the tag, reports the tag without its `v`.
+- Any other CI / Bundle run in NVIDIA/NemoClaw reports `X.Y.Z-<run>`, or `X.Y.Z-rc.N.<run>` after `vX.Y.Z-rc.N`, with `.<attempt>` from its second attempt, so no two of its builds share a version.
+- A local build, or a fork's, reports `X.Y.Z-dev.<hash>`, where the hash names its source files.
+
+`X.Y.Z` is the higher of the `Cargo.toml` workspace version and the patch after the highest release tag that the commit reaches; raise `Cargo.toml` to plan a minor or major release.
+Only `rc.N` release candidate tags count, not tags such as `v0.1.0-rc1`.
+Under semver comparison, a version's run-numbered builds sort before its source builds, which sort before its release candidates, and each candidate's builds sort after it.
 Until [signing](#signing) is configured, the executables are neither signed nor notarized ([#14621](https://github.com/NVIDIA/NemoClaw/issues/14621)).
 
-If CI / Bundle fails at the tag, staging fails before it pushes release images or drafts the release; rerun the failed jobs, then the staging workflow.
+Staging takes the bundles only from CI / Bundle's run for the tag's push, whose attempts all report the tag; a manual run at the tag numbers its bundles.
+If that run fails, staging fails before it pushes release images or drafts the release; rerun the failed jobs, then the staging workflow.
 CI keeps a run's bundles for 7 days; after that, staging names the missing platforms.
-Run CI / Bundle at the tag again, and rerun the staging workflow once it passes:
+Rerun all of the push run's jobs, which GitHub allows for 30 days, and rerun the staging workflow once it passes:
 
 ```sh
-gh workflow run rust.yml --ref v0.1.0-rc1
+gh run rerun <run-id>
 ```
 
 ### Signing
@@ -72,7 +80,7 @@ A job's `if:` can't read an environment's variables, so the repository variable 
 | Platform | Signing job |
 |---|---|
 | `windows_amd64` | Signs the programs the [inventory](#program-inventory) assigns to NVIDIA on Windows through Azure Artifact Signing, and checks them and the Helm provider's HashiCorp signature with `signtool verify /pa /all /tw`. Needs the environment's `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_ARTIFACT_SIGNING_ENDPOINT`, `AZURE_ARTIFACT_SIGNING_ACCOUNT`, and `AZURE_ARTIFACT_SIGNING_PROFILE` variables. |
-| `darwin_arm64` | Checks that every program is notarized and signed as the [inventory](#program-inventory) assigns: by the Apple team in the environment's `APPLE_TEAM_ID` variable, or by HashiCorp's team `D38WU7D763` for the Helm provider. It doesn't sign yet, so listing `darwin_arm64` stops staging until the signing step lands. |
+| `darwin_arm64` | Signs the programs the [inventory](#program-inventory) assigns to NVIDIA through 3S, each with its own identifier, `com.nvidia.nemoclaw.<program>`, without a provider's `_v<version>` suffix. When the `MACOS_NOTARIZATION` repository variable is `true`, notarizes them with the environment's `APPLE_NOTARY_ID` and `APPLE_NOTARY_PASSWORD` secrets: an Apple ID on the team in `APPLE_TEAM_ID` and its app-specific password. Checks that every program is signed as the inventory assigns, by the Apple team in `APPLE_TEAM_ID` with that identifier or by HashiCorp's team `D38WU7D763` for the Helm provider, and notarized when notarization is on. The 3S job runs outside the environment, so its Vault identity stays bound to the tag. |
 
 Staging puts the signed executables in their bundles with the bundles' file modes, records their new hashes in `manifest.json` with `nemoclaw-build reseal`, and then writes `SHA256SUMS`.
 When a listed platform's signing job fails, staging stops before it drafts the release.
@@ -126,6 +134,14 @@ On Windows, SmartScreen doesn't check programs that another program starts, so O
 
 [`signing-inventory.sh`](../../.github/scripts/signing-inventory.sh) holds this decision: both signing jobs and the evidence record select programs through it, and it fails on a program it doesn't classify, so a new program needs a decision before it can ship.
 
+## Version Pins
+
+Staging attaches `version-pins.json`, which `nemoclaw-build release-pins` writes from the tag's `versions.json` and the images staging pushed, in the format that [compatibility](../../docs/references/compatibility.md#using-one-release-together) describes.
+The command selects the components a deployment uses and leaves out what only builds and tests NemoClaw: Rust, Protocol Buffers, cargo-nextest, kind and its node image, and the OpenShell CLI.
+A component added to `versions.json` is listed only after `release-pins` selects it, and the command fails when a selected component is missing or isn't pinned by digest or checksum.
+
+Before it publishes a final release, the workflow writes the pins again with the trusted controller, from the tag's `versions.json` and the `inventory.json` that staging recorded, and fails when the draft's `version-pins.json` differs.
+
 ## Testing a Staged Release
 
 Use [image assessment](image-assessment.md) to evaluate the saved SPDX inventories.
@@ -137,7 +153,7 @@ Docker deployments pull private images through `spec.registries`; Kubernetes dep
 ## Publishing
 
 Push a final tag only from a commit whose release candidate has completed installer, onboarding, QA, and product sign-off; until then, the draft and packages stay private.
-The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the [security assessment](image-assessment.md#hosted-enforcement) passes, the registry digests are unchanged, and the [provenance](#verifying-provenance) of every image, CLI archive, and `SHA256SUMS` is attested.
+The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the draft's [version pins](#version-pins) match the tag and those images, the [security assessment](image-assessment.md#hosted-enforcement) passes, the registry digests are unchanged, and the [provenance](#verifying-provenance) of every image, CLI archive, and `SHA256SUMS` is attested.
 Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
 Publishing a draft by hand and package-administrator privileges bypass the workflow.
 An administrator handles package visibility changes; making a package public cannot be undone.

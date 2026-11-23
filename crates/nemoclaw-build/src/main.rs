@@ -48,6 +48,15 @@ enum Action {
         #[arg(long)]
         supported: PathBuf,
     },
+    /// Print the versions and digests that a deployment of the release uses.
+    ReleasePins {
+        #[arg(long)]
+        versions: PathBuf,
+        #[arg(long)]
+        inventory: PathBuf,
+        #[arg(long)]
+        tag: String,
+    },
     /// Validate the candidate's inert image catalog with the trusted controller.
     ReleaseCatalog {
         #[arg(long)]
@@ -127,7 +136,7 @@ enum Action {
         /// Print the selected steps and their plan as JSON without running checks.
         #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit", "hcl_cases"])]
         dry_run: bool,
-        /// Nextest partition for an explicitly selected contract or integration run (for example slice:1/2).
+        /// Nextest partition for an explicitly selected test, contract, or integration run (for example slice:1/2).
         #[arg(long)]
         partition: Option<String>,
         /// Run contract, integration, or live tests from a nextest archive instead of compiling them.
@@ -475,7 +484,22 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
     .await?;
     let source = nemoclaw_build::BUILDER_SOURCE_VERSION;
     nemoclaw_build::verify_source_version(source, &sources()?)?;
-    let version = nemoclaw_build::bundle_version(Path::new("."), source);
+    // Prebuilt parts carry the version compiled into their CLI, which a later
+    // attempt of the run that assembles them keeps.
+    let version = match fs::read_to_string(nemoclaw_build::BUNDLE_VERSION_FILE) {
+        Ok(recorded) if prebuilt => {
+            let recorded = recorded.trim().to_owned();
+            if recorded.is_empty()
+                || !recorded
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+            {
+                return Err(format!("invalid recorded bundle version {recorded:?}").into());
+            }
+            recorded
+        }
+        _ => nemoclaw_build::bundle_version(Path::new("."), source)?,
+    };
     let target = target(platform)?;
     if !prebuilt {
         build(&[], target, &version, &|_| {})?;
@@ -612,6 +636,17 @@ fn reseal(directory: &Path) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Action::ReleasePins {
+        versions,
+        inventory,
+        tag,
+    } = &cli.command
+    {
+        let pins =
+            nemoclaw_build::release_pins::pins(&fs::read(versions)?, &fs::read(inventory)?, tag)?;
+        println!("{pins}");
+        return Ok(());
+    }
     if let Action::ReleaseCatalog {
         catalog,
         candidate_revision,
@@ -889,8 +924,10 @@ async fn main() -> Result<()> {
                 .map(str::to_owned)
                 .collect()
         });
-        if partition.is_some() && !matches!(step.as_deref(), Some("contract" | "integration")) {
-            return Err("--partition requires ci contract or integration".into());
+        if partition.is_some()
+            && !matches!(step.as_deref(), Some("test" | "contract" | "integration"))
+        {
+            return Err("--partition requires ci test, contract, or integration".into());
         }
         if archive_file.is_some()
             && !matches!(
@@ -999,6 +1036,7 @@ async fn main() -> Result<()> {
         | Action::ReleaseGate(..)
         | Action::ReleaseVerifyPromotion { .. }
         | Action::ReleaseMonitorPlan { .. }
+        | Action::ReleasePins { .. }
         | Action::ReleaseCatalog { .. }
         | Action::ReleaseMonitorVerify { .. }
         | Action::ReleaseAssess { .. }

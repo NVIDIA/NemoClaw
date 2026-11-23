@@ -263,6 +263,26 @@ The request gives the sandbox's programs device access, not CUDA libraries.
 Provide those in the agent image or on a read-only [mounted volume](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes).
 Changing `gpus` replaces the sandbox and its agent, so keep files that must survive on mounted volumes.
 
+## CPU and Memory Limits
+
+`cpu` and `memory` set the limits OpenShell gives a sandbox, as quantities in OpenShell's `sandbox create --cpu` and `--memory` format:
+
+```yaml
+spec:
+  sandboxes:
+    assistant:
+      cpu: "2"
+      memory: 4Gi
+```
+
+Merge this fragment into a complete deployment configuration.
+CPU takes cores or millicores, such as `2`, `0.5`, or `500m`; memory takes a byte count or a quantity such as `512Mi`, `4Gi`, or `8G`.
+Quote a plain number, such as `"2"`, because both fields are strings.
+NemoClaw passes both to OpenShell unchanged, and OpenShell validates them.
+Docker and Podman apply each value as a runtime limit; Kubernetes applies it as both the container's request and its limit, so a node must have that much allocatable.
+Omitting a field sets no limit of that kind.
+Changing either one replaces the sandbox and its agent, because OpenShell can't resize a running sandbox, so keep files that must survive on [mounted volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes).
+
 ## Skills on a Mounted Volume
 
 Fabric passes the skills in `fabric_agent`'s `skills` block to the harness.
@@ -416,7 +436,7 @@ agent:
 Use `provider: tavily` for Tavily.
 The [web search example](../../examples/web-search.yaml) shows two agents sharing one definition.
 Set the referenced variable on the applying host through your secret-management mechanism.
-NemoClaw creates a workspace-scoped provider profile and credential-bearing provider in OpenShell.
+NemoClaw registers the search API as an [`openshell_api`](../references/provider.md#api-credentials) credential: a workspace-scoped provider profile and credential-bearing provider in OpenShell.
 The sandbox receives a placeholder, `BRAVE_API_KEY` or `TAVILY_API_KEY` even when the host reference has another name, and OpenShell substitutes the real key for authorized requests to the search API.
 Set `sandboxEnv` when the harness reads the key under another name.
 Hermes's Brave plugin, for example, reads `BRAVE_SEARCH_API_KEY`:
@@ -435,8 +455,8 @@ Destroy removes the owned provider and profile without revoking the upstream key
 Unchanged apply doesn't rotate a changed value behind an unchanged reference.
 Follow [credential retirement](../security/security.md#credentials-and-authentication) when replacing or revoking the key.
 
-The reserved `nemoclaw-brave` and `nemoclaw-tavily` policy rules permit the search API's paths for the harness's executables.
-Explicit policy can't reuse those names, and inference provider names can't use the reserved `brave-search` or `tavily-search` registration prefixes.
+The profile admits only the search requests the harness's executables make: Brave's `GET /res/v1/web/search`, or Tavily's `POST /search` and `POST /extract`.
+Inference provider and `api` integration names can't use the reserved `brave-search` or `tavily-search` registration prefixes.
 Unused definitions create no resources or credentials.
 
 OpenShell supplies the credential and the network grant.

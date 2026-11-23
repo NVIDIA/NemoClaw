@@ -16,10 +16,13 @@ pub mod hcl_cases;
 pub mod helm_provider;
 pub mod images;
 pub mod release_assessment;
+pub mod release_pins;
 #[cfg(feature = "sdk")]
 pub mod schema;
 mod source;
+mod version;
 pub use source::{SOURCE_ROOTS, hex, source_inputs, source_version};
+pub use version::{BUNDLE_VERSION_FILE, Run, build_kind, bundle_version, stamped_version};
 #[cfg(feature = "sdk")]
 pub const BUILDER_SOURCE_VERSION: &str = env!("NEMOCLAW_BUILD_SOURCE_VERSION");
 pub fn extract_tofu(bytes: &[u8], windows: bool) -> Result<Vec<u8>, String> {
@@ -59,29 +62,6 @@ fn extract_entry(bytes: &[u8], name: &str, limit: u64) -> Result<Vec<u8>, String
         return Err("incomplete archive entry".into());
     }
     Ok(output)
-}
-
-/// The version of a bundle built from the checkout at `root`: a clean checkout
-/// of a version tag such as `v0.1.0-rc12` reports `0.1.0-rc12`, so a release
-/// reports its tag, and any other checkout reports `dev`, which names its
-/// sources.
-pub fn bundle_version(root: &std::path::Path, dev: &str) -> String {
-    let described = std::process::Command::new("git")
-        .current_dir(root)
-        .args(["describe", "--tags", "--exact-match", "--dirty"])
-        .args(["--match", "v[0-9]*.[0-9]*.[0-9]*"])
-        .stderr(std::process::Stdio::null())
-        .output();
-    let Ok(described) = described else {
-        return dev.into();
-    };
-    let tag = String::from_utf8_lossy(&described.stdout);
-    match tag.trim().strip_prefix('v') {
-        Some(version) if described.status.success() && !version.ends_with("-dirty") => {
-            version.into()
-        }
-        _ => dev.into(),
-    }
 }
 
 pub fn verify_source_version(expected: &str, files: &[(String, Vec<u8>)]) -> Result<(), String> {

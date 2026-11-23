@@ -502,7 +502,7 @@ fn reconstructible_recreation_uses_opentofu_state_after_refresh_only() {
 
 #[test]
 fn reconstructible_resources_support_removal_replacement_and_confirmed_absence() {
-    for kind in ["inference", "web_search", "agent"] {
+    for kind in ["inference", "api", "agent"] {
         let address = format!("{}.example", crate::compile::resource_type(kind));
         let expected = [(address.clone(), Row::new())].into();
         let bindings = [(
@@ -575,7 +575,7 @@ fn reconstructible_resource_plans_keep_scope_without_rechecking_provider_identit
 fn teardown_delegates_reconstructible_and_disposable_recovery_to_opentofu() {
     for address in [
         "openshell_inference.example",
-        "openshell_web_search.example",
+        "openshell_api.example",
         "fabric_agent.example",
         "docker_container.runtime",
     ] {
@@ -1816,4 +1816,43 @@ fn an_existing_issuers_token_reaches_gateway_only_runs() {
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let environment = gateway_environment(&document, &OidcValues, Path::new("state")).unwrap();
     assert_eq!(environment["OIDC_TOKEN"], "test-OIDC_TOKEN");
+}
+
+/// Plan passes OpenTofu exactly the references `plan_credential_names`
+/// lists, for every example: a credential that only apply reads, including a
+/// kind added later, never becomes one plan requires.
+#[test]
+fn plan_passes_opentofu_only_the_references_plan_reads() {
+    fn yaml_files(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                yaml_files(&path, files);
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension == "yaml")
+            {
+                files.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    yaml_files(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples"),
+        &mut files,
+    );
+    let mut deferred = 0;
+    for path in files {
+        let document = Document::parse(std::fs::File::open(&path).unwrap()).unwrap();
+        let passed = super::opentofu::plan_environment(&document);
+        assert_eq!(
+            passed.credential_names(),
+            document.plan_credential_names(),
+            "{}",
+            path.display()
+        );
+        deferred += document.credential_names().len() - document.plan_credential_names().len();
+    }
+    // Some example names a credential that only apply reads.
+    assert!(deferred > 0);
 }

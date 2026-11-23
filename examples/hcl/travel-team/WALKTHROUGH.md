@@ -126,11 +126,11 @@ This registers the local model once it's ready, so the sandboxes that attach it,
 `openshell_inference.frontier` registers the hosted model the same way. During apply, NemoClaw's OpenTofu provider reads the key from the environment variable named in `credential_env` and sends it to OpenShell. The key stays out of OpenTofu state.
 
 ```hcl
-sandbox_env = var.search.provider == "brave" ? "BRAVE_SEARCH_API_KEY" : null
+sandbox_env = var.search.provider == "brave" ? "BRAVE_SEARCH_API_KEY" : "TAVILY_API_KEY"
 ```
 
-One web search registration, which only researchers attach.
-Inside a sandbox, an agent finds a provider's key in a variable OpenShell sets; Hermes's Brave plugin reads `BRAVE_SEARCH_API_KEY`, so the registration names that variable instead of the default `BRAVE_API_KEY`.
+One web search registration, which only researchers attach: an `openshell_api` with the search service's host and key header, whose `rest` rules admit only the search requests.
+Inside a sandbox, an agent finds a provider's key in a variable OpenShell sets; Hermes's Brave plugin reads `BRAVE_SEARCH_API_KEY`, so the registration names that variable.
 
 The buyer alone attaches `openshell_api.bookings`.
 The registration holds the credential. Its profile carries the `mcp` block's rules for setup, tool listing, and calls to `var.bookings.tools`.
@@ -220,7 +220,7 @@ This holds each agent's configuration, so the sandbox can be replaced when it ch
 ```hcl
 providers = concat(
   [each.value.model == "local" ? openshell_inference.local.ref : openshell_inference.frontier.ref],
-  each.value.search ? [openshell_web_search.research.ref] : [],
+  each.value.search ? [openshell_api.research.ref] : [],
   each.key == "buyer" ? [openshell_api.bookings.ref] : [],
 )
 ```

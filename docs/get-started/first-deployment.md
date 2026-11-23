@@ -5,7 +5,7 @@
 
 In this tutorial, you configure one OpenClaw sandbox with an existing NVIDIA OpenShell gateway and inference endpoint.
 You then plan the deployment, apply it, and send one request to the agent.
-The commands use the v1 source-built tools and the [OpenClaw example at implementation revision `1636069b91`](https://github.com/NVIDIA/NemoClaw/blob/1636069b91f402242a35714fde1011042c3f1f70/examples/openclaw.yaml), the `v0.1.0-rc12` tag's commit.
+The commands use the v1 source-built tools and the [OpenClaw example at implementation revision `1636069b91`](https://github.com/NVIDIA/NemoClaw/blob/1636069b91f402242a35714fde1011042c3f1f70/examples/openclaw.yaml).
 Keep the bundle and generated schema from the source revision used to build the image.
 A successful apply starts a runtime.
 Only an invocation checks whether the agent replies.

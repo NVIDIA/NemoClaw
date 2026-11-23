@@ -175,6 +175,266 @@
       "bun-LICENSE.md": {
         "url": "https://raw.githubusercontent.com/oven-sh/bun/38afee6c84fcf48c0edb2466aa4b27d287a59c30/LICENSE.md",
         "sha256": "362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd"
+      },
+      "codex-LICENSE": {
+        "url": "https://raw.githubusercontent.com/openai/codex/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/LICENSE",
+        "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
+      },
+      "codex-NOTICE": {
+        "url": "https://raw.githubusercontent.com/openai/codex/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/NOTICE",
+        "sha256": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915"
+      },
+      "anydoc-LICENSE": {
+        "url": "https://raw.githubusercontent.com/firecrawl/anydoc/42bf1c5ecdde9eb0d96d6bd75a9e6698cf93b14c/LICENSE",
+        "sha256": "03a9e7657aac6536fb6458bd220347c4e7f85bd0a51d8d9e8528530b7a682ade"
+      },
+      "langsmith-LICENSE": {
+        "url": "https://raw.githubusercontent.com/langchain-ai/langsmith-sdk/930be18058789110d7d9883d7b7d481f10fa1830/LICENSE",
+        "sha256": "34e0b9842c7a31d34e53bc7eb224e81e07a34996106e029bbc72dea2d449f496"
+      },
+      "sqlite-vec-LICENSE-MIT": {
+        "url": "https://raw.githubusercontent.com/asg017/sqlite-vec/e9f598abfa0c06b328d8fe5da9c3760cce74be10/LICENSE-MIT",
+        "sha256": "6ce72bbe12d975bd5286e5ab0a064c069693300c47bccbc57bec18485f1621ea"
+      },
+      "xterm-LICENSE": {
+        "url": "https://raw.githubusercontent.com/xtermjs/xterm.js/f447274f430fd22513f6adbf9862d19524471c04/LICENSE",
+        "sha256": "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd"
+      },
+      "ubrn-source.tgz": {
+        "url": "https://registry.npmjs.org/uniffi-bindgen-react-native/-/uniffi-bindgen-react-native-0.31.0-3.tgz",
+        "sha256": "fc26ac2ac4d3a7010b988d5b8621a33a26881be0413d9c73088f2231ca086640"
+      },
+      "cua-source.tar.gz": {
+        "url": "https://codeload.github.com/trycua/cua/tar.gz/36987990b292537770fe2df3a9e6dee2ef43db2f",
+        "sha256": "4f57fb435eaae04f378145671d5c5473fca28997af9d223d6a00d3ac185de379"
+      },
+      "jetbrains-mono-OFL.txt": {
+        "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/19371302b95d218af43299bce79ddbddd0bc364d/OFL.txt",
+        "sha256": "a76abf002c49097d146e86740a3105a5d00450b1592e820a1109a8c5680cd697"
+      },
+      "codex-source.tar.gz": {
+        "url": "https://codeload.github.com/openai/codex/tar.gz/6b9826e3aa83b1a5947db50f4332cb9c65f1b340",
+        "sha256": "848c7ffac62e21b14edc2048d2e5b7c82b31c556afa4b0d305da0f7d5aa794f4"
+      },
+      "codex-symphonia-source.tar.gz": {
+        "url": "https://codeload.github.com/pdeljanov/Symphonia/tar.gz/980bf5830a90e069fd64641d9c38f067ab772a24",
+        "sha256": "3cbc98a8fcf42d4f9159a46818f0d9b222ea30938202425729d5e3f2420c64c6"
+      },
+      "codex-nucleo-source.tar.gz": {
+        "url": "https://codeload.github.com/helix-editor/nucleo/tar.gz/4253de9faabb4e5c6d81d946a5e35a90f87347ee",
+        "sha256": "d1676ac33a82c5903ffede68ce73c9d924666aa8a102bb649a8fb926a7a61ce1"
+      },
+      "colored-source.crate": {
+        "url": "https://static.crates.io/crates/colored/colored-3.1.1.crate",
+        "sha256": "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
+      },
+      "option-ext-source.crate": {
+        "url": "https://static.crates.io/crates/option-ext/option-ext-0.2.0.crate",
+        "sha256": "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+      },
+      "codex-rg-LICENSE-MIT": {
+        "url": "https://raw.githubusercontent.com/BurntSushi/ripgrep/e89fff89ac9af12e8d4ce9d5fd07beb408ca730f/LICENSE-MIT",
+        "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
+      },
+      "codex-zsh-LICENCE": {
+        "url": "https://raw.githubusercontent.com/zsh-users/zsh/77045ef899e53b9598bebc5a41db93a548a40ca6/LICENCE",
+        "sha256": "d06fdf3ef9b1ec69d6b9e170b0a9516fbad3523261ff1668bde3bfea6e0ef5f5"
+      },
+      "codex-rust-notices.tar.xz": {
+        "url": "https://static.rust-lang.org/dist/2026-04-16/rustc-1.95.0-x86_64-unknown-linux-gnu.tar.xz",
+        "sha256": "8426a3d170a5879f5682f5fbdd024a1779b3951e7baba685af2d6dc32a6dfc15"
+      },
+      "codex-rg-arm64-rust-notices.tar.xz": {
+        "url": "https://static.rust-lang.org/dist/2026-07-09/rustc-1.97.0-x86_64-unknown-linux-gnu.tar.xz",
+        "sha256": "0a8787303c88b018af61b5c53a0c7024d516d175e623eeab35a35eab11dbcad0"
+      },
+      "codex-rg-amd64-rust-notices.tar.xz": {
+        "url": "https://static.rust-lang.org/dist/2026-07-15/rustc-nightly-x86_64-unknown-linux-gnu.tar.xz",
+        "sha256": "dad49ece98c6d0e5f3bfd7c532b5111f55319a0e2a880ef1a87379643348cf8e"
+      },
+      "hermes-libheif-source.tar.gz": {
+        "url": "https://github.com/strukturag/libheif/releases/download/v1.23.6/libheif-1.23.6.tar.gz",
+        "sha256": "4484346dc5995319dbc11e3a1c35d0a2ec46511ce370900869337fd2c7033125"
+      },
+      "hermes-libde265-source.tar.gz": {
+        "url": "https://github.com/strukturag/libde265/releases/download/v1.1.3/libde265-1.1.3.tar.gz",
+        "sha256": "554228bd17788c99a7e63b37ab5634722190e6e2bf60c1dcb01cef328e133905"
+      },
+      "hermes-x265-source.tar.gz": {
+        "url": "https://github.com/Multicorewareinc/x265/releases/download/4.3/x265_4.3.tar.gz",
+        "sha256": "83c53e4c8bbb8f1e33ed59e10a7d621d1d7801ca853910c3eb41f038b8ffb121"
+      },
+      "hermes-pillow-heif-source.tar.gz": {
+        "url": "https://files.pythonhosted.org/packages/44/c1/82145984920ca055675af2c2795bd30da6f7461215c41f3c1eacb3d66353/pillow_heif-1.8.1.tar.gz",
+        "sha256": "521ebffb8a181d56c3904e5a61f20903edee0d9d3275967b8fb345f866215c06"
+      },
+      "codex-libcap-source.tar.xz": {
+        "url": "https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.75.tar.xz",
+        "sha256": "de4e7e064c9ba451d5234dd46e897d7c71c96a9ebf9a0c445bc04f4742d83632"
+      },
+      "codex-v8-source.tar.gz": {
+        "url": "https://github.com/v8/v8/archive/refs/tags/15.0.245.2.tar.gz",
+        "sha256": "164f3d3e0a8b4c02a386d3a88d1b1133d37e5c20be0239fecdcdde414a4340d5"
+      },
+      "codex-rusty-v8-LICENSE": {
+        "url": "https://raw.githubusercontent.com/denoland/rusty_v8/5c15a6995c9bb4bacd3e341b59fff32c909c80bf/LICENSE",
+        "sha256": "1c6356fb751d45f0c53093ebf8a7f5e580e802f51999178e19d60f3ec39e147d"
+      },
+      "codex-icu-LICENSE.base64": {
+        "url": "https://chromium.googlesource.com/chromium/deps/icu/+/a86a32e67b8d1384b33f8fa48c83a6079b86f8cd/LICENSE?format=TEXT",
+        "sha256": "c5a4698576c4195d3b5869d409cb3d4be7fca00201a5f15ecb5b03aae07b2e2e"
+      },
+      "codex-libcxx-LICENSE.base64": {
+        "url": "https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libcxx.git/+/5abc7f839700f0f17338434e1c1c6a8c87c00c11/LICENSE.TXT?format=TEXT",
+        "sha256": "2df883eed85d488ef641ac22f3ce8afb495508b6f87c38847af95ddbf94aea70"
+      },
+      "codex-libcxxabi-LICENSE.base64": {
+        "url": "https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libcxxabi.git/+/8f11bb1d4438d0239d0dfc1bd9456a9f31629dda/LICENSE.TXT?format=TEXT",
+        "sha256": "8d3456e92a31955fdaea9c32634e2e2d5abf87e32e862ca28f40b979e68ea612"
+      },
+      "codex-llvm-libc-LICENSE.base64": {
+        "url": "https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libc.git/+/9309c117ebae84dd2f9df1ef99de4782162527d5/LICENSE.TXT?format=TEXT",
+        "sha256": "0cced642a3b6d411a42ad6e8ebd7942b4768a530c6e063fa41455a3600a82887"
+      },
+      "deepagents-orjson-source.tar.gz": {
+        "url": "https://files.pythonhosted.org/packages/7e/0c/964746fcafbd16f8ff53219ad9f6b412b34f345c75f384ad434ceaadb538/orjson-3.11.9.tar.gz",
+        "sha256": "4fef17e1f8722c11587a6ef18e35902450221da0028e65dbaaa543619e68e48f"
+      },
+      "python-fastuuid-source.tar.gz": {
+        "url": "https://files.pythonhosted.org/packages/c3/7d/d9daedf0f2ebcacd20d599928f8913e9d2aea1d56d2d355a93bfa2b611d7/fastuuid-0.14.0.tar.gz",
+        "sha256": "178947fc2f995b38497a74172adee64fdeb8b7ec18f2a5934d037641ba265d26"
+      },
+      "python-litellm-source.tar.gz": {
+        "url": "https://files.pythonhosted.org/packages/71/63/28fb5696e52f40f4bafd096a3d0ed2c8679a24311ed89c200a280ee3b68a/litellm-1.100.4.tar.gz",
+        "sha256": "c031cbc63848be16403725594f6060fe002dc2e65f0866878285d72923ac27ab"
+      },
+      "python-tiktoken-source.tar.gz": {
+        "url": "https://files.pythonhosted.org/packages/e4/e5/5f3cb2159769d0f4324c0e9e87f9de3c4b1cd45848a96b2eb3566ad5ca77/tiktoken-0.13.0.tar.gz",
+        "sha256": "c9435714c3a84c2319499de9a300c0e604449dd0799ff246458b3bb6a7f433c1"
+      },
+      "python-ormsgpack-source.tar.gz": {
+        "url": "https://files.pythonhosted.org/packages/12/0c/f1761e21486942ab9bb6feaebc610fa074f7c5e496e6962dea5873348077/ormsgpack-1.12.2.tar.gz",
+        "sha256": "944a2233640273bee67521795a73cf1e959538e0dfb7ac635505010455e53b33"
+      },
+      "rust-notice-whatisinternet--inflector--a4a95eac75043f4bffb127c7c8ec886b5b106053--LICENSE.md": {
+        "url": "https://raw.githubusercontent.com/whatisinternet/inflector/a4a95eac75043f4bffb127c7c8ec886b5b106053/LICENSE.md",
+        "sha256": "03d1bd5bfbee8d44651e7f57faf9e5b4eda4233f0d4eda36a716f2f0533d230b"
+      },
+      "rust-notice-str4d--rage--1465e602c83c5e4d3db8f58d9bdfc2a10063f90d--LICENSE-APACHE": {
+        "url": "https://raw.githubusercontent.com/str4d/rage/1465e602c83c5e4d3db8f58d9bdfc2a10063f90d/LICENSE-APACHE",
+        "sha256": "3708458dee7f359ac6c9c5558023ed481be87e5372c43ebd7f2ca7ad23c12026"
+      },
+      "rust-notice-str4d--rage--1465e602c83c5e4d3db8f58d9bdfc2a10063f90d--LICENSE-MIT": {
+        "url": "https://raw.githubusercontent.com/str4d/rage/1465e602c83c5e4d3db8f58d9bdfc2a10063f90d/LICENSE-MIT",
+        "sha256": "fe56c030c2d8c3404a37fe711cebb27ebea13d0aacf7e3524db4198335ad8cd1"
+      },
+      "rust-notice-str4d--rage--17446612f865c705e44fe392d9d41dd102fed137--LICENSE-APACHE": {
+        "url": "https://raw.githubusercontent.com/str4d/rage/17446612f865c705e44fe392d9d41dd102fed137/LICENSE-APACHE",
+        "sha256": "3708458dee7f359ac6c9c5558023ed481be87e5372c43ebd7f2ca7ad23c12026"
+      },
+      "rust-notice-str4d--rage--17446612f865c705e44fe392d9d41dd102fed137--LICENSE-MIT": {
+        "url": "https://raw.githubusercontent.com/str4d/rage/17446612f865c705e44fe392d9d41dd102fed137/LICENSE-MIT",
+        "sha256": "fe56c030c2d8c3404a37fe711cebb27ebea13d0aacf7e3524db4198335ad8cd1"
+      },
+      "rust-notice-rusticata--asn1-rs--a20e5f7319c896737ad0f2557037817b91ad854f--LICENSE-APACHE": {
+        "url": "https://raw.githubusercontent.com/rusticata/asn1-rs/a20e5f7319c896737ad0f2557037817b91ad854f/LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      "rust-notice-rusticata--asn1-rs--a20e5f7319c896737ad0f2557037817b91ad854f--LICENSE-MIT": {
+        "url": "https://raw.githubusercontent.com/rusticata/asn1-rs/a20e5f7319c896737ad0f2557037817b91ad854f/LICENSE-MIT",
+        "sha256": "a5c61b93b6ee1d104af9920cf020ff3c7efe818e31fe562c72261847a728f513"
+      },
+      "rust-notice-nugine--simd--d74c030d9dc4f3cae02146d1f497ff62726ef09a--LICENSE": {
+        "url": "https://raw.githubusercontent.com/Nugine/simd/d74c030d9dc4f3cae02146d1f497ff62726ef09a/LICENSE",
+        "sha256": "71674605ec4c087fe9eb534e3e4f9e26eb2e4aabcd76a29fd156c6a844d44b3d"
+      },
+      "rust-notice-rust-bakery--cookie-factory--d36b805dbd7dd65f2df947235c5bcc573afe2c76--LICENSES__MIT.txt": {
+        "url": "https://raw.githubusercontent.com/rust-bakery/cookie-factory/d36b805dbd7dd65f2df947235c5bcc573afe2c76/LICENSES/MIT.txt",
+        "sha256": "d09216dc1ea5f273997667935a8d6514d80f00b89fb6954ecc3a43e0a6e360de"
+      },
+      "rust-notice-akhilles--crc-catalog--b500ea693c552f8d946e290722a7b3ee8b9a7ee2--LICENSES__Apache-2.0.txt": {
+        "url": "https://raw.githubusercontent.com/akhilles/crc-catalog/b500ea693c552f8d946e290722a7b3ee8b9a7ee2/LICENSES/Apache-2.0.txt",
+        "sha256": "d3cdb764b98283ee7c3a3cea8d374e2a2957322374378d1f3263f4d512741fc3"
+      },
+      "rust-notice-akhilles--crc-catalog--b500ea693c552f8d946e290722a7b3ee8b9a7ee2--LICENSES__MIT.txt": {
+        "url": "https://raw.githubusercontent.com/akhilles/crc-catalog/b500ea693c552f8d946e290722a7b3ee8b9a7ee2/LICENSES/MIT.txt",
+        "sha256": "5ef8fcfb6cccec8fcae043c834099a60c8b7406408db576e026d2b7e67dc5cf5"
+      },
+      "rust-notice-projectfluent--fluent-langneg-rs--7fdc590466ea63ca2367ac10fb1b881fe561f1a8--LICENSE-APACHE": {
+        "url": "https://raw.githubusercontent.com/projectfluent/fluent-langneg-rs/7fdc590466ea63ca2367ac10fb1b881fe561f1a8/LICENSE-APACHE",
+        "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+      },
+      "rust-notice-projectfluent--fluent-langneg-rs--7fdc590466ea63ca2367ac10fb1b881fe561f1a8--LICENSE-MIT": {
+        "url": "https://raw.githubusercontent.com/projectfluent/fluent-langneg-rs/7fdc590466ea63ca2367ac10fb1b881fe561f1a8/LICENSE-MIT",
+        "sha256": "016fcc02048817d628b04b140c54db290fd9d29a5e8a55b77871194e810716ac"
+      },
+      "rust-notice-michael-f-bryan--include_dir--d742c6fffce99ee89da91b934e7ce6fb2a82680c--LICENSE": {
+        "url": "https://raw.githubusercontent.com/Michael-F-Bryan/include_dir/d742c6fffce99ee89da91b934e7ce6fb2a82680c/LICENSE",
+        "sha256": "9369f62987b3a116111f2edfdc4cc72633e44ddc94d5d0c68659cf537b76a31f"
+      },
+      "rust-notice-zbraniecki--pluralrules--d0715d5b7cca72e228d6e6c4de154bd30dfdd06a--intl_pluralrules__LICENSE-APACHE": {
+        "url": "https://raw.githubusercontent.com/zbraniecki/pluralrules/d0715d5b7cca72e228d6e6c4de154bd30dfdd06a/intl_pluralrules/LICENSE-APACHE",
+        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+      },
+      "rust-notice-zbraniecki--pluralrules--d0715d5b7cca72e228d6e6c4de154bd30dfdd06a--intl_pluralrules__LICENSE-MIT": {
+        "url": "https://raw.githubusercontent.com/zbraniecki/pluralrules/d0715d5b7cca72e228d6e6c4de154bd30dfdd06a/intl_pluralrules/LICENSE-MIT",
+        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+      },
+      "rust-notice-open-telemetry--opentelemetry-rust--285dc925f98403ff426acc70968f104dc820d4f2--LICENSE": {
+        "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-rust/285dc925f98403ff426acc70968f104dc820d4f2/LICENSE",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      },
+      "rust-notice-open-telemetry--opentelemetry-rust--00f97c948e95beb7b2c966fcdb5f946c2a89baeb--LICENSE": {
+        "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-rust/00f97c948e95beb7b2c966fcdb5f946c2a89baeb/LICENSE",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      },
+      "rust-notice-facebook--starlark-rust--8978f3cd91b2908e1e61f6b58f84293097abf8f1--LICENSE": {
+        "url": "https://raw.githubusercontent.com/facebook/starlark-rust/8978f3cd91b2908e1e61f6b58f84293097abf8f1/LICENSE",
+        "sha256": "50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a"
+      },
+      "rust-notice-plabayo--rama--4733273a10a791762e2b7727850032b0c9b8536d--LICENSE-APACHE": {
+        "url": "https://raw.githubusercontent.com/plabayo/rama/4733273a10a791762e2b7727850032b0c9b8536d/LICENSE-APACHE",
+        "sha256": "95bd3988beee069fa2848f648dab43cc6e0b2add2ad6bcb17360caf749802bcc"
+      },
+      "rust-notice-plabayo--rama--4733273a10a791762e2b7727850032b0c9b8536d--LICENSE-MIT": {
+        "url": "https://raw.githubusercontent.com/plabayo/rama/4733273a10a791762e2b7727850032b0c9b8536d/LICENSE-MIT",
+        "sha256": "1fa7e078de3f9165a1c6742359307711e91652f035dc37a32376ca0023483e63"
+      },
+      "rust-notice-modelcontextprotocol--rust-sdk--51ccb42993d6eb5075399672ce7a0c21a0e55eea--LICENSE": {
+        "url": "https://raw.githubusercontent.com/modelcontextprotocol/rust-sdk/51ccb42993d6eb5075399672ce7a0c21a0e55eea/LICENSE",
+        "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
+      },
+      "rust-notice-marwes--schemafy--5f835025d16d691f168315dda93efc52ae1e4e5e--LICENSE": {
+        "url": "https://raw.githubusercontent.com/Marwes/schemafy/5f835025d16d691f168315dda93efc52ae1e4e5e/LICENSE",
+        "sha256": "a11232911aa0d746688b560af367728021184084eeb6328a1922d60925c5eda0"
+      },
+      "rust-notice-facebookexperimental--rust-shed--756ae7daba100d194aa0260131937b7d96672549--LICENSE-APACHE": {
+        "url": "https://raw.githubusercontent.com/facebookexperimental/rust-shed/756ae7daba100d194aa0260131937b7d96672549/LICENSE-APACHE",
+        "sha256": "bb28c48e3e078166e91cfc2b6db7ffebb8a0973b9e23b3df060561292d8d69ec"
+      },
+      "rust-notice-facebookexperimental--rust-shed--756ae7daba100d194aa0260131937b7d96672549--LICENSE-MIT": {
+        "url": "https://raw.githubusercontent.com/facebookexperimental/rust-shed/756ae7daba100d194aa0260131937b7d96672549/LICENSE-MIT",
+        "sha256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85"
+      },
+      "rust-notice-facebook--starlark-rust--0c8d107ab963362ba47ee3ab9e0173bc39bd101d--LICENSE": {
+        "url": "https://raw.githubusercontent.com/facebook/starlark-rust/0c8d107ab963362ba47ee3ab9e0173bc39bd101d/LICENSE",
+        "sha256": "50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a"
+      },
+      "rust-notice-hyperium--tonic--ed4bafc35af7a284357cf4e77e26b9c3eb0266ca--LICENSE": {
+        "url": "https://raw.githubusercontent.com/hyperium/tonic/ed4bafc35af7a284357cf4e77e26b9c3eb0266ca/LICENSE",
+        "sha256": "e24a56698aa6feaf3a02272b3624f9dc255d982970c5ed97ac4525a95056a5b3"
+      },
+      "rust-notice-aleph-alpha--ts-rs--1dce5297090804082e9639d2b7d851ba815aa359--LICENSE": {
+        "url": "https://raw.githubusercontent.com/Aleph-Alpha/ts-rs/1dce5297090804082e9639d2b7d851ba815aa359/LICENSE",
+        "sha256": "db7f7f8e7236a2d0b41b855b2501b7b913caebbcda6ce498637a304ad1706ce1"
+      },
+      "python-nemo-relay-source.tar.gz": {
+        "url": "https://files.pythonhosted.org/packages/96/22/7d1b069ea917b058a1a2954b279f46ddec618a3111b66e9db6bb8a8e87e8/nemo_relay-0.11.0.tar.gz",
+        "sha256": "c9d022948901a19a22851f2cf717140c5b8c48d39c188799148d1ef1c878c531"
+      },
+      "codex-rg-source.tar.gz": {
+        "url": "https://codeload.github.com/BurntSushi/ripgrep/tar.gz/e89fff89ac9af12e8d4ce9d5fd07beb408ca730f",
+        "sha256": "af40d0f4cb7a55994906c009a7ba865047f0d487c95bceb8db59ffc4f2173d20"
       }
     },
     "ollama": {
@@ -203,6 +463,30 @@
       "xxhash-LICENSE": {
         "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/vendor/hash/xxhash/LICENSE",
         "sha256": "6ffedbc0f7878612d2b23589f1ff2ab15633e1df7963a5d9fc750ec5500c7e7a"
+      },
+      "llama-brand-LICENSE": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama-brand/f05540643c1ca2a18d732ed6491c839686da9a3a/LICENSE",
+        "sha256": "41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0"
+      },
+      "llama-brand-BRAND-USAGE.md": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama-brand/f05540643c1ca2a18d732ed6491c839686da9a3a/BRAND-USAGE.md",
+        "sha256": "3f9e9b47e1ce34a34178f23daeac254f400f58ddf49009aa8b4026d92a3f0d46"
+      },
+      "llama-brand-fonts-OFL.txt": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama-brand/f05540643c1ca2a18d732ed6491c839686da9a3a/fonts/OFL.txt",
+        "sha256": "c683bfbcc7e087f5d37a54ef628f10387c451a83ddc459b151403a164ac46c90"
+      },
+      "llama-ui-big-integer-LICENSE": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/tools/ui/src/lib/vendors/big-integer/LICENSE",
+        "sha256": "e9b0e94f628e00b5ed98046cfa041696ff89eebbbdd54108ee350625bc6d0363"
+      },
+      "llama-ui-nerdamer-LICENSE": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/tools/ui/src/lib/vendors/nerdamer-prime/LICENSE",
+        "sha256": "c9f52548869a0a2e63a7100055c54cebf36b9327c8fc2da7cf9ca8dddc2f1cca"
+      },
+      "llama-source.tar.gz": {
+        "url": "https://codeload.github.com/ggml-org/llama.cpp/tar.gz/9d25e0014c4b4b316873c01f4938c0e3c687287d",
+        "sha256": "16807cb72e989e2191b2e6d99aa8d3d859ab870ce82fb352b52663fc10e287c6"
       }
     }
   },

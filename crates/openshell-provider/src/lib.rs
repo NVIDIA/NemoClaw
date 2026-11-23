@@ -13,11 +13,12 @@ mod connected;
 mod driver_config;
 mod gateway_source;
 mod gpu;
+mod limits;
 mod network;
 mod profile;
 mod provider;
 mod services;
-pub use nemoclaw_openshell::pairs::{inference_rows, web_search_rows};
+pub use nemoclaw_openshell::pairs::inference_rows;
 pub use nemoclaw_openshell::{policy::policy_json, profile::definition as inference_profile};
 mod inference;
 use inference::{PROVIDERS_ENV, inference_environment};
@@ -211,9 +212,6 @@ fn provider_row(
         ]);
         return Ok(row);
     }
-    if nemoclaw_openshell::search::SearchProvider::from_profile(&provider.r#type).is_some() {
-        return profile::provider_row(provider, name, removing);
-    }
     if provider.r#type != format!("nemoclaw-inference-{name}")
         || provider
             .metadata
@@ -282,6 +280,7 @@ fn sandbox_row(
     let template = spec.template.ok_or(ObservationError::Incomplete)?;
     let driver_config = driver_config::observed(template.driver_config.as_ref());
     let gpu_count = gpu::observed(spec.resource_requirements.as_ref());
+    let (cpu, memory) = limits::observed(template.resources.as_ref());
     let image = template.image;
     let environment: Row = spec.environment.into_iter().collect();
     let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
@@ -340,6 +339,8 @@ fn sandbox_row(
     row.insert("image".into(), image);
     row.insert("driver_config_json".into(), driver_config);
     row.insert("gpu_count".into(), gpu_count);
+    row.insert("cpu".into(), cpu);
+    row.insert("memory".into(), memory);
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
     row.insert(POLICY_AUTHORITY.into(), authority.into());
@@ -549,21 +550,9 @@ fn inference_sandbox_env(known: &Row, unknown: &[&str]) -> Option<String> {
     })
 }
 
-/// The registration a web search row registers, derived from the inputs that
-/// name it.
-fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
-    if ["name", "provider_type", "credential_env"]
-        .iter()
-        .any(|field| unknown.contains(field))
-    {
-        return None;
-    }
-    nemoclaw_openshell::registration_name(composite::WEB_SEARCH, known)
-}
-
 /// OpenShell objects and their planning rules.
-pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
-    use nemoclaw_openshell::api::MCP_POLICY;
+pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
+    use nemoclaw_openshell::api::{MCP_POLICY, REST_POLICY};
     use nemoclaw_tofu::Definition;
     [
         Definition::new("workspace", &["name", "owner", "generation"], &[]),
@@ -582,6 +571,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "sandbox_env",
                 POLICY_AUTHORITY,
                 MCP_POLICY,
+                REST_POLICY,
             ],
             &["credential_env", "binaries_json"],
         )
@@ -594,6 +584,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "sandbox_env",
             POLICY_AUTHORITY,
             MCP_POLICY,
+            REST_POLICY,
         ])
         // Omission selects the default, not the previous value.
         .reset_when_omitted(&[
@@ -608,49 +599,14 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
         .validate_inputs(composite::validate_api)
         .replaces(binaries_changes)
         .derived("registration", provider_registration),
-        // A web search provider's profile and registration, as one resource
-        // whose owner is its workspace's. Every input names them, so changes
-        // replace. `credential_env` and `binaries` are required by plans,
-        // not the schema: an observation reports them empty when their half
-        // of the pair is missing, which shows as drift.
-        Definition::new(
-            composite::WEB_SEARCH,
-            &[
-                "workspace",
-                "name",
-                "owner",
-                "generation",
-                "provider_type",
-                "credential_env",
-                "sandbox_env",
-                "binaries_json",
-                POLICY_AUTHORITY,
-            ],
-            &["binaries_json"],
-        )
-        .optional(&[
-            "credential_env",
-            "sandbox_env",
-            "binaries_json",
-            POLICY_AUTHORITY,
-        ])
-        // Omission selects the default, not the previous value.
-        .reset_when_omitted(&[
-            "credential_env",
-            "sandbox_env",
-            "binaries_json",
-            POLICY_AUTHORITY,
-        ])
-        .replaces(binaries_changes)
-        .derived("registration", web_search_registration),
         // An inference server's profile and registration, as one resource
         // whose owner is its workspace's and whose endpoint and credential
         // come from the server's ref. A rotated credential reference updates
         // in place, since OpenShell refuses to delete a registration a sandbox
         // attaches; adding or removing authentication, or any other change,
         // replaces them. The schema lists the server's fields and `binaries` as
-        // optional, and plans require them, for the same reason as web
-        // search's.
+        // optional, and plans require them: an observation reports them empty
+        // when their half of the pair is missing, which shows as drift.
         Definition::new(
             composite::INFERENCE,
             &[
@@ -700,6 +656,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "provider_names_json",
                 "driver_config_json",
                 "gpu_count",
+                "cpu",
+                "memory",
                 POLICY_AUTHORITY,
                 services::FIELD,
             ],
@@ -714,6 +672,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "provider_names_json",
             "driver_config_json",
             "gpu_count",
+            "cpu",
+            "memory",
             services::FIELD,
             POLICY_HASH,
             POLICY_PROVENANCE,

@@ -52,6 +52,7 @@ The following platform, model, and placement limits apply:
 | Local GPU deployment on Windows/WSL or macOS. | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | A model service on a separate physical SSH host. | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Serving one model across several GPUs on one host: `container.gpuDevices` takes one entry, so vLLM refuses a [parallel layout](../agents-inference/models.md#setting-the-parallel-layout) larger than one GPU. | [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) | [`cb8ef25`][v1-cb8ef25]: code, issue |
+| DGX Spark systems whose driver reports a placeholder GPU name, such as `NVIDIA JMJWOA-Generic-GPU`, instead of `NVIDIA GB10`: the `dgx-spark` profile and recipes that require `NVIDIA GB10` [don't match them](../agents-inference/models.md#choosing-a-hardware-profile). | [#14698](https://github.com/NVIDIA/NemoClaw/issues/14698) | [`c30c3f1`][v1-c30c3f1]: code, issue |
 | Distributed inference across several Sparks or Stations. | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Podman beyond a local rootless Linux gateway: rootful operation, remote engines, and model services on the Podman host. A Podman gateway can use one on a Docker host through [SSH placement](../agents-inference/remote-service.md). | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, docs, issue |
 | OpenShift beyond [OpenShift Local runs by hand](../build-deploy/kubernetes.md). No automated run covers OpenShift, and kind cannot run a managed `openshift` gateway, which needs OpenShift to assign its `fsGroup`. | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
@@ -80,7 +81,7 @@ The following inference limits apply:
 | Hermes does not reject a managed Ollama window below its 64,000-token minimum. Refer to [sizing the context for Hermes](../agents-inference/inference.md#sizing-the-context-for-hermes). | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) | [`cb8ef25`][v1-cb8ef25]: Hermes, issue |
 | Native NVIDIA NIM's full tool inventory, default 8K context, general task reliability, cross-host cache restoration, and other model and profile combinations remain unqualified. Use the [bounded BF16 candidate configuration](../agents-inference/models.md#native-nim-candidate). | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556), [NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679) | Refer to the [source-specific qualification record](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) |
 | llama.cpp bearer authentication protects inference. Native model inventory and health remain public. A key does not provide inventory confidentiality. | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) | Refer to the [source-specific qualification record](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) |
-| Model Router. | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
+| Model Router. | By design: the deprecated `llm-router` was retired ([#14066](https://github.com/NVIDIA/NemoClaw/issues/14066)); configure Switchyard routing through [Hermes Relay](../agents-inference/agents.md#hermes-relay-tracing) | [`5b83ffc`][v1-5b83ffc]: code, docs |
 | A provider that uses Gemini's native API. Onboarding's Google Gemini preset connects through Gemini's OpenAI-compatible endpoint. | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous. | No open issue | [`cb8ef25`][v1-cb8ef25]: docs |
 | More than 32 providers attached to one sandbox: OpenShell refuses more, and its inference providers, its web search and each `api` integration count one each. | By design: OpenShell's limit per sandbox | [`cb8ef25`][v1-cb8ef25]: code, OpenShell |
@@ -156,6 +157,9 @@ The following SDK and provider limits apply:
 | Configuration or state migration between releases | Not during alpha, as [compatibility](../references/compatibility.md) describes | [`cb8ef25`][v1-cb8ef25]: code, docs |
 | A hosted Rust API reference | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 | `tofu import`, adoption, and remote state for CLI and SDK deployments | Not supported, as [compatibility](../references/compatibility.md) describes | [`cb8ef25`][v1-cb8ef25]: code, docs |
+| [Hand-written HCL](../build-deploy/opentofu-project.md) under Terraform: the provider addresses are under `registry.opentofu.org`, and the examples' tests run only under OpenTofu. | [#14725](https://github.com/NVIDIA/NemoClaw/issues/14725) | [`1b5574f`][v1-1b5574f]: code, issue |
+| A guard against lost creation replies in hand-written HCL: only the SDK records the OpenShell and Fabric objects an apply might create. | [#14726](https://github.com/NVIDIA/NemoClaw/issues/14726) | [`1b5574f`][v1-1b5574f]: code, issue |
+| Handing an existing CLI deployment over to hand-written HCL | [#14721](https://github.com/NVIDIA/NemoClaw/issues/14721) | [`1b5574f`][v1-1b5574f]: code, issue |
 
 ## Documentation Site
 
@@ -172,10 +176,13 @@ Managed [llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-lla
 General tool use, multimodal input, other models and Classic host parity need separate qualification.
 Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006).
 
+[v1-5b83ffc]: https://github.com/NVIDIA/NemoClaw/tree/5b83ffc8e6ae46c4e5eec2466ed847cb223addad
 [v1-cb8ef25]: https://github.com/NVIDIA/NemoClaw/tree/cb8ef25252ffffbca051787adb4711c96ebfcf28
+[v1-c30c3f1]: https://github.com/NVIDIA/NemoClaw/tree/c30c3f1b3fbf9d825d13fd4497c98b35ef33f1ee
 [v1-291723b]: https://github.com/NVIDIA/NemoClaw/tree/291723b41b77dbd502f5418b9b0a9b7c1a322dc9
 [v1-5223fdc]: https://github.com/NVIDIA/NemoClaw/tree/5223fdc0b6c9a7ec0b7d86b9c11699eb3de1a206
 [v1-ffe5406]: https://github.com/NVIDIA/NemoClaw/tree/ffe5406498c6a27c068ad52a56ddcfb1cb37b904
 [v1-e7e1857]: https://github.com/NVIDIA/NemoClaw/tree/e7e1857514f4bed9269eeaf6786bcdb2d6d0ade3
 [v1-43c9dc9]: https://github.com/NVIDIA/NemoClaw/tree/43c9dc9cea1dea3bd59057fd18d96ed799475e9c
 [v1-1636069]: https://github.com/NVIDIA/NemoClaw/tree/1636069b91f402242a35714fde1011042c3f1f70
+[v1-1b5574f]: https://github.com/NVIDIA/NemoClaw/tree/1b5574f18137bb4a94b695dfa86b4be5e1c8d8e6

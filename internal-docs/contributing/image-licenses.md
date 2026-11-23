@@ -4,7 +4,8 @@
 # Reviewing Image Licenses
 
 Publishing a v1 image redistributes every component in it, so each image's licenses must allow that before a final release ([#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
-This page states which images releases don't publish, when an image needs open-source review board (OSRB) sign-off, how to review a release's images, and the result for release candidate `v0.1.0-rc10`.
+This page describes release review requirements, excluded images, and the historical review of release candidate `v0.1.0-rc10`.
+A technical audit is evidence for a release decision; it does not authorize publication.
 
 ## Images Releases Don't Publish
 
@@ -26,17 +27,35 @@ An image needs OSRB sign-off when it contains any of these:
 
 NVIDIA proprietary components, such as CUDA libraries, need no OSRB sign-off under this rule; their own license's redistribution terms still apply.
 
+OSRB hasn't confirmed whether permissive-only images, such as `ollama-proxy`, need sign-off; [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) tracks the question.
+
+## Retained Sources and Notices
+
+[Agent image sources](../../image/NOTICE.md) and the runtime image notice files describe retained dependency notices and source archives.
+[Retained Rust Sources](../../image/SOURCES.md) and [OpenClaw Native Sources](../../image/fabric/OPENCLAW-SOURCES.md) provide extraction and rebuild instructions.
+
+## Remaining Release Evidence
+
+[#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) tracks final image review, source and relinking delivery, and applicable release approval coverage.
+Reconcile retained notices and sources against every final platform artifact, including native executables and frontend bundles that package metadata can miss.
+Retaining a source archive or notice does not establish complete coverage.
+[#14719](https://github.com/NVIDIA/NemoClaw/issues/14719) tracks unresolved Hermes upstream notices and font redistribution coverage.
+
 ## Reviewing a Release
 
 1. Download every platform's SPDX asset and `sboms.json` from the release draft, as [SBOM assets](releases.md#sbom-assets) describes.
 2. Classify each package by its declared license expression: take the most permissive choice of an `OR`, and the most restrictive term of an `AND`.
 3. Resolve entries the SBOM marks `NOASSERTION` from their registry's metadata, such as [deps.dev](https://deps.dev) for Cargo, Go, npm, and PyPI packages, or from the upstream repository's license.
 4. Inspect the image for components the SBOM can't see, such as executables bundled inside a package or libraries copied without package metadata.
-5. Check that the image retains each component's license and notices, and record what each non-permissive component requires.
+5. Check that the image retains each component's license and notices, and record applicable source, relinking, and redistribution requirements.
+6. Record the source delivery mechanism and applicable approval coverage against each final platform manifest digest.
 
-No release check applies this rule; review each final release's images by hand.
+No automated license gate establishes these release decisions; review each final release's images.
 
 ## Result for v0.1.0-rc10
+
+This is a historical technical assessment, not current release approval.
+The verdicts and gaps below describe rc10; use [Remaining Release Evidence](#remaining-release-evidence) for current closeout work.
 
 This review covers both platforms of every image that `v0.1.0-rc10` staged from [`5716c39`](https://github.com/NVIDIA/NemoClaw/commit/5716c39bc26a16532033d1e4c6e44636fe7aa983).
 Images built from later commits, such as the vLLM 0.34.0 and Hermes Agent 0.22.7 upgrades, need their own review.

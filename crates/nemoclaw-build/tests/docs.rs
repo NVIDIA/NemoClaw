@@ -172,3 +172,122 @@ fn malformed_yaml_examples_stop_documentation_generation() {
     );
     assert!(String::from_utf8_lossy(&result.stderr).contains("YAML"));
 }
+
+#[test]
+fn publishes_changelog_entries_with_links_to_guides_and_dated_fern_routes() {
+    let root = fixture();
+    let dir = root.path().join("docs/changelog");
+    fs::create_dir(&dir).unwrap();
+    fs::write(
+        dir.join("overview.md"),
+        "# Release Notes\n\n[First release](2026-02-03.md)\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("2026-02-03.md"),
+        "## v0.1.0\n\nRefer to [state](../state.md#keep-data).\n",
+    )
+    .unwrap();
+    let manifest = root.path().join("fern/pages.json");
+    let mut pages: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    pages["sections"][0]["pages"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "title": "Release Notes", "source": "docs/changelog/overview.md",
+            "slug": "release-notes", "changelog": true
+        }));
+    fs::write(manifest, serde_json::to_vec(&pages).unwrap()).unwrap();
+
+    assert_success(generate(root.path(), false));
+    let output = root.path().join("fern/_generated");
+    let nav: serde_json::Value =
+        serde_saphyr::from_str(&fs::read_to_string(output.join("navigation.yml")).unwrap())
+            .unwrap();
+    let folder = nav["navigation"][0]["contents"][2]["changelog"]
+        .as_str()
+        .unwrap();
+    let published = output.join(folder);
+    assert!(
+        fs::read_to_string(published.join("2026-02-03.mdx"))
+            .unwrap()
+            .contains("/nemoclaw/v1/state#keep-data")
+    );
+    assert!(
+        fs::read_to_string(published.join("overview.mdx"))
+            .unwrap()
+            .contains("/nemoclaw/v1/release-notes/2026/2/3")
+    );
+    assert_success(generate(root.path(), true));
+}
+
+#[test]
+fn renders_the_pinned_shared_guide_without_a_v1_source_copy() {
+    let root = fixture();
+    let root = root.path();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args([
+                "-c",
+                "user.name=Docs Test",
+                "-c",
+                "user.email=docs@example.org",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let guide = root.join("docs/shared.mdx");
+    let body = "---\ntitle: Shared\n---\n\n<Note>Read [a guide](related).</Note>\n\n`[example](related)`\n";
+    fs::write(&guide, body).unwrap();
+    git(&["init", "--quiet"]);
+    git(&["add", "docs/shared.mdx"]);
+    git(&["commit", "--quiet", "-m", "Shared guide"]);
+    let pin = git(&["rev-parse", "HEAD"]);
+    fs::write(
+        root.join("fern/main-source.json"),
+        serde_json::json!({"revision": pin.trim()}).to_string(),
+    )
+    .unwrap();
+    fs::remove_file(guide).unwrap();
+    fs::write(
+        root.join("fern/pages.json"),
+        serde_json::json!({"sections": [{"title":"Resources", "pages":[{
+            "title":"Shared", "slug":"resources/shared", "source":"docs/shared.mdx",
+            "from-main":true
+        }]}]})
+        .to_string(),
+    )
+    .unwrap();
+
+    assert_success(generate(root, false));
+    let output = root.join("fern/_generated");
+    let nav: serde_json::Value =
+        serde_saphyr::from_str(&fs::read_to_string(output.join("navigation.yml")).unwrap())
+            .unwrap();
+    let entry = &nav["navigation"][0]["contents"][0];
+    assert_eq!(entry["slug"], "resources/shared");
+    let rendered = fs::read_to_string(output.join(entry["path"].as_str().unwrap())).unwrap();
+    assert_eq!(
+        rendered,
+        body.replacen(
+            "](related)",
+            &format!(
+                "](https://github.com/NVIDIA/NemoClaw/blob/{}/docs/related.mdx)",
+                pin.trim()
+            ),
+            1
+        )
+    );
+    assert_success(generate(root, true));
+}

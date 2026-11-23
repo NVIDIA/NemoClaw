@@ -796,7 +796,7 @@ fn a_gateway_image_is_rejected_as_an_unknown_field() {
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("at spec.gateway") && error.ends_with("unknown fields are not allowed"),
+            error.contains("at spec.gateway") && error.contains(": unknown fields are not allowed"),
             "{file}: {error}"
         );
     }

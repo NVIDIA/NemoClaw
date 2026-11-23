@@ -79,7 +79,7 @@ pub struct WebSearch {
     pub credential: SecretRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String")]
-    /// Variable name the sandbox sees for the key, such as BRAVE_SEARCH_API_KEY for Hermes's Brave plugin. Defaults to the credential's variable.
+    /// Variable name the sandbox sees for the key, such as BRAVE_SEARCH_API_KEY for Hermes's Brave plugin. Defaults to the provider's own, BRAVE_API_KEY or TAVILY_API_KEY.
     pub sandbox_env: Option<String>,
 }
 
@@ -242,9 +242,96 @@ pub(crate) struct RuntimeWebSearch {
     pub credential: SecretRef,
     pub sandbox_env: Option<String>,
 }
-pub use nemoclaw_openshell::search::{SearchProvider, search_provider_name};
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+/// Search provider supported by the managed profile.
+pub enum SearchProvider {
+    Brave,
+    Tavily,
+}
+
+impl SearchProvider {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Brave => "brave",
+            Self::Tavily => "tavily",
+        }
+    }
+
+    /// The variable the sandbox sees the key in unless `sandboxEnv` names
+    /// another: the one the provider's own client libraries read.
+    pub fn credential_env(self) -> &'static str {
+        match self {
+            Self::Brave => "BRAVE_API_KEY",
+            Self::Tavily => "TAVILY_API_KEY",
+        }
+    }
+
+    /// The search API's host, as an API endpoint.
+    fn endpoint(self) -> &'static str {
+        match self {
+            Self::Brave => "https://api.search.brave.com",
+            Self::Tavily => "https://api.tavily.com",
+        }
+    }
+
+    /// How the provider's API takes the key: an auth style, and a header
+    /// when the style needs one.
+    fn authentication(self) -> (ApiAuthStyle, Option<&'static str>) {
+        match self {
+            Self::Brave => (ApiAuthStyle::Header, Some("X-Subscription-Token")),
+            Self::Tavily => (ApiAuthStyle::Bearer, None),
+        }
+    }
+
+    /// The only requests the key is sent with: Brave's web search, and
+    /// Tavily's search and extract.
+    fn rest_policy(self) -> serde_json::Value {
+        let rules = match self {
+            Self::Brave => {
+                serde_json::json!([{"allow":{"method":"GET","path":"/res/v1/web/search"}}])
+            }
+            Self::Tavily => serde_json::json!([
+                {"allow":{"method":"POST","path":"/search"}},
+                {"allow":{"method":"POST","path":"/extract"}}
+            ]),
+        };
+        serde_json::json!({ "rules": rules })
+    }
+}
 
 impl RuntimeWebSearch {
+    /// The OpenShell registration: one per provider, credential reference,
+    /// and image scope, so sandboxes sharing all three share it. OpenShell
+    /// names are at most 40 characters, so both are hashed.
+    pub(crate) fn registration(&self, image_scope: &str) -> String {
+        use sha2::{Digest, Sha256};
+        format!(
+            "{}-search-{}-{}",
+            self.provider.name(),
+            &super::hex(&Sha256::digest(&self.credential.env))[..12],
+            &image_scope[..12]
+        )
+    }
+
+    /// The API credential the search compiles to: the provider's host and
+    /// authentication, the variable its tools read, and its REST policy.
+    pub(crate) fn api(&self) -> (Api, String) {
+        let (auth_style, header_name) = self.provider.authentication();
+        let api = Api {
+            endpoints: vec![self.provider.endpoint().into()],
+            credential: self.credential.clone(),
+            sandbox_env: Some(
+                self.sandbox_env
+                    .clone()
+                    .unwrap_or_else(|| self.provider.credential_env().into()),
+            ),
+            auth_style: Some(auth_style),
+            header_name: header_name.map(Into::into),
+        };
+        (api, self.provider.rest_policy().to_string())
+    }
+
     pub(crate) fn validate<'a>(
         &self,
         agents: impl Iterator<Item = &'a str>,

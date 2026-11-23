@@ -17,6 +17,8 @@ mod changes;
 mod ci;
 #[cfg(unix)]
 mod ci_lifecycle;
+#[cfg(unix)]
+mod dependency_sources;
 #[path = "docs.rs"]
 mod docs;
 #[path = "fabric_cache.rs"]
@@ -39,10 +41,14 @@ mod registry_metadata;
 #[path = "release_assessment.rs"]
 mod release_assessment;
 // GNU tar, zip, and sha256sum, as on the release runner.
+#[cfg(unix)]
+mod macos_signatures;
 #[cfg(all(target_os = "linux", feature = "sdk"))]
 mod release_bundles;
 #[cfg(unix)]
 mod release_gate;
+#[path = "release_pins.rs"]
+mod release_pins;
 #[path = "schema.rs"]
 mod schema;
 #[cfg(target_os = "linux")]

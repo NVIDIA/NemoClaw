@@ -43,6 +43,7 @@ nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
 nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "76bde16c40747062001bd6ea5f5d13cadab3d706" }
 futures-util.workspace = true
 jsonschema.workspace = true
+strsim.workspace = true
 reqwest.workspace = true
 schemars.workspace = true
 async-trait.workspace = true

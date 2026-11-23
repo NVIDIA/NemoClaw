@@ -21,13 +21,28 @@ pub fn input_schema_ref() -> &'static serde_json::Value {
     &INPUT
 }
 
+/// The input schema compiled, for callers that check authored input against
+/// it: compiling it costs more than most checks, so a process compiles it once.
+pub fn input_validator() -> &'static jsonschema::Validator {
+    runtime::input_validator()
+}
+
 fn build_schema(normalized: bool) -> serde_json::Value {
-    let settings = schemars::generate::SchemaSettings::draft2020_12();
-    let mut schema = settings
-        .into_generator()
-        .into_root_schema_for::<super::Document>()
-        .to_value();
-    remove_serde_defaults(&mut schema);
+    // The input and normalized schemas constrain one generated schema, and
+    // generating it costs more than copying it.
+    static GENERATED: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
+        let settings = schemars::generate::SchemaSettings::draft2020_12();
+        let mut schema = settings
+            .into_generator()
+            .into_root_schema_for::<super::Document>()
+            .to_value();
+        remove_serde_defaults(&mut schema);
+        // nemoclaw_openshell::policy::definitions bounds the policy types the
+        // same way, so its definitions stay equal to these.
+        nemoclaw_runtime::schema::bound_integers(&mut schema);
+        schema
+    });
+    let mut schema = GENERATED.clone();
     validation::constrain(&mut schema, normalized);
     schema["$id"] = serde_json::json!("urn:nemoclaw:config:v1alpha1");
     schema["title"] = serde_json::json!("NemoClaw configuration (v1alpha1)");
@@ -71,7 +86,10 @@ fn remove_serde_defaults(schema: &mut serde_json::Value) {
     }
 }
 
+pub use nemoclaw_runtime::schema::integer_range;
+
 mod runtime;
+pub use runtime::unexplained_rules;
 pub(crate) use runtime::{
     validate_definition, validate_document, validate_input, validate_property, validate_service,
     validate_tuning,

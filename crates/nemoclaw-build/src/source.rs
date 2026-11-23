@@ -18,6 +18,8 @@ pub const SOURCE_ROOTS: &[&str] = &[
     "image/fabric/FABRIC-LICENSE",
     "image/NOTICE.md",
 ];
+/// What names a set of source inputs: a hash of their paths and contents,
+/// which a source build's version ends with.
 pub fn source_version(files: &[(String, Vec<u8>)]) -> String {
     let mut files: Vec<_> = files.iter().collect();
     files.sort_by(|a, b| a.0.cmp(&b.0));
@@ -28,7 +30,7 @@ pub fn source_version(files: &[(String, Vec<u8>)]) -> String {
         hash.update((bytes.len() as u64).to_le_bytes());
         hash.update(bytes);
     }
-    format!("0.1.0-dev.{}", hex(&hash.finalize())[..16].to_owned())
+    hex(&hash.finalize())[..16].to_owned()
 }
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()

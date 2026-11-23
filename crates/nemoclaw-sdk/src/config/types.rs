@@ -446,6 +446,14 @@ pub struct Sandbox {
     #[schemars(with = "u32", range(min = 1))]
     /// GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none.
     pub gpus: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1))]
+    /// CPU limit OpenShell gives the sandbox, as a quantity such as 500m or 2, passed to its resources.limits.cpu: Docker and Podman apply it as a runtime limit, Kubernetes as the container's request and limit. OpenShell validates it. Changing it replaces the sandbox; omission sets no limit.
+    pub cpu: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1))]
+    /// Memory limit OpenShell gives the sandbox, as a quantity such as 512Mi or 4Gi, passed to its resources.limits.memory: Docker and Podman apply it as a runtime limit, Kubernetes as the container's request and limit. OpenShell validates it. Changing it replaces the sandbox; omission sets no limit.
+    pub memory: Option<String>,
     #[serde(
         rename = "serviceExposures",
         default,

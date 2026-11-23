@@ -17,11 +17,11 @@ variable "AGENT_PLATFORM" {
 
 variable "HARNESSES" {
   default = {
-    deepagents     = { stage = "generic", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents", extra = "deepagents" }
+    deepagents     = { stage = "deepagents", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents", extra = "deepagents" }
     claude         = { stage = "generic", adapter = "claude", adapter_id = "nvidia.fabric.claude", extra = "claude" }
-    codex          = { stage = "generic", adapter = "codex", adapter_id = "nvidia.fabric.codex", extra = "codex" }
-    mini-swe-agent = { stage = "generic", adapter = "mini-swe-agent", adapter_id = "nvidia.fabric.mini-swe-agent", extra = "mini-swe-agent" }
-    nooa           = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa", extra = "nooa" }
+    codex          = { stage = "codex", adapter = "codex", adapter_id = "nvidia.fabric.codex", extra = "codex" }
+    mini-swe-agent = { stage = "mini-swe-agent", adapter = "mini-swe-agent", adapter_id = "nvidia.fabric.mini-swe-agent", extra = "mini-swe-agent" }
+    nooa           = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa", extra = "nooa", targets = "nvidia.nooa.arc-solver nvidia.nooa.coding-agent" }
     nooa-bench     = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa.bench-agent", extra = "nooa" }
     remote-agent   = { stage = "generic", adapter = "remote-agent", adapter_id = "nvidia.fabric.remote-agent", extra = "remote-agent" }
     openclaw       = { stage = "openclaw", adapter = "openclaw", adapter_id = "nvidia.fabric.openclaw", extra = "openclaw" }
@@ -55,6 +55,8 @@ target "agents" {
     # The Fabric extra whose locked dependencies the image installs.
     EXTRA = HARNESSES[harness].extra
     ADAPTER_ID = HARNESSES[harness].adapter_id
+    # The workflow targets the generic stage declares for the adapter.
+    TARGET_IDS = lookup(HARNESSES[harness], "targets", "")
     # The stage that `cargo images build` catalogs and labels.
     STAGE = HARNESSES[harness].stage
   }

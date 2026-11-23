@@ -25,6 +25,9 @@ Links to examples, code, notices, and unpublished design pages point to GitHub a
 External URLs are retained without network validation.
 Generated files are ignored by Git; do not edit them.
 
+Both versions publish **Engineer Documentation for AI Agents** from `docs/resources/engineer-agentic-documentation.mdx` on main.
+The v1 renderer reads the revision in `fern/main-source.json` and links to the referenced guides at that same revision on GitHub.
+
 The [upstream notice](../../fern/NOTICE.md) records the main revision used for the publishing integration.
 The publisher extracts main's documentation and generators at an immutable Git revision without changing another worktree.
 It installs only the [locked docs dependency](../../tools/docs/main/package.json), `yaml`, in that extracted directory and runs the original generators with Node's TypeScript support.
@@ -37,6 +40,17 @@ To refresh Latest, update `fern/main-source.json` to a reviewed main commit, rec
 Before a public release, select the main revision intended for publication; a main branch tip is not automatically its latest published release.
 The first build fetches the pinned commit if it is absent locally.
 To recover a damaged import, stop the preview server, remove only the generated `fern/_main/` directory, and rerun the build.
+
+## Release Notes
+
+The v1 [changelog overview](../../docs/changelog/overview.md) introduces the release series.
+Fern displays each `docs/changelog/YYYY-MM-DD.md` file as a searchable entry.
+Use the version as its heading, for example `## v0.1.0`.
+Keep changes between release candidates in the [maintainer notes](release-candidates.md).
+
+Before publishing the 0.1.0 entry, verify the changes against the release tag and confirm the date in the filename.
+If the filename changes, redirect the draft entry URL to the published entry in `fern/docs.yml`.
+Use the published release date for each subsequent entry.
 
 ## Validating Locally
 

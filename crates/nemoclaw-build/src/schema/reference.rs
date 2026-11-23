@@ -307,6 +307,28 @@ fn input_type(schema: &Value) -> String {
         .to_owned()
 }
 
+/// Whether a bound only restates the range of a 64-bit integer type, which no
+/// reader needs. A narrower type's limit can be a real bound, such as a port's
+/// 65535, and an unsigned type's minimum of 0 says that negatives are rejected.
+fn type_bound(schema: &Value, key: &str, value: &Value) -> bool {
+    let Some((low, high)) = schema["format"]
+        .as_str()
+        .filter(|format| ["int64", "uint64", "int", "uint"].contains(format))
+        .and_then(nemoclaw_sdk::config::schema::integer_range)
+    else {
+        return false;
+    };
+    let value = value
+        .as_i64()
+        .map(i128::from)
+        .or_else(|| value.as_u64().map(i128::from));
+    match key {
+        "maximum" => value == Some(high),
+        "minimum" => low != 0 && value == Some(low),
+        _ => false,
+    }
+}
+
 fn constraints(schema: &Value) -> String {
     let mut parts = Vec::new();
     if let Some(value) = schema.get("const") {
@@ -334,7 +356,9 @@ fn constraints(schema: &Value) -> String {
         ("minProperties", "minimum entries"),
         ("maxProperties", "maximum entries"),
     ] {
-        if let Some(value) = schema.get(key) {
+        if let Some(value) = schema.get(key)
+            && !type_bound(schema, key, value)
+        {
             parts.push(format!("{label} {value}"));
         }
     }
@@ -492,6 +516,28 @@ mod tests {
             "string"
         );
         assert!(constraints(&json!({"oneOf":[{"type":"object"},{"type":"array"}]})).is_empty());
+    }
+
+    #[test]
+    fn only_64_bit_type_limits_are_left_out_of_constraints() {
+        assert_eq!(
+            constraints(
+                &json!({"type":"integer", "format":"uint64", "minimum":0, "maximum":u64::MAX})
+            ),
+            "minimum 0"
+        );
+        assert_eq!(
+            constraints(
+                &json!({"type":"integer", "format":"int64", "minimum":i64::MIN, "maximum":12})
+            ),
+            "maximum 12"
+        );
+        assert_eq!(
+            constraints(
+                &json!({"type":"integer", "format":"uint16", "minimum":1024, "maximum":u16::MAX})
+            ),
+            "minimum 1024; maximum 65535"
+        );
     }
 
     #[test]

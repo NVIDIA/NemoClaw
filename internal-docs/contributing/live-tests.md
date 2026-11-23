@@ -20,6 +20,7 @@ cargo ci live-kind
 ```
 
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
+Meanwhile, the node pulls the pinned OpenShell gateway, supervisor, and sandbox images and the development issuer's image, so that no scenario's time includes those pulls.
 It then runs two [HCL E2E scenarios](#hcl-e2e-scenarios), one after the other, each in new namespaces.
 
 The `kind-kubernetes-development` scenario deploys one agent with the `kubernetes` target and the `development` authentication profile, whose tokens the SDK issues.
@@ -143,7 +144,7 @@ The hosted cases make real hosted inference requests, which may incur charges.
 
 The workflows destroy each deployment in a separate step after success, failure, or cancellation and upload outcome reports with the destroy receipt.
 Requests, replies, command output, and credentials stay in the run's private `work` directory.
-CI / Bundle runs the selected hosted cases from Linux AMD64's test archive, bundle, and live images, except on a fork's pull request, and adds the GPU cases through Live / HCL, from the same artifacts, on `v1` pushes and manual runs; each case's document decides [where it runs](testing.md#live-suites), and the plan [selects the cases](testing.md#live-suites) a pull request affects. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, which builds its own candidate from the dispatched branch, or run a case by hand as below.
+CI / Bundle runs the selected hosted cases from Linux AMD64's test archive, bundle, and live images, except on a fork's pull request, and adds the GPU cases through Live / HCL, from the same artifacts, on `v1` pushes and manual runs; each case's document decides [where it runs](testing.md#live-suites), and the plan [selects the cases](testing.md#live-suites) a pull request affects. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, run CI / Bundle by hand with `suite=hcl`, as [below](#dgx-station-and-spark-on-colossus), which builds the Linux bundle, test executables, and images and runs only the HCL cases, or run a case by hand as below.
 
 To run a case by hand on Linux with Docker, load the candidate images, bind the case's image templates and `uid` as the `Live / HCL` workflow does, and run from `crates/nemoclaw-e2e`:
 
@@ -160,30 +161,34 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 
 ### DGX Station and Spark on Colossus
 
-**Live / V1 PR hardware** listens for `copy-pr-bot` pushes to `pull-request/<number>`. Like main, it uses the bot's trusted-author admission rather than a maintainer/admin-only actor gate. It verifies that the PR is open, non-draft, targets `v1`, and still has the copied head SHA, then uses `changes cases --base` to select affected GPU and Station cases. The Station example and scenario belong to the Station placement in the same case registry; shared changes select it through the existing dependency rules. Spark remains manual-only and is excluded from this automatic selection. A PR based on v1 before this workflow was introduced must pick up the workflow before its copied branch can trigger it.
+CI / Bundle also runs on `copy-pr-bot`'s pushes to `pull-request/<number>`, as its `hardware` suite. Like main, it uses the bot's trusted-author admission rather than a maintainer/admin-only actor gate. Its plan verifies that the PR is open, non-draft, targets `v1`, and still has the copied head SHA, then uses `changes cases --base` to select affected GPU and Station cases. It builds only the Linux platforms those cases need, Linux AMD64 for the GPU cases and Linux ARM64 for Station, without their unit, contract, integration, and live suites, and calls Live / HCL with their artifacts. The Station example and scenario belong to the Station placement in the same case registry; shared changes select it through the existing dependency rules. Spark remains manual-only and is excluded from this automatic selection. A PR based on v1 before this suite was introduced must pick up the workflow change before its copied branch can trigger it.
 
-These runs report failures in a separate workflow; they are not added as merge requirements. Running jobs are not automatically cancelled. Hardware jobs recheck PR eligibility after queueing and before deployment. GitLab/Colorunner continues to own leases and replacement; CI does not provision hosts.
+These runs report no `Test /` checks and are not merge requirements. Running jobs are not automatically cancelled. Hardware jobs recheck PR eligibility after queueing and before deployment. GitLab/Colorunner continues to own leases and replacement; CI does not provision hosts.
 
-Operators can dispatch **Live / HCL** on `v1`, or on a current, non-draft v1 PR's bot-admitted `pull-request/<number>` branch. The optional `jobs` input selects individual comma-separated case IDs on the target; unknown or misplaced IDs fail before hardware jobs queue. An empty input selects every case on that target:
+The hardware suite refreshes one PR selection comment for the analyzed commit, including when no hardware case is selected. It explains automatic, non-gating execution and groups case IDs under fixed selection reasons. Execution links, outcomes, timing, artifacts, runner identities and raw diagnostics stay out of that comment; Actions evidence retains its existing visibility. Comment-write permission belongs to a separate job that neither checks out candidate code nor runs its executables.
 
-```bash
-gh workflow run hcl-e2e.yml --ref v1 -f target=dgx-station -f hosted=false \
-  -f jobs=dgx-station-openclaw-nemotron
-```
-
-Spark uses the same workflow and persistent-runner path, with the fixed `colossus-gb10` label and without CI / Bundle artifacts. Like Station, dispatch on `v1` or the current PR's bot-admitted `pull-request/<number>` branch; direct dispatch from an author branch is rejected. For a PR candidate:
+Operators can run the HCL cases by dispatching **CI / Bundle** with `suite=hcl` on `v1`, or on a current, non-draft v1 PR's bot-admitted `pull-request/<number>` branch. The run builds the target's Linux platform, Linux AMD64 for `rtx-pro-6000` and Linux ARM64 for Station and Spark, and Live / HCL runs its cases from those artifacts. The optional `hcl-jobs` input selects individual comma-separated case IDs on the target; unknown or misplaced IDs fail before hardware jobs queue. An empty input selects every case on that target:
 
 ```bash
-gh workflow run hcl-e2e.yml --repo NVIDIA/NemoClaw --ref "pull-request/<number>" \
-  -f target=dgx-spark -f hosted=false -f jobs=dgx-spark-openclaw-nemotron
+gh workflow run rust.yml --ref v1 -f suite=hcl -f hcl-target=dgx-station -f hcl-hosted=false \
+  -f hcl-jobs=dgx-station-openclaw-nemotron
 ```
+
+Spark uses the same workflow and persistent-runner path, with the fixed `colossus-gb10` label. Like Station, dispatch on `v1` or the current PR's bot-admitted `pull-request/<number>` branch; dispatch from any other branch is rejected. For a PR candidate:
+
+```bash
+gh workflow run rust.yml --repo NVIDIA/NemoClaw --ref "pull-request/<number>" \
+  -f suite=hcl -f hcl-target=dgx-spark -f hcl-hosted=false -f hcl-jobs=dgx-spark-openclaw-nemotron
+```
+
+For a reviewer-requested extra case, dispatch CI / Bundle with `suite=hcl` on the PR's current admitted `pull-request/<number>` branch with that case ID in `hcl-jobs`. This starts an additional selection and leaves automatic selections intact. To preview an additive selection locally, use `changes cases --base origin/v1 --add CASE`; reviewed additions do not require an Advisor service.
 
 Build, inference, and cleanup failures fail the run visibly. An offline runner leaves its hardware job queued. A queued PR revision that becomes draft, closes, or is superseded cannot deploy when it reaches a runner.
 
 Colorunner must prepare Ubuntu 24.04 ARM64, the intended GPU (GB300 for Station or GB10 for Spark), Docker/Buildx, NVIDIA Container Toolkit, container GPU access, and the containerd image store. CI does not provision the host or manage its lease.
 Before Spark dispatch, complete the capacity checks in [#13934](https://github.com/NVIDIA/NemoClaw/issues/13934): record the SSA owner, admitted lease window, limits and recovery procedure; verify host identity and GPU access; and qualify the persistent runner with a manual smoke on its unique label. Keep the exact smoke commit, runner ID and run URL. Smoke runs `true` and proves job delivery only; capacity, inference and cleanup need their own evidence.
 
-The shared HCL workflow builds on the selected host and binds its existing GTC example to candidate images, a fresh UID, state, and nonoverlapping subnet:
+The shared HCL workflow downloads CI / Bundle's Linux ARM64 bundle, test executable, and images on the selected host, or pulls a v1 commit's pushed images when no image input changed since, and binds its existing GTC example to them, a fresh UID, state, and nonoverlapping subnet:
 
 | Target | Runner label | Example and model |
 |---|---|---|
@@ -194,13 +199,42 @@ Each scenario applies, requires OpenClaw to reply `READY`, and destroys; indepen
 
 Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>/`. Published reports contain outcomes and candidate/UID/case identity only.
 Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
-The [Spark scenario](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-spark-openclaw-nemotron.tftest.hcl), including model download and load, must fit the existing 60-minute job budget with build and cleanup; the model startup timeout does not extend that job budget. Do not reuse an existing deployment as evidence of a fresh run.
+
+For the Station case, Colorunner can install the root-owned
+`/usr/local/libexec/colorunner-model-cache` helper. A successful cold run publishes
+its verified model files. Subsequent runs mount those files read-only into a
+fresh model volume; engine caches, status, credentials, and deployment state stay
+per run. Hosts without the helper keep the original acquisition path. This cache
+survives image replacement on the same host, but does not provide cross-host
+persistence. Spark does not use it.
+
+The case records cache availability and publication or release outcomes in
+`reports/model-cache.json`. Invalid entries fall back to acquisition before
+mounting; uncertain mount state fails the case. A separate always-run cleanup
+recovers this run's mount after SDK destroy and independent Docker cleanup. Its
+`reports/model-cache-cleanup.json` must confirm success. Recovery preserves live
+holders, container references, and mounts whose identity cannot be established.
+Do not remove their journals or force-unmount to bypass a failed cleanup.
+Qualify the coordinated Colorunner and NemoClaw revisions on an owned GB300,
+including cancellation recovery, before unattended use; see
+[#13994](https://github.com/NVIDIA/NemoClaw/issues/13994).
+
+The [Spark scenario](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-spark-openclaw-nemotron.tftest.hcl), including model download and load, must fit the existing 60-minute job budget with the downloads and cleanup; the model startup timeout does not extend that job budget. Do not reuse an existing deployment as evidence of a fresh run.
 To recover a failed run, set `run` to its retained directory and use the original executables:
 
 ```bash
 "$run/bundle/bin/nemoclaw" destroy --output json --progress off --state-dir "$run/deployment"
 NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
   "$run/e2e" hcl_live::docker_cleanup --exact --ignored --nocapture
+```
+
+For a Station run with the host cache installed, release its mount after those
+commands succeed:
+
+```bash
+NEMOCLAW_HCL_CASE=dgx-station-openclaw-nemotron \
+  NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
+  "$run/e2e" hcl_live::model_cache_cleanup --exact --ignored --nocapture
 ```
 
 ## Spark and Fabric
@@ -216,8 +250,8 @@ Rebuilding `dist` replaces development artifacts; keep the selected bundle uncha
 
 ## Bare Brev
 
-The `Live / Brev` workflow provisions an ordinary Brev CPU VM rather than a NemoClaw Launchable.
-Three jobs build the Linux AMD64 bundle and the `nemoclaw-e2e` `e2e` test executable, build the matching OpenClaw image, and provision the VM in parallel.
+CI / Bundle's `brev` suite runs `Live / Brev`, which provisions an ordinary Brev CPU VM rather than a NemoClaw Launchable.
+Linux AMD64's jobs build the bundle and the `nemoclaw-e2e` `e2e` test executable while Live / Brev host builds the matching OpenClaw image and provisions the VM, in parallel.
 Image transfer starts as soon as the image and VM are ready, overlapping any remaining bundle build.
 The image-loading job verifies the archive checksum and source revision, and requires Docker to retain the built image digest after loading.
 The lifecycle job waits for the bundle and loaded image, then transfers the bundle and runs the `docker-openclaw-v0-parity` [HCL E2E scenario](#hcl-e2e-scenarios) on the fresh VM.
@@ -225,7 +259,7 @@ Image compilation happens on the CI runner.
 A separate cleanup job runs after success, failure, or cancellation and requires two confirmed observations that its owned VM is absent.
 The check list shows bundle build, image build, preparation, image loading, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
 The workflow requires repository secrets named `BREV_API_KEY` and `NVIDIA_API_KEY`.
-Run it on `v1` with `gh workflow run brev.yml --ref v1`, or by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`; a dispatch from any other branch skips every job.
+Run it on `v1` with `gh workflow run rust.yml --ref v1 -f suite=brev`, or by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`; a dispatch from any other branch skips every job.
 GitHub's documentation requires a dispatched workflow on the default branch, but GitHub has accepted dispatches of this one on `v1`.
 
 The reviewed Brev startup script installs the required host packages, enables Docker, and waits on a readiness sentinel before candidate transfer.

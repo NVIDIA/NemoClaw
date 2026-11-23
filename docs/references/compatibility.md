@@ -13,6 +13,26 @@ Use them together.
 Mixing releases is not supported.
 Refer to [bundle building](../build-deploy/build.md) for how a bundle pins its parts.
 
+Each release attaches `version-pins.json`, which lists the version and digest or checksum of each component that a deployment of the release uses, so hand-written HCL and other installers do not need the repository's `versions.json`.
+Its `release` field is the tag.
+Each entry under `components` has one pin: `image` or `chart`, a reference by digest; `archives`, each platform's release archive by `url` and `sha256`; or `source`, a source archive by `url` and `sha256`.
+Every entry except `developmentIssuer` also has a `version`.
+
+| Component | Version | Pin |
+|---|---|---|
+| `opentofu` | OpenTofu | `archives` |
+| `dockerProvider`, `helmProvider` | The Docker and Helm providers | `archives` |
+| `gateway`, `supervisor`, `sandboxRuntime` | OpenShell | `image` |
+| `gatewayChart` | OpenShell | `chart` |
+| `developmentIssuer`, the issuer that a managed Kubernetes gateway runs for the `development` profile | None | `image` |
+| `fabric` | The Fabric source revision | `source` |
+| Each agent and runtime image of the release, by name, such as `hermes` or `vllm` | The release's tag | `image` |
+
+The file leaves out tools that only build and test NemoClaw, such as Rust and kind.
+The NemoClaw providers ship in the CLI archives, which `SHA256SUMS` lists.
+HCL can read the file with `jsondecode`, as in `jsondecode(file("version-pins.json")).components.gateway.image`.
+A final release is published only when its `version-pins.json` matches its tag's `versions.json` and the images it staged.
+
 ## Configuration
 
 `v1alpha1` can change between releases without migration.
@@ -47,7 +67,7 @@ Provider type names, inputs, and outputs can change between releases.
 Each release's [provider guide](provider.md) and schema snapshots describe that release's types.
 
 The examples under [`examples/hcl`](../../examples/hcl) are supported with the release they ship in: [`travel`](../../examples/hcl/travel/main.tf), which an integration scenario applies unchanged, and [`travel-team`](../../examples/hcl/travel-team/README.md).
-Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and destroy keeps what [deployment state](../build-deploy/state.md#understanding-the-retained-resources) lists as retained.
+Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and `tofu destroy` deletes everything the HCL manages, but refuses to run while the HCL or the provider protects one of its resources, as [Tearing the Configuration Down](../build-deploy/opentofu-project.md#tearing-the-configuration-down) describes.
 
 ## Import, Adoption, and State Backends
 
@@ -58,5 +78,6 @@ It checks ownership labels and its saved bindings before changing anything.
 The CLI and SDK keep each deployment's OpenTofu state in its local [state directory](../build-deploy/state.md).
 Remote state backends are not supported for them.
 Hand-written HCL can use any state backend OpenTofu supports, because the providers do not depend on the backend.
-State holds resource identities and settings, never credential values.
+State holds resource identities and settings.
+For credentials, NemoClaw's providers store the names of environment variables, never their values, as [Keeping State in Your Backend](../build-deploy/opentofu-project.md#keeping-state-in-your-backend) describes.
 Protect it like any OpenTofu state.

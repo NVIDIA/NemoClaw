@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Security review, scan binding, and controlled draft publication added for #13523.
-# Stage a release from a semver tag such as v0.1.0-rc1 on the v1 branch. Promote
+# Stage a release from a semver tag such as v0.1.0-rc.1 on the v1 branch. Promote
 # the images CI checked on the tagged history to v1/<image>:<tag>, build the runtime
 # images, and create a draft release listing every digest, with the CLI bundles
 # CI / Bundle built and checked at the tag. The protected
@@ -295,17 +295,66 @@ jobs:
           path: ${{ runner.temp }}/windows_amd64.verification.txt
           if-no-files-found: error
           retention-days: 7
-  # Product Security decides whether Secure Signing signs and notarizes the
-  # macOS executables or this job does with NVIDIA's Developer ID (#14621); the
-  # signing step lands with that decision. Until then, listing darwin_arm64 in
-  # RELEASE_SIGNING stops staging here: only the Helm provider is notarized.
-  sign-macos:
-    name: Sign the macOS CLI
+  # Dedicated private runner: only the trusted controller executes with SSA access.
+  sign-macos-3s:
+    name: Sign macOS executables with 3S
     needs: [bundles, security-controller]
     if: contains(vars.RELEASE_SIGNING, 'darwin_arm64')
+    runs-on: [self-hosted, linux, x64, nemoclaw-release-signing]
+    timeout-minutes: 100
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.security-controller.outputs.revision }}
+          persist-credentials: false
+      - name: Compile the trusted signing helper
+        run: rustc --edition=2021 tools/release/macos-signing.rs -o "$RUNNER_TEMP/macos-signing"
+      - name: Download the bundle CI checked at the tag
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.bundles.outputs.darwin_arm64 }}
+          run-id: ${{ needs.bundles.outputs.run }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/ci
+      - name: Unpack the checked bundle
+        run: tar -xf "$RUNNER_TEMP/ci/bundle.tar" -C "$RUNNER_TEMP"
+      - name: Fetch current SSA credentials and sign NVIDIA inventory
+        env:
+          MACOS_THIRD_PARTY_SIGNING_APPROVED: ${{ vars.MACOS_THIRD_PARTY_SIGNING_APPROVED }}
+        run: |
+          export PATH="/opt/nemoclaw-signing/nvsec/bin:$PATH"
+          "$RUNNER_TEMP/macos-signing" sign "$RUNNER_TEMP/dist/darwin_arm64"
+      - name: Preserve executable permissions for the Mac handoff
+        run: tar -cf "$RUNNER_TEMP/macos-3s.tar" -C "$RUNNER_TEMP/dist" darwin_arm64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-3s-intermediate
+          path: ${{ runner.temp }}/macos-3s.tar
+          if-no-files-found: error
+          retention-days: 1
+      - name: Remove private job scratch data
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP"/nemoclaw-3s-* "$RUNNER_TEMP/dist" "$RUNNER_TEMP/ci"
+          rm -f "$RUNNER_TEMP/macos-3s.tar" "$RUNNER_TEMP/macos-signing"
+  sign-macos:
+    name: Sign the macOS CLI
+    needs: [sign-macos-3s, security-controller]
+    # The Apple notary credentials live in this environment, whose deployment
+    # rule admits only release tags. The 3S job stays outside it so its Vault
+    # identity remains bound to the tag.
+    environment: release-signing
+    if: >-
+      !cancelled() && needs.sign-macos-3s.result == 'success' &&
+      needs.security-controller.result == 'success' &&
+      contains(vars.RELEASE_SIGNING, 'darwin_arm64')
     runs-on: macos-15
     timeout-minutes: 30
-    environment: release-signing
     permissions:
       actions: read
       contents: read
@@ -321,25 +370,52 @@ jobs:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: |
           if [ -z "$APPLE_TEAM_ID" ]; then
-            echo '::error::The release-signing environment has no APPLE_TEAM_ID variable.'
+            echo '::error::The repository has no APPLE_TEAM_ID variable.'
             exit 1
           fi
-      - name: Download the bundle CI checked at the tag
+      - name: Compile the trusted notarization helper
+        run: rustc --edition=2021 tools/release/macos-signing.rs -o "$RUNNER_TEMP/macos-signing"
+      - name: Download the 3S-signed bundle
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          artifact-ids: ${{ needs.bundles.outputs.darwin_arm64 }}
-          run-id: ${{ needs.bundles.outputs.run }}
-          github-token: ${{ github.token }}
-          merge-multiple: true
+          name: macos-3s-intermediate
           path: ${{ runner.temp }}/ci
-      - name: Unpack the bundle
-        run: tar -xf "$RUNNER_TEMP/ci/bundle.tar" -C "$RUNNER_TEMP"
+      - name: Unpack signed executables
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          tar -xf "$RUNNER_TEMP/ci/macos-3s.tar" -C "$RUNNER_TEMP/dist"
+      # MACOS_NOTARIZATION turns this on; signing works without it.
+      - name: Notarize the signed executables
+        if: vars.MACOS_NOTARIZATION == 'true'
+        env:
+          APPLE_NOTARY_ID: ${{ secrets.APPLE_NOTARY_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_NOTARY_PROFILE: nemoclaw-release
+          APPLE_NOTARY_KEYCHAIN: ${{ runner.temp }}/nemoclaw-notary.keychain-db
+        run: |
+          set -euo pipefail
+          : "${APPLE_NOTARY_ID:?Missing Apple ID}"
+          : "${APPLE_NOTARY_PASSWORD:?Missing app-specific password}"
+          keychain_password=$(openssl rand -hex 32)
+          echo "::add-mask::$keychain_password"
+          trap 'security delete-keychain "$APPLE_NOTARY_KEYCHAIN" >/dev/null 2>&1 || true' EXIT
+          security create-keychain -p "$keychain_password" "$APPLE_NOTARY_KEYCHAIN"
+          security unlock-keychain -p "$keychain_password" "$APPLE_NOTARY_KEYCHAIN"
+          xcrun notarytool store-credentials "$APPLE_NOTARY_PROFILE" \
+            --keychain "$APPLE_NOTARY_KEYCHAIN" --apple-id "$APPLE_NOTARY_ID" \
+            --team-id "$APPLE_TEAM_ID" --password "$APPLE_NOTARY_PASSWORD"
+          unset APPLE_NOTARY_PASSWORD keychain_password
+          "$RUNNER_TEMP/macos-signing" notarize "$RUNNER_TEMP/dist/darwin_arm64"
       - name: Verify every signature
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          MACOS_NOTARIZATION: ${{ vars.MACOS_NOTARIZATION }}
         run: |
           set -o pipefail
-          bash .github/scripts/verify-macos-signatures.sh "$RUNNER_TEMP/dist/darwin_arm64" "$APPLE_TEAM_ID" 2>&1 |
+          mode=signatures-only
+          if [ "$MACOS_NOTARIZATION" = true ]; then mode=notarized; fi
+          bash .github/scripts/verify-macos-signatures.sh "$RUNNER_TEMP/dist/darwin_arm64" "$APPLE_TEAM_ID" "$mode" 2>&1 |
             tee "$RUNNER_TEMP/darwin_arm64.verification.txt"
       - name: Upload the signed bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -352,9 +428,14 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signing-verification-darwin_arm64
-          path: ${{ runner.temp }}/darwin_arm64.verification.txt
+          path: |
+            ${{ runner.temp }}/darwin_arm64.verification.txt
+            ${{ runner.temp }}/darwin_arm64.notarization.json
           if-no-files-found: error
           retention-days: 7
+      - name: Remove the temporary Apple keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/nemoclaw-notary.keychain-db" >/dev/null 2>&1 || true
   stage:
     name: Stage the release
     outputs:
@@ -526,6 +607,15 @@ jobs:
             fi
             echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` | $metadata |" >> "$notes"
           done
+          pins="$RUNNER_TEMP/version-pins.json"
+          cargo run --locked -q -p nemoclaw-build --no-default-features -- release-pins \
+            --versions versions.json --inventory "$inventory" --tag "$TAG" > "$pins"
+          {
+            echo
+            echo '## Version pins'
+            echo
+            echo "\`version-pins.json\` lists the version and digest or checksum of each component that a deployment of this release uses, including its images. Hand-written HCL can read it instead of the repository's \`versions.json\`."
+          } >> "$notes"
           # Each platform's SPDX document was recorded where the image was built,
           # under its digest. Syft scans only an image whose record doesn't name it.
           sboms="$RUNNER_TEMP/sboms"
@@ -570,7 +660,7 @@ jobs:
               --title "NemoClaw $TAG" --notes-file "$notes"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$bundles"/*.metadata.json
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$cli"/nemoclaw-* "$cli/SHA256SUMS" "$cli/release-evidence.json"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$cli"/nemoclaw-* "$cli/SHA256SUMS" "$cli/release-evidence.json" "$pins"
           cp "$inventory" "$sboms/inventory.json"
           echo "inventory_sha256=$(sha256sum "$inventory" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "sboms_sha256=$(sha256sum "$sboms/sboms.json" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
@@ -707,6 +797,26 @@ jobs:
           done < "$dir/tags"
           echo "::error::No release candidate of $TAG staged these images. Tag one from this commit and test it first."
           exit 1
+      - name: Require the version pins of the tag and its images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          CANDIDATE_REVISION: ${{ github.sha }}
+          INVENTORY_SHA256: ${{ needs.stage.outputs.inventory_sha256 }}
+        run: |
+          # The controller, not the tag's build tool, derives the expected pins.
+          dir="$RUNNER_TEMP/pins"
+          mkdir -p "$dir"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern inventory.json --output "$dir/inventory.json"
+          test "$(sha256sum "$dir/inventory.json" | cut -d ' ' -f1)" = "$INVENTORY_SHA256"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern version-pins.json --output "$dir/staged.json"
+          git show "$CANDIDATE_REVISION:versions.json" > "$dir/versions.json"
+          cargo run --locked -q -p nemoclaw-build --no-default-features -- release-pins \
+            --versions "$dir/versions.json" --inventory "$dir/inventory.json" --tag "$TAG" > "$dir/expected.json"
+          if ! cmp -s "$dir/expected.json" "$dir/staged.json"; then
+            echo "::error::The draft's version-pins.json doesn't match the versions.json of $TAG and the images staging recorded."
+            exit 1
+          fi
       - name: Assess the staged release
         id: gate
         uses: ./.github/actions/release-assessment

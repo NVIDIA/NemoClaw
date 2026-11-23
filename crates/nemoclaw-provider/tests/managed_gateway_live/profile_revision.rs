@@ -5,7 +5,7 @@ use super::*;
 use nemoclaw_sdk::{
     ObservationError, Secrets,
     backend::{Backend, Row},
-    config::{Gateway, SearchProvider, search_provider_name},
+    config::Gateway,
 };
 use openshell_provider::{OpenShell, verify_identity};
 use openshell_sdk::raw::proto;
@@ -127,27 +127,40 @@ async fn imported_profile_revisions_survive_repeated_reads_and_gateway_restart()
         fields.insert("credential_source".into(), String::new());
         providers.push(ensure(&backend, "provider", &fields).await);
     }
-    for search in [SearchProvider::Brave, SearchProvider::Tavily] {
+    // The REST-restricted API profiles each web search provider compiles to.
+    for (name, endpoint, auth_style, header_name, rules) in [
+        (
+            "brave-search",
+            "https://api.search.brave.com",
+            "header",
+            "X-Subscription-Token",
+            r#"{"rules":[{"allow":{"method":"GET","path":"/res/v1/web/search"}}]}"#,
+        ),
+        (
+            "tavily-search",
+            "https://api.tavily.com",
+            "bearer",
+            "",
+            r#"{"rules":[{"allow":{"method":"POST","path":"/search"}},{"allow":{"method":"POST","path":"/extract"}}]}"#,
+        ),
+    ] {
         let mut fields = base.clone();
-        fields.insert("name".into(), search.profile().into());
-        fields.insert(
-            "binaries_json".into(),
-            r#"["/usr/local/bin/python3"]"#.into(),
+        fields.extend(
+            [
+                ("name", name),
+                ("endpoints_json", &format!(r#"["{endpoint}"]"#)),
+                ("credential_env", "PROFILE_TEST_KEY"),
+                ("binaries_json", r#"["/usr/local/bin/python3"]"#),
+                ("auth_style", auth_style),
+                ("header_name", header_name),
+                ("sandbox_env", ""),
+                (nemoclaw_openshell::api::REST_POLICY, rules),
+            ]
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
         );
-        profiles.push(ensure(&backend, "provider_profile", &fields).await);
-        fields.remove("binaries_json");
-        fields.extend([
-            ("profile_name".into(), search.profile().into()),
-            (
-                "name".into(),
-                search_provider_name(search, "PROFILE_TEST_KEY", search.profile()),
-            ),
-            ("endpoint".into(), search.endpoint().into()),
-            ("provider_type".into(), search.name().into()),
-            ("credential_env".into(), "PROFILE_TEST_KEY".into()),
-            ("credential_source".into(), String::new()),
-        ]);
-        providers.push(ensure(&backend, "provider", &fields).await);
+        let (profile, registration) = nemoclaw_openshell::pairs::api_rows(&fields);
+        profiles.push(ensure(&backend, "provider_profile", &profile).await);
+        providers.push(ensure(&backend, "provider", &registration).await);
     }
     let scoped = client.workspace(&workspace["name"]);
     let sandbox = scoped

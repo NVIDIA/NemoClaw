@@ -21,8 +21,8 @@ async fn search_preserves_credentials_on_unchanged_ensure_and_removes_owned_regi
     }
 }
 
-/// The profile and registration an `openshell_web_search` resource owns,
-/// exercised through the OpenShell client directly.
+/// The profile and registration the `openshell_api` resource a web search
+/// compiles to owns, exercised through the OpenShell client directly.
 async fn search_credential_lifecycle(provider_type: &str, credential_env: &str) {
     let fixture = Fixture::start().await;
     let mut doc =
@@ -57,10 +57,12 @@ async fn search_credential_lifecycle(provider_type: &str, credential_env: &str) 
     );
     let search = &targets
         .iter()
-        .find(|t| t.kind == "web_search" && t.values["provider_type"] == provider_type)
+        .find(|t| {
+            t.kind == "api" && t.values["name"].starts_with(&format!("{provider_type}-search-"))
+        })
         .unwrap()
         .values;
-    let (profile, target) = openshell_provider::web_search_rows(search).unwrap();
+    let (profile, target) = nemoclaw_openshell::pairs::api_rows(search);
     let profile = &profile;
     fixture.state.lock().unwrap().lose_create = true;
     assert!(
@@ -87,7 +89,10 @@ async fn search_credential_lifecycle(provider_type: &str, credential_env: &str) 
         let state = fixture.state.lock().unwrap();
         let stored = &state.providers[&key];
         assert_eq!(stored.credentials[credential_env], "owned-search-key");
-        assert!(stored.config.is_empty());
+        assert_eq!(
+            stored.config[nemoclaw_openshell::api::ENDPOINTS_CONFIG],
+            search["endpoints_json"]
+        );
         assert_eq!(stored.profile_workspace, doc.workspace());
     }
     let effects = fixture.state.lock().unwrap().effects;
@@ -179,18 +184,18 @@ async fn separate_search_credentials_reach_only_their_selected_sandbox_attachmen
         .into();
     let targets = targets(&doc, &generations).unwrap();
     let client = OpenShell::connect(&doc.spec.gateway.connection(), Arc::new(Keys)).unwrap();
-    // Web search targets expand to the profile and registration they own.
+    // API targets, web search included, expand to the profile and
+    // registration they own.
     for kind in [
         "workspace",
         "provider_profile",
         "provider",
-        "web_search",
+        "api",
         "sandbox",
     ] {
         for target in targets.iter().filter(|t| t.kind == kind) {
-            let rows = if kind == "web_search" {
-                let (profile, registration) =
-                    openshell_provider::web_search_rows(&target.values).unwrap();
+            let rows = if kind == "api" {
+                let (profile, registration) = nemoclaw_openshell::pairs::api_rows(&target.values);
                 vec![("provider_profile", profile), ("provider", registration)]
             } else {
                 vec![(kind, target.values.clone())]
@@ -205,12 +210,9 @@ async fn separate_search_credentials_reach_only_their_selected_sandbox_attachmen
     for (sandbox, reference) in doc.sandboxes().zip(["SEARCH_A", "SEARCH_B"]) {
         let search = targets
             .iter()
-            .find(|t| t.kind == "web_search" && t.values["credential_env"] == reference)
+            .find(|t| t.kind == "api" && t.values["credential_env"] == reference)
             .unwrap();
-        let registration = openshell_provider::web_search_rows(&search.values)
-            .unwrap()
-            .1["name"]
-            .clone();
+        let registration = search.values["name"].clone();
         let stored = &state.providers[&format!("{}/{}", doc.workspace(), registration)];
         assert_eq!(
             stored.credentials["BRAVE_API_KEY"],
