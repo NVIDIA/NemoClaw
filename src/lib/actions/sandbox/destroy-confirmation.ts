@@ -85,7 +85,7 @@ export async function confirmSandboxDestroy(
   return false;
 }
 
-/** Tell the user where the pre-upgrade or pre-rebuild backup is, without touching it. */
+/** Report backup metadata without claiming the recorded location or archive is verified. */
 export function printRetainedBackupLocation(sandboxName: string): void {
   let backupPath: string | null = null;
   try {
@@ -98,11 +98,11 @@ export function printRetainedBackupLocation(sandboxName: string): void {
   }
   if (backupPath) {
     console.error(
-      `  Latest backup found at: ${backupPath} (native-home.tar should hold the agent home and workspace). NemoClaw has not checked that the archive is intact. Copy the directory somewhere safe and verify it before any manual cleanup.`,
+      `  Latest backup record lists: ${backupPath} (native-home.tar should hold the agent home and workspace). NemoClaw has not verified this recorded location or archive. Confirm the location, copy the backup somewhere safe, and verify its contents before any manual cleanup.`,
     );
   } else {
     console.error(
-      `  No complete backup was found for '${sandboxName}' under the NemoClaw rebuild-backups directory.`,
+      `  NemoClaw could not identify a backup location for '${sandboxName}'. Backup files or unreadable records may still exist under the NemoClaw rebuild-backups directory. Inspect it before any manual cleanup.`,
     );
   }
 }

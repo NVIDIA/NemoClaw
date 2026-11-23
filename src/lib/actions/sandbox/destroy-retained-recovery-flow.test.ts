@@ -911,7 +911,7 @@ describe("destroySandbox retained recovery flow", () => {
   const backupPath = "/tmp/rebuild-backups/alpha/2026-11-23";
   it.each([
     {
-      backupState: "present",
+      backupState: "recorded",
       lookup: () => ({
         version: 2,
         sandboxName: "alpha",
@@ -924,13 +924,13 @@ describe("destroySandbox retained recovery flow", () => {
         blueprintDigest: null,
         backupComplete: true,
       }),
-      expectedMessage: `  Latest backup found at: ${backupPath} (native-home.tar should hold the agent home and workspace). NemoClaw has not checked that the archive is intact. Copy the directory somewhere safe and verify it before any manual cleanup.`,
+      expectedMessage: `  Latest backup record lists: ${backupPath} (native-home.tar should hold the agent home and workspace). NemoClaw has not verified this recorded location or archive. Confirm the location, copy the backup somewhere safe, and verify its contents before any manual cleanup.`,
     },
     {
-      backupState: "absent",
+      backupState: "unconfirmed",
       lookup: () => null,
       expectedMessage:
-        "  No complete backup was found for 'alpha' under the NemoClaw rebuild-backups directory.",
+        "  NemoClaw could not identify a backup location for 'alpha'. Backup files or unreadable records may still exist under the NemoClaw rebuild-backups directory. Inspect it before any manual cleanup.",
     },
     {
       backupState: "unreadable",
@@ -941,7 +941,7 @@ describe("destroySandbox retained recovery flow", () => {
         "  NemoClaw could not read the rebuild-backups directory for 'alpha', so it cannot say whether a backup exists. Check the directory permissions before any manual cleanup.",
     },
   ])(
-    "refuses ambiguous retained recovery and reports the $backupState backup state (#10547, #14323)",
+    "refuses ambiguous retained recovery and reports $backupState backup evidence (#10547, #14323)",
     { timeout: 30_000 },
     async ({ lookup, expectedMessage }) => {
       const firstRecovery = retainedRecoveryRecord();
