@@ -190,6 +190,12 @@ fn targets_with_plans(
         if let Some(gpus) = sandbox.gpus {
             values.insert("gpu_count".into(), gpus.to_string());
         }
+        if let Some(cpu) = &sandbox.cpu {
+            values.insert("cpu".into(), cpu.clone());
+        }
+        if let Some(memory) = &sandbox.memory {
+            values.insert("memory".into(), memory.clone());
+        }
         if let Some(config) = &sandbox.driver_config {
             values.insert(
                 "driver_config_json".into(),

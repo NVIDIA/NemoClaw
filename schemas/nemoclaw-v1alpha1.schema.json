@@ -3431,6 +3431,14 @@
           "$ref": "#/$defs/Agent",
           "description": "The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes."
         },
+        "cpu": {
+          "description": "CPU limit OpenShell gives the sandbox, as a quantity such as 500m or 2, passed to its resources.limits.cpu: Docker and Podman apply it as a runtime limit, Kubernetes as the container's request and limit. OpenShell validates it. Changing it replaces the sandbox; omission sets no limit.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "driverConfig": {
           "additionalProperties": true,
           "description": "OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.",
@@ -3495,6 +3503,14 @@
             "pattern": "^[a-z][a-z0-9-]{0,39}$"
           },
           "type": "object"
+        },
+        "memory": {
+          "description": "Memory limit OpenShell gives the sandbox, as a quantity such as 512Mi or 4Gi, passed to its resources.limits.memory: Docker and Podman apply it as a runtime limit, Kubernetes as the container's request and limit. OpenShell validates it. Changing it replaces the sandbox; omission sets no limit.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "network": {
           "$ref": "#/$defs/Network",

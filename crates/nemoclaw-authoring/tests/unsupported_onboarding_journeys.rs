@@ -31,12 +31,6 @@ fn an_author_can_install_or_reuse_vllm_after_environment_discovery() {
 }
 
 #[test]
-#[ignore = "V1 Sandbox has no CPU or RAM resource-sizing fields"]
-fn an_author_can_choose_a_resource_profile_or_custom_cpu_and_ram() {
-    panic!("missing V1 sandbox resource contract");
-}
-
-#[test]
 #[ignore = "desired state preserves isolated or explicit policy, but has no policy-tier and composable-preset intent"]
 fn an_author_can_choose_a_policy_tier_then_customize_presets_and_access() {
     panic!("missing V1 guided policy-preset contract");

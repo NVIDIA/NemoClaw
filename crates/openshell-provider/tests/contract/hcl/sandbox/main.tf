@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Sandbox settings passed through to OpenShell: per-driver configuration,
+# Sandbox settings passed through to OpenShell: CPU and memory limits, per-driver configuration,
 # service exposures and the URLs reported for them, optional providers, and
 # a policy's middleware binding.
 terraform {
@@ -12,6 +12,7 @@ terraform {
 variable "endpoint" { type = string }
 variable "destroying" { default = false }
 variable "target" { default = "/sandbox/skills" }
+variable "memory" { default = "4Gi" }
 variable "services" {
   type = map(object({
     target_port        = number
@@ -67,6 +68,8 @@ resource "openshell_sandbox" "agent" {
   image       = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   launch_json = local.launch_json
   gpu_count   = 1
+  cpu         = "1500m"
+  memory      = var.memory
   providers   = [openshell_api.search.ref]
   driver_config = jsonencode({
     docker = {
