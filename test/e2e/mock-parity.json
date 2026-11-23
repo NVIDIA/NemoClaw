@@ -972,7 +972,11 @@
     },
     {
       "live": "test/e2e/live/ollama-auth-proxy.test.ts",
+      "liveSources": ["test/e2e/fixtures/owned-tcp-listener.ts"],
       "fast": [
+        "test/e2e/support/native-nvidia-target-ownership.test.ts",
+        "test/e2e/support/owned-tcp-listener.test.ts",
+        "test/e2e/support/observed-child-process.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
