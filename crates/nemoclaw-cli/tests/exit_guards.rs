@@ -91,7 +91,14 @@ fn network_guard_counts_a_connection() {
     let guard = NetworkGuard::new();
     let address = guard.0.local_addr().unwrap();
     drop(std::net::TcpStream::connect(address).unwrap());
-    assert_eq!(guard.connections(), 1);
+    // The kernel can queue the connection for the listener just after connect returns.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut count = guard.connections();
+    while count == 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        count = guard.connections();
+    }
+    assert_eq!(count, 1);
     guard.assert_no_connection("after counting");
 }
 
@@ -127,8 +134,9 @@ fn onboarding_without_a_terminal_exits_one_with_text_on_stderr() {
         assert_eq!(
             stderr,
             format!(
-                "Onboard failed · <DURATION>\n{input}State: <ROOT>/state\n\n\
-                 onboarding requires a terminal on stdin and stderr\n"
+                "Onboard failed · <DURATION>\n{input}State: <ROOT>{}state\n\n\
+                 onboarding requires a terminal on stdin and stderr\n",
+                std::path::MAIN_SEPARATOR
             ),
             "{template:?}"
         );
