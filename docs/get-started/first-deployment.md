@@ -107,9 +107,14 @@ The OpenShell CLI authenticates separately from NemoClaw. This request can incur
    ```
 
 6. Check the command's exit status. Stop on failure and consult [native diagnostics](../observability/troubleshooting.md#reading-native-service-logs).
-7. Check the outer `status` for command success. It does not establish that the agent completed the request.
-8. Check the JSON response for `result.status: succeeded`. If the result failed or is missing, stop and diagnose it. Do not replay an invocation with unknown effects.
-9. Inspect `result.output` for the greeting. A reply verifies this request against the selected endpoint and model, not a platform or harness matrix.
+7. Verify that the outer `status` is `succeeded`.
+   This alone does not establish that the agent completed the request.
+8. Verify that `result.status` is `succeeded`.
+   If either status is missing or not `succeeded`, stop and consult [native diagnostics](../observability/troubleshooting.md#reading-native-service-logs).
+   Do not replay an invocation with unknown effects.
+9. Verify that `result.output.response` contains a short greeting.
+   If the reply is missing or unexpected, stop and consult [inference and agent readiness](../observability/troubleshooting.md#inference-and-agent-readiness).
+   A reply verifies this request against the selected endpoint and model, not a platform or harness matrix.
 
 ## Previewing and Removing the Deployment
 
@@ -119,19 +124,24 @@ Destroy does not prompt. It removes the deployment's sandbox, workspace, and own
 2. Preview removal with the original bundle and state directory.
 
    ```sh
-   nemoclaw plan --destroy --state-dir .nemoclaw-first
+   nemoclaw plan --destroy -o json --state-dir .nemoclaw-first
    ```
 
-3. Review the removal plan and any retained resources.
-4. Destroy the deployment only if you accept the listed removals.
+3. Verify that the preview exited successfully and reports `complete: true`.
+   If it failed or is incomplete, stop without running destroy.
+   Keep the state directory and consult [destroy troubleshooting](../build-deploy/usage.md#destroying).
+4. Review the planned removals and any retained resources.
+5. Destroy the deployment only if you accept the listed removals.
 
    ```sh
    nemoclaw destroy --state-dir .nemoclaw-first
    ```
 
-5. Check the destroy result. If it fails, keep the entire state directory and [resume teardown](../build-deploy/usage.md#destroying) with the same state.
-6. Review [retention and explicit cleanup](../build-deploy/usage.md#removing-retained-resources) before deleting local state.
-7. Clear any caller-owned credential variables that you no longer need. This does not revoke the upstream credentials.
+6. Check the destroy result.
+   If it fails, keep the entire state directory and [resume teardown](../build-deploy/usage.md#destroying) with the same state.
+7. Review [retention and explicit cleanup](../build-deploy/usage.md#removing-retained-resources) before deleting local state.
+8. Clear any caller-owned credential variables that you no longer need.
+   This does not revoke the upstream credentials.
 
 ## Next Steps
 

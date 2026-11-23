@@ -47,6 +47,16 @@ Merged `origin/v1` at `105e002500daaacb90ffcadaf59d8ea80268a91c` without conflic
 - Regeneration, schema freshness, whitespace, and all 11 focused CLI parser tests passed. Fern reported zero errors and one warning per pass. The expanded diagnostics confirmed that only the unauthenticated redirect check remains. Logs: `/tmp/nc-r3-schema.log`, `/tmp/nc-r3-parser.log`, `/tmp/nc-r3-fern.log`, and `/tmp/nc-r3-fern-warnings.log`.
 - The final release lookup still returned no tag or release. The corrections do not establish a shipped archive, a live native reply, or hosted rendering.
 
+## First-Reply and Troubleshooting Review Corrections
+
+The independent review of `da0852d7e11a30180b06ec43804c9122af87e935` requested changes. The fetched `origin/v1` still resolves to `105e002500daaacb90ffcadaf59d8ea80268a91c`, which is already merged. The workflow branch has no remote head or proposal.
+
+- Troubleshooting distinguishes `deferred` prerequisites from `unverified` advisories, including missing-image compatibility. See `crates/nemoclaw-cli/src/formatting.rs` and `crates/nemoclaw-sdk/src/deployment/reporting.rs`.
+- The first-reply tutorial checks both invocation statuses and the greeting in `result.output.response`. See Fabric's `runtime_server/cli.py` and `adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/adapter.py` at `76bde16c40747062001bd6ea5f5d13cadab3d706`.
+- The teardown procedure requires a successful JSON preview with `complete: true` before reviewing removals. See `crates/nemoclaw-sdk/src/deployment/runtime/teardown.rs` and the CLI JSON formatter.
+- `cargo run --locked -p nemoclaw-build -- fern check` exited 0 (`/tmp/nc-r4-fern.log`), with zero errors and one warning per pass. Schema freshness and whitespace checks passed. No schema inputs or parser examples changed in this correction.
+- GitHub still returned no final `v0.1.0` tag or release. The hosted v1 overview probe failed with a connection reset. No release rehearsal was run.
+
 ## Release Evidence Still Needed
 
 `git ls-remote --tags origin refs/tags/v0.1.0` returned no match. The final release page returned HTTP 404. The v1 hosted overview first returned 404 and later failed to connect. The API request was rate-limited. These observations do not establish the contents of a private release. No draft RC assets were substituted and nothing was published.
