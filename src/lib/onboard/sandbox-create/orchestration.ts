@@ -1146,9 +1146,9 @@ export async function reconcileCreatedHermesCredentialEnvironment(
     const restart = await deps.restartGateway(input.sandboxName, deps.revalidateSandboxIdentity);
     if (!restart || restart.status !== 0) {
       throw new Error(
-        credentialsChanged
-          ? `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the native Hermes restart failed.`
-          : `Hermes state was restored for sandbox '${input.sandboxName}', but the native Hermes restart failed; the restored state has no Hermes API key until the gateway restarts. Run '${cliName()} ${input.sandboxName} gateway restart'.`,
+        restoredHermesState
+          ? `Hermes state was restored for sandbox '${input.sandboxName}', but the native Hermes restart failed; the restored state has no Hermes API key until the gateway restarts. Run '${cliName()} ${input.sandboxName} gateway restart'.`
+          : `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the native Hermes restart failed.`,
       );
     }
     deps.revalidateSandboxIdentity(

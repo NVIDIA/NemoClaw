@@ -83,4 +83,5 @@ export const RECREATION_RESTORE_CASES: readonly {
   { scenario: "Deep Agents provider change", agent: "langchain-deepagents-code", drift: true },
   { scenario: "Deep Agents marked resume", agent: "langchain-deepagents-code", marked: true },
   { scenario: "unchanged Deep Agents selection", agent: "langchain-deepagents-code" },
+  { scenario: "Hermes recreation", agent: "hermes" },
 ];

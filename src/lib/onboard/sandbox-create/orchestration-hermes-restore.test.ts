@@ -81,4 +81,31 @@ describe("created Hermes gateway restart after a state restore", () => {
     ).rejects.toThrow(/Hermes state was restored for sandbox 'alpha'.*alpha gateway restart/u);
     expect(recordRecovery).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    {
+      restoredHermesState: true,
+      message: /Hermes state was restored for sandbox 'alpha'.*alpha gateway restart/u,
+    },
+    {
+      restoredHermesState: false,
+      message:
+        /^Hermes messaging credential reconciliation changed the gateway environment for sandbox 'alpha', but the native Hermes restart failed\.$/u,
+    },
+  ])(
+    "keeps gateway restart guidance only for a restore when credentials changed and the restart fails (restored: $restoredHermesState)",
+    async ({ restoredHermesState, message }) => {
+      await expect(
+        reconcileCreatedHermesCredentialEnvironment(
+          { sandboxName: "alpha", plan, restoredHermesState },
+          {
+            revalidateSandboxIdentity: vi.fn(),
+            reconcileCredentialEnv: () => ({ changed: true }),
+            restartGateway: async () => ({ status: 1, stdout: "", stderr: "failed" }),
+          },
+          vi.fn(),
+        ),
+      ).rejects.toThrow(message);
+    },
+  );
 });
