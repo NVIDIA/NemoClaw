@@ -263,26 +263,16 @@ impl ConnectedOpenShellGateway {
                 // The policy the sandbox holds now: its latest revision, or
                 // the one it was created with until it has one. Teardown
                 // reads neither.
-                let status = if removing {
-                    None
+                let (status, current) = if removing {
+                    (None, None)
                 } else {
-                    self.policy_status(workspace, name).await?
+                    let status = self.policy_status(workspace, name).await?;
+                    let current = status
+                        .as_ref()
+                        .and_then(|status| status.revision.as_ref()?.policy.clone())
+                        .or_else(|| response.sandbox.as_ref()?.spec.as_ref()?.policy.clone());
+                    (status, current)
                 };
-                let current = (!removing)
-                    .then(|| {
-                        status
-                            .as_ref()
-                            .and_then(|status| status.revision.as_ref())
-                            .and_then(|revision| revision.policy.clone())
-                            .or_else(|| {
-                                response
-                                    .sandbox
-                                    .as_ref()
-                                    .and_then(|sandbox| sandbox.spec.as_ref())
-                                    .and_then(|spec| spec.policy.clone())
-                            })
-                    })
-                    .flatten();
                 let (mut row, ready, grants) = checked_sandbox_row_with(
                     response,
                     workspace,
