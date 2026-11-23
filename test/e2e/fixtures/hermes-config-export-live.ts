@@ -113,7 +113,8 @@ function refusalFindings(diagnostic: string): Array<{ field: string; category: s
     .map((line) => {
       const finding = /^(\S+) \(([^)]+)\):(?: .*)?$/u.exec(line);
       if (finding) return { field: finding[1]!, category: finding[2]! };
-      // The credential assignment redactor consumes the category token, not the field.
+      // Redaction erases this category. Normalize to the source contract's unsupported category;
+      // only domain tests can verify the original token. Live evidence retains the field and header.
       return line.startsWith("spec.inferenceProviders[].credential <REDACTED> ")
         ? { field: "spec.inferenceProviders[].credential", category: "unsupported" }
         : null;
@@ -400,7 +401,13 @@ export async function verifyHermesConfigExportLive(
           isDeepStrictEqual(categories[0], categories[1]) &&
           isDeepStrictEqual(findingSets[0], findingSets[1]),
         checked: true,
-        credentialValuesOmitted: !containsCredential,
+        credentialValuesOmitted:
+          !containsCredential &&
+          diagnostics.every(
+            (diagnostic) =>
+              inspectConfigExportArtifactSafety(diagnostic, input.redactionValues, diagnostic)
+                .knownSecretsAbsent,
+          ),
         outputFilesAbsent: !fs.existsSync(nemoclawPath) && !fs.existsSync(nemohermesPath),
         refusalCausesMatch,
         refusalCategoriesMatch,

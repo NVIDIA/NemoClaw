@@ -1064,11 +1064,13 @@ unchanged because this contract replaces a redundant nonempty-log assertion in t
 
 The shared Hermes export fixture checks refusal exit status 2, matching expected category sets,
 a matching field for each active refusal cause, absence of output files, and omission of credential
-values. Refusal detail wording is incidental and can change during redaction. The credential field
-may retain a redaction marker in place of its category token. Domain config-export tests own the
-exact refusal messages; live evidence confirms the configured source caused the refusal.
-Both launchers must report the same field/category set. Every finding must identify an allowed cause,
-and the header must match the finding categories.
+values. Refusal detail wording is incidental and can change during redaction. Redaction erases the
+credential finding's category token. The fixture normalizes that finding to the source contract's
+`unsupported` category; it cannot establish the original token. Domain config-export tests own the
+original category and exact refusal messages. Live evidence checks the credential field, refusal
+header, exit status, and absence of output files and credential values.
+Both launchers must report the same normalized field/category set. Every finding must identify an
+allowed cause, and the header must match the normalized finding categories.
 The effective-policy refusal is allowed alongside any expected source refusal when its finding is present.
 A pinned-V1 consumer exception still fails validation. Its evidence records the launcher alias,
 pinned revision, operation, and a redacted diagnostic limited to 2,000 characters, while preserving

@@ -372,6 +372,12 @@ describe("Hermes config export live evidence", () => {
       "Config export failed (unsupported).\nspec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.",
     );
     expect(diagnostic).toContain("credential <REDACTED>");
+    // The live boundary cannot distinguish these original category tokens after redaction.
+    expect(diagnostic).toBe(
+      redactString(
+        "Config export failed (unsupported).\nspec.inferenceProviders[].credential (policy-not-representable): V1alpha1 requires HTTPS when an inference provider declares a credential.",
+      ),
+    );
     mocks.command.mockResolvedValue({ exitCode: 2, stdout: "", stderr: diagnostic });
     await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: true });
     expect(mocks.writeText).not.toHaveBeenCalled();
@@ -915,41 +921,53 @@ describe("Hermes config export live evidence", () => {
     );
   });
 
-  it("rejects credential disclosure in a matching HTTP refusal diagnostic", async () => {
-    mocks.load.mockReturnValue({
-      sandboxes: {
-        hermes: {
-          credentialEnv: "NVIDIA_API_KEY",
-          endpointUrl: "http://host.openshell.internal:35271/v1",
-          gatewayName: "nemoclaw",
-          workload: { kind: "managed-image", reference: IMAGE_REF },
+  it.each(["raw", "base64", "percent", "unicode"] as const)(
+    "rejects %s credential disclosure in a matching HTTP refusal diagnostic",
+    async (encoding) => {
+      const secret = "secret-value+/=";
+      const diagnosticValue = {
+        raw: secret,
+        base64: Buffer.from(secret).toString("base64"),
+        percent: encodeURIComponent(secret),
+        unicode: [...secret]
+          .map((character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)
+          .join(""),
+      }[encoding];
+      mocks.load.mockReturnValue({
+        sandboxes: {
+          hermes: {
+            credentialEnv: "NVIDIA_API_KEY",
+            endpointUrl: "http://host.openshell.internal:35271/v1",
+            gatewayName: "nemoclaw",
+            workload: { kind: "managed-image", reference: IMAGE_REF },
+          },
         },
-      },
-    });
-    const refusal =
-      "Config export failed (unsupported).\nspec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.";
-    mocks.command
-      .mockResolvedValueOnce({ exitCode: 2, stdout: "", stderr: `${refusal}\n` })
-      .mockResolvedValueOnce({
-        exitCode: 2,
-        stdout: "",
-        stderr: `${refusal} secret-value\n`,
       });
+      const refusal =
+        "Config export failed (unsupported).\nspec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.";
+      mocks.command
+        .mockResolvedValueOnce({ exitCode: 2, stdout: "", stderr: `${refusal}\n` })
+        .mockResolvedValueOnce({
+          exitCode: 2,
+          stdout: "",
+          stderr: `${refusal} ${diagnosticValue}\n`,
+        });
 
-    await expect(runEnabledFixture(["secret-value"])).resolves.toEqual({
-      checked: true,
-      passed: false,
-    });
-    expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
-      outcome: "expected-refusal",
-      aliasesEquivalent: true,
-      checked: true,
-      credentialValuesOmitted: false,
-      outputFilesAbsent: true,
-      refusalCausesMatch: true,
-      refusalCategoriesMatch: true,
-    });
-  });
+      await expect(runEnabledFixture([secret])).resolves.toEqual({
+        checked: true,
+        passed: false,
+      });
+      expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
+        outcome: "expected-refusal",
+        aliasesEquivalent: true,
+        checked: true,
+        credentialValuesOmitted: false,
+        outputFilesAbsent: true,
+        refusalCausesMatch: true,
+        refusalCategoriesMatch: true,
+      });
+    },
+  );
 
   it("withholds encoded credential material from retained YAML", async () => {
     const encoded = Buffer.from("secret-value", "utf8").toString("base64");
