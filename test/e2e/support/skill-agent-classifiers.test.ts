@@ -50,7 +50,9 @@ describe("skill-agent live test local classifiers", () => {
         );
 
         expect(result.status).toBe(exitCode);
-        expect(result.stdout.includes("SKILL_TOKEN_PATH=")).toBe(present);
+        expect(result.stdout).toBe(
+          present ? `SKILL_TOKEN_PATH=${path.join(fixtureDir, file)}\n` : "",
+        );
         expect(
           shouldSkipExternalAgentVerificationFailure("LLM idle timeout", result.status === 0),
         ).toBe(present);
