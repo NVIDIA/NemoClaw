@@ -52,6 +52,37 @@ describe("standard E2E execution profile", () => {
       },
     ],
     [
+      "candidate-workspace installer",
+      (steps, index) => {
+        delete steps[index]!.uses;
+        steps[index]!.run =
+          'bash .github/actions/setup-v1-protoc/install.sh "${{ runner.os }}-${{ runner.arch }}"';
+      },
+    ],
+    [
+      "mutable installer reference",
+      (steps, index) => {
+        steps[index]!.uses = "NVIDIA/NemoClaw/.github/actions/setup-v1-protoc@main";
+      },
+    ],
+    [
+      "substituted installer revision",
+      (steps, index) => {
+        steps[index]!.uses =
+          "NVIDIA/NemoClaw/.github/actions/setup-v1-protoc@0000000000000000000000000000000000000000";
+      },
+    ],
+    [
+      "setup after candidate checkout",
+      (steps, index) => {
+        const [setup] = steps.splice(index, 1);
+        const checkoutIndex = steps.findIndex((step) =>
+          String(step.uses).startsWith("actions/checkout@"),
+        );
+        steps.splice(checkoutIndex + 1, 0, setup!);
+      },
+    ],
+    [
       "late",
       (steps, index) => {
         steps.push(...steps.splice(index, 1));

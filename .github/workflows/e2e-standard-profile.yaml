@@ -412,16 +412,16 @@ jobs:
           printf 'Hermes E2E swap ready: %s bytes active\n' "${active_swap_bytes}"
           /usr/bin/sudo -n /usr/sbin/swapon --show
 
+      - name: Set up the pinned v1 protoc
+        if: ${{ inputs.catalogue_id == 'security-posture-hermes' }}
+        uses: NVIDIA/NemoClaw/.github/actions/setup-v1-protoc@860c09d3c810ef926d49f0dd4e33ad2fab426f62
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.candidate_repository }}
           ref: ${{ inputs.candidate_sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Set up the pinned v1 protoc
-        if: ${{ inputs.catalogue_id == 'security-posture-hermes' }}
-        run: bash .github/actions/setup-v1-protoc/install.sh "${{ runner.os }}-${{ runner.arch }}"
 
       - name: Authenticate to Docker Hub
         uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f
