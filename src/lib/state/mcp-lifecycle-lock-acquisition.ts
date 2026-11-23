@@ -168,6 +168,21 @@ function createWaitNotifier(
   };
 }
 
+function createWaitNotifiers(
+  sandboxName: string,
+  lockPath: string,
+  options: McpLifecycleLockOptions,
+  monotonicNow: () => number,
+) {
+  const stderrNotice = createStderrNoticeWriter();
+  const notifierFor = (ownerPath: string) =>
+    createWaitNotifier(sandboxName, ownerPath, options, monotonicNow, stderrNotice);
+  return {
+    notifyWaiting: notifierFor(lockPath),
+    notifyReaperWaiting: notifierFor(`${lockPath}.reaper`),
+  };
+}
+
 async function tryReapStaleMainLock(
   lockPath: string,
   sandboxName: string,
@@ -250,20 +265,11 @@ async function acquireMcpLifecycleLock(
   const corruptReaperTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
   const reaperPath = `${lockPath}.reaper`;
-  const stderrNotice = createStderrNoticeWriter();
-  const notifyWaiting = createWaitNotifier(
+  const { notifyWaiting, notifyReaperWaiting } = createWaitNotifiers(
     sandboxName,
     lockPath,
     options,
     monotonicNow,
-    stderrNotice,
-  );
-  const notifyReaperWaiting = createWaitNotifier(
-    sandboxName,
-    reaperPath,
-    options,
-    monotonicNow,
-    stderrNotice,
   );
   const assertBeforeTimeout = () => {
     if (monotonicNow() >= deadline) throw timeoutError(sandboxName, lastOwnerPid);
@@ -374,20 +380,11 @@ function acquireMcpLifecycleLockSync(
   const corruptReaperTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
   const reaperPath = `${lockPath}.reaper`;
-  const stderrNotice = createStderrNoticeWriter();
-  const notifyWaiting = createWaitNotifier(
+  const { notifyWaiting, notifyReaperWaiting } = createWaitNotifiers(
     sandboxName,
     lockPath,
     options,
     monotonicNow,
-    stderrNotice,
-  );
-  const notifyReaperWaiting = createWaitNotifier(
-    sandboxName,
-    reaperPath,
-    options,
-    monotonicNow,
-    stderrNotice,
   );
   const assertBeforeTimeout = () => {
     if (monotonicNow() >= deadline) throw timeoutError(sandboxName, lastOwnerPid);
