@@ -131,14 +131,11 @@ def records(adapters):
     ]
 
 
-def snapshot(revision, source_sha256, adapter_ids, targets=None):
+def snapshot(revision, source_sha256, adapter_ids, targets):
     """Return the bundled catalog: the listed adapters' descriptors and their targets.
 
-    targets maps adapter IDs to their declarations, as in /opt/nemoclaw/adapters.json;
-    without it, the adapters' declarations, if any, give their targets.
+    targets maps adapter IDs to their declarations, as in /opt/nemoclaw/adapters.json.
     """
-    if targets is None:
-        targets = adapter_ids if isinstance(adapter_ids, dict) else {}
     return {
         "schema_version": 2,
         "fabric_revision": revision,
@@ -154,7 +151,7 @@ def installed(revision, source_sha256, *, adapters=ADAPTERS, runtime_manifest=RU
     from runtime_metadata import read_runtime
 
     declared = read_adapters(adapters)
-    catalog = snapshot(revision, source_sha256, declared)
+    catalog = snapshot(revision, source_sha256, declared, declared)
     catalog["runtime"] = read_runtime(
         runtime_manifest,
         {adapter_id: entry["binaries"] for adapter_id, entry in declared.items()},
