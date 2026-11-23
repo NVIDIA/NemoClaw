@@ -433,7 +433,9 @@ describe("complete managed-image publication workflow", () => {
     );
     const publishedContract = step(prBuilder, "Export exact published PR managed-image contract");
     const contractUpload = step(prBuilder, "Upload exact published PR managed-image contract");
-    expect(localBaseBuild.run).toContain("NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox");
+    expect(String(localBaseBuild.with?.["build-args"])).toContain(
+      "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+    );
     expect(String(registryBaseBuild.with?.["build-args"])).toContain(
       "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
     );
@@ -547,26 +549,32 @@ describe("complete managed-image publication workflow", () => {
       "scripts/checks/resolve-managed-pr-base.sh",
     );
     expect(registryBaseBuild.if).toBe("steps.base.outputs.local != 'true'");
-    const localBuild = required(localBaseBuild.run, "PR managed image local build is missing");
-    expect(localBuild).toContain("docker build");
-    expect(localBuild).toContain('--platform "$PLATFORM"');
-    expect(localBuild).toContain('--build-arg "BASE_IMAGE=${BASE_IMAGE}"');
-    expect(localBuild).toContain('--tag "$IMAGE_REFERENCE"');
-    expect(localBuild).toContain('--label "org.opencontainers.image.version=${RELEASE}"');
-    expect(localBaseBuild.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
-    expect(localBuild).not.toContain("docker buildx build");
-    expect(registryBaseBuild.with).toMatchObject({
-      platforms: "linux/${{ matrix.arch }}",
+    const publish = step(prBuilder, "Publish exact same-repository PR managed image by digest");
+    expect(localBaseBuild).toMatchObject({
+      if: "steps.base.outputs.local == 'true'",
+      uses: publish.uses,
+    });
+    expect(localBaseBuild.with).toEqual({
+      ...publish.with,
+      "build-contexts":
+        "${{ format('nemoclaw-pr-base=oci-layout://{0}', steps.base.outputs.oci) }}",
+      "build-args": String(publish.with?.["build-args"]).replace(
+        "${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}",
+        "nemoclaw-pr-base",
+      ),
+      outputs: undefined,
+      tags: "${{ matrix.image }}:${{ github.event.pull_request.head.sha }}",
       load: true,
       push: false,
     });
-    expect(registryBaseBuild.with?.labels).toContain(
-      "org.opencontainers.image.version=${{ steps.release.outputs.value }}",
-    );
-    expect(localBaseBuild.env?.PUBLICATION_COHORT).toBe(
-      "${{ needs.publication-identity.outputs.cohort }}",
-    );
-    expect(registryBaseBuild.with?.labels).toContain(
+    expect(registryBaseBuild.with).toMatchObject({
+      builder: "${{ steps.buildx.outputs.name }}",
+      platforms: "linux/${{ matrix.arch }}",
+      labels: localBaseBuild.with?.labels,
+      load: true,
+      push: false,
+    });
+    expect(localBaseBuild.with?.labels).toContain(
       "io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}",
     );
     expect(publishedContract.env?.COHORT).toBe("${{ needs.publication-identity.outputs.cohort }}");
@@ -714,7 +722,6 @@ describe("complete managed-image publication workflow", () => {
       "run-managed-image-direct-e2e.ts",
     );
     const login = step(prBuilder, "Log in to GHCR for exact same-repository PR digest");
-    const publish = step(prBuilder, "Publish exact same-repository PR managed image by digest");
     const logout = step(prBuilder, "Remove PR publication credentials");
     const pull = step(prBuilder, "Pull exact published PR managed image");
     const exportContract = step(prBuilder, "Export exact published PR managed-image contract");
