@@ -89,6 +89,12 @@ export interface OpenClawPublicFetchExpectation {
 export interface OpenClawToolEvidence {
   schemaVersion: 1;
   controlTargetViolations: number;
+  compiledSearchContext?: {
+    runtimeMarkerPresent: boolean;
+    disabledSearchPresent: boolean;
+    unavailableInstructionPresent: boolean;
+    providerToolCount: number | null;
+  };
   errors: string[];
   finalStatuses: string[];
   projectedTargetEvidence: boolean;
@@ -588,6 +594,37 @@ export function reduceOpenClawToolEvidence(
     projectedMessages.splice(0, projectedMessages.length, ...data.messagesSnapshot);
   }
 
+  // Keep compiled prompt diagnostics inside the serialized, read-only reducer.
+  // Raw prompts, tool definitions and run identities are never returned.
+  const compiledSearchContext = ((): OpenClawToolEvidence["compiledSearchContext"] => {
+    if (!projectedRunId) return undefined;
+    let observed: OpenClawToolEvidence["compiledSearchContext"];
+    for (const document of trajectoryDocuments) {
+      const root = asRecord(document);
+      if (root?.type !== "context.compiled" || normalizedId(root.runId) !== projectedRunId) {
+        continue;
+      }
+      const data = asRecord(root.data);
+      if (typeof data?.systemPrompt !== "string") continue;
+      const prompt = data.systemPrompt;
+      const tools = Array.isArray(data.providerVisibleTools)
+        ? data.providerVisibleTools
+        : Array.isArray(data.tools)
+          ? data.tools
+          : null;
+      observed = {
+        runtimeMarkerPresent:
+          prompt.includes("<nemoclaw-runtime>") && prompt.includes("</nemoclaw-runtime>"),
+        disabledSearchPresent: prompt.includes("Web search is disabled in OpenClaw configuration."),
+        unavailableInstructionPresent: prompt.includes(
+          "For web-search requests, tell the user that web search is unavailable immediately.",
+        ),
+        providerToolCount: tools === null ? null : Math.min(1_000, tools.length),
+      };
+    }
+    return observed;
+  })();
+
   const toolCalls: OpenClawToolRecord[] = [];
   const sessionDocuments = parseJsonLines(sessionJsonLines, "session");
   const allowedWrapperIdParts = new Set<string>();
@@ -873,6 +910,7 @@ export function reduceOpenClawToolEvidence(
     controlTargetViolations: controlTargetViolationIds.size,
     errors,
     finalStatuses: [...finalStatuses].sort(),
+    ...(compiledSearchContext ? { compiledSearchContext } : {}),
     projectedTargetEvidence,
     providerMentions: [...providerMentions].sort(),
     toolCalls,
@@ -921,7 +959,21 @@ export function parseOpenClawToolEvidence(raw: string): OpenClawToolEvidence {
   const parsed = JSON.parse(
     line.slice(OPENCLAW_TOOL_EVIDENCE_MARKER.length),
   ) as Partial<OpenClawToolEvidence>;
+  const context = parsed.compiledSearchContext;
+  const invalidCompiledContext =
+    context !== undefined &&
+    (context === null ||
+      typeof context !== "object" ||
+      Array.isArray(context) ||
+      typeof context.runtimeMarkerPresent !== "boolean" ||
+      typeof context.disabledSearchPresent !== "boolean" ||
+      typeof context.unavailableInstructionPresent !== "boolean" ||
+      (context.providerToolCount !== null &&
+        (!Number.isInteger(context.providerToolCount) ||
+          context.providerToolCount < 0 ||
+          context.providerToolCount > 1_000)));
   if (
+    invalidCompiledContext ||
     parsed.schemaVersion !== 1 ||
     !Number.isInteger(parsed.controlTargetViolations) ||
     !Array.isArray(parsed.errors) ||
@@ -1262,6 +1314,17 @@ export function projectUnavailableSearchToolEvidenceArtifact(evidence: OpenClawT
   return {
     schemaVersion: 1 as const,
     contract: "unavailable-search" as const,
+    ...(evidence.compiledSearchContext
+      ? {
+          compiledSearchContext: {
+            runtimeMarkerPresent: evidence.compiledSearchContext.runtimeMarkerPresent,
+            disabledSearchPresent: evidence.compiledSearchContext.disabledSearchPresent,
+            unavailableInstructionPresent:
+              evidence.compiledSearchContext.unavailableInstructionPresent,
+            providerToolCount: evidence.compiledSearchContext.providerToolCount,
+          },
+        }
+      : {}),
     errorCount: Math.min(1_000, evidence.errors.length),
     finalStatusCount: Math.min(1_000, evidence.finalStatuses.length),
     finalSuccess: evidence.finalStatuses.length === 1 && evidence.finalStatuses[0] === "success",

@@ -1476,6 +1476,10 @@ Printed commands or tool-call markup containing that token fail this check and u
 The host independently checks the saved response's location, temperature, time, and Celsius unit, then records its SHA-256 hash.
 When session reduction succeeds, a failed weather agent assertion records aggregate session error, final-status, tool-call, execution, and result counts, including exec call and result counts.
 The artifact excludes raw session content and credentials; these counts do not establish why the command failed.
+Disabled-search diagnostics optionally record compiled-context observations for the latest completed model run.
+They record runtime-marker presence, disabled-search instruction presence, unavailable-search instruction presence, and a bounded provider-tool count.
+Missing compiled context remains unknown. Raw prompts, tool definitions, and run identities are excluded.
+These observations describe native context before transport; they do not prove provider receipt or instruction compliance.
 Brave preset inclusion belongs to the existing onboarding policy tests, independent of weather coverage.
 
 ### Catalogue Execution Evidence
