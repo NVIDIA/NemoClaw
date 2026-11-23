@@ -62,6 +62,16 @@ NemoClaw keeps these by decision, as its own promises:
 
 - Managed Docker and Podman gateways, so that one file can create a working local deployment ([#13474](https://github.com/NVIDIA/NemoClaw/issues/13474)). An OpenShell-installed gateway with `gateway.management: external` remains the alternative.
   NemoClaw writes only the keys it owns into the gateway's configuration and passes the rest through from [`spec.gateway.config`](../../docs/build-deploy/usage.md#configuring-a-managed-gateway), in OpenShell's format ([#13473](https://github.com/NVIDIA/NemoClaw/issues/13473)).
+- One telemetry switch for NemoClaw and the gateway it manages ([#14678](https://github.com/NVIDIA/NemoClaw/issues/14678)).
+  Decision: proposed for `Accept`; it takes effect when the accountable maintainer, Will Curran (@wscurran), accepts it in its pull request.
+  Reason: a user who sets `NEMOCLAW_DISABLE_TELEMETRY=1` expects nothing NemoClaw deploys to send telemetry, but today the result depends on the driver: managed Docker and Podman gateways send OpenShell's telemetry because NemoClaw sets no value, and a Kubernetes gateway never sends because NemoClaw sets it off.
+  Placement: when NemoClaw manages the gateway, the SDK sets OpenShell's own switch from NemoClaw's, as `OPENSHELL_TELEMETRY_ENABLED` in the Docker and Podman gateway environment and as the chart value `server.telemetryEnabled` on Kubernetes.
+  Telemetry is on unless `NEMOCLAW_DISABLE_TELEMETRY=1`, so Kubernetes gateways start sending by default, and a change to the value replaces a Docker or Podman gateway container on the next apply.
+  OpenShell passes the gateway's value to the sandbox supervisors it starts.
+  A gateway with `gateway.management: external` keeps its operator's setting, and the OpenShell library inside the CLI stays built without telemetry.
+  Validation: [#14686](https://github.com/NVIDIA/NemoClaw/issues/14686) adds tests that the gateway specification carries telemetry off with `NEMOCLAW_DISABLE_TELEMETRY=1` and on otherwise, for Docker, Podman, and Kubernetes.
+  It also makes `crates/nemoclaw-sdk/tests/telemetry.rs` fail if the CLI's `openshell-core` is built with telemetry; today that test's child run matches no test and passes.
+  [#14687](https://github.com/NVIDIA/NemoClaw/issues/14687) then runs a managed gateway on each driver with the switch off and on, and reports what OpenShell sends.
 - Managed vLLM and Ollama services on a local Docker engine, because nothing else on a single host decides whether a model fits the GPU and memory, when the server is ready, or where its key and model cache live ([#12732](https://github.com/NVIDIA/NemoClaw/issues/12732)).
   On Kubernetes and OpenShift the platform does all of that, so NemoClaw places no model servers there: sandboxes use a server the platform runs, through an inference provider at its Service address ([Using a Model Server in the Cluster](../../docs/build-deploy/kubernetes.md#using-a-model-server-in-the-cluster)).
   Both paths start from the same runtime images and the same `vllm_runtime` and `ollama_runtime` descriptions; only who applies them differs.
@@ -101,7 +111,7 @@ Model-specific tools belong to versioned recipe artifacts with their upstream li
 See [runtime](runtime.md), [execution targets](execution-targets.md), and [recipes](recipes.md) for rationale.
 
 SDK errors and progress must not expose secrets.
-OpenShell transport must use the pinned Rust SDK, with its supported raw clients where the high-level API omits required operations or fields, telemetry disabled, mTLS, bearer credential references, bounded calls, and no automatic mutation retry.
+OpenShell transport must use the pinned Rust SDK, built without its telemetry, with its supported raw clients where the high-level API omits required operations or fields, mTLS, bearer credential references, bounded calls, and no automatic mutation retry.
 Call supported SDK operations directly; keep NemoClaw code for deployment ownership and reconciliation, without pass-through client wrappers.
 Verify certificate trust in both directions independently of plaintext protocol tests.
 
