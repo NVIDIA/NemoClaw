@@ -39,7 +39,7 @@ The [staging workflow](../../.github/workflows/release.yml):
 1. Finds the latest commit in the tag's `v1` history with per-commit images, and checks with `nemoclaw-build changes images` that nothing since could change them; otherwise it builds and checks the images at the tag.
 2. Builds the vLLM, Ollama, and llama.cpp runtime images on each native platform; their builds are reproducible.
 3. Joins each image's ARM64 and AMD64 images into one index at `ghcr.io/nvidia/nemoclaw/v1/<image>:<tag>`, without rebuilding.
-4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the [CLI bundles](#cli-bundles), their [evidence record](#evidence-record), and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
+4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the [CLI bundles](#cli-bundles), their [evidence record](#evidence-record), the [version pins](#version-pins), and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
 
 Only users with push access see a draft release, and the `v1` packages stay internal.
 
@@ -80,7 +80,7 @@ A job's `if:` can't read an environment's variables, so the repository variable 
 | Platform | Signing job |
 |---|---|
 | `windows_amd64` | Signs the programs the [inventory](#program-inventory) assigns to NVIDIA on Windows through Azure Artifact Signing, and checks them and the Helm provider's HashiCorp signature with `signtool verify /pa /all /tw`. Needs the environment's `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_ARTIFACT_SIGNING_ENDPOINT`, `AZURE_ARTIFACT_SIGNING_ACCOUNT`, and `AZURE_ARTIFACT_SIGNING_PROFILE` variables. |
-| `darwin_arm64` | Checks that every program is notarized and signed as the [inventory](#program-inventory) assigns: by the Apple team in the environment's `APPLE_TEAM_ID` variable, or by HashiCorp's team `D38WU7D763` for the Helm provider. It doesn't sign yet, so listing `darwin_arm64` stops staging until the signing step lands. |
+| `darwin_arm64` | Signs the programs the [inventory](#program-inventory) assigns to NVIDIA through 3S, each with its own identifier, `com.nvidia.nemoclaw.<program>`, without a provider's `_v<version>` suffix. When the `MACOS_NOTARIZATION` repository variable is `true`, notarizes them with the environment's `APPLE_NOTARY_ID` and `APPLE_NOTARY_PASSWORD` secrets: an Apple ID on the team in `APPLE_TEAM_ID` and its app-specific password. Checks that every program is signed as the inventory assigns, by the Apple team in `APPLE_TEAM_ID` with that identifier or by HashiCorp's team `D38WU7D763` for the Helm provider, and notarized when notarization is on. The 3S job runs outside the environment, so its Vault identity stays bound to the tag. |
 
 Staging puts the signed executables in their bundles with the bundles' file modes, records their new hashes in `manifest.json` with `nemoclaw-build reseal`, and then writes `SHA256SUMS`.
 When a listed platform's signing job fails, staging stops before it drafts the release.
@@ -134,6 +134,14 @@ On Windows, SmartScreen doesn't check programs that another program starts, so O
 
 [`signing-inventory.sh`](../../.github/scripts/signing-inventory.sh) holds this decision: both signing jobs and the evidence record select programs through it, and it fails on a program it doesn't classify, so a new program needs a decision before it can ship.
 
+## Version Pins
+
+Staging attaches `version-pins.json`, which `nemoclaw-build release-pins` writes from the tag's `versions.json` and the images staging pushed, in the format that [compatibility](../../docs/references/compatibility.md#using-one-release-together) describes.
+The command selects the components a deployment uses and leaves out what only builds and tests NemoClaw: Rust, Protocol Buffers, cargo-nextest, kind and its node image, and the OpenShell CLI.
+A component added to `versions.json` is listed only after `release-pins` selects it, and the command fails when a selected component is missing or isn't pinned by digest or checksum.
+
+Before it publishes a final release, the workflow writes the pins again with the trusted controller, from the tag's `versions.json` and the `inventory.json` that staging recorded, and fails when the draft's `version-pins.json` differs.
+
 ## Testing a Staged Release
 
 Use [image assessment](image-assessment.md) to evaluate the saved SPDX inventories.
@@ -145,7 +153,7 @@ Docker deployments pull private images through `spec.registries`; Kubernetes dep
 ## Publishing
 
 Push a final tag only from a commit whose release candidate has completed installer, onboarding, QA, and product sign-off; until then, the draft and packages stay private.
-The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the [security assessment](image-assessment.md#hosted-enforcement) passes, the registry digests are unchanged, and the [provenance](#verifying-provenance) of every image, CLI archive, and `SHA256SUMS` is attested.
+The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the draft's [version pins](#version-pins) match the tag and those images, the [security assessment](image-assessment.md#hosted-enforcement) passes, the registry digests are unchanged, and the [provenance](#verifying-provenance) of every image, CLI archive, and `SHA256SUMS` is attested.
 Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
 Publishing a draft by hand and package-administrator privileges bypass the workflow.
 An administrator handles package visibility changes; making a package public cannot be undone.

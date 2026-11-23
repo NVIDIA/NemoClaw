@@ -184,7 +184,7 @@ hardware:
   profile: dgx-spark
 ```
 
-This profile requires one NVIDIA GB10 with observed compute capability at least 12.1, at least 118 GiB host RAM, and driver major 580 or newer.
+This profile requires one GPU that [`nvidia-smi` names](#choosing-a-hardware-profile) `NVIDIA GB10`, with observed compute capability at least 12.1, at least 118 GiB host RAM, and driver major 580 or newer.
 For other hardware, select a [named profile](#choosing-a-hardware-profile) or declare [dedicated GPU requirements](#configuring-nemotron-on-an-amd64-gpu-host).
 An inline recipe supplies its own compatibility requirements and excludes `hardware`.
 
@@ -303,6 +303,18 @@ They check GPU family and CPU architecture, not chassis identity.
 `dgx-station` shares the `gb300` checks and excludes earlier Volta and A100 Stations.
 GPU-only profiles require `architecture` because GPU identity doesn't determine the host CPU.
 There are no `spark`, `gb100`, or B100/B200/B300 profile names.
+
+The runtime reads the GPU family from the name that `nvidia-smi --query-gpu=name` reports in the model container.
+`dgx-spark` requires exactly `NVIDIA GB10`, and `rtx-spark` requires one of the N1X names below.
+The other profiles accept a name that starts with their family, such as `NVIDIA H100 80GB HBM3` for `h100`.
+A driver that reports a placeholder name, as some DGX Spark systems do with `NVIDIA JMJWOA-Generic-GPU`, matches no profile, and the runtime stops with `hardware.profile requires NVIDIA GB10; observed different GPU family` ([#14698](https://github.com/NVIDIA/NemoClaw/issues/14698)).
+That stop can come after apply has created the gateway and the model container, so check the name before applying, on the host whose Docker engine runs the service:
+
+```sh
+nvidia-smi --query-gpu=name,compute_cap,driver_version --format=csv,noheader
+```
+
+On a DGX Spark that `dgx-spark` accepts, this prints `NVIDIA GB10, 12.1,` and a driver version of 580 or newer.
 
 The `rtx-spark` profile accepts the base `NVIDIA RTX Spark N1X` identity and the documented 5120-core and 6144-core GPU names from NVIDIA's [GPU identification guide](https://docs.nvidia.com/rtx-spark/rtx-spark-porting-guide/latest/gpu-identification.html) and [pinned system-readiness reference](https://github.com/NVIDIA/NemoClaw/blob/4ce30c292c0a518ee713f2d10460d473bb904637/docs/reference/system-readiness.mdx).
 Its compute-capability minimum is 12.1, as listed in NVIDIA's [CUDA GPU table](https://developer.nvidia.com/cuda/gpus).

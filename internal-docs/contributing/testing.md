@@ -94,6 +94,7 @@ Put each test in the cheapest layer that can check its behavior, and assert only
 ### Unit
 
 Unit tests check one crate's rules: configuration parsing and validation, compilation, planning, provider backends, CLI argument and output handling, and the build tool.
+On Unix, the build tool's image source-retention tests require Python 3.11 or newer on `PATH` for its standard-library TOML parser; CI installs Python 3.14.
 They live in each crate's `src` modules and in its `integration` test binary, `tests/main.rs`; the providers' `schema` binaries also belong here.
 In `nemoclaw-e2e` alone, the `integration` binary holds the integration layer instead; the tests it and the `e2e` binary don't ignore still run here.
 They use in-process fakes and temporary files and need no bundle; `openshell-provider` and `fabric-provider`, for example, test their backends against the fake OpenShell gateway in `src/fake_gateway_tests.rs` without OpenTofu.

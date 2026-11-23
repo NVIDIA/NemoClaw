@@ -123,14 +123,14 @@ fn invalid(reason: &str) -> AssessmentError {
     }
 }
 
-fn hex(value: &str, length: usize) -> bool {
+pub(crate) fn hex(value: &str, length: usize) -> bool {
     value.len() == length
         && value
             .bytes()
             .all(|v| v.is_ascii_digit() || (b'a'..=b'f').contains(&v))
 }
 
-fn digest(value: &str) -> bool {
+pub(crate) fn digest(value: &str) -> bool {
     value
         .strip_prefix("sha256:")
         .is_some_and(|value| hex(value, 64))
