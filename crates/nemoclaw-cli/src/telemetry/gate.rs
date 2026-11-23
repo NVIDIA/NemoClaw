@@ -6,7 +6,7 @@
 use super::record::{TEST_LABEL_PATTERN, matches};
 
 /// The off switch. It, or any of [`CI_VARIABLES`], set stops the record.
-const OFF_SWITCH: &str = "NEMOCLAW_DISABLE_TELEMETRY";
+const OFF_SWITCH: &str = nemoclaw_sdk::telemetry::DISABLE_ENV;
 
 /// Any of these, set, means the run is in CI and nothing is sent.
 const CI_VARIABLES: [&str; 6] = [
@@ -28,10 +28,9 @@ pub fn check() -> Option<String> {
 }
 
 fn decide(var: impl Fn(&str) -> Option<String>) -> Option<String> {
-    // Set means present, not empty, and not `false` or `0` in any letter case,
-    // so `1`, `yes`, and `TRUE` all turn telemetry off.
-    let set =
-        |value: String| !value.is_empty() && !value.eq_ignore_ascii_case("false") && value != "0";
+    // The rule the managed gateway's telemetry follows too, so `1`, `yes`,
+    // and `TRUE` all turn telemetry off.
+    let set = |value: String| nemoclaw_sdk::telemetry::is_set(Some(value.as_ref()));
     if std::iter::once(&OFF_SWITCH)
         .chain(&CI_VARIABLES)
         .any(|name| var(name).is_some_and(set))
