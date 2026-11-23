@@ -104,11 +104,12 @@ def target_record(adapter_id, target_id, descriptor_path=None):
 
 def target_records(adapters):
     """Return the targets each adapter declares, in target ID order."""
-    declared = {
-        target_id: (adapter_id, target.get("descriptor"))
-        for adapter_id, entry in adapters.items()
-        for target_id, target in entry.get("targets", {}).items()
-    }
+    declared = {}
+    for adapter_id, entry in adapters.items():
+        for target_id, target in entry.get("targets", {}).items():
+            if target_id in declared:
+                raise ValueError(f"{target_id} is declared by more than one adapter")
+            declared[target_id] = (adapter_id, target.get("descriptor"))
     return [
         target_record(adapter_id, target_id, path)
         for target_id, (adapter_id, path) in sorted(declared.items())

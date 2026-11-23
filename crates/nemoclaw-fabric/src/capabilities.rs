@@ -80,7 +80,7 @@ fn overall(checks: &[CapabilityCheck]) -> Support {
 /// against that adapter's descriptor, and an explicit filesystem policy lets the
 /// adapter read its files. Whether the image's Fabric runtime is compatible is
 /// Fabric's to report when the agent starts, as is a workflow when the image's
-/// catalog records no workflow targets.
+/// catalog records no workflow targets for the adapter.
 pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> CompatibilityReport {
     let adapter_id = request
         .configuration
@@ -174,10 +174,11 @@ const CONFIGURATION: &str = "fabric_configuration";
 /// the image's adapter descriptor. Fabric decides what its adapters accept, so
 /// this reports each issue it finds, with the field the user wrote where the
 /// request records one, instead of repeating any of its rules. A workflow needs
-/// its target's descriptor: a target the image's catalog doesn't register is
-/// unsupported, unless the catalog records no targets at all and the adapter
-/// takes workflows. Such a catalog may predate workflow targets, so the check
-/// is left to Fabric when the agent starts.
+/// its target's descriptor, among the targets the image's catalog registers for
+/// the selected adapter. A workflow on an adapter that takes none, or a target
+/// the catalog doesn't register, is unsupported, unless the catalog registers
+/// no targets for the adapter. Such a catalog may predate workflow targets, so
+/// the check is left to Fabric when the agent starts.
 fn configuration_checks(
     catalog: &FabricCatalog,
     adapter: &crate::catalog::FabricAdapter,
@@ -206,24 +207,35 @@ fn configuration_checks(
     let target = match &config.workflow {
         None => None,
         Some(workflow) => {
-            let found = catalog.targets.iter().find_map(|target| {
-                serde_json::from_value::<AdapterTargetDescriptor>(target["descriptor"].clone())
-                    .ok()
-                    .filter(|target| target.id == workflow.target_id)
-            });
+            let registered: Vec<AdapterTargetDescriptor> = catalog
+                .targets
+                .iter()
+                .filter_map(|target| serde_json::from_value(target["descriptor"].clone()).ok())
+                .filter(|target: &AdapterTargetDescriptor| {
+                    target.adapter_id == descriptor.adapter_id
+                })
+                .collect();
+            let found = registered
+                .iter()
+                .find(|target| target.id == workflow.target_id)
+                .cloned();
             let field = authored_field(&request.provenance, "workflow.target_id");
             match found {
                 Some(target) => Some(target),
-                None if catalog.targets.is_empty()
-                    && descriptor
-                        .target_types
-                        .contains(&AdapterTargetType::Workflow) =>
+                None if !descriptor
+                    .target_types
+                    .contains(&AdapterTargetType::Workflow) =>
                 {
+                    return vec![unsupported(&format!(
+                        "{field}: the selected adapter takes no workflow targets"
+                    ))];
+                }
+                None if registered.is_empty() => {
                     return vec![CapabilityCheck {
                         requirement: CONFIGURATION.into(),
                         status: Support::Unknown,
                         reason: format!(
-                            "{field}: the image's catalog records no workflow targets; Fabric checks the workflow when the agent starts"
+                            "{field}: the image's catalog records no workflow targets for the selected adapter; Fabric checks the workflow when the agent starts"
                         ),
                     }];
                 }
