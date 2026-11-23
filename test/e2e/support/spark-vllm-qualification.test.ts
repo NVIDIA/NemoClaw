@@ -18,7 +18,10 @@ import {
   selectedEnvironment,
 } from "./managed-image-receipt-fixture.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { SPARK_EGRESS_PROBE, vllmPublicationCurlArgs } from "./spark-express-vllm-safety.ts";
+import {
+  SPARK_EGRESS_PROBE,
+  vllmPublicationCurlArgs,
+} from "../../../tools/e2e/spark-vllm-probes.mts";
 import { buildRiskSignal } from "../../../tools/e2e/risk-signal.ts";
 import {
   boundedSparkVllmProfilePlan,
@@ -367,11 +370,24 @@ it("rejects a different durable sandbox image on the physical run", async () => 
   await expect(sparkVllmQualificationReceipt(directory, env)).rejects.toThrow(/sandbox image/);
 });
 
-it("writes the canonical qualification file through the workflow CLI entrypoint", async () => {
+it("writes the canonical qualification file without loading test modules", async () => {
   const { directory, env } = await fixture();
+  const testTree = new URL("../../", import.meta.url).href;
+  const importGuard = `import { registerHooks } from "node:module";
+    registerHooks({ load(url, context, nextLoad) {
+      if (url.startsWith(${JSON.stringify(testTree)})) throw new Error("Workflow imported test code: " + url);
+      return nextLoad(url, context);
+    } });`;
   const result = spawnSync(
     process.execPath,
-    ["--no-warnings", "--import", "tsx", "tools/e2e/spark-vllm-qualification.mts"],
+    [
+      "--no-warnings",
+      "--import",
+      "tsx",
+      "--import",
+      `data:text/javascript,${encodeURIComponent(importGuard)}`,
+      "tools/e2e/spark-vllm-qualification.mts",
+    ],
     {
       encoding: "utf8",
       timeout: 10000,

@@ -9,10 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { createPrivateRegularFile, readPrivateRegularFile } from "./private-file.mts";
-import {
-  SPARK_EGRESS_PROBE,
-  vllmPublicationCurlArgs,
-} from "../../test/e2e/support/spark-express-vllm-safety.ts";
+import { SPARK_EGRESS_PROBE, vllmPublicationCurlArgs } from "./spark-vllm-probes.mts";
 
 const { MANAGED_IMAGE_REPOSITORIES, parseManagedImageContractV1 } = createRequire(import.meta.url)(
   "../../src/lib/onboard/managed-image/contract.ts",

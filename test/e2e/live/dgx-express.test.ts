@@ -8,6 +8,10 @@ import {
   boundedSparkVllmProfilePlan,
   SPARK_EXTRA_ARGS,
 } from "../../../tools/e2e/spark-vllm-qualification.mts";
+import {
+  SPARK_EGRESS_PROBE,
+  vllmPublicationCurlArgs,
+} from "../../../tools/e2e/spark-vllm-probes.mts";
 
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
@@ -32,8 +36,6 @@ import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receip
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertLocalDockerEnvironment,
-  SPARK_EGRESS_PROBE,
-  vllmPublicationCurlArgs,
   classifyDockerContainerInspection,
   cleanupCapturedSparkResource,
   inspectDockerContainerIdentity,
