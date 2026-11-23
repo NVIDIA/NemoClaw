@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Sandbox settings passed through to OpenShell: per-driver configuration,
 # service exposures and the URLs reported for them, optional providers, and
-# a policy's middleware binding.
+# a policy's network rules, middleware binding, and filesystem paths.
 terraform {
   required_providers {
     openshell = { source = "registry.opentofu.org/nvidia/openshell" }
@@ -12,6 +12,15 @@ terraform {
 variable "endpoint" { type = string }
 variable "destroying" { default = false }
 variable "target" { default = "/sandbox/skills" }
+variable "docs_host" { default = "docs.example.com" }
+variable "guard_terms" {
+  type    = list(string)
+  default = ["forbidden"]
+}
+variable "read_only" {
+  type    = list(string)
+  default = ["/usr"]
+}
 variable "services" {
   type = map(object({
     target_port        = number
@@ -78,10 +87,14 @@ resource "openshell_sandbox" "agent" {
   policy {
     explicit {
       version = 1
+      filesystem_policy {
+        read_only  = var.read_only
+        read_write = ["/sandbox"]
+      }
       network_policies "docs" {
         name = "docs"
         endpoints {
-          host     = "docs.example.com"
+          host     = var.docs_host
           port     = 443
           protocol = "rest"
           access   = "read-only"
@@ -94,7 +107,7 @@ resource "openshell_sandbox" "agent" {
         middleware = "decision-guard"
         order      = 10
         on_error   = "fail_closed"
-        config     = jsonencode({ mode = "block", terms = ["forbidden"] })
+        config     = jsonencode({ mode = "block", terms = var.guard_terms })
         endpoints {
           include = ["docs.example.com"]
           exclude = ["trusted.example.com"]

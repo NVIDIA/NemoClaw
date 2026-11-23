@@ -1571,7 +1571,7 @@ Paths:
 | `inferenceProviders` | map of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes through providerRef. Names must not shadow deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. |
+| `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. Changing network rules, middleware bindings, or grants updates the running sandbox in place; changing filesystem, Landlock, or process settings replaces it. |
 | `serviceExposures` | map of [ServiceExposure](#serviceexposure) | No | — | OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks each name when it exposes the service. Changing them updates the running sandbox's endpoints in place. Constraints: maximum entries 32. |
 
 ## SearchProvider

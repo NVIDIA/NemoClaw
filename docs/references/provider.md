@@ -134,6 +134,8 @@ Other inputs are typed too:
   The block's attributes and blocks follow the sandbox policy model with snake_case names: an optional `explicit` policy, whose named network rules are labeled blocks, and `managed` deployment grants, a list of blocks with unique `name`s.
   Because grants are unlabeled, a `dynamic "managed"` block can generate them in a sandbox that uses `for_each`. OpenTofu requires the labels of dynamic blocks to be known when it validates, before `each.key` is.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
+  Changing network rules, middleware bindings, or grants updates the sandbox in place, as `openshell policy set` does: the sandbox keeps its files and agent, and connections it opened under the previous rules close.
+  OpenShell applies filesystem, Landlock, and process settings only when a sandbox starts, so changing them replaces the sandbox, as does any change to a policy APF governs.
 - `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
   OpenShell attaches at most 32 to one sandbox and refuses to create a sandbox with more.
 - `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables that managed endpoint grants naming none allow.
@@ -148,6 +150,7 @@ Other inputs are typed too:
   Adding, changing, or removing a block updates the sandbox in place, as `openshell service expose` and `openshell service delete` do. So does a declared endpoint observed differently on the gateway. Endpoints under other names stay as they are.
 - The computed `policy_hash` is the hash OpenShell reports for the sandbox's loaded policy, including paths OpenShell adds itself. It is recorded when the policy first loads with every declared rule intact. A different hash later is drift.
   Creating a sandbox waits, within the 120-second startup deadline, for it to load its policy, so a policy changed after the first apply is drift. A sandbox that has not loaded one by then, one that exited, and one whose configuration OpenShell rejected are recorded without a hash, and the next apply that finds the policy loaded records it.
+  A plan that changes the network rules leaves the hash unknown. The update sends the declared rules with the loaded policy's filesystem paths, OpenShell's own included, and waits the same way for the sandbox to load them. If the sandbox fails to load the new policy, the update restores the previous one and fails.
 - The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry. A plan that changes the `service` blocks leaves it unknown until apply.
 - `owner` and `generation` are optional. When omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
 
@@ -537,7 +540,7 @@ Each resource is reconciled and protected as follows:
 |---|---|---|
 | Inference and API credentials | Create the profile and then the registration. Recreate a missing profile and rotate a credential reference in place. Replace on any other input change or a missing registration. | The same checks for both objects. A failure between them records the identity, so the next apply replaces the resource. |
 | Fabric agent | Apply the public Fabric document. Replace the agent on any input change. | Verify the parent sandbox identity. Refuse a replacement unless the sandbox is replaced too. |
-| Sandbox | Create and observe the declared sandbox. Replace it on any change to its specification. | Replacement and deletion delete its files and conversation history. Data that must survive belongs on a mounted volume. |
+| Sandbox | Create and observe the declared sandbox. Update its service exposures and network rules in place. Replace it on any other change to its specification. | Replacement and deletion delete its files and conversation history. Data that must survive belongs on a mounted volume. |
 | Workspace | Create and observe. Delete only during explicit teardown. | Refuse replacement and automatic recreation of a missing binding. `lifecycle { prevent_destroy = true }` retains it, as generated graphs do during apply. |
 
 OpenShell refuses deletion of profiles referenced by registrations and registrations attached to sandboxes.
@@ -545,7 +548,7 @@ Inference and API credential resources therefore recreate a missing profile in p
 Generated graphs create an `openshell_inference` only for definitions selected by sandboxes.
 Unused YAML definitions have no resource lifecycle.
 Standalone HCL can remove or replace an inference resource, while removing a last selection in SDK YAML also changes the sandbox's specification, which replaces the sandbox.
-Endpoint and policy changes that also change a sandbox's launch specification replace the sandbox.
+Endpoint and policy changes that also change a sandbox's launch specification, or its filesystem, Landlock, or process settings, replace the sandbox.
 Refer to [change paths](../build-deploy/usage.md#choosing-the-change-path).
 
 The provider's `destroy` setting authorizes explicit teardown of workspaces.

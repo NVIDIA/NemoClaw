@@ -50,6 +50,15 @@ pub(super) trait OpenShellGateway: Send + Sync {
     /// Ask OpenShell to update the bound sandbox's configuration without a
     /// policy, so its policy authority issues the policy again.
     async fn reissue_policy(&self, want: &Row) -> Result<(), ObservationError>;
+    /// Change the bound sandbox's network rules to `want`'s, keeping the
+    /// settings it started with; returns the policy it held before.
+    async fn update_policy(&self, want: &Row) -> Result<proto::SandboxPolicy, ObservationError>;
+    /// Make `policy` the bound sandbox's policy, recording `row`'s policy input.
+    async fn set_policy(
+        &self,
+        row: &Row,
+        policy: proto::SandboxPolicy,
+    ) -> Result<(), ObservationError>;
     /// One service endpoint of the bound sandbox, verified to belong to it.
     async fn service(
         &self,
@@ -251,34 +260,45 @@ impl ConnectedOpenShellGateway {
                 else {
                     return Ok(None);
                 };
+                // The policy the sandbox holds now: its latest revision, or
+                // the one it was created with until it has one. Teardown
+                // reads neither.
+                let status = if removing {
+                    None
+                } else {
+                    self.policy_status(workspace, name).await?
+                };
+                let current = (!removing)
+                    .then(|| {
+                        status
+                            .as_ref()
+                            .and_then(|status| status.revision.as_ref())
+                            .and_then(|revision| revision.policy.clone())
+                            .or_else(|| {
+                                response
+                                    .sandbox
+                                    .as_ref()
+                                    .and_then(|sandbox| sandbox.spec.as_ref())
+                                    .and_then(|spec| spec.policy.clone())
+                            })
+                    })
+                    .flatten();
                 let (mut row, ready, grants) = checked_sandbox_row_with(
                     response,
                     workspace,
                     name,
                     removing,
+                    current.as_ref(),
                     |row| async move { self.sandbox_cluster_grants(&row).await },
                 )
                 .await?;
                 if ready && !removing {
-                    let status = self
-                        .client
-                        .raw_grpc()
-                        .get_sandbox_policy_status(self.request(
-                            proto::GetSandboxPolicyStatusRequest {
-                                sandbox: name.into(),
-                                workspace_scope: Some(proto::workspace_selector(workspace)),
-                                ..Default::default()
-                            },
-                        ))
-                        .await
-                        .map_err(|error| remote_error(&error))?
-                        .into_inner();
                     let expected = if row.get(crate::POLICY_AUTHORITY).is_some_and(|a| a == "apf") {
                         None
                     } else {
                         Some(policy_json(&network::granted_row_policy(&row, &grants)?)?)
                     };
-                    let hash = active_policy(status, expected.as_deref())?;
+                    let hash = active_policy(status.unwrap_or_default(), expected.as_deref())?;
                     row.insert(crate::POLICY_HASH.into(), hash);
                 }
                 Some(row)
@@ -324,6 +344,18 @@ impl OpenShellGateway for ConnectedOpenShellGateway {
 
     async fn reissue_policy(&self, want: &Row) -> Result<(), ObservationError> {
         ConnectedOpenShellGateway::reissue_policy(self, want).await
+    }
+
+    async fn update_policy(&self, want: &Row) -> Result<proto::SandboxPolicy, ObservationError> {
+        ConnectedOpenShellGateway::update_policy(self, want).await
+    }
+
+    async fn set_policy(
+        &self,
+        row: &Row,
+        policy: proto::SandboxPolicy,
+    ) -> Result<(), ObservationError> {
+        ConnectedOpenShellGateway::set_policy(self, row, policy).await
     }
 
     async fn service(
@@ -471,6 +503,7 @@ impl ConnectedOpenShellGateway {
             binding,
             &base(sandbox.metadata.clone(), row_value(binding, "name"), false)?,
         )?;
+        // Its identity and launch, not its policy, which observations check.
         let (observed, _, _) = sandbox_row(
             proto::SandboxResponse {
                 sandbox: Some(sandbox.clone()),
@@ -478,6 +511,7 @@ impl ConnectedOpenShellGateway {
             },
             row_value(binding, "name"),
             false,
+            None,
         )?;
         if binding.get("launch_json") != observed.get("launch_json") {
             return Err(ObservationError::BindingMismatch.into());
@@ -603,6 +637,21 @@ mod tests {
         }
 
         async fn reissue_policy(&self, _want: &Row) -> Result<(), ObservationError> {
+            unreachable!()
+        }
+
+        async fn update_policy(
+            &self,
+            _want: &Row,
+        ) -> Result<proto::SandboxPolicy, ObservationError> {
+            unreachable!()
+        }
+
+        async fn set_policy(
+            &self,
+            _row: &Row,
+            _policy: proto::SandboxPolicy,
+        ) -> Result<(), ObservationError> {
             unreachable!()
         }
 

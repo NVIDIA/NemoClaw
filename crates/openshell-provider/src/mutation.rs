@@ -24,6 +24,52 @@ fn policy_unchanged(prior: &Row, row: &Row) -> bool {
     recorded.is_empty() || observed.is_empty() || recorded == observed
 }
 
+/// The binding a mutation leaves once its readback settles: the object read
+/// back, when it is the `established` one and reads back as `want` writes it.
+fn settled(
+    kind: &str,
+    established: Row,
+    want: &Row,
+    readback: Result<Option<Row>, ObservationError>,
+) -> Mutation {
+    match readback {
+        Ok(Some(row)) => {
+            // The mutation response establishes the physical binding even when
+            // the desired row did not yet have an ID. Never adopt a substituted
+            // object during readback or discard the established recovery state.
+            if let Err(error) = verify_identity(&established, &row) {
+                return Mutation::partial(established, error);
+            }
+            // The ID and the computed URLs and policy hash come from the
+            // gateway; every other field must read back as written.
+            // A provider records no policy authority; its profile does.
+            if want.iter().any(|(key, v)| {
+                ![
+                    "id",
+                    services::URLS,
+                    crate::POLICY_HASH,
+                    crate::POLICY_PROVENANCE,
+                ]
+                .contains(&key.as_str())
+                    && !(kind == "provider" && key == crate::POLICY_AUTHORITY)
+                    && row.get(key) != Some(v)
+            }) {
+                return Mutation::partial(row, ObservationError::Incomplete);
+            }
+            // An APF-governed sandbox binds only with APF's provenance.
+            if kind == "sandbox"
+                && value(&row, crate::POLICY_AUTHORITY) == "apf"
+                && value(&row, crate::POLICY_PROVENANCE).is_empty()
+            {
+                return Mutation::partial(row, ObservationError::BindingMismatch);
+            }
+            Mutation::complete(row)
+        }
+        Ok(None) => Mutation::partial(established, ObservationError::Incomplete),
+        Err(error) => Mutation::partial(established, error),
+    }
+}
+
 /// A sandbox observation whose loaded policy APF did not issue: no token, and
 /// the hash recorded before the change, so the next observation still sees the
 /// change and plans APF to issue its policy again.
@@ -272,6 +318,14 @@ impl OpenShell {
                 {
                     return self.reissue(want, &row, prior.unwrap_or(want)).await;
                 }
+                // The plan changes the live sandbox's network rules.
+                if kind == "sandbox"
+                    && prior.is_some()
+                    && value(want, crate::POLICY_AUTHORITY).is_empty()
+                    && value(&row, "policy_json") != value(want, "policy_json")
+                {
+                    return self.change_policy(want, &row).await;
+                }
                 row
             }
             None => {
@@ -292,42 +346,51 @@ impl OpenShell {
         } else {
             self.observe(kind, workspace, name, false).await
         };
-        match readback {
-            Ok(Some(row)) => {
-                // The mutation response establishes the physical binding even when
-                // the desired row did not yet have an ID. Never adopt a substituted
-                // object during readback or discard the established recovery state.
-                if let Err(error) = verify_identity(&established, &row) {
-                    return Ok(Mutation::partial(established, error));
-                }
-                // The ID and the computed URLs and policy hash come from the
-                // gateway; every other field must read back as written.
-                // A provider records no policy authority; its profile does.
-                if want.iter().any(|(key, v)| {
-                    ![
-                        "id",
-                        services::URLS,
-                        crate::POLICY_HASH,
-                        crate::POLICY_PROVENANCE,
-                    ]
-                    .contains(&key.as_str())
-                        && !(kind == "provider" && key == crate::POLICY_AUTHORITY)
-                        && row.get(key) != Some(v)
-                }) {
-                    return Ok(Mutation::partial(row, ObservationError::Incomplete));
-                }
-                // An APF-governed sandbox binds only with APF's provenance.
-                if kind == "sandbox"
-                    && value(&row, crate::POLICY_AUTHORITY) == "apf"
-                    && value(&row, crate::POLICY_PROVENANCE).is_empty()
-                {
-                    return Ok(Mutation::partial(row, ObservationError::BindingMismatch));
-                }
-                Ok(Mutation::complete(row))
-            }
-            Ok(None) => Ok(Mutation::partial(established, ObservationError::Incomplete)),
-            Err(error) => Ok(Mutation::partial(established, error)),
+        Ok(settled(kind, established, want, readback))
+    }
+    /// Change a bound sandbox's network rules to `want`'s in place, as
+    /// `openshell policy set` does, then wait until the sandbox loads them,
+    /// as a new sandbox's policy is waited for. The plan leaves the new
+    /// revision's hash unknown.
+    ///
+    /// A sandbox that fails to load the new revision gets the policy it held
+    /// before back, so the binding stays as recorded and the next plan
+    /// proposes the change again.
+    async fn change_policy(&self, want: &Row, live: &Row) -> Result<Mutation, ObservationError> {
+        let previous = self.gateway.update_policy(want).await?;
+        // Until the sandbox loads it, the binding records the new policy
+        // without a hash.
+        let mut established = live.clone();
+        established.insert("policy_json".into(), value(want, "policy_json").into());
+        established.insert(crate::POLICY_HASH.into(), String::new());
+        let readback = self
+            .read_back_sandbox(&established, want, true, STARTUP_DEADLINE)
+            .await;
+        let refused = ObservationError::SandboxConfigurationRejected {
+            reason: crate::POLICY_REFUSED,
+        };
+        if !matches!(&readback, Err(error) if *error == refused) {
+            return Ok(settled("sandbox", established, want, readback));
         }
+        if self.gateway.set_policy(live, previous).await.is_err() {
+            return Ok(Mutation::partial(established, refused));
+        }
+        let mut restoring = live.clone();
+        restoring.insert(crate::POLICY_HASH.into(), String::new());
+        Ok(
+            match self
+                .read_back_sandbox(&restoring, live, true, STARTUP_DEADLINE)
+                .await
+            {
+                Ok(Some(row)) if verify_identity(live, &row).is_ok() => Mutation::partial(
+                    row,
+                    ObservationError::SandboxConfigurationRejected {
+                        reason: crate::POLICY_RESTORED,
+                    },
+                ),
+                _ => Mutation::partial(restoring, refused),
+            },
+        )
     }
     async fn delete_bound(&self, kind: &str, want: &Row) -> Result<(), ObservationError> {
         let name = value(want, "name");

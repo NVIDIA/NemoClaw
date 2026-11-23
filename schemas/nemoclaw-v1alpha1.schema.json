@@ -3498,7 +3498,7 @@
         },
         "network": {
           "$ref": "#/$defs/Network",
-          "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference."
+          "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference. Changing network rules, middleware bindings, or grants updates the running sandbox in place; changing filesystem, Landlock, or process settings replaces it."
         },
         "serviceExposures": {
           "additionalProperties": {

@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Sandbox settings reach the gateway as written and report their service URLs.
-# Changed, added, and removed service exposures update the sandbox in place;
-# a changed mount replaces it.
+# Changed, added, and removed service exposures, network rules, and middleware
+# bindings update the sandbox in place; a changed filesystem path or mount
+# replaces it.
 
 run "deploy" {
   assert {
@@ -122,13 +123,63 @@ run "remove_services" {
   }
 }
 
+# A changed network rule and middleware binding reach the running sandbox as
+# its next policy revision, as `openshell policy set` sends them. The revision
+# keeps the path OpenShell added when the sandbox started.
+run "change_network_policy" {
+  variables {
+    services    = {}
+    docs_host   = "reference.example.com"
+    guard_terms = ["forbidden", "secret"]
+  }
+  assert {
+    condition     = length(local.openshell.created_sandboxes) == 3
+    error_message = "Changing network rules must keep the sandbox."
+  }
+  assert {
+    condition = local.openshell.policies["team/researcher"] == {
+      version    = 2
+      read_only  = ["/usr", "/var/log"]
+      read_write = ["/sandbox"]
+      endpoints  = ["reference.example.com:443"]
+      middlewares = {
+        guard = {
+          name       = "guard"
+          middleware = "decision-guard"
+          order      = 10
+          on_error   = "fail_closed"
+          config     = { mode = "block", terms = ["forbidden", "secret"] }
+          include    = ["docs.example.com"]
+          exclude    = ["trusted.example.com"]
+        }
+      }
+    }
+    error_message = "The gateway must hold the changed rule and binding as the sandbox's next revision: ${jsonencode(local.openshell.policies)}"
+  }
+}
+
+# OpenShell applies filesystem paths only when a sandbox starts, so adding one
+# replaces the sandbox.
+run "add_filesystem_path" {
+  variables {
+    services    = {}
+    docs_host   = "reference.example.com"
+    guard_terms = ["forbidden", "secret"]
+    read_only   = ["/usr", "/opt"]
+  }
+  assert {
+    condition     = length(local.openshell.created_sandboxes) == 4 && length(local.openshell.sandboxes) == 3
+    error_message = "Adding a filesystem path must replace the sandbox."
+  }
+}
+
 run "change_mount" {
   variables {
     services = {}
     target   = "/sandbox/other"
   }
   assert {
-    condition     = length(local.openshell.created_sandboxes) == 4 && length(local.openshell.sandboxes) == 3
+    condition     = length(local.openshell.created_sandboxes) == 5 && length(local.openshell.sandboxes) == 3
     error_message = "A changed mount must replace the sandbox."
   }
 }

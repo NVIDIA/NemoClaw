@@ -311,7 +311,15 @@ This removes the upstream cause of suspected GPU false drift.
 Live GPU export and reapply remain unverified.
 Missing policy observations or drift do not produce a partial configuration.
 
-A policy change replaces the sandbox, deleting its files and conversations (except on [mounted volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes)).
+A change to network rules, middleware bindings, or grants updates the running sandbox in place, as `openshell policy set` does.
+The sandbox keeps its files, conversations, and running agent.
+Apply sends the new rules as the sandbox's next policy revision, with the filesystem paths OpenShell added when the sandbox started, and waits for the sandbox to load it.
+Connections the sandbox opened under the previous rules close, so a request in progress, such as a model call, can fail and need a retry.
+If the sandbox fails to load the new revision, apply restores the previous policy and reports `OpenShell configuration rejected`; correct the policy and apply again.
+
+OpenShell applies filesystem, Landlock, and process settings only when a sandbox starts, as its [policy guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/policies/manage-policies.mdx#how-changes-take-effect) describes.
+Changing them replaces the sandbox, deleting its files and conversations (except on [mounted volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes)).
+So does any change to a policy APF governs.
 Back them up first.
 External OpenShell policy edits conflict with the declared policy and stop export.
 Change the policy in the YAML instead.
