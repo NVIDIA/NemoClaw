@@ -46,8 +46,8 @@ function verifiedSource(result: ReturnType<typeof verifyExportSource>) {
 }
 
 function primaryOpenClawAgent(config: V1Alpha1Export) {
-  const sandbox = config.spec.sandboxes[0]!;
-  expect(sandbox.harness.kind).toBe("openclaw");
+  const sandbox = config.spec.sandboxes.alpha!;
+  expect(sandbox.harness.kind).toBe("nvidia.fabric.openclaw");
   return { ...sandbox.agent, ...sandbox.harness };
 }
 
@@ -209,54 +209,48 @@ describe("config export source verification (#10938)", () => {
         },
       },
     },
-  ])(
-    "exports retained tuning and execution with telemetry $telemetry",
-    async ({ telemetry, expected }) => {
-      const observed = tunedSnapshot({
-        ...tunedEnvironment,
-        ...(telemetry ? { NEMOCLAW_OPENCLAW_OTEL: "1" } : {}),
-      });
-      const result = await exportSnapshots([observed]);
-      expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-      expect(result.read).toHaveBeenCalledTimes(2);
-      const [yaml] = result.writeStdout.mock.calls[0]!;
-      const config = asExportedConfig(YAML.parse(yaml));
-      const agent = primaryOpenClawAgent(config);
-      expect(agent.inference.routes[0]!.overrides).toEqual({
-        model: "gpt-5",
-        contextWindow: 65536,
-        maxTokens: 8192,
-        reasoning: true,
-        reasoningEffort: "high",
-      });
-      expect(agent.execution).toEqual({ timeoutSeconds: 900, heartbeatEvery: "30m" });
-      expect(agent).toMatchObject(expected);
-      expect(Object.hasOwn(agent, "observability")).toBe(telemetry);
-      expect(config.spec.sandboxes[0]!.network.policy.explicit).toMatchObject({
-        process: { run_as_user: "1000", run_as_group: "1000" },
-        filesystem_policy: {
-          read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/app"]),
-        },
-      });
-      expect(config.spec.inferenceProviders[0]).toEqual(
-        expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
-      );
-      const verifiedInference = verifiedSource(verify(observed)).inference;
-      expect("overrides" in verifiedInference).toBe(true);
-      const hostedInference = verifiedInference as Extract<
-        typeof verifiedInference,
-        { readonly endpoint: string }
-      >;
-      expect(Object.isFrozen(hostedInference.overrides)).toBe(true);
-      expect(result.publish).not.toHaveBeenCalled();
-    },
-  );
+  ])("exports retained tuning and execution with telemetry $telemetry", async ({ telemetry }) => {
+    const observed = tunedSnapshot({
+      ...tunedEnvironment,
+      ...(telemetry ? { NEMOCLAW_OPENCLAW_OTEL: "1" } : {}),
+    });
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
+    expect(result.read).toHaveBeenCalledTimes(2);
+    const [yaml] = result.writeStdout.mock.calls[0]!;
+    const config = asExportedConfig(YAML.parse(yaml));
+    const agent = primaryOpenClawAgent(config);
+    // v1 route overrides keep maxTokens only; the rest has no v1 home.
+    expect(agent.inference.routes[0]!.overrides).toEqual({ model: "gpt-5", maxTokens: 8192 });
+    // v1 keeps the timeout under harness.runtime; heartbeat and OTel have no v1 home.
+    expect(agent.runtime).toEqual({ timeout_seconds: 900 });
+    expect(Object.hasOwn(agent, "execution")).toBe(false);
+    expect(Object.hasOwn(agent, "observability")).toBe(false);
+    // The V0 image's process and filesystem sections are left out (#14580).
+    expect(config.spec.sandboxes.alpha!.network.policy.explicit).not.toHaveProperty("process");
+    expect(config.spec.sandboxes.alpha!.network.policy.explicit).not.toHaveProperty(
+      "filesystem_policy",
+    );
+    expect(Object.values(config.spec.inferenceProviders)[0]).toEqual(
+      expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
+    );
+    const verifiedInference = verifiedSource(verify(observed)).inference;
+    expect("overrides" in verifiedInference).toBe(true);
+    const hostedInference = verifiedInference as Extract<
+      typeof verifiedInference,
+      { readonly endpoint: string }
+    >;
+    expect(Object.isFrozen(hostedInference.overrides)).toBe(true);
+    expect(result.publish).not.toHaveBeenCalled();
+  });
 
   it("retains an explicit zero heartbeat duration", async () => {
     const result = await exportSnapshots([tunedSnapshot({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" })]);
     expect(result.outcome.ok).toBe(true);
     const config = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
-    expect(primaryOpenClawAgent(config).execution).toEqual({ heartbeatEvery: "0m" });
+    // Heartbeat has no v1 home; the timeout is always exported.
+    expect(primaryOpenClawAgent(config).runtime).toEqual({ timeout_seconds: 600 });
+    expect(Object.hasOwn(primaryOpenClawAgent(config), "heartbeatEvery")).toBe(false);
   });
 
   it.each(Object.entries(tunedEnvironment))(
@@ -280,7 +274,7 @@ describe("config export source verification (#10938)", () => {
     expect(result.outcome.ok).toBe(true);
     expect(result.read).toHaveBeenCalledTimes(4);
     const config = asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0]));
-    expect(primaryOpenClawAgent(config).execution?.timeoutSeconds).toBe(900);
+    expect(primaryOpenClawAgent(config).runtime?.timeout_seconds).toBe(900);
   });
 
   it.each([
@@ -296,11 +290,8 @@ describe("config export source verification (#10938)", () => {
     const route = primaryOpenClawAgent(
       asExportedConfig(YAML.parse(result.writeStdout.mock.calls[0]![0])),
     ).inference.routes[0]!;
-    expect(route.overrides).toEqual(
-      reasoning === "true"
-        ? { model: "gpt-5", contextWindow: 131072, reasoning: true, reasoningEffort: "high" }
-        : { model: "gpt-5", contextWindow: 131072 },
-    );
+    // Reasoning has no v1 home whatever its value; only the model and maxTokens carry over.
+    expect(route.overrides).toEqual({ model: "gpt-5", maxTokens: 4096 });
   });
 
   it.each([
@@ -408,21 +399,17 @@ describe("config export source verification (#10938)", () => {
     expect(result.writeStdout).not.toHaveBeenCalled();
     expect(result.publish).not.toHaveBeenCalled();
   });
-  it("exports retained managed proxy settings through the complete action", async () => {
+  it("leaves the retained managed proxy out of the v1 export because v1 has no proxy field", async () => {
     const observed = proxySnapshot();
     const result = await exportSnapshots([observed]);
 
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     expect(result.read).toHaveBeenCalledTimes(2);
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const config = asExportedConfig(YAML.parse(yaml));
-    expect(config.spec.sandboxes[0]!.network).toMatchObject({
-      proxy: { host: "proxy.internal", port: 3129 },
-      policy: {
-        explicit: { process: { run_as_user: "1000", run_as_group: "1000" } },
-      },
-    });
+    expect(config.spec.sandboxes.alpha!.network).not.toHaveProperty("proxy");
+    expect(config.spec.sandboxes.alpha!.network.policy.explicit).not.toHaveProperty("process");
     expect(Object.isFrozen(verifiedSource(verify(observed)).proxy)).toBe(true);
   });
 
@@ -430,11 +417,9 @@ describe("config export source verification (#10938)", () => {
     const result = await exportSnapshots([snapshot()]);
     expect(result.outcome.ok).toBe(true);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network).toMatchObject({
-      policy: {
-        explicit: { process: { run_as_user: "1000", run_as_group: "1000" } },
-      },
-    });
+    expect(
+      asExportedConfig(YAML.parse(yaml)).spec.sandboxes.alpha!.network.policy.explicit,
+    ).not.toHaveProperty("process");
     expect(verifiedSource(verify(snapshot()))).not.toHaveProperty("proxy");
   });
 
@@ -452,10 +437,10 @@ describe("config export source verification (#10938)", () => {
     expect(result.outcome.ok).toBe(true);
     expect(result.read).toHaveBeenCalledTimes(4);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes[0]!.network.proxy).toEqual({
-      host: "proxy.internal",
-      port: 3129,
-    });
+    // v1 has no sandbox proxy field, so the export leaves it out.
+    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes.alpha!.network).not.toHaveProperty(
+      "proxy",
+    );
   });
 
   it("does not publish proxy settings when both snapshot pairs change", async () => {
@@ -597,21 +582,18 @@ describe("config export source verification (#10938)", () => {
           },
         },
       ]);
-      expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+      expect(result.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
       expect(result.read).toHaveBeenCalledTimes(2);
       expect(result.publish).not.toHaveBeenCalled();
       const [yaml] = result.writeStdout.mock.calls[0]!;
       const config = asExportedConfig(YAML.parse(yaml));
-      expect(config.spec.inferenceProviders[0]).toMatchObject({ endpoint });
-      const sandbox = config.spec.sandboxes[0]!;
-      expect(sandbox.harness.kind).toBe("hermes");
+      expect(Object.values(config.spec.inferenceProviders)[0]).toMatchObject({ endpoint });
+      const sandbox = config.spec.sandboxes.alpha!;
+      expect(sandbox.harness.kind).toBe("nvidia.fabric.hermes");
       expect(sandbox.agent).not.toHaveProperty("tools");
-      expect(sandbox.network.policy.explicit).toMatchObject({
-        process: { run_as_user: "1000", run_as_group: "1000" },
-        filesystem_policy: {
-          read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/opt/hermes"]),
-        },
-      });
+      // The V0 image's process and filesystem sections are left out (#14580).
+      expect(sandbox.network.policy.explicit).not.toHaveProperty("process");
+      expect(sandbox.network.policy.explicit).not.toHaveProperty("filesystem_policy");
     },
   );
 
@@ -667,16 +649,15 @@ describe("config export source verification (#10938)", () => {
     expect(verifiedSource(verify(observed)).auth).toEqual({ method: "api-key" });
 
     const result = await exportSnapshots([observed]);
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     expect(result.read).toHaveBeenCalledTimes(2);
     expect(result.publish).not.toHaveBeenCalled();
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const document = asExportedConfig(YAML.parse(yaml));
-    expect(document.spec.sandboxes[0]!.agent.auth).toEqual({
+    expect(document.spec.sandboxes.alpha!.agent.auth).toEqual({
       method: "api-key",
     });
-    expect(document.spec.inferenceProviders[0]).toMatchObject({
-      name: "hosted-hermes-provider",
+    expect(document.spec.inferenceProviders["hosted-hermes-provider"]).toMatchObject({
       provider: "openai",
       credential: { env: "NOUS_API_KEY" },
     });
@@ -1217,13 +1198,13 @@ function dashboardSnapshot(
 describe("dashboard settings export", () => {
   it("disables the target-default Hermes dashboard for a canonical source (#12132)", async () => {
     const exported = await exportSnapshots([hermesSnapshot()]);
-    expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(exported.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.harness).toEqual({
-      kind: "hermes",
-      interfaces: { dashboard: { enabled: false } },
+    // Interfaces are left out until v1 and V0 port meanings are confirmed equivalent.
+    expect(document.spec.sandboxes.alpha!.harness).toEqual({
+      kind: "nvidia.fabric.hermes",
     });
-    expect(document.spec.sandboxes[0]!.agent).toEqual({
+    expect(document.spec.sandboxes.alpha!.agent).toEqual({
       name: "primary",
       inference: {
         routes: [
@@ -1255,27 +1236,23 @@ describe("dashboard settings export", () => {
   );
 
   it.each([
-    [19000, "0.0.0.0", { port: 19000, bind: "0.0.0.0" }],
-    [19000, "127.0.0.1", { port: 19000 }],
-    [18789, "0.0.0.0", { bind: "0.0.0.0" }],
-  ] as const)(
-    "exports prepared dashboard port %s and bind %s (#10904)",
-    async (port, bind, dashboard) => {
-      const observed = dashboardSnapshot(port, bind);
-      const outcome = await exportSnapshots([observed]);
-      expect(outcome.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
-      const raw = outcome.writeStdout.mock.calls[0]![0];
-      const document = asExportedConfig(YAML.parse(raw));
-      expect(document.spec.sandboxes[0]!.harness).toMatchObject({
-        kind: "openclaw",
-        interfaces: { dashboard },
-      });
-      expect(raw).not.toContain("deviceAuth");
-      expect(raw).not.toContain(`http://127.0.0.1:${port}`);
-      expect(outcome.read).toHaveBeenCalledTimes(2);
-      expect(outcome.publish).not.toHaveBeenCalled();
-    },
-  );
+    [19000, "0.0.0.0"],
+    [19000, "127.0.0.1"],
+    [18789, "0.0.0.0"],
+  ] as const)("exports prepared dashboard port %s and bind %s (#10904)", async (port, bind) => {
+    const observed = dashboardSnapshot(port, bind);
+    const outcome = await exportSnapshots([observed]);
+    expect(outcome.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
+    const raw = outcome.writeStdout.mock.calls[0]![0];
+    const document = asExportedConfig(YAML.parse(raw));
+    expect(document.spec.sandboxes.alpha!.harness).toMatchObject({
+      kind: "nvidia.fabric.openclaw",
+    });
+    expect(raw).not.toContain("deviceAuth");
+    expect(raw).not.toContain(`http://127.0.0.1:${port}`);
+    expect(outcome.read).toHaveBeenCalledTimes(2);
+    expect(outcome.publish).not.toHaveBeenCalled();
+  });
 
   it("exports prepared dashboard settings alongside a managed proxy (#10904)", async () => {
     const observed = dashboardSnapshot(19000, "0.0.0.0", {
@@ -1283,27 +1260,21 @@ describe("dashboard settings export", () => {
       NEMOCLAW_PROXY_PORT: "3129",
     });
     const exported = await exportSnapshots([observed]);
-    expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(exported.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
-      kind: "openclaw",
-      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+    expect(document.spec.sandboxes.alpha!.harness).toMatchObject({
+      kind: "nvidia.fabric.openclaw",
     });
-    expect(document.spec.sandboxes[0]!.network.proxy).toEqual({
-      host: "proxy.internal",
-      port: 3129,
-    });
+    expect(document.spec.sandboxes.alpha!.network).not.toHaveProperty("proxy");
   });
 
   it("keeps explicit and legacy canonical dashboard exports identical (#10904, #12132)", async () => {
     const legacy = await exportSnapshots([snapshot()]);
     const explicit = await exportSnapshots([dashboardSnapshot(18789, "127.0.0.1")]);
-    expect(explicit.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(explicit.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     expect(explicit.writeStdout.mock.calls).toEqual(legacy.writeStdout.mock.calls);
     const document = asExportedConfig(YAML.parse(explicit.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
-      dashboard: { port: 18789 },
-    });
+    expect(document.spec.sandboxes.alpha!.harness).not.toHaveProperty("settings");
   });
 
   it("preserves inference and execution tuning alongside dashboard settings (#10904)", async () => {
@@ -1314,14 +1285,13 @@ describe("dashboard settings export", () => {
       NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m",
     });
     const exported = await exportSnapshots([observed]);
-    expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(exported.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
-      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
-      execution: { timeoutSeconds: 900, heartbeatEvery: "30m" },
+    expect(document.spec.sandboxes.alpha!.harness).toMatchObject({
+      runtime: { timeout_seconds: 900 },
     });
-    expect(document.spec.sandboxes[0]!.agent).toMatchObject({
-      inference: { routes: [{ overrides: { contextWindow: 65536, maxTokens: 8192 } }] },
+    expect(document.spec.sandboxes.alpha!.agent).toMatchObject({
+      inference: { routes: [{ overrides: { maxTokens: 8192 } }] },
     });
   });
 

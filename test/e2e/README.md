@@ -1347,7 +1347,7 @@ The GPU memory-offload assertion also rejects a missing matching process because
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies attached-Ollama and fixed managed-vLLM configuration export on
-native Linux Docker. Each scenario runs the candidate CLI, checks its named service and `image: null`,
+native Linux Docker. Each scenario runs the candidate CLI, checks its named service and placeholder `image`,
 rejects credential disclosure, and retains the generated YAML. The existing CUDA, authentication,
 and inference lifecycle scenarios remain separate. The catalogue allows 150 minutes for this target.
 The fixture retries read-only daemon readiness checks on connection refusal or curl

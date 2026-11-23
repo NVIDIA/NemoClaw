@@ -43,9 +43,10 @@ import { withGatewayRouteMutationLock } from "../../inference/gateway-route-muta
 import {
   findReachableOllamaHost,
   probeLocalProviderHealth,
+  probeOllamaAuthProxyHealth,
   shouldFrontOllamaWithProxy,
 } from "../../inference/local";
-import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
+import { ensureOllamaAuthProxy } from "../../inference/ollama/proxy";
 import {
   assertNoOpenShellGatewayEndpointOverride,
   OpenShellGatewayEndpointOverrideError,
@@ -1655,10 +1656,14 @@ function verifyLocalInferenceRouteDependencies(
   }
 
   if (frontOllamaWithProxy) {
+    // The probe returns null when no proxy token was ever persisted. Fail
+    // closed, because a fronted route cannot work without one.
     const proxyHealth = probeOllamaAuthProxyHealth();
-    if (!proxyHealth.ok) {
+    if (!proxyHealth?.ok) {
       if (!quiet) {
-        console.error(`  Error: ${proxyHealth.detail}`);
+        console.error(
+          `  Error: ${proxyHealth?.detail ?? "Ollama auth proxy token is missing. Re-run NemoClaw onboarding for the Ollama-local sandbox."}`,
+        );
       }
       return false;
     }
