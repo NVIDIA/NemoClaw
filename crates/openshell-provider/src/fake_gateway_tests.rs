@@ -1411,6 +1411,290 @@ async fn explicit_policy_reaches_the_gateway_and_detects_drift() {
     assert!(!fixture.state.lock().unwrap().sandboxes.contains_key(&key));
 }
 
+/// `bound` with its policy input changed by `edit`.
+fn with_policy(bound: &Row, edit: impl FnOnce(&mut Value)) -> Row {
+    let mut policy: Value = serde_json::from_str(&bound["policy_json"]).unwrap();
+    edit(&mut policy);
+    let mut row = bound.clone();
+    row.insert("policy_json".into(), policy.to_string());
+    row
+}
+
+/// The explicit-policy fixture's documentation rule.
+fn documentation(policy: &mut Value) -> &mut Value {
+    &mut policy["explicit"]["network_policies"]["documentation"]
+}
+
+/// What OpenTofu plans when `bound`'s policy input becomes `desired`'s: the
+/// planned state, the row the provider then receives, and whether the change
+/// replaces the sandbox.
+fn plan_policy(bound: &Row, desired: &Row) -> (nemoclaw_tofu::State, Row, bool) {
+    use tf_provider::value::Value;
+    let definition = definitions()
+        .into_iter()
+        .find(|definition| definition.kind == "sandbox")
+        .unwrap();
+    let state = |row: &Row| -> nemoclaw_tofu::State {
+        row.iter()
+            .map(|(name, value)| (name.clone(), Value::Value(value.clone())))
+            .collect()
+    };
+    let (planned, replacements) =
+        nemoclaw_tofu::plan_update(&definition, &state(bound), state(desired));
+    let row = planned
+        .iter()
+        .filter_map(|(name, value)| match value {
+            Value::Value(value) => Some((name.clone(), value.clone())),
+            _ => None,
+        })
+        .collect();
+    (planned, row, !replacements.is_empty())
+}
+
+/// OpenShell changes a running sandbox's network rules and middleware, but
+/// applies its filesystem, Landlock, and process settings only when it
+/// starts. So a change to the rules, a binding, or a managed grant plans an
+/// in-place update whose new revision's hash is unknown, and any other policy
+/// change, or one to a policy APF governs, plans a replacement.
+#[test]
+fn only_network_rule_changes_update_a_sandbox_in_place() {
+    let (_, mut bound) = fixture_rows("explicit-policy")
+        .into_iter()
+        .find(|(kind, _)| *kind == "sandbox")
+        .unwrap();
+    bound.insert(POLICY_HASH.into(), "sha256:recorded".into());
+    let in_place: [fn(&mut Value); 4] = [
+        |policy| {
+            documentation(policy)["endpoints"][0]["rules"][0]["allow"]["path"] =
+                "/reference/**".into()
+        },
+        |policy| {
+            policy["explicit"]["network_policies"]["search"] = serde_json::json!({
+                "name": "search",
+                "endpoints": [{"host": "search.example.com", "port": 443}],
+                "binaries": [{"path": "/usr/bin/curl"}]
+            })
+        },
+        |policy| {
+            policy["explicit"]["network_middlewares"] = serde_json::json!({"guard": {
+                "middleware": "decision-guard", "order": 10, "config": {"mode": "block"},
+                "endpoints": {"include": ["docs.example.com"]}
+            }})
+        },
+        |policy| policy["managed"][0]["endpoints"][0]["path"] = "/v2/**".into(),
+    ];
+    for edit in in_place {
+        let desired = with_policy(&bound, edit);
+        let (planned, _, replaced) = plan_policy(&bound, &desired);
+        assert!(!replaced, "{}", desired["policy_json"]);
+        assert_eq!(
+            planned.get(POLICY_HASH),
+            Some(&tf_provider::value::Value::Unknown)
+        );
+    }
+    let replacing: [fn(&mut Value); 4] = [
+        |policy| {
+            policy["explicit"]["filesystem_policy"]["read_write"]
+                .as_array_mut()
+                .unwrap()
+                .push("/data".into())
+        },
+        |policy| {
+            policy["explicit"]["filesystem_policy"]["read_only"]
+                .as_array_mut()
+                .unwrap()
+                .pop();
+        },
+        |policy| policy["explicit"]["landlock"]["compatibility"] = "hard_requirement".into(),
+        |policy| policy["explicit"]["process"]["run_as_user"] = "10002".into(),
+    ];
+    for edit in replacing {
+        let desired = with_policy(&bound, edit);
+        assert!(
+            plan_policy(&bound, &desired).2,
+            "{}",
+            desired["policy_json"]
+        );
+    }
+    // APF issues a governed sandbox's policy, so NemoClaw changes none in place.
+    let mut governed = bound.clone();
+    governed.insert(POLICY_AUTHORITY.into(), "apf".into());
+    let desired = with_policy(&governed, in_place[0]);
+    assert!(plan_policy(&governed, &desired).2);
+}
+
+/// A changed network rule reaches the running sandbox as its next policy
+/// revision, which keeps the paths OpenShell added when it started, and the
+/// sandbox records the new policy input. The binding keeps the sandbox and
+/// records the new revision's hash, the next observation finds it unchanged,
+/// a later revision with other rules is drift, and teardown needs only the
+/// sandbox's identity.
+#[tokio::test]
+async fn a_changed_network_rule_updates_the_running_sandbox() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let bound = create_sandbox(&client, "explicit-policy").await;
+    let key = key(&bound);
+    let changed = with_policy(&bound, |policy| {
+        documentation(policy)["endpoints"][0]["rules"][0]["allow"]["path"] = "/reference/**".into()
+    });
+    let (_, desired, replaced) = plan_policy(&bound, &changed);
+    assert!(!replaced);
+    let result = client.update("sandbox", &desired, &bound).await;
+    assert!(result.error().is_none(), "{:?}", result.error());
+    let updated = result.into_parts().0.unwrap();
+    assert_eq!(updated["id"], bound["id"]);
+    assert_eq!(updated["policy_json"], changed["policy_json"]);
+    assert!(!updated[POLICY_HASH].is_empty());
+    assert_ne!(updated[POLICY_HASH], bound[POLICY_HASH]);
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(
+            state.created_sandboxes.len(),
+            1,
+            "the change replaced the sandbox"
+        );
+        assert_eq!(state.delete_calls, 0);
+        let sent = state.config_updates.last().unwrap().policy.clone().unwrap();
+        let rule = &sent.network_policies["documentation"].endpoints[0].rules[0];
+        assert_eq!(rule.allow.as_ref().unwrap().path, "/reference/**");
+        assert!(
+            sent.filesystem
+                .unwrap()
+                .read_only
+                .contains(&"/var/log".to_owned()),
+            "the revision dropped a path OpenShell added"
+        );
+        let annotations = &state.sandboxes[&key].metadata.as_ref().unwrap().annotations;
+        assert_eq!(annotations[agent::POLICY], changed["policy_json"]);
+    }
+    assert_eq!(
+        client
+            .read("sandbox", &updated, false)
+            .await
+            .unwrap()
+            .unwrap(),
+        updated
+    );
+    // Another revision, as `openshell policy set` would store, is drift.
+    let external = {
+        let mut state = fixture.state.lock().unwrap();
+        let id = updated["id"].clone();
+        let revisions = state.policy_revisions.get_mut(&id).unwrap();
+        let mut revision = revisions.last().unwrap().clone();
+        revision.version += 1;
+        revision.policy_hash = "fixture:external".into();
+        revision.policy.as_mut().unwrap().network_policies.clear();
+        revisions.push(revision);
+        id
+    };
+    assert!(matches!(
+        client.read("sandbox", &updated, false).await,
+        Err(ObservationError::BindingMismatch)
+    ));
+    // Teardown reads the sandbox's identity, not its policy.
+    assert!(
+        client
+            .read("sandbox", &updated, true)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    client.remove("sandbox", &updated, true).await.unwrap();
+    let state = fixture.state.lock().unwrap();
+    assert!(!state.sandboxes.contains_key(&key));
+    assert!(state.policy_revisions.contains_key(&external));
+}
+
+/// A sandbox that fails to load the changed policy gets the one it ran
+/// before back, so the binding stays as recorded, the next observation finds
+/// it so, and the next plan proposes the change again.
+#[tokio::test]
+async fn a_policy_the_sandbox_cannot_load_is_restored() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let bound = create_sandbox(&client, "explicit-policy").await;
+    let changed = with_policy(&bound, |policy| {
+        documentation(policy)["endpoints"][0]["rules"][0]["allow"]["path"] = "/reference/**".into()
+    });
+    let (_, desired, _) = plan_policy(&bound, &changed);
+    fixture.state.lock().unwrap().policy_loads = [proto::PolicyStatus::Failed].into();
+    let (state, error) = client
+        .update("sandbox", &desired, &bound)
+        .await
+        .into_parts();
+    assert!(
+        matches!(
+            error,
+            Some(ObservationError::SandboxConfigurationRejected { .. })
+        ),
+        "{error:?}"
+    );
+    let recorded = state.unwrap();
+    assert_eq!(recorded, bound);
+    {
+        let state = fixture.state.lock().unwrap();
+        let sent: Vec<_> = state
+            .config_updates
+            .iter()
+            .map(|update| update.annotations[agent::POLICY].clone())
+            .collect();
+        assert_eq!(
+            sent,
+            [changed["policy_json"].clone(), bound["policy_json"].clone()]
+        );
+    }
+    assert_eq!(
+        client
+            .read("sandbox", &recorded, false)
+            .await
+            .unwrap()
+            .unwrap(),
+        bound
+    );
+    assert!(!plan_policy(&recorded, &changed).2);
+}
+
+/// An update whose reply is lost after the gateway stored the new policy
+/// fails, and OpenTofu keeps the binding as it was. The next observation
+/// finds the new policy input and the revision the sandbox loaded for it
+/// together, so it records them instead of reporting drift, and the change
+/// then plans nothing more.
+#[tokio::test]
+async fn an_update_whose_reply_was_lost_reads_back_as_applied() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let bound = create_sandbox(&client, "explicit-policy").await;
+    let changed = with_policy(&bound, |policy| {
+        documentation(policy)["endpoints"][0]["rules"][0]["allow"]["path"] = "/reference/**".into()
+    });
+    let (_, desired, _) = plan_policy(&bound, &changed);
+    fixture.state.lock().unwrap().lose_policy_update = true;
+    let (state, error) = client
+        .update("sandbox", &desired, &bound)
+        .await
+        .into_parts();
+    assert!(error.is_some());
+    assert!(state.is_none(), "{state:?}");
+    let observed = client
+        .read("sandbox", &bound, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed["id"], bound["id"]);
+    assert_eq!(observed["policy_json"], changed["policy_json"]);
+    assert!(!observed[POLICY_HASH].is_empty());
+    assert_ne!(observed[POLICY_HASH], bound[POLICY_HASH]);
+    let (planned, _, replaced) = plan_policy(&observed, &changed);
+    assert!(!replaced);
+    assert_eq!(
+        planned.get(POLICY_HASH),
+        Some(&tf_provider::value::Value::Value(
+            observed[POLICY_HASH].clone()
+        ))
+    );
+}
+
 /// A sandbox that is still starting when it is created records its loaded
 /// policy's hash before the apply returns, so a path added to the policy after
 /// the first apply is drift, as it is after the second.
@@ -1542,6 +1826,16 @@ impl crate::transport::OpenShellGateway for PhaseUnavailable {
     }
     async fn reissue_policy(&self, want: &Row) -> Result<(), ObservationError> {
         self.inner.reissue_policy(want).await
+    }
+    async fn update_policy(&self, want: &Row) -> Result<proto::SandboxPolicy, ObservationError> {
+        self.inner.update_policy(want).await
+    }
+    async fn set_policy(
+        &self,
+        row: &Row,
+        policy: proto::SandboxPolicy,
+    ) -> Result<(), ObservationError> {
+        self.inner.set_policy(row, policy).await
     }
     async fn service(
         &self,

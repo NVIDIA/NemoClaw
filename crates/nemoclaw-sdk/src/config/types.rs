@@ -432,7 +432,7 @@ pub struct Sandbox {
     pub image: Image,
     #[serde(rename = "network")]
     #[schemars(default)]
-    /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
+    /// Sandbox network policy; omission selects isolated egress with grants for declared inference. Changing network rules, middleware bindings, or grants updates the running sandbox in place; changing filesystem, Landlock, or process settings replaces it.
     pub network: super::Network,
     #[serde(
         rename = "driverConfig",
