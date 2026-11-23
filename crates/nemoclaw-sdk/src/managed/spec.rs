@@ -137,8 +137,16 @@ fn gateway_launch(driver: ComputeDriver, name: &str, port: u16, data_path: &str)
         env: vec![
             format!("XDG_STATE_HOME={data_path}/state"),
             format!("OPENSHELL_DB_URL=sqlite:{data_path}/gateway.db"),
+            format!("{OPENSHELL_TELEMETRY_ENV}={}", gateway_telemetry_enabled()),
         ],
     }
+}
+/// OpenShell's telemetry switch; the gateway passes it on to each sandbox.
+pub const OPENSHELL_TELEMETRY_ENV: &str = "OPENSHELL_TELEMETRY_ENABLED";
+/// Whether a gateway NemoClaw manages sends OpenShell telemetry: it follows
+/// NemoClaw's own switch, on unless [`crate::telemetry::DISABLE_ENV`] is set.
+pub fn gateway_telemetry_enabled() -> bool {
+    !crate::telemetry::disabled()
 }
 /// Launch a Docker gateway container from its name, endpoint, and the data
 /// path its storage returns.

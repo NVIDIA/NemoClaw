@@ -236,6 +236,7 @@ pub enum RejectableOperation {
     CreateWorkspace,
     CreateSandbox,
     ExposeService,
+    UpdateConfig,
     DeleteProvider,
     DeleteProviderProfile,
 }
@@ -246,6 +247,7 @@ impl RejectableOperation {
             Self::CreateWorkspace => "CreateWorkspace",
             Self::CreateSandbox => "CreateSandbox",
             Self::ExposeService => "ExposeService",
+            Self::UpdateConfig => "UpdateConfig",
             Self::DeleteProvider => "DeleteProvider",
             Self::DeleteProviderProfile => "DeleteProviderProfile",
         }

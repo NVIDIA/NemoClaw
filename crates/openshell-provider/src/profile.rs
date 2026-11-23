@@ -1152,9 +1152,20 @@ mod tests {
             ..Default::default()
         };
         let (workspace, name) = (&sandbox["workspace"], &sandbox["name"]);
-        let check = |response, removing, observed| async move {
-            checked_sandbox_row_with(response, workspace, name, removing, |_| async { observed })
-                .await
+        // The sandbox has no later policy revision; teardown reads none.
+        let check = |response: proto::SandboxResponse, removing: bool, observed| async move {
+            let current = (!removing)
+                .then(|| response.sandbox.as_ref()?.spec.as_ref()?.policy.clone())
+                .flatten();
+            checked_sandbox_row_with(
+                response,
+                workspace,
+                name,
+                removing,
+                current.as_ref(),
+                |_| async { observed },
+            )
+            .await
         };
         let current = check(response.clone(), false, Ok(grants.clone()))
             .await

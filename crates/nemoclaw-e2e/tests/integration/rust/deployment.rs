@@ -621,6 +621,89 @@ async fn changed_service_exposures_keep_the_sandbox_and_its_agent() {
     lifecycle.destroy();
 }
 
+/// A changed network grant updates the running sandbox's policy in place:
+/// apply updates the sandbox rather than replacing it, the agent keeps
+/// running, the gateway holds the new grant as the sandbox's next policy
+/// revision, and export reproduces the changed document. The provider's
+/// sandbox contract scenario covers which policy changes replace a sandbox.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn changed_network_grants_keep_the_sandbox_and_its_agent() {
+    let mut document =
+        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
+            .unwrap();
+    let network = |path: &str| {
+        serde_json::from_value(serde_json::json!({
+            "tier": "isolated",
+            "grants": {"docs": {"endpoints": [{
+                "host": "docs.example.com", "port": 443, "protocol": "rest",
+                "enforcement": "enforce", "rules": [{"allow": {"method": "GET", "path": path}}]
+            }]}}
+        }))
+        .unwrap()
+    };
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .network = network("/docs/**");
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    lifecycle.apply().await;
+    let key = format!("{}/assistant", lifecycle.document.workspace());
+    let (created, starts) = {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        (state.created_sandboxes.len(), state.fabric_starts.clone())
+    };
+    let mut changed = lifecycle.document.clone();
+    changed.spec.sandboxes.get_mut("assistant").unwrap().network = network("/reference/**");
+    lifecycle.resource_events.lock().unwrap().clear();
+    lifecycle
+        .deployment
+        .apply(&changed, &lifecycle.cancel)
+        .await
+        .unwrap();
+    assert!(
+        lifecycle
+            .resource_events
+            .lock()
+            .unwrap()
+            .contains(&("sandbox", "update", "complete")),
+        "{:?}",
+        lifecycle.resource_events.lock().unwrap()
+    );
+    {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        assert_eq!(
+            state.created_sandboxes.len(),
+            created,
+            "the change replaced the sandbox"
+        );
+        assert_eq!(
+            state.fabric_starts, starts,
+            "the change restarted the agent"
+        );
+        let id = &state.sandboxes[&key].metadata.as_ref().unwrap().id;
+        let policy = state.policy_revisions[id]
+            .last()
+            .unwrap()
+            .policy
+            .clone()
+            .unwrap();
+        let rule = &policy.network_policies["docs"].endpoints[0].rules[0];
+        assert_eq!(rule.allow.as_ref().unwrap().path, "/reference/**");
+    }
+    assert_eq!(
+        lifecycle
+            .deployment
+            .export(&lifecycle.cancel)
+            .await
+            .unwrap(),
+        changed
+    );
+    lifecycle.destroy();
+}
+
 /// Progress events that the deployment's callback records.
 type Recorded<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
 
