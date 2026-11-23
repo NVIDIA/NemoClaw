@@ -312,7 +312,7 @@ Paths:
 | `network_middlewares` | map of [PolicyMiddleware](#policymiddleware) | No | — | Supervisor middleware attachments keyed by policy-local names, which OpenShell's logs report. Each names a built-in middleware or a service registered in the gateway's `openshell.supervisor.middleware` configuration, and selects the admitted destination hosts it runs for. |
 | `network_policies` | map of [PolicyRule](#policyrule) | Yes | — | Named egress rules. An empty map grants no general egress. |
 | `process` | [PolicyProcess](#policyprocess) | No | — | Sandbox process user and group. |
-| `version` | integer | Yes | — | Policy format version; currently 1. Constraints: `1`; minimum 0. |
+| `version` | integer | Yes | — | Policy format version; currently 1. Constraints: `1`; minimum 0; maximum 4294967295. |
 
 ## ExplicitPolicySelection
 
@@ -1405,7 +1405,7 @@ Paths:
 | `middleware` | string | Yes | — | A built-in middleware, such as `openshell/regex`, or the `name` of a service registered with the gateway. |
 | `name` | string | No | — | Display name; omission uses the attachment's key. |
 | `on_error` | string | No | — | fail_closed blocks the affected traffic when the middleware fails; fail_open lets it continue. Omission selects fail_closed. A middleware denial blocks traffic either way. Constraints: `"fail_closed"` or `"fail_open"`. |
-| `order` | integer | No | — | Position among attachments that select the same host; lower values run first. Orders must be unique within the policy; omission means 0. |
+| `order` | integer | No | — | Position among attachments that select the same host; lower values run first. Orders must be unique within the policy; omission means 0. Constraints: minimum -2147483648; maximum 2147483647. |
 
 ## PolicyMiddlewareEndpoints
 
@@ -1564,7 +1564,7 @@ Paths:
 | `agent` | [Agent](#agent) | Yes | — | The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes. |
 | `cpu` | any JSON value | No | — | CPU limit OpenShell gives the sandbox, as a quantity such as 500m or 2, passed to its resources.limits.cpu: Docker and Podman apply it as a runtime limit, Kubernetes as the container's request and limit. OpenShell validates it. Changing it replaces the sandbox; omission sets no limit. Constraints: minimum characters 1. |
 | `driverConfig` | object | No | — | OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration. |
-| `gpus` | integer | No | — | GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none. Constraints: minimum 1. |
+| `gpus` | integer | No | — | GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none. Constraints: minimum 1; maximum 4294967295. |
 | `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation. |
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |

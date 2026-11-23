@@ -3234,6 +3234,7 @@ version = "0.1.0"
 dependencies = [
  "jsonschema 0.61.2",
  "nemoclaw-backend",
+ "nemoclaw-runtime",
  "nemoclaw-tofu",
  "openshell-policy",
  "openshell-sdk",
@@ -3354,6 +3355,7 @@ dependencies = [
  "serde-saphyr 1.3.0",
  "serde_json",
  "sha2 0.11.1",
+ "strsim",
  "tempfile",
  "time",
  "tokio",

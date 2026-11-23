@@ -25,6 +25,9 @@ pub(crate) fn matches(pattern: &'static str, value: &str) -> bool {
 
 pub(crate) const KIND: &str = "NemoClawConfig";
 pub(crate) const SLUG: &str = nemoclaw_openshell::NAME_PATTERN;
+/// What [`SLUG`] allows, for a map key that names a definition.
+pub(crate) const SLUG_KEYS_ERROR: &str = "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters";
+pub(crate) const IMAGE_METADATA_TARGETS: &str = "image.metadata is available only for Kubernetes and OpenShift; Docker and Podman use engine image inspection";
 pub(crate) const UUID: &str = r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$";
 /// RFC 4122 UUIDs are case-insensitive on input; defaults store them lowercase.
 pub(crate) const UUID_INPUT: &str =

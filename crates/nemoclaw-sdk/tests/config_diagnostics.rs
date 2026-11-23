@@ -181,3 +181,184 @@ fn a_missing_service_image_reports_the_digest_pin_rule_at_its_service() {
         "{error}"
     );
 }
+
+fn local_yaml() -> String {
+    std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/local.yaml"),
+    )
+    .unwrap()
+}
+
+/// `examples/local.yaml` after `edit`, which must change it.
+fn edited(edit: impl FnOnce(String) -> String) -> String {
+    let original = local_yaml();
+    let text = edit(original.clone());
+    assert_ne!(text, original, "the edit must change the example");
+    text
+}
+
+/// The 1-based line and character column where `needle` starts in `text`.
+fn position_of(text: &str, needle: &str) -> String {
+    let before = &text[..text.find(needle).unwrap()];
+    let line = before.matches('\n').count() + 1;
+    let column = before.rsplit('\n').next().unwrap().chars().count() + 1;
+    format!("line {line}, column {column}")
+}
+
+fn rejection(text: &str) -> String {
+    Document::parse(text.as_bytes()).unwrap_err().to_string()
+}
+
+const WEB_SEARCH: &str = "  integrations:\n    search:\n      kind: webSearch\n      provider: brave\n      credential:\n        env: BRAVE_API_KEY\n  sandboxes:\n";
+
+#[test]
+fn schema_rules_without_their_own_message_still_explain_the_failure() {
+    for (text, path, at, constraint) in [
+        (
+            edited(|yaml| yaml.replace("kind: nvidia.fabric.openclaw", "kind: \"\"")),
+            "spec.sandboxes.assistant.harness.kind",
+            "\"\"",
+            "must not be empty",
+        ),
+        (
+            edited(|yaml| {
+                let routes = yaml.find("          routes:").unwrap();
+                format!("{}          routes: []\n", &yaml[..routes])
+            }),
+            "spec.sandboxes.assistant.agent.inference.routes",
+            "[]",
+            "must not be empty",
+        ),
+        (
+            edited(|yaml| {
+                yaml.replace("  sandboxes:\n", WEB_SEARCH).replace(
+                    "        name: main\n",
+                    "        name: main\n        integrationRefs: [search, search]\n",
+                )
+            }),
+            "spec.sandboxes.assistant.agent.integrationRefs",
+            "[search, search]",
+            "must not repeat an entry",
+        ),
+        (
+            edited(|yaml| {
+                yaml.replace(
+                    "      endpoint: http://172.20.0.1:11436/v1\n",
+                    "      serviceRef: ollama\n      credential:\n        env: OPENAI_API_KEY\n",
+                )
+            }),
+            "spec.inferenceProviders.local",
+            "provider: openai",
+            "must not set credential",
+        ),
+        (
+            edited(|yaml| {
+                yaml.replace(
+                    "        ref: nc-fabric@sha256:",
+                    "        metadata:\n          env: IMAGE_METADATA\n        ref: nc-fabric@sha256:",
+                )
+            }),
+            "spec.sandboxes.assistant.image",
+            "metadata:\n          env: IMAGE_METADATA",
+            "image.metadata is available only for Kubernetes and OpenShift; Docker and Podman use engine image inspection",
+        ),
+        (
+            edited(|yaml| yaml.replace("    assistant:\n", "    Assistant_1:\n")),
+            "spec.sandboxes",
+            "Assistant_1",
+            "names must start with a lowercase letter and use only lowercase letters, digits, and hyphens, up to 40 characters",
+        ),
+    ] {
+        assert_eq!(
+            rejection(&text),
+            format!(
+                "configuration violates schema at {path} ({}): {constraint}",
+                position_of(&text, at)
+            )
+        );
+    }
+}
+
+#[test]
+fn a_tag_that_names_no_variant_lists_the_allowed_values() {
+    let text = edited(|yaml| yaml.replace("management: external", "management: extrnal"));
+    assert_eq!(
+        rejection(&text),
+        format!(
+            "configuration violates schema at spec.gateway.management ({}): must be one of: external, managed",
+            position_of(&text, "extrnal")
+        )
+    );
+    let text = edited(|yaml| {
+        yaml.replace(
+            "  sandboxes:\n",
+            &WEB_SEARCH.replace("kind: webSearch", "kind: websearch"),
+        )
+    });
+    assert_eq!(
+        rejection(&text),
+        format!(
+            "configuration violates schema at spec.integrations.search.kind ({}): must be one of: api, webSearch",
+            position_of(&text, "websearch")
+        )
+    );
+    let text = edited(|yaml| {
+        yaml.replace(
+            "  sandboxes:\n",
+            &WEB_SEARCH.replace("      kind: webSearch\n", ""),
+        )
+    });
+    assert_eq!(
+        rejection(&text),
+        format!(
+            "configuration violates schema at spec.integrations.search ({}): required field: \"kind\"; must be one of: api, webSearch",
+            position_of(&text, "provider: brave")
+        )
+    );
+}
+
+#[test]
+fn an_unknown_field_is_reported_at_its_key_with_a_declared_name() {
+    let text = edited(|yaml| yaml.replace("tier: isolated", "teir: isolated"));
+    assert_eq!(
+        rejection(&text),
+        format!(
+            "configuration violates schema at spec.sandboxes.assistant.network ({}): unknown fields are not allowed; did you mean \"tier\"?",
+            position_of(&text, "teir")
+        )
+    );
+    // Without a close declared name, the error lists the declared ones and
+    // never the key, which can hold any text.
+    for key in ["lables", "PRIVATE_SENTINEL"] {
+        let text = edited(|yaml| {
+            yaml.replace(
+                "  uid: 87d485ad-fba7-4197-9eaa-aa97cc97446b\n",
+                &format!("  uid: 87d485ad-fba7-4197-9eaa-aa97cc97446b\n  {key}: {{team: a}}\n"),
+            )
+        });
+        assert_eq!(
+            rejection(&text),
+            format!(
+                "configuration violates schema at metadata ({}): unknown fields are not allowed; accepted fields: name, uid",
+                position_of(&text, key)
+            )
+        );
+    }
+}
+
+#[test]
+fn an_integer_beyond_its_rust_type_fails_in_the_schema_at_its_position() {
+    let text = edited(|yaml| {
+        yaml.replace(
+            "      network:\n",
+            "      gpus: 5000000000\n      network:\n",
+        )
+    });
+    assert_eq!(
+        rejection(&text),
+        format!(
+            "configuration violates schema at spec.sandboxes.assistant.gpus ({}): must be at most 4294967295",
+            position_of(&text, "5000000000")
+        )
+    );
+}
