@@ -630,8 +630,9 @@ The SDK checks image identity, source revision and platform, and that the image 
 An image without the adapter is unsupported. NemoClaw does not compare Fabric revisions: the image's own Fabric runtime reports an incompatibility when the agent starts.
 With `config_json`, the data source also runs Fabric's own compatibility check of the configuration against the image's adapter descriptor.
 It reports each issue as an unsupported check (`fabric_configuration`).
-A workflow is checked only when the image's catalog describes its target.
-Otherwise Fabric checks it inside the sandbox when the agent starts.
+A workflow is checked against the target descriptor the image's catalog registers.
+A workflow target the catalog doesn't register is unsupported on `workflow.target_id`.
+When the catalog registers no workflow targets and the adapter takes them, as in a catalog that predates targets, the check is `unknown` and Fabric checks the configuration inside the sandbox when the agent starts.
 A check at plan time catches what the adapter declares it can't accept.
 It doesn't establish that the agent starts.
 Deployment postconditions name the sandbox and adapter and preserve unsupported check reasons in text and JSON errors.

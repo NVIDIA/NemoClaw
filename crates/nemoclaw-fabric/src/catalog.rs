@@ -93,11 +93,13 @@ impl FabricCatalog {
                     )
                     .is_err()
             })
+            // Targets are recorded as adapters are: Fabric's descriptor with
+            // NemoClaw's provenance note.
             || catalog.targets.iter().any(|target| {
                 target["descriptor"]["contract_version"]
                     != nemo_fabric_core::ADAPTER_CONTRACT_VERSION
-                    || serde_json::from_value::<nemo_fabric_core::ResolvedAdapterTargetDescriptor>(
-                        target.clone(),
+                    || serde_json::from_value::<nemo_fabric_core::AdapterTargetDescriptor>(
+                        target["descriptor"].clone(),
                     )
                     .is_err()
             })

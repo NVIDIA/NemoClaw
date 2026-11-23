@@ -199,9 +199,11 @@ ENV ADAPTER_PYTHON=/opt/fabric/bin/python
 
 FROM runtime-base AS generic
 ARG ADAPTER_ID
-# catalog.py publishes the adapters each harness stage declares here.
+# The workflow targets the adapter's package installs, space-separated.
+ARG TARGET_IDS
+# catalog.py publishes the adapters and targets each harness stage declares here.
 RUN test -n "$ADAPTER_ID" \
-    && printf '{"%s": {"files": [], "binaries": []}}\n' "$ADAPTER_ID" > /opt/nemoclaw/adapters.json
+    && python3 -c 'import json, os; print(json.dumps({os.environ["ADAPTER_ID"]: {"files": [], "binaries": [], "targets": {t: {} for t in os.environ.get("TARGET_IDS", "").split()}}}))' > /opt/nemoclaw/adapters.json
 USER node
 
 FROM common-wheels AS codex-vendor

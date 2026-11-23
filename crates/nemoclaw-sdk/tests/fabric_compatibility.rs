@@ -995,3 +995,94 @@ fn planning_names_the_authored_field_of_an_invalid_model_value() {
         "{rejections:?}"
     );
 }
+
+/// The NOOA example's sandbox, edited by `edit`, assessed against `catalog`:
+/// each check's status and reason.
+fn assess_nooa_example(
+    catalog: &FabricCatalog,
+    edit: impl FnOnce(&mut serde_json::Value),
+) -> nemoclaw_sdk::fabric_capabilities::CompatibilityReport {
+    use nemoclaw_sdk::config::Document;
+    use nemoclaw_sdk::fabric_capabilities::{assess_fabric, requirements_for_sandbox};
+    let mut input: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-nooa.yaml")).unwrap();
+    edit(&mut input["spec"]["sandboxes"]["assistant"]);
+    let doc = Document::parse(input.to_string().as_bytes()).unwrap();
+    let requirements = requirements_for_sandbox(&doc, doc.sandbox("assistant").unwrap()).unwrap();
+    assess_fabric(catalog, &requirements)
+}
+
+fn unsupported_reasons(
+    report: &nemoclaw_sdk::fabric_capabilities::CompatibilityReport,
+) -> Vec<&str> {
+    use nemoclaw_sdk::fabric_capabilities::Support;
+    report
+        .checks
+        .iter()
+        .filter(|check| check.status == Support::Unsupported)
+        .map(|check| check.reason.as_str())
+        .collect()
+}
+
+/// A sandbox with a workflow is checked like any other: NOOA's adapter takes
+/// no `max_tokens`, so a route's `maxTokens` fails the plan, naming the route.
+#[test]
+fn planning_rejects_a_field_a_workflow_sandboxs_adapter_refuses() {
+    use nemoclaw_sdk::fabric_capabilities::Support;
+    let catalog = FabricCatalog::bundled();
+    let unchanged = assess_nooa_example(&catalog, |_| {});
+    assert_eq!(
+        unchanged.status,
+        Support::Supported,
+        "{:?}",
+        unchanged.checks
+    );
+    let report = assess_nooa_example(&catalog, |sandbox| {
+        sandbox["agent"]["inference"]["routes"][0]["overrides"]["maxTokens"] = 64.into();
+    });
+    let reasons = unsupported_reasons(&report);
+    assert!(
+        reasons.iter().any(|reason| reason.starts_with(
+            "spec.sandboxes[assistant].agent.inference.routes[primary].overrides.maxTokens:"
+        )),
+        "{reasons:?}"
+    );
+}
+
+/// A workflow target the image doesn't register can't run, so the plan fails
+/// on the field that selects it.
+#[test]
+fn planning_rejects_a_workflow_target_the_image_does_not_register() {
+    let report = assess_nooa_example(&FabricCatalog::bundled(), |sandbox| {
+        sandbox["agent"]["workflow"]["target_id"] = "nvidia.nooa.unregistered".into();
+    });
+    let reasons = unsupported_reasons(&report);
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.starts_with("spec.sandboxes[assistant].agent.workflow.target_id:")),
+        "{reasons:?}"
+    );
+}
+
+/// An image whose catalog records no workflow targets may predate them, so
+/// its workflow is left to Fabric when the agent starts instead of failing.
+#[test]
+fn a_catalog_without_workflow_targets_leaves_the_workflow_unverified() {
+    use nemoclaw_sdk::fabric_capabilities::Support;
+    let mut catalog = FabricCatalog::bundled();
+    catalog.targets.clear();
+    let report = assess_nooa_example(&catalog, |_| {});
+    assert_eq!(report.status, Support::Unknown, "{:?}", report.checks);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|check| check.status == Support::Unknown
+                && check
+                    .reason
+                    .starts_with("spec.sandboxes[assistant].agent.workflow.target_id:")),
+        "{:?}",
+        report.checks
+    );
+}

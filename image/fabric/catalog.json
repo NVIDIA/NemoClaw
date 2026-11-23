@@ -3016,5 +3016,77 @@
   "fabric_revision": "76bde16c40747062001bd6ea5f5d13cadab3d706",
   "schema_version": 2,
   "source_sha256": "ec859652522bb4ead9cf7d96fedf0fe3fa22a472d5fac395592a0e478f1eb3b8",
-  "targets": []
+  "targets": [
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.nooa",
+        "contract_version": "fabric.adapter/v1alpha2",
+        "id": "nvidia.nooa.arc-solver",
+        "spec": {
+          "entrypoint": {
+            "kind": "interactive_agent_factory",
+            "ref": "nemo_fabric_adapters.nooa.targets.arc_solver:create_agent"
+          },
+          "settings_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "max_actions_per_turn": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "png_scale": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "reflect_every": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "visual": {
+                "enum": [
+                  "off",
+                  "only",
+                  "additive"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "workflow"
+      },
+      "provenance": [
+        {
+          "source": "nemo-fabric-adapter-catalog"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.nooa",
+        "contract_version": "fabric.adapter/v1alpha2",
+        "id": "nvidia.nooa.coding-agent",
+        "spec": {
+          "entrypoint": {
+            "kind": "interactive_agent_factory",
+            "ref": "nemo_fabric_adapters.nooa.targets.coding_agent:create_agent"
+          },
+          "settings_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          }
+        },
+        "type": "workflow"
+      },
+      "provenance": [
+        {
+          "source": "nemo-fabric-adapter-catalog"
+        }
+      ]
+    }
+  ]
 }

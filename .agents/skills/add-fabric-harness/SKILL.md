@@ -25,7 +25,7 @@ Deliver one pull request, titled like `feat: add the OpenCode agent image`.
 
 The [Bake file](../../../docker-bake.hcl)'s `HARNESSES` map names every harness, and both platforms build all of them.
 
-**A Python adapter with no other runtime** needs only an entry there: `stage = "generic"`, its directory under Fabric's `adapters/python` as `adapter`, its `adapter_id`, and its Fabric extra as `extra`.
+**A Python adapter with no other runtime** needs only an entry there: `stage = "generic"`, its directory under Fabric's `adapters/python` as `adapter`, its `adapter_id`, its Fabric extra as `extra`, and, when its package installs workflow targets, their IDs, space-separated, as `targets`, as `nooa` lists NOOA's.
 
 **Anything else** gets its own stage in [the agent Dockerfile](../../../image/fabric/Dockerfile), and its entry names that stage.
 Use the existing stages as patterns: `generic` for Python, `pi` for a TypeScript adapter, and `openclaw` and `hermes` for native agents.
@@ -34,7 +34,7 @@ The stage:
 - installs the adapter and what it drives from Fabric's source and lockfiles at the pinned revision, or from an upstream release pinned by digest, or by revision and checksum;
 - copies any runtime the descriptor requires from an image pinned by digest, never a mutable tag;
 - links only the descriptor into `/opt/fabric/share/nemo-fabric/adapters/<name>/`, because Fabric's discovery skips symlinked directories;
-- writes `/opt/nemoclaw/adapters.json`, the declaration the catalog label publishes: `{"<adapter_id>": {"files": [directories the adapter reads], "binaries": [runtimes it runs]}}`, plus `"read_write"` for paths outside the defaults that its image's default policy must let it write, as Hermes lists `/dev/pts` and `/dev/ptmx`;
+- writes `/opt/nemoclaw/adapters.json`, the declaration the catalog label publishes: `{"<adapter_id>": {"files": [directories the adapter reads], "binaries": [runtimes it runs]}}`, plus `"read_write"` for paths outside the defaults that its image's default policy must let it write, as Hermes lists `/dev/pts` and `/dev/ptmx`, and `"targets"` mapping each workflow target the adapter's package installs to `{}`, or to `{"descriptor": "<path>"}` when Fabric's catalog package doesn't publish it;
 - keeps sources and notices for third-party code, as the [image notice](../../../image/NOTICE.md) describes;
 - ends with `USER node`, the 10001 user OpenShell runs sandboxes as.
 
