@@ -7,12 +7,6 @@
 // contract exists, then replace the failure with an outside-in journey.
 
 #[test]
-#[ignore = "V1 has no NemoCUA harness kind or qualified image contract"]
-fn an_author_can_choose_the_feature_gated_nemocua_agent() {
-    panic!("missing V1 NemoCUA harness contract");
-}
-
-#[test]
 #[ignore = "V1 has no managed model-router or model-pool lifecycle"]
 fn an_author_can_choose_the_experimental_model_router() {
     panic!("missing V1 model-router contract");
@@ -40,12 +34,6 @@ fn an_author_can_choose_a_resource_profile_or_custom_cpu_and_ram() {
 #[ignore = "desired state preserves isolated or explicit policy, but has no policy-tier and composable-preset intent"]
 fn an_author_can_choose_a_policy_tier_then_customize_presets_and_access() {
     panic!("missing V1 guided policy-preset contract");
-}
-
-#[test]
-#[ignore = "V1 has no messaging-channel configuration model"]
-fn an_author_can_select_multiple_messaging_channels() {
-    panic!("missing V1 messaging-channel contract");
 }
 
 #[test]
