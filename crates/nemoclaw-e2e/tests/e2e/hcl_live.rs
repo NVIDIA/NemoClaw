@@ -86,6 +86,22 @@ async fn case() {
         fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
         fs::write(reports.join("identity.json"), json!({"candidate":var("GITHUB_SHA").unwrap(),"uid":document["metadata"]["uid"],"case":case}).to_string()).unwrap();
     }
+    let mut model_cache = if case == "dgx-station-openclaw-nemotron"
+        && var("NEMOCLAW_HCL_PERSISTENT").as_deref() == Ok("true")
+    {
+        let document: Value =
+            serde_saphyr::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+        Some(
+            nemoclaw_build::ci::model_cache::Session::start(
+                nemoclaw_build::ci::model_cache::Installed,
+                &document,
+                &reports,
+            )
+            .expect("host model cache preparation failed; preserve this run for recovery"),
+        )
+    } else {
+        None
+    };
     // The dummy case's middleware and effect recorder listen on the ports its
     // document names until the case ends, including after a failed run block.
     let _middleware = if case == "docker-dummy" {
@@ -170,7 +186,38 @@ async fn case() {
         .env("TF_LOG_PATH", &log.0)
         .status();
     report_timings(&case, &log.run_durations());
+    let succeeded = tested.as_ref().is_ok_and(|status| status.success());
+    if let Some(cache) = &mut model_cache {
+        let finished = cache.finish(succeeded);
+        // A failed scenario can stop before its destroy run, so the deployment
+        // may still hold the mount and its release fail too. The always-run
+        // Destroy and cache recovery steps release it; report the scenario.
+        if succeeded {
+            finished.expect("host model cache cleanup failed; preserve this run for recovery");
+        }
+    }
     assert!(tested.unwrap().success(), "tofu test failed");
+}
+
+#[test]
+#[ignore = "live: recover this Station run's cached mount after SDK destroy"]
+fn model_cache_cleanup() {
+    if var("NEMOCLAW_HCL_CASE").as_deref() != Ok("dgx-station-openclaw-nemotron") {
+        return;
+    }
+    let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap();
+    let document: Value = serde_saphyr::from_str(&fs::read_to_string(config).unwrap()).unwrap();
+    let uid = document["metadata"]["uid"].as_str().unwrap();
+    let result =
+        nemoclaw_build::ci::model_cache::cleanup(nemoclaw_build::ci::model_cache::Installed, uid);
+    let run = PathBuf::from(var("NEMOCLAW_HCL_RUN").unwrap());
+    fs::create_dir_all(run.join("reports")).unwrap();
+    fs::write(
+        run.join("reports/model-cache-cleanup.json"),
+        json!({"succeeded": result.is_ok()}).to_string(),
+    )
+    .unwrap();
+    result.expect("host model cache recovery failed; preserve this run");
 }
 
 fn docker(args: &[&str]) -> String {
