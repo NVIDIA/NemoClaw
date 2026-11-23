@@ -337,8 +337,8 @@ The route suffix above comes from the variant, section, and page slug hierarchy 
 
 ### Use the Fern Index as the Mapping Layer
 
-The version entry in `fern/docs.yml` points Fern to `docs/index.yml`.
-That index defines the navigation and published route tree for every supported agent variant.
+In `fern/docs.yml`, the `v0` product entry points to `docs/index.yml`, which defines the navigation and published routes for each v0 agent variant.
+The `v1` entry links to the documentation published by the `v1` branch.
 
 The OpenClaw navigation entry for this guide uses the following shape:
 
@@ -403,8 +403,8 @@ Syntax validation alone does not catch behavioral drift.
 | Route graph | Links or redirects that target unpublished pages. | Published-route validation derived from `docs/index.yml`. |
 | Product parity | Reference documentation that disagrees with the product. | CLI command, flag, installer, and environment-variable parity checks. |
 | Pull-request preview | Layout or navigation failures hidden by source checks. | An isolated Fern preview for each docs pull request. |
-| Staging publish | A merge that cannot produce the deployed site. | Validation and publication from `main`. |
-| Public release gate | Public docs from an unapproved or detached revision. | Release-tag publication only when the tagged commit is reachable from `main`. |
+| Staging publish | A merge that cannot produce the deployed site. | Validation and publication from `v0` once that branch exists, or from `main` until then. |
+| Public release gate | Public docs from an unapproved or detached revision. | The tagged commit must be reachable from `v0` once that branch exists, or from `main` until then. |
 
 Run the narrowest checks on every relevant change and keep broader checks at integration or release boundaries.
 Tests should derive routes and behavior from the same source models used by the product instead of maintaining a second hard-coded catalog.
@@ -544,7 +544,7 @@ The current NemoClaw repository provides concrete examples for each layer.
 | Information-architecture workflow | `.agents/skills/nemoclaw-maintainer-refactor-docs/SKILL.md`. |
 | Pull-request assurance | Docs link, product parity, and preview workflows under `.github/workflows/`. |
 | Release history | Dated entries under `docs/changelog/` that land before the release tag. |
-| Release publication | Staging publication from `main` and public publication from release tags. |
+| Release publication | Staging publication from `v0` once it exists, or from `main` until then. Public publication from eligible release tags. |
 
 Use this map as a reference architecture, not a requirement to adopt the same vendor or repository layout.
 Preserve the contracts when adapting the implementation.
