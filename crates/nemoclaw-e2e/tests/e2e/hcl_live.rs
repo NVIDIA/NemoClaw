@@ -86,7 +86,7 @@ async fn case() {
         fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
         fs::write(reports.join("identity.json"), json!({"candidate":var("GITHUB_SHA").unwrap(),"uid":document["metadata"]["uid"],"case":case}).to_string()).unwrap();
     }
-    let mut model_cache = if case == "dgx-station-openclaw-nemotron"
+    let mut model_cache = if nemoclaw_build::hcl_cases::STATION_CASES.contains(&case.as_str())
         && var("NEMOCLAW_HCL_PERSISTENT").as_deref() == Ok("true")
     {
         let document: Value =
@@ -202,7 +202,9 @@ async fn case() {
 #[test]
 #[ignore = "live: recover this Station run's cached mount after SDK destroy"]
 fn model_cache_cleanup() {
-    if var("NEMOCLAW_HCL_CASE").as_deref() != Ok("dgx-station-openclaw-nemotron") {
+    if !var("NEMOCLAW_HCL_CASE")
+        .is_ok_and(|id| nemoclaw_build::hcl_cases::STATION_CASES.contains(&id.as_str()))
+    {
         return;
     }
     let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap();

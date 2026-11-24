@@ -227,7 +227,15 @@ jobs:
       - name: Select the case's agent images
         id: agents
         run: |
-          if grep -qs 'nc-fabric-hermes@' "crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"; then
+          document="crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
+          primary=openclaw
+          case "$NEMOCLAW_HCL_CASE" in
+            dgx-station-openclaw-nemotron) document=examples/platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml ;;
+            dgx-station-hermes-nemotron) document=examples/platforms/docker/vllm/dgx-station/hermes-dgx-station.yaml primary=hermes ;;
+            dgx-spark-openclaw-nemotron) document=examples/platforms/docker/vllm/dgx-spark/openclaw-dgx-spark.yaml ;;
+          esac
+          printf 'document=%s\nprimary=%s\n' "$document" "$primary" >> "$GITHUB_OUTPUT"
+          if grep -Eq 'nc-fabric-hermes@|kind: nvidia.fabric.hermes' "$document"; then
             printf 'names=openclaw hermes\nsuffix=\n' >> "$GITHUB_OUTPUT"
           else
             printf 'names=openclaw\nsuffix=-openclaw\n' >> "$GITHUB_OUTPUT"
@@ -292,6 +300,8 @@ jobs:
           RUNTIMES: ${{ join(fromJSON(needs.cases.outputs.runtimes)[matrix.case], ' ') }}
           AGENTS: ${{ steps.agents.outputs.names }}
           SUFFIX: ${{ steps.agents.outputs.suffix }}
+          DOCUMENT: ${{ steps.agents.outputs.document }}
+          PRIMARY_AGENT: ${{ steps.agents.outputs.primary }}
         run: |
           read -ra agent_names <<< "$AGENTS"
           # As the E2E platform workflow's hosted HCL jobs load them.
@@ -317,14 +327,14 @@ jobs:
           read -ra runtimes <<< "$RUNTIMES"
           NEMOCLAW_HCL_RUN="$RUNNER_TEMP/hcl"
           bindings=()
-          document="crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
+          document="$DOCUMENT"
           if [[ $PERSISTENT == true ]]; then
             umask 077
-            NEMOCLAW_HCL_RUN="$HOME/.local/state/nemoclaw-ci/hcl/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+            NEMOCLAW_HCL_RUN="$HOME/.local/state/nemoclaw-ci/hcl/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$NEMOCLAW_HCL_CASE"
             test ! -e "$NEMOCLAW_HCL_RUN"
             mkdir -p "$NEMOCLAW_HCL_RUN"
             document="$NEMOCLAW_HCL_RUN/case.yaml"
-            cp "examples/platforms/docker/vllm/$TARGET/openclaw-$TARGET.yaml" "$document"
+            cp "$DOCUMENT" "$document"
             # Station's qualified model stays separate from the Spark template.
             if [[ $TARGET == dgx-station ]]; then
               bindings+=(
@@ -350,7 +360,7 @@ jobs:
           for runtime in "${runtimes[@]}"; do docker image inspect "nc-prototype-$runtime:rust-v1" > /dev/null; done
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
           # Pin this run's images and give it a fresh deployment identity; plan rejects an unbound image.
-          sed -i "${bindings[@]}" -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id nc-fabric:openclaw)#" \
+          sed -i "${bindings[@]}" -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id "nc-fabric:$PRIMARY_AGENT")#" \
             -e "s#nc-fabric-hermes@sha256:0\{64\}#nc-fabric@$(id nc-fabric:hermes)#" \
             -e "s#nc-prototype-vllm@sha256:0\{64\}#nc-prototype-vllm@$(id nc-prototype-vllm:rust-v1)#" \
             -e "s#nc-prototype-llama-cpp@sha256:0\{64\}#nc-prototype-llama-cpp@$(id nc-prototype-llama-cpp:rust-v1)#" \
