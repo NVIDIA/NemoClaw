@@ -13,7 +13,7 @@ NemoClaw's [`api` integration](agents.md#key-authenticated-apis) declares a key-
 This guide uses Microsoft Graph with Entra as the example supported by OpenShell's [provider-refresh tutorial](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/tutorials/microsoft-graph-provider-refresh.mdx).
 An Okta-backed API needs its own provider profile, token endpoint, scopes, and initial sign-in flow.
 The Graph profile isn't an Okta configuration.
-This procedure isn't yet qualified against a live Entra or Okta tenant with v1.
+This procedure isn't yet qualified against a live Entra or Okta tenant with NemoClaw Agent Configs.
 Native agent login and tool use need separate [platform and integration qualification](https://github.com/NVIDIA/NemoClaw/issues/12641).
 
 ## Preparing the Gateway and Credentials

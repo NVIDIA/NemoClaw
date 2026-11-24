@@ -453,7 +453,7 @@ Destroy omits image compatibility gates, so a mismatched image alone does not pr
 
 Removing a source-built bundle removes only local tools.
 It does not stop deployments, remove images, or revoke credentials.
-There is no v1 `uninstall` command or package-manager installation to reverse for a source-built bundle.
+NemoClaw Agent Configs has no `uninstall` command. A source-built bundle has no package-manager installation to reverse.
 
 To remove a bundle, perform the following steps:
 

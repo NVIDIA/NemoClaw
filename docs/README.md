@@ -17,7 +17,7 @@ Start with the product overview, then use the architecture and ecosystem guides 
 | Understand the product and choose an interface | [NemoClaw Overview](about/overview.md) |
 | Follow the components and deployment flow | [Architecture Overview](about/architecture-overview.md) |
 | Distinguish upstream responsibilities | [Ecosystem](about/ecosystem.md) |
-| Track v1 releases | [Release Notes](changelog/overview.md) |
+| Track NemoClaw Agent Configs releases | [Release Notes](changelog/overview.md) |
 
 ## Getting Started
 

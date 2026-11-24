@@ -161,7 +161,7 @@ The following SDK and provider limits apply:
 
 ## Documentation Site
 
-Select the v1 guide explicitly and match its source revision to the bundle before using hosted instructions.
+Select the NemoClaw Agent Configs guide explicitly and match its source revision to the bundle before using hosted instructions.
 The following documentation site limits apply:
 
 | Limit | Issue | Last Verified |
