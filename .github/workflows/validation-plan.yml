@@ -45,7 +45,7 @@ on:
       lifecycle:
         value: ${{ jobs.plan.outputs.lifecycle }}
       installer:
-        description: Whether darwin_arm64 tests the macOS installer.
+        description: Whether darwin_arm64 and windows_amd64 test their installers.
         value: ${{ jobs.plan.outputs.installer }}
       images:
         value: ${{ jobs.plan.outputs.images }}

@@ -39,7 +39,7 @@ The [staging workflow](../../.github/workflows/release.yml):
 1. Finds the latest commit in the tag's `v1` history with per-commit images, and checks with `nemoclaw-build changes images` that nothing since could change them; otherwise it builds and checks the images at the tag.
 2. Builds the vLLM, Ollama, and llama.cpp runtime images on each native platform; their builds are reproducible.
 3. Joins each image's ARM64 and AMD64 images into one index at `ghcr.io/nvidia/nemoclaw/v1/<image>:<tag>`, without rebuilding.
-4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the [CLI bundles](#cli-bundles), the [macOS installer](#macos-installer), their [evidence record](#evidence-record), the [version pins](#version-pins), and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
+4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the [CLI bundles](#cli-bundles), the [macOS](#macos-installer) and [Windows](#windows-installer) installers, their [evidence record](#evidence-record), the [version pins](#version-pins), and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
 
 Only users with push access see a draft release, and the `v1` packages stay internal.
 
@@ -84,7 +84,7 @@ A job's `if:` can't read an environment's variables, so the repository variable 
 
 Staging puts the signed executables in their bundles with the bundles' file modes, records their new hashes in `manifest.json` with `nemoclaw-build reseal`, and then writes `SHA256SUMS`.
 When a listed platform's signing job fails, staging stops before it drafts the release.
-Staging stops the same way when the [macOS installer](#macos-installer)'s build fails, or its signing when that's on.
+Staging stops the same way when the [macOS installer](#macos-installer)'s build fails, or its signing when that's on, and when the [Windows installer](#windows-installer)'s build or signing fails while Windows signing is on.
 
 Linux is out of scope for OS code signing: Linux has no publisher check like Gatekeeper or SmartScreen.
 A final release's [attestations](#verifying-provenance) authenticate the Linux archives, as they do the others.
@@ -118,6 +118,25 @@ Its temporary notary keychain is deleted when the job ends.
 While `MACOS_INSTALLER_SIGNING` is not `true`, both jobs are skipped: a release candidate's private draft attaches the unsigned installer, and a final release attaches none.
 To stop installer signing, set the variable to anything else.
 
+### Windows Installer
+
+When `windows_amd64` is signed, staging also attaches `nemoclaw-<tag>-windows_amd64.msi`, a per-user Windows Installer package of the `windows_amd64` archive's bundle, as [installing with the Windows installer](../../docs/get-started/install.md#installing-with-the-windows-installer) describes.
+The `windows-installer-bundle` job assembles that bundle on `ubuntu-24.04` as staging does, from the bundle CI checked and the executables `sign-windows` signed.
+The `windows-installer` job builds the installer from it on `windows-2025` with WiX Toolset v5 and [`windows-installer.rs`](../../tools/release/windows-installer.rs) from [its sources](../../tools/release/windows-installer/README.md).
+It runs in the `release-signing` environment from the v1 controller's checkout, so a change to the installer's sources reaches a release once it merges to `v1`; the bundle is data, which the helper reads but never runs.
+It refuses a bundle whose version isn't the tag's, signs the installer through Azure Artifact Signing with the profile that signs the executables, and checks it with `signtool verify /pa /all /tw`.
+`SHA256SUMS` lists the installer, the [evidence record](#evidence-record) describes it, and a final release attests it with the archives.
+
+Without Windows signing, both jobs are skipped and the release attaches no Windows installer, including a final release staged under `RELEASE_UNSIGNED_EXCEPTION`: an unsigned installer would meet SmartScreen's warning, and the archive serves the same bundle.
+
+The package's UpgradeCode never changes, so each installer replaces the installed version.
+Windows Installer compares only `MAJOR.MINOR.BUILD`, each at most 255, 255, and 65535, and has no prerelease part, so the package version is `MAJOR.MINOR.(PATCH × 1000 + RANK)`: `RANK` is 999 for a final release, `N` for `rc.N` and the CI builds after it, and 0 otherwise.
+For example, `v0.1.0-rc.12` is `0.1.12` and `v0.1.0` is `0.1.999`.
+The helper refuses a version it can't order: a patch above 64, or a candidate above 998.
+The product name carries the bundle's own version, which **Settings** > **Apps** shows beside the package version.
+
+When CI / Bundle selects the installer checks, `E2E installer` builds the package from the Windows bundle, then installs it on the runner, checks that a failed upgrade restores it, upgrades it, refuses a downgrade, and uninstalls it; see [its sources](../../tools/release/windows-installer/README.md#testing-the-package).
+
 
 ### Final Releases Require Signing
 
@@ -125,7 +144,7 @@ A final release's tag has no prerelease suffix such as `-rc1`.
 Its `darwin_arm64` and `windows_amd64` executables must be signed: `RELEASE_SIGNING` must list both platforms, and both signing jobs must pass.
 Otherwise staging fails after packing the archives, before it pushes release images or drafts the release, and names the unsigned platforms.
 Release candidates may stay unsigned.
-A final release's macOS installer must be signed and notarized; without installer signing, a final release attaches none.
+A final release's macOS installer must be signed and notarized, and its Windows installer signed; a final release attaches neither unsigned.
 Until the macOS signing step lands, a final release needs the exception below.
 
 The only exception is the `RELEASE_UNSIGNED_EXCEPTION` repository variable, set to `<tag>:<reason>`, such as `v0.1.0:<reason>`.
@@ -140,7 +159,7 @@ It records:
 - `version`, `commit`, and `run`: the tag, its commit, and the staging run's URL.
 - `signing`: whether the release required signing, which of `darwin_arm64` and `windows_amd64` are unsigned, and the exception's reason, if one applied.
 - `archives`: each archive's SHA-256, the programs NVIDIA signed in it with their SHA-256, and the output of the signing job's signature checks.
-- `installer`: the macOS installer's file name and SHA-256, whether it's signed, and the output of its signature checks, or `null` when the release has no installer.
+- `installers`: each attached installer's platform, file name, and SHA-256, whether it's signed, and the output of its signature checks; empty when the release has no installer.
 - `verification`: the output of `sha256sum --check --strict SHA256SUMS` over the final archives. Before it publishes a final release, the workflow adds the output of `gh attestation verify` for each archive and `SHA256SUMS`.
 
 [`record-cli-signing.sh`](../../.github/scripts/record-cli-signing.sh) applies the signing rule and writes the record.

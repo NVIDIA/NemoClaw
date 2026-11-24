@@ -169,10 +169,9 @@ jobs:
             echo "runtimes=$runtimes"
           } >> "$GITHUB_OUTPUT"
           "$tool" images fetch
-          # Only the Ollama and llama.cpp images have sources; vllm has none.
           # Tar keeps the mode and time that images fetch gave them, which the
           # images' layers retain and artifact transfer drops.
-          tar -cf "$RUNNER_TEMP/image-sources.tar" .build/image-sources/ollama .build/image-sources/llama-cpp
+          tar -cf "$RUNNER_TEMP/image-sources.tar" .build/image-sources/ollama .build/image-sources/llama-cpp .build/image-sources/vllm
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.SOURCES }}
@@ -269,7 +268,7 @@ jobs:
           read -ra names <<< "$RUNTIMES"
           {
             for name in "${names[@]}"; do
-              { sed -n '1{/^# syntax=/p}; /^FROM /p' "image/$name/Dockerfile"; echo 'RUN true'; } |
+              { sed -n '1{/^# syntax=/p;}; /^ARG /p; /^FROM /p' "image/$name/Dockerfile"; echo 'RUN true'; } |
                 docker buildx build --quiet --output type=cacheonly - &&
                 echo "Pulled the $name base after ${SECONDS}s."
             done

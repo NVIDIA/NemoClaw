@@ -273,6 +273,7 @@ COPY --from=sources --chmod=0644 /langsmith-LICENSE /sqlite-vec-LICENSE-MIT /opt
 COPY --from=sources --chmod=0644 /deepagents-orjson-source.tar.gz /opt/nemoclaw/source/deepagents/orjson-source.tar.gz
 
 FROM generic AS mini-swe-agent
+COPY --from=sources --chmod=u=rwX,go=rX /tokenizers-source.tar.gz /opt/nemoclaw/source/tokenizers/
 COPY --from=sources --chmod=0644 /colored-source.crate /option-ext-source.crate /opt/nemoclaw/source/hf-xet/
 
 FROM runtime-base AS interactive
@@ -402,6 +403,7 @@ RUN mkdir -p /opt/pi/adapters/typescript \
     && cp -a /opt/fabric-source/adapters/typescript/pi/node_modules /opt/pi/adapters/typescript/pi/
 
 FROM runtime-base AS pi
+COPY --from=sources --chmod=u=rwX,go=rX /pi-LICENSE /opt/nemoclaw/source/pi/
 COPY --from=node /node/ /
 COPY --from=pi-build /opt/pi /opt/fabric-source
 # Fabric discovery skips symlinked directories, so link only the descriptor.

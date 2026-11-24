@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img">
+<title>NemoClaw Quiet Orbit icon</title>
+<defs>
+<linearGradient id="i8bg" x2="1" y2="1">
+<stop stop-color="#111611"/>
+<stop offset="1" stop-color="#080c09"/>
+</linearGradient>
+<radialGradient id="i8halo">
+<stop stop-color="#76b900" stop-opacity=".24"/>
+<stop offset="1" stop-color="#76b900" stop-opacity="0"/>
+</radialGradient>
+<linearGradient id="i8gold" x2=".8" y2="1">
+<stop stop-color="#e0d5b6"/>
+<stop offset=".5" stop-color="#827351"/>
+<stop offset="1" stop-color="#cabc91"/>
+</linearGradient>
+<linearGradient id="i8top" x2=".7" y2="1">
+<stop stop-color="#d4ff95"/>
+<stop offset=".5" stop-color="#a5e34c"/>
+<stop offset="1" stop-color="#76b900"/>
+</linearGradient>
+<linearGradient id="i8side">
+<stop stop-color="#659d05"/>
+<stop offset="1" stop-color="#294706"/>
+</linearGradient>
+<linearGradient id="i8frame" x2="1" y2="1">
+<stop stop-color="#303b27"/>
+<stop offset="1" stop-color="#101810"/>
+</linearGradient>
+</defs>
+<svg width="256" height="256" viewBox="0 0 32 32">
+<rect width="32" height="32" rx="7" fill="#10160e"/>
+<g transform="translate(16 16) scale(.14)">
+<circle r="105" fill="url(#i8halo)"/>
+<g fill="none" stroke="url(#i8gold)" stroke-width=".65">
+<circle r="73" opacity=".22"/>
+<path d="M-68-26A73 73 0 0 1 41-60M63 37A73 73 0 0 1-35 64" opacity=".8"/>
+<path d="M0-62 53-31V31L0 62-53 31V-31Z M-53-31 0 0 53-31M0 0V62"/>
+<path d="M0-62V0M-53 31 0 0 53 31" stroke-dasharray="2 4" opacity=".35"/>
+</g>
+<g transform="scale(0.85)" stroke-linejoin="round">
+<path d="M0-25 24-11 0 3-24-11Z" fill="url(#i8top)"/>
+<path d="M-24-11 0 3V31L-24 17Z" fill="#76b900"/>
+<path d="M0 3 24-11V17L0 31Z" fill="url(#i8side)"/>
+<path d="M-24-11 0 3 24-11M0 3V31" fill="none" stroke="#e7ffc6" stroke-opacity=".65" stroke-width=".65"/>
+</g>
+<g fill="#e2d5b1">
+<circle cy="-62" r="1.6"/>
+<circle cx="-53" cy="-31" r="1.4"/>
+<circle cx="53" cy="-31" r="1.4"/>
+<circle cx="41" cy="-60" r="1.2"/>
+</g>
+</g>
+</svg>
+</svg>

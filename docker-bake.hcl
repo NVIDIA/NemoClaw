@@ -107,6 +107,7 @@ target "_runtime" {
 
 target "vllm" {
   inherits = ["_runtime"]
+  contexts = { supervisor = "target:supervisor", sources = ".build/image-sources/vllm" }
   dockerfile = "image/vllm/Dockerfile"
   tags = ["nc-prototype-vllm:rust-v1"]
 }
