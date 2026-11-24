@@ -49,6 +49,13 @@ fetch_file() {
     -o "$destination" "$url"
 }
 
+openshell_release_repository() {
+  case "$1" in
+    0.1.10) printf '%s\n' "ai-openshell/openshell" ;;
+    *) printf '%s\n' "NVIDIA/OpenShell" ;;
+  esac
+}
+
 sha256_file() {
   local file="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -79,7 +86,7 @@ check_openshell_release_assets() {
   local brev_installer="${REPO_ROOT}/scripts/brev-launchable-ci-cpu.sh"
   local supervisor_runtime="${REPO_ROOT}/src/lib/onboard/docker-driver-gateway-runtime.ts"
   local release_base workspace manifests spec manifest expected actual source asset pinned upstream formula_asset
-  local matches formula_expected formula_matches formula_url
+  local matches formula_expected formula_matches formula_url release_repository
   local pin_records parser_error parser_errors record_type parsed_version release_version record_extra
   local selected_release_version="" release_versions="" version_pin_records
   local count brev_count published_count expected_published_count failures=0
@@ -125,6 +132,7 @@ check_openshell_release_assets() {
       echo "  STALE: trusted parser returned an invalid OpenShell release record."
       return 1
     fi
+    release_repository="$(openshell_release_repository "$parsed_version")"
     case "$record_type" in
       manifest)
         [[ "$source" == "OpenShell release" ]] || {
@@ -133,7 +141,7 @@ check_openshell_release_assets() {
         }
         ;;
       formula)
-        if [[ "$asset" != "openshell.rb" || "$source" != "https://github.com/NVIDIA/OpenShell/releases/download/v${parsed_version}/${asset}" ]]; then
+        if [[ "$asset" != "openshell.rb" || "$source" != "https://github.com/${release_repository}/releases/download/v${parsed_version}/${asset}" ]]; then
           echo "  STALE: trusted parser returned an invalid OpenShell formula record."
           return 1
         fi
@@ -220,7 +228,8 @@ check_openshell_release_assets() {
       return 1
     fi
 
-    release_base="https://github.com/NVIDIA/OpenShell/releases/download/v${release_version}"
+    release_repository="$(openshell_release_repository "$release_version")"
+    release_base="https://github.com/${release_repository}/releases/download/v${release_version}"
     echo "Checking OpenShell v${release_version} release assets..."
     for spec in "${manifest_specs[@]}"; do
       manifest="${spec%%:*}"
