@@ -14,7 +14,7 @@ function matchingOpenshellRuntime() {
     resolveOpenshell: () => "/test/openshell",
     runVersionCommand: () => ({
       status: 0,
-      stdout: "openshell 0.1.9\n",
+      stdout: "openshell 0.1.10\n",
       stderr: "",
     }),
   };

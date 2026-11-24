@@ -258,7 +258,7 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
           'if [ "${1:-}" = gateway ] && [ "${2:-}" = info ]; then printf "No gateway metadata found\\n"; exit 1; fi',
           'if [ "${1:-}" = gateway ] && [ "${2:-}" = list ]; then printf "[]\\n"; exit 0; fi',
           'case "${1:-}" in',
-          '  -V|--version) printf "%s 0.1.9\\n" "${0##*/}"; exit 0;;',
+          '  -V|--version) printf "%s 0.1.10\\n" "${0##*/}"; exit 0;;',
           "esac",
           "exit 1",
         ].join("\n"),

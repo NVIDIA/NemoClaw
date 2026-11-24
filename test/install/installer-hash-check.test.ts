@@ -1093,7 +1093,9 @@ describe("installer hash verification", () => {
         /const QUALIFIED_STABLE_OPENSHELL_VERSION = "[0-9.]+";/,
         'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";',
       );
-    const prepared = selectPreparedGatewayRuntime(source).replace(
+    const prepared = selectPreparedGatewayRuntime(
+      source.replaceAll("quay.io/ai-openshell/supervisor", "ghcr.io/nvidia/openshell/supervisor"),
+    ).replace(
       /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
       candidatePins.trim(),
     );

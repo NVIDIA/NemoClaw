@@ -58,7 +58,7 @@ exit 127
   writeExecutable(
     openshellBin,
     `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then printf '%s\n' 'openshell 0.1.9'; fi
+if [ "\${1:-}" = "--version" ]; then printf '%s\n' 'openshell 0.1.10'; fi
 exit 0
 `,
   );

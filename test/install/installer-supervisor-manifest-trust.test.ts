@@ -250,7 +250,9 @@ describe("OpenShell supervisor manifest trust", () => {
         selectedRelease,
         transformSupervisor: (source) =>
           selectThreadGroupExecutableRuntime(source).replace(
-            "ghcr.io/nvidia/openshell/supervisor@${manifestDigest}",
+            selectedRelease
+              ? "quay.io/ai-openshell/supervisor@${manifestDigest}"
+              : "ghcr.io/nvidia/openshell/supervisor@${manifestDigest}",
             "registry.invalid/openshell/supervisor@${manifestDigest}",
           ),
       });
@@ -461,7 +463,7 @@ describe("selected OpenShell supervisor identity", () => {
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "missing=[ghcr.io/nvidia/openshell/supervisor|" + selectedVersion + "|",
+      "missing=[quay.io/ai-openshell/supervisor|" + selectedVersion + "|",
     );
   });
 
