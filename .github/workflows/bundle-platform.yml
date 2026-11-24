@@ -482,8 +482,9 @@ jobs:
           "$RUNNER_TEMP/installer-tests" --include-ignored --test-threads 1 --skip an_unsupported_mac --nocapture
 
   # An Intel Mac and a Mac older than the installer's minimum macOS must refuse
-  # it with its reason. The test builds the installer from a stand-in bundle, so
-  # these jobs start at once.
+  # it with its reason. Hosted runners with Apple silicon start at macOS 15, so
+  # there the test raises the minimum above the runner's macOS. It builds the
+  # installer from a stand-in bundle, so these jobs start at once.
   installer-refusal:
     name: Installer refusal on ${{ matrix.mac }}
     if: inputs.installer && inputs.platform == 'darwin_arm64'
@@ -493,8 +494,8 @@ jobs:
         include:
           - mac: Intel
             runner: macos-15-intel
-          - mac: macOS 14
-            runner: macos-14
+          - mac: an older macOS
+            runner: macos-15
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:

@@ -38,7 +38,7 @@ It adds `/etc/paths.d/nemoclaw`, which puts `/usr/local/nemoclaw/bin` on `PATH` 
 It refuses an Intel Mac and older versions of macOS.
 
 A final release attaches the installer only when it's signed and notarized.
-A release candidate's installer isn't signed or notarized until NVIDIA's installer signing is configured ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)), so macOS won't open it from Finder after a browser download; install it from Terminal instead, as below.
+A release candidate's installer isn't signed or notarized until NVIDIA's installer signing is configured ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)), so macOS won't open it from Finder after a browser download; install it from Terminal with the following steps.
 
 1. In an empty directory, download the installer and the checksums, and check the installer's checksum:
 

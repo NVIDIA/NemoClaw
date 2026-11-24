@@ -29,7 +29,18 @@ const MINIMUM_MACOS: &str = "15.0";
 const INTEL_TITLE: &str = "NemoClaw Agent Configs requires a Mac with Apple silicon.";
 const INTEL_MESSAGE: &str =
     "This Mac has an Intel processor. NemoClaw Agent Configs runs only on Macs with Apple silicon.";
-const MACOS_TITLE: &str = "NemoClaw Agent Configs requires macOS 15 or later.";
+/// The refusal's title on a Mac older than MINIMUM.
+fn macos_title(minimum: &str) -> String {
+    format!(
+        "NemoClaw Agent Configs requires macOS {} or later.",
+        major(minimum)
+    )
+}
+
+/// A macOS version as people name it: 15.0 is macOS 15.
+fn major(minimum: &str) -> &str {
+    minimum.trim_end_matches(".0")
+}
 const MACOS_MESSAGE: &str = "Update macOS in System Settings, then open this installer again.";
 /// Installer runs this as root before it writes the payload. $3 is the
 /// target volume's mount point.
@@ -181,9 +192,9 @@ fn license(bundle: &Path) -> Result<String> {
 }
 
 /// Fill a page's placeholders; one the tool doesn't know fails.
-fn page(template: &str, version: &str, docs_ref: &str) -> Result<String> {
+fn page(template: &str, version: &str, docs_ref: &str, minimum: &str) -> Result<String> {
     let docs = format!("https://github.com/NVIDIA/NemoClaw/blob/{docs_ref}/docs");
-    let minimum = MINIMUM_MACOS.trim_end_matches(".0");
+    let minimum = major(minimum);
     let mut page = template.replace("{{STYLE}}", STYLE);
     for (name, value) in [
         ("VERSION", version),
@@ -202,19 +213,23 @@ fn page(template: &str, version: &str, docs_ref: &str) -> Result<String> {
 }
 
 /// The distribution: one hidden choice installing the component package,
-/// on Apple silicon running at least MINIMUM_MACOS. The installation check
-/// runs when the package opens and refuses another Mac with its reason;
-/// hostArchitectures keeps Installer from needing Rosetta on Apple silicon.
-fn distribution(version: &str) -> String {
+/// on Apple silicon running at least MINIMUM. The installation check runs
+/// when the package opens and refuses another Mac with its reason. Listing
+/// arm64 in hostArchitectures keeps Installer from needing Rosetta on Apple
+/// silicon; listing x86_64 too lets an Intel Mac open the package and reach
+/// that check, where arm64 alone gets only Installer's "can't be installed on
+/// this computer".
+fn distribution(version: &str, minimum: &str) -> String {
+    let macos_title = macos_title(minimum);
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
     <title>{TITLE}</title>
-    <options customize="never" hostArchitectures="arm64"/>
+    <options customize="never" hostArchitectures="arm64,x86_64"/>
     <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
     <volume-check>
         <allowed-os-versions>
-            <os-version min="{MINIMUM_MACOS}"/>
+            <os-version min="{minimum}"/>
         </allowed-os-versions>
     </volume-check>
     <installation-check script="supported_mac()"/>
@@ -226,9 +241,9 @@ function supported_mac() {{
         my.result.message = '{INTEL_MESSAGE}';
         return false;
     }}
-    if (system.compareVersions(system.version.ProductVersion, '{MINIMUM_MACOS}') < 0) {{
+    if (system.compareVersions(system.version.ProductVersion, '{minimum}') < 0) {{
         my.result.type = 'Fatal';
-        my.result.title = '{MACOS_TITLE}';
+        my.result.title = '{macos_title}';
         my.result.message = 'This Mac runs macOS ' + system.version.ProductVersion + '. {MACOS_MESSAGE}';
         return false;
     }}
@@ -259,7 +274,8 @@ function supported_mac() {{
 /// Lay out everything the packaging tools read under WORK: the payload in
 /// root, the preinstall script in scripts, the pages in resources, the
 /// artwork in art, and distribution.xml.
-fn stage(bundle: &Path, work: &Path, version: &str, docs_ref: &str) -> Result<()> {
+/// MINIMUM is the oldest macOS version the installer accepts.
+fn stage(bundle: &Path, work: &Path, version: &str, docs_ref: &str, minimum: &str) -> Result<()> {
     check_version(version)?;
     check_docs_ref(docs_ref)?;
     check_bundle(bundle)?;
@@ -286,7 +302,7 @@ fn stage(bundle: &Path, work: &Path, version: &str, docs_ref: &str) -> Result<()
     let resources = work.join("resources");
     create_dir(&resources)?;
     for (name, template) in PAGES {
-        let page = page(template, version, docs_ref)?;
+        let page = page(template, version, docs_ref, minimum)?;
         write(&resources.join(name), page.as_bytes(), 0o644)?;
     }
     write(
@@ -302,7 +318,7 @@ fn stage(bundle: &Path, work: &Path, version: &str, docs_ref: &str) -> Result<()
     }
     write(
         &work.join("distribution.xml"),
-        distribution(version).as_bytes(),
+        distribution(version, minimum).as_bytes(),
         0o644,
     )?;
     create_dir(&work.join("packages"))
@@ -321,7 +337,7 @@ fn run(command: &mut Command) -> Result<()> {
 
 /// Build the component package from the staged payload, then the product
 /// archive that Installer opens.
-fn package(work: &Path, version: &str, output: &Path) -> Result<()> {
+fn package(work: &Path, version: &str, minimum: &str, output: &Path) -> Result<()> {
     let art = work.join("art");
     let resources = work.join("resources");
     for (name, _, _) in ARTWORK {
@@ -337,7 +353,7 @@ fn package(work: &Path, version: &str, output: &Path) -> Result<()> {
         .arg(work.join("root"))
         .args(["--identifier", IDENTIFIER, "--version", version])
         .args(["--install-location", "/", "--ownership", "recommended"])
-        .args(["--min-os-version", MINIMUM_MACOS])
+        .args(["--min-os-version", minimum])
         .arg("--scripts")
         .arg(work.join("scripts"))
         .arg(work.join("packages/nemoclaw-cli.pkg")))?;
@@ -351,13 +367,13 @@ fn package(work: &Path, version: &str, output: &Path) -> Result<()> {
         .arg(output))
 }
 
-fn build(bundle: &Path, version: &str, docs_ref: &str, output: &Path) -> Result<()> {
+fn build(bundle: &Path, version: &str, docs_ref: &str, minimum: &str, output: &Path) -> Result<()> {
     let work = env::temp_dir().join(format!("nemoclaw-installer-{}", std::process::id()));
     if work.exists() {
         fs::remove_dir_all(&work).map_err(io(&work))?;
     }
-    let result =
-        stage(bundle, &work, version, docs_ref).and_then(|()| package(&work, version, output));
+    let result = stage(bundle, &work, version, docs_ref, minimum)
+        .and_then(|()| package(&work, version, minimum, output));
     let _ = fs::remove_dir_all(&work);
     result
 }
@@ -367,9 +383,13 @@ const USAGE: &str = "Usage: macos-installer build BUNDLE VERSION DOCS_REF OUTPUT
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let result = match args.as_slice() {
-        [command, bundle, version, docs_ref, output] if command == "build" => {
-            build(Path::new(bundle), version, docs_ref, Path::new(output))
-        }
+        [command, bundle, version, docs_ref, output] if command == "build" => build(
+            Path::new(bundle),
+            version,
+            docs_ref,
+            MINIMUM_MACOS,
+            Path::new(output),
+        ),
         _ => Err(USAGE.into()),
     };
     if let Err(error) = result {
@@ -452,7 +472,7 @@ mod tests {
         let bundle = scratch.0.join("bundle");
         fake_bundle(&bundle);
         let work = scratch.0.join("work");
-        stage(&bundle, &work, "0.1.0-rc.13", "v0.1.0-rc.13").unwrap();
+        stage(&bundle, &work, "0.1.0-rc.13", "v0.1.0-rc.13", MINIMUM_MACOS).unwrap();
         let mut expected: Tree = tree(&bundle)
             .into_iter()
             .map(|(name, (contents, mode))| {
@@ -476,7 +496,7 @@ mod tests {
             let bundle = scratch.0.join(missing.replace('/', "-"));
             fake_bundle(&bundle);
             fs::remove_file(bundle.join(missing)).unwrap();
-            let error = stage(&bundle, &scratch.0.join("work"), "0.1.0", "v1").unwrap_err();
+            let error = stage(&bundle, &scratch.0.join("work"), "0.1.0", "v1", "15.0").unwrap_err();
             assert!(error.contains(missing), "{missing}: {error}");
         }
     }
@@ -487,7 +507,7 @@ mod tests {
         let bundle = scratch.0.join("bundle");
         fake_bundle(&bundle);
         std::os::unix::fs::symlink("/etc/passwd", bundle.join("licenses/link")).unwrap();
-        let error = stage(&bundle, &scratch.0.join("work"), "0.1.0", "v1").unwrap_err();
+        let error = stage(&bundle, &scratch.0.join("work"), "0.1.0", "v1", "15.0").unwrap_err();
         assert!(error.contains("licenses/link"), "{error}");
     }
 
@@ -517,7 +537,7 @@ mod tests {
         let guide =
             "https://github.com/NVIDIA/NemoClaw/blob/v0.1.0-rc.13/docs/get-started/first-deployment.md";
         for (name, template) in PAGES {
-            let page = page(template, "0.1.0-rc.13", "v0.1.0-rc.13").unwrap();
+            let page = page(template, "0.1.0-rc.13", "v0.1.0-rc.13", MINIMUM_MACOS).unwrap();
             assert!(!page.contains("{{"), "{name}");
             assert!(page.contains("prefers-color-scheme: dark"), "{name}");
             let expected = if name == "welcome.html" {
@@ -527,15 +547,15 @@ mod tests {
             };
             assert!(page.contains(expected), "{name}");
         }
-        let error = page("{{UNKNOWN}} text", "0.1.0", "v1").unwrap_err();
+        let error = page("{{UNKNOWN}} text", "0.1.0", "v1", "15.0").unwrap_err();
         assert!(error.contains("{{UNKNOWN}}"), "{error}");
     }
 
     #[test]
     fn the_distribution_admits_only_apple_silicon_with_the_minimum_macos() {
-        let xml = distribution("0.1.0-rc.13");
+        let xml = distribution("0.1.0-rc.13", MINIMUM_MACOS);
         for expected in [
-            r#"hostArchitectures="arm64""#,
+            r#"hostArchitectures="arm64,x86_64""#,
             r#"<os-version min="15.0"/>"#,
             "system.sysctl('hw.optional.arm64') != 1",
             "compareVersions(system.version.ProductVersion, '15.0') < 0",
@@ -547,7 +567,12 @@ mod tests {
             assert!(xml.contains(expected), "{expected} missing:\n{xml}");
         }
         // The script's strings are single-quoted JavaScript inside XML.
-        for message in [INTEL_TITLE, INTEL_MESSAGE, MACOS_TITLE, MACOS_MESSAGE] {
+        for message in [
+            INTEL_TITLE,
+            INTEL_MESSAGE,
+            &macos_title("15.0"),
+            MACOS_MESSAGE,
+        ] {
             assert!(!message.contains(['\'', '\\', '<', '&']), "{message}");
         }
     }
@@ -643,8 +668,8 @@ mod tests {
         );
         let old_package = scratch.0.join("old.pkg");
         let new_package = scratch.0.join("new.pkg");
-        build(&old, "0.0.1", "v1", &old_package).unwrap();
-        build(&bundle, &bundle_version, "v1", &new_package).unwrap();
+        build(&old, "0.0.1", "v1", MINIMUM_MACOS, &old_package).unwrap();
+        build(&bundle, &bundle_version, "v1", MINIMUM_MACOS, &new_package).unwrap();
         let home = scratch.0.join("home");
         fs::create_dir_all(&home).unwrap();
         let installed = Path::new(INSTALL_DIR);
@@ -706,15 +731,6 @@ mod tests {
             said.contains("destroy requires existing deployment state"),
             "{said}"
         );
-        // TEMPORARY diagnostic: does a symbolic link to the CLI find its bundle?
-        let link = home.join("nemoclaw-link");
-        std::os::unix::fs::symlink(installed.join("bin/nemoclaw"), &link).unwrap();
-        let linked = output(
-            Command::new(&link)
-                .args(["plan", "--destroy"])
-                .current_dir(&home),
-        );
-        eprintln!("SYMLINK DIAGNOSTIC: {}", text(&linked));
 
         // Uninstall as docs/get-started/install.md describes.
         let removed =
@@ -731,24 +747,29 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "runs Installer as root on an unsupported Mac; CI's refusal jobs run it"]
+    #[ignore = "runs Installer as root; CI's refusal jobs run it on macOS 15"]
     fn an_unsupported_mac_refuses_the_installer_and_says_why() {
+        // An Intel Mac refuses the installer as it ships. CI has no Mac with
+        // Apple silicon older than macOS 15, so on Apple silicon the test
+        // raises the minimum to a version newer than any macOS instead.
+        let intel = env::consts::ARCH == "x86_64";
+        let minimum = if intel { MINIMUM_MACOS } else { "99.0" };
         let scratch = Scratch::new("refusal");
         let bundle = scratch.0.join("bundle");
         fake_bundle(&bundle);
         let package = scratch.0.join("nemoclaw.pkg");
-        build(&bundle, "0.0.1", "v1", &package).unwrap();
+        build(&bundle, "0.0.1", "v1", minimum, &package).unwrap();
         let result = install(&package);
         let said = text(&result);
         eprintln!("{said}");
         assert!(!result.status.success(), "{said}");
-        let expected = if env::consts::ARCH == "x86_64" {
-            [INTEL_TITLE, INTEL_MESSAGE]
+        let expected = if intel {
+            [INTEL_TITLE.to_owned(), INTEL_MESSAGE.to_owned()]
         } else {
-            [MACOS_TITLE, MACOS_MESSAGE]
+            [macos_title(minimum), MACOS_MESSAGE.to_owned()]
         };
         assert!(
-            expected.iter().any(|reason| said.contains(reason)),
+            expected.iter().any(|reason| said.contains(reason.as_str())),
             "{said}"
         );
         assert!(!Path::new(INSTALL_DIR).exists());
