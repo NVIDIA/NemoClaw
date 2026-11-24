@@ -363,6 +363,7 @@ Keep `$schema` in the comment.
 A YAML field named `$schema` is an unknown configuration field and is rejected.
 Exported YAML omits comments, so add the association again if you want editor assistance for an export.
 
+For a value of the wrong type or one that breaks a pattern, the editor shows the message the CLI reports, where the schema has one.
 Editor validation doesn't replace SDK parsing or deployment checks.
 See [validation beyond the schema](../reference/configuration.md#validation-beyond-the-schema) for those limits.
 
