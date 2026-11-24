@@ -61,7 +61,7 @@ A selected-gateway uninstall uses only that gateway's process record and does no
 Uninstall preserves an unrelated process that uses the same port.
 
 If uninstall reports `Portable lifecycle state is unsafe: Completed onboarding session authority is incomplete`, it exits nonzero before any cleanup.
-The rest of the message names the part of `onboard-session.json` that failed validation.
+The message names the invalid field when NemoClaw can identify it. Otherwise, it says NemoClaw could not load `onboard-session.json` as a completed onboarding session.
 Keep `onboard-session.json` unchanged and [file an issue on GitHub](https://github.com/NVIDIA/NemoClaw/issues/new) with the full message.
 `$$nemoclaw onboard` can stop with the same diagnostic; keep the file and report it the same way.
 
