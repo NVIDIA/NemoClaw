@@ -10,7 +10,7 @@ Keep the documentation, configuration schema, and runtime bundle matched to the 
 
 Repository Markdown and the [generated field reference](../reference/configuration.md) are available in this checkout. The reference and its JSON Schema belong to this checkout's source revision.
 Use the ones from the bundle's revision for validation.
-Use [CLI reference](../references/cli.md) for accepted commands and [migration](../get-started/migration.md) for earlier-product boundaries.
+Use the [CLI reference](../references/cli.md) for accepted commands. If you use NemoClaw v0, [evaluate NemoClaw Agent Configs in a separate deployment](../get-started/migration.md).
 
 <a name="choosing-the-v1-sources"></a>
 
@@ -67,7 +67,7 @@ Review the cited version and task guide in its answer before operational work.
 The skill only routes documentation.
 Reading it does not install software or change deployment resources.
 To use exported settings in an Agent Configs evaluation, ask the assistant to read [Preparing a Separate Deployment From a NemoClaw v0 Export](../../.agents/skills/nemoclaw-v0-migration/SKILL.md).
-Refer to [migration](../get-started/migration.md#starting-from-the-earlier-export).
+See how to [start a separate deployment from a NemoClaw v0 export](../get-started/migration.md#starting-from-the-earlier-export).
 Automatic discovery, packaged installation across assistant clients and a rehearsed installation prompt are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
 ## Getting Help

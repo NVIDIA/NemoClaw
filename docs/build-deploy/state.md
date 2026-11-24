@@ -298,7 +298,7 @@ The state directory keeps the ownership receipt, which records the namespace's U
 Use [operation recovery](usage.md#updates-and-recovery) with the original configuration and retained state.
 For a failed or interrupted native Helm release removal, use [Helm removal recovery](usage.md#recovering-an-interrupted-helm-removal).
 Preserve the checkpoint and current state together.
-For a move from an earlier product version, use [migration](../get-started/migration.md).
+To [evaluate NemoClaw Agent Configs alongside NemoClaw v0](../get-started/migration.md), create a separate deployment.
 The platform owns transfer of mounted native data.
 A copied volume doesn't move deployment ownership or establish compatibility with another harness version.
 Moving deployment state to another host is unqualified, and native conversation continuity depends on Fabric and the selected harness.
