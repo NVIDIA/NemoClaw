@@ -209,17 +209,20 @@ Each scenario applies, requires its selected agent to reply `READY`, and destroy
 Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>-<case-id>/`. Published reports contain outcomes and candidate/UID/case identity only.
 Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
 
-For the Station, DGX Spark, and RTX PRO 6000 vLLM cases, host provisioning can install the root-owned
+For Nemotron vLLM cases on Station, DGX Spark, and RTX PRO 6000, host provisioning can install the root-owned
 `/usr/local/libexec/colorunner-model-cache` helper. A successful cold run publishes
 its verified model files. Subsequent runs mount those files read-only into a
 fresh model volume; engine caches, status, credentials, and deployment state stay
 per run. Managed and external DGX setup install the helper; the RTX runner image
-owner must install it separately from a reviewed controller revision. The E2E
-workflow does not configure host storage. Hosts without a compatible helper keep
+owner must install it separately from a reviewed controller revision. E2E cache
+eligibility is limited to pinned `nvidia/NVIDIA-Nemotron-*` repositories. Current
+RTX Qwen cases stay uncached; switching an RTX case to Nemotron can use the
+prepared cache without changing this lane integration. This change does not
+select or qualify that future model. The E2E workflow does not configure host storage. Hosts without a compatible helper keep
 the original acquisition path. The `named-services` capability permits services
-such as RTX's `qwen`; older helpers still serve `super` and leave other names
+such as `nemotron`; older helpers still serve `super` and leave other names
 uncached. Only one managed vLLM service on `unix:///var/run/docker.sock` is eligible;
-Ollama, llama.cpp, remote engines, and multiple vLLM services keep their original
+Qwen, other models, Ollama, llama.cpp, remote engines, and multiple vLLM services keep their original
 paths. The cache survives image replacement on an intact host, but does not
 provide cross-host persistence. Verify whether the RTX runner preserves that disk
 between jobs before expecting a warm hit.
@@ -230,6 +233,8 @@ mounting; uncertain mount state fails the case. A separate always-run cleanup
 recovers this run's mount after SDK destroy and independent Docker cleanup. Its
 `reports/model-cache-cleanup.json` must confirm success. Recovery preserves live
 holders, container references, and mounts whose identity cannot be established.
+Retained mount claims remain recoverable even if their model is no longer
+eligible for new cache reuse or publication.
 Do not remove their journals or force-unmount to bypass a failed cleanup.
 Qualify the coordinated controller and NemoClaw revisions on each owned target,
 including cancellation recovery, before unattended use; see

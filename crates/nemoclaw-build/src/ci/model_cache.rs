@@ -10,6 +10,9 @@ use std::{
 };
 
 const HELPER: &str = "/usr/local/libexec/colorunner-model-cache";
+// Cache eligibility follows the hardware test priorities, independently of
+// which GPU runs the case or what its model service is named.
+const PRIORITIZED_MODEL_PREFIX: &str = "nvidia/NVIDIA-Nemotron-";
 
 /// Only the privileged external host boundary is substituted in tests.
 pub trait Backend {
@@ -99,8 +102,18 @@ fn model_service(document: &Value) -> Option<(&str, &Value)> {
     Some((name, service))
 }
 
-/// Only a single managed vLLM service on the host's fixed Docker socket qualifies.
+/// One prioritized Nemotron vLLM service on the host's Docker socket qualifies.
 pub fn supports(document: &Value) -> bool {
+    model_service(document).is_some_and(|(_, service)| {
+        service
+            .pointer("/model/repository")
+            .and_then(Value::as_str)
+            .is_some_and(|repository| repository.starts_with(PRIORITIZED_MODEL_PREFIX))
+    })
+}
+
+/// Retained claims remain recoverable when a model is no longer prioritized.
+pub fn supports_cleanup(document: &Value) -> bool {
     model_service(document).is_some()
 }
 
@@ -129,8 +142,15 @@ impl<B: Backend> Session<B> {
     /// The caller supplies an eligible, already-bound document before apply.
     pub fn start(backend: B, document: &Value, reports: &Path) -> Result<Self, String> {
         let uid = field(document, "/metadata/uid")?;
-        let (service_name, service) = model_service(document)
-            .ok_or("The host cache requires one vLLM service on local Docker")?;
+        if !supports(document) {
+            return Err(
+                "The host cache requires one prioritized Nemotron vLLM service on local Docker"
+                    .into(),
+            );
+        }
+        let (service_name, service) = model_service(document).ok_or(
+            "The host cache requires one prioritized Nemotron vLLM service on local Docker",
+        )?;
         let model_arguments = vec![
             "--uid".into(),
             uid.clone(),
@@ -314,7 +334,7 @@ mod tests {
         json!({"metadata":{"uid":"12345678-1234-4234-8234-123456789abc"},
             "spec":{"gateway":{"management":"managed","target":{"docker":{
                 "engine":"unix:///var/run/docker.sock"}}},"services":{"super":{"kind":"vllm", "model":{
-                "repository":"example/model", "revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}})
+                "repository":"nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4", "revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}})
     }
 
     fn report(path: &Path) -> Value {
@@ -337,11 +357,11 @@ mod tests {
     fn rtx_named_vllm_service_can_reuse_and_release_weights() {
         let reports = tempfile::tempdir().unwrap();
         let mut host = Host::new("hit");
-        host.service = "qwen";
+        host.service = "nemotron";
         let mut config = document();
         let services = config["spec"]["services"].as_object_mut().unwrap();
         let model = services.remove("super").unwrap();
-        services.insert("qwen".into(), model);
+        services.insert("nemotron".into(), model);
         let mut session = Session::start(host.clone(), &config, reports.path()).unwrap();
         assert!(host.mounted.get());
         session.finish(true).unwrap();
@@ -350,7 +370,7 @@ mod tests {
 
     #[test]
     fn older_hosts_keep_super_support_and_leave_named_services_uncached() {
-        for name in ["super", "qwen"] {
+        for name in ["super", "nemotron"] {
             let reports = tempfile::tempdir().unwrap();
             let mut host = Host::new("hit");
             host.named_services = false;
@@ -362,7 +382,7 @@ mod tests {
             assert_eq!(host.mounted.get(), name == "super");
             session.finish(true).unwrap();
             assert!(!host.mounted.get());
-            if name == "qwen" {
+            if name == "nemotron" {
                 assert_eq!(report(reports.path())["state"], "unavailable");
                 assert!(!host.published.get());
             }
@@ -383,6 +403,40 @@ mod tests {
         let mut multiple = document();
         multiple["spec"]["services"]["other"] = multiple["spec"]["services"]["super"].clone();
         assert!(!supports(&multiple));
+    }
+
+    #[test]
+    fn only_prioritized_nemotron_weights_are_eligible_for_the_hardware_cache() {
+        for repository in [
+            "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+            "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+            "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        ] {
+            let mut config = document();
+            config["spec"]["services"]["super"]["model"]["repository"] = json!(repository);
+            assert!(supports(&config), "{repository}");
+        }
+        for repository in [
+            "Qwen/Qwen3-4B",
+            "example/other-model",
+            "example/NVIDIA-Nemotron-model",
+        ] {
+            let mut config = document();
+            config["spec"]["services"]["super"]["model"]["repository"] = json!(repository);
+            assert!(
+                !supports(&config),
+                "{repository} must keep normal acquisition"
+            );
+            assert!(
+                supports_cleanup(&config),
+                "previous claims must remain recoverable"
+            );
+            let reports = tempfile::tempdir().unwrap();
+            let host = Host::new("hit");
+            assert!(Session::start(host.clone(), &config, reports.path()).is_err());
+            assert!(!host.mounted.get());
+            assert!(!host.published.get());
+        }
     }
 
     #[test]

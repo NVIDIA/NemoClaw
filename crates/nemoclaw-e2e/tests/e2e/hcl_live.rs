@@ -204,7 +204,7 @@ async fn case() {
 fn model_cache_cleanup() {
     let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap();
     let document: Value = serde_saphyr::from_str(&fs::read_to_string(config).unwrap()).unwrap();
-    if !nemoclaw_build::ci::model_cache::supports(&document) {
+    if !nemoclaw_build::ci::model_cache::supports_cleanup(&document) {
         return;
     }
     let uid = document["metadata"]["uid"].as_str().unwrap();
