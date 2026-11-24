@@ -786,34 +786,33 @@ fn local_gateways_compile_the_sdk_image_pin_their_documents_do_not_name() {
 
 #[test]
 fn portable_container_memory_limits_cover_shared_memory_and_recipe_preparation_on_docker() {
-    for source in [
-        include_str!("../../../examples/platforms/dgx-spark/vllm.yaml"),
-        include_str!("../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"),
-        include_str!("fixtures/config/inline-recipe.yaml"),
+    for (source, service) in [
+        (
+            include_str!("../../../examples/platforms/dgx-spark/vllm.yaml"),
+            "qwen",
+        ),
+        (
+            include_str!("../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"),
+            "ollama-server",
+        ),
+        (include_str!("fixtures/config/inline-recipe.yaml"), "qwen"),
     ] {
         let mut input: Value = serde_saphyr::from_str(source).unwrap();
-        let service = input["spec"]["services"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .next()
-            .unwrap()
-            .clone();
-        input["spec"]["services"][&service]["container"] =
+        input["spec"]["services"][service]["container"] =
             json!({"memoryLimitGiB": 7, "sharedMemoryGiB":8});
         assert!(
             Document::parse(input.to_string().as_bytes()).is_err(),
             "the explicit memory limit must cover private shared memory"
         );
-        input["spec"]["services"][&service]["container"]["memoryLimitGiB"] = json!(64);
+        input["spec"]["services"][service]["container"]["memoryLimitGiB"] = json!(64);
         Document::parse(input.to_string().as_bytes()).unwrap();
-        if input["spec"]["services"][&service].get("recipe").is_some() {
-            input["spec"]["services"][&service]["container"]["memoryLimitGiB"] = json!(19);
+        if input["spec"]["services"][service].get("recipe").is_some() {
+            input["spec"]["services"][service]["container"]["memoryLimitGiB"] = json!(19);
             assert!(
                 Document::parse(input.to_string().as_bytes()).is_err(),
                 "the recipe's 20 GiB preparation requirement must fit the explicit container limit"
             );
-            input["spec"]["services"][&service]["container"]["memoryLimitGiB"] = json!(20);
+            input["spec"]["services"][service]["container"]["memoryLimitGiB"] = json!(20);
             Document::parse(input.to_string().as_bytes()).unwrap();
         }
     }
