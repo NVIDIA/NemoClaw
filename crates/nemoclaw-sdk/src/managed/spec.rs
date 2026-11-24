@@ -34,6 +34,12 @@ pub struct Spec {
     pub image: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<Process>,
+    /// Whether the gateway sends OpenShell telemetry, decided when the
+    /// deployment is compiled and recorded with the gateway, so a later run
+    /// with another switch value reproduces it. A gateway recorded before
+    /// NemoClaw set it has none, and its container keeps OpenShell's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<bool>,
 }
 
 /// Package-neutral container process compiled by a service installer.
@@ -115,7 +121,13 @@ pub struct GatewayLaunch {
     pub command: Vec<String>,
     pub env: Vec<String>,
 }
-fn gateway_launch(driver: ComputeDriver, name: &str, port: u16, data_path: &str) -> GatewayLaunch {
+fn gateway_launch(
+    driver: ComputeDriver,
+    name: &str,
+    port: u16,
+    data_path: &str,
+    telemetry: Option<bool>,
+) -> GatewayLaunch {
     // Docker publishes the port from the gateway network; Podman uses host networking.
     let bind_address = if driver == ComputeDriver::Docker {
         "0.0.0.0"
@@ -134,17 +146,20 @@ fn gateway_launch(driver: ComputeDriver, name: &str, port: u16, data_path: &str)
             "--port".into(),
             port.to_string(),
         ],
-        env: vec![
+        env: [
             format!("XDG_STATE_HOME={data_path}/state"),
             format!("OPENSHELL_DB_URL=sqlite:{data_path}/gateway.db"),
-            format!("{OPENSHELL_TELEMETRY_ENV}={}", gateway_telemetry_enabled()),
-        ],
+        ]
+        .into_iter()
+        .chain(telemetry.map(|enabled| format!("{OPENSHELL_TELEMETRY_ENV}={enabled}")))
+        .collect(),
     }
 }
 /// OpenShell's telemetry switch; the gateway passes it on to each sandbox.
 pub const OPENSHELL_TELEMETRY_ENV: &str = "OPENSHELL_TELEMETRY_ENABLED";
-/// Whether a gateway NemoClaw manages sends OpenShell telemetry: it follows
-/// NemoClaw's own switch, on unless [`crate::telemetry::DISABLE_ENV`] is set.
+/// Whether a gateway NemoClaw compiles now sends OpenShell telemetry: it
+/// follows NemoClaw's own switch, on unless [`crate::telemetry::DISABLE_ENV`]
+/// is set. Read when the deployment is compiled, never by the provider.
 pub fn gateway_telemetry_enabled() -> bool {
     !crate::telemetry::disabled()
 }
@@ -157,6 +172,7 @@ pub fn docker_gateway_launch(
     name: &str,
     endpoint: &str,
     data_path: &str,
+    telemetry: Option<bool>,
 ) -> Result<GatewayLaunch, Error> {
     check_gateway_attribute("name", name).map_err(|_| {
         Error::Conflict(
@@ -181,7 +197,13 @@ pub fn docker_gateway_launch(
             "data_path must be an absolute path without parent segments or whitespace",
         ));
     }
-    Ok(gateway_launch(ComputeDriver::Docker, name, port, data_path))
+    Ok(gateway_launch(
+        ComputeDriver::Docker,
+        name,
+        port,
+        data_path,
+        telemetry,
+    ))
 }
 /// Resource attributes of a managed gateway and its storage.
 pub const GATEWAY_ATTRIBUTES: [&str; 8] = [
@@ -200,6 +222,10 @@ pub const CONFIG_ATTRIBUTE: &str = "gateway_config";
 /// APF's connection settings, as JSON, when the deployment has NemoClaw
 /// register APF with a Docker gateway; absent otherwise.
 pub const APF_ATTRIBUTE: &str = "apf_registration";
+/// Whether the gateway sends OpenShell telemetry, `true` or `false`, as the
+/// deployment decided when it was compiled; absent for a gateway recorded
+/// before NemoClaw set it.
+pub const TELEMETRY_ATTRIBUTE: &str = "openshell_telemetry";
 /// Docker gateway data does not depend on the listen port, so its storage
 /// records this port instead of the gateway's.
 const DOCKER_STORAGE_PORT: u16 = 8080;
@@ -217,6 +243,7 @@ pub fn check_gateway_attribute(attribute: &str, value: &str) -> Result<(), &'sta
             "must be 32 lowercase hexadecimal characters",
         ),
         "compute_driver" => (r"^(docker|podman)$", "must be docker or podman"),
+        TELEMETRY_ATTRIBUTE => (r"^(true|false)$", "must be true or false"),
         "engine" => {
             return crate::config::validate_engine_endpoint(value)
                 .map_err(|_| "must be a local engine's Unix socket or named pipe");
@@ -277,6 +304,9 @@ impl Spec {
     /// The storage specification of this gateway.
     pub fn storage(&self) -> Self {
         let mut storage = self.clone();
+        // Storage holds no gateway process, so its identity doesn't change
+        // with the gateway's telemetry.
+        storage.telemetry = None;
         if self.compute_driver == ComputeDriver::Docker {
             storage.layout = 1;
             if let Some(local) = storage.gateway.target.local_mut() {
@@ -323,6 +353,9 @@ impl Spec {
                     .map_err(|_| Error::State("cannot encode gateway config"))?,
             );
         }
+        if let Some(telemetry) = self.telemetry.filter(|_| kind == GATEWAY_KIND) {
+            row.insert(TELEMETRY_ATTRIBUTE.into(), telemetry.to_string());
+        }
         if let Some(apf) = self.managed_apf().filter(|_| kind == GATEWAY_KIND) {
             row.insert(
                 APF_ATTRIBUTE.into(),
@@ -344,12 +377,17 @@ impl Spec {
                 .cloned()
                 .ok_or(crate::ObservationError::Incomplete)
         };
-        for attribute in GATEWAY_ATTRIBUTES
-            .into_iter()
-            .chain([CONFIG_ATTRIBUTE, APF_ATTRIBUTE])
-        {
+        for attribute in GATEWAY_ATTRIBUTES.into_iter().chain([
+            CONFIG_ATTRIBUTE,
+            APF_ATTRIBUTE,
+            TELEMETRY_ATTRIBUTE,
+        ]) {
             if let Some(value) = row.get(attribute).filter(|value| {
-                !value.is_empty() || !matches!(attribute, CONFIG_ATTRIBUTE | APF_ATTRIBUTE)
+                !value.is_empty()
+                    || !matches!(
+                        attribute,
+                        CONFIG_ATTRIBUTE | APF_ATTRIBUTE | TELEMETRY_ATTRIBUTE
+                    )
             }) {
                 check_gateway_attribute(attribute, value)
                     .map_err(|_| Error::Conflict("invalid managed gateway attribute"))?;
@@ -422,6 +460,10 @@ impl Spec {
             },
             image: get("image")?,
             process: None,
+            telemetry: row
+                .get(TELEMETRY_ATTRIBUTE)
+                .filter(|_| kind == GATEWAY_KIND)
+                .and_then(|value| value.parse().ok()),
         };
         spec.validate()?;
         Ok(spec)
@@ -669,7 +711,13 @@ impl Spec {
                 .ok_or(Error::Conflict("managed gateway requires a local engine"))?
                 .port;
             config["User"] = json!("0:0");
-            let launch = gateway_launch(self.compute_driver, &self.name, port, data_path);
+            let launch = gateway_launch(
+                self.compute_driver,
+                &self.name,
+                port,
+                data_path,
+                self.telemetry,
+            );
             config["Env"] = json!(launch.env);
             config["Entrypoint"] = json!(launch.entrypoint);
             config["Cmd"] = json!(launch.command);

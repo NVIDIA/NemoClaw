@@ -23,6 +23,7 @@ pub(crate) struct GatewayRuntimeState {
     config: Value<String>,
     apf_endpoint: Value<String>,
     apf_ca_env: Value<String>,
+    openshell_telemetry: Value<String>,
     entrypoint: Value<Vec<Value<String>>>,
     command: Value<Vec<Value<String>>>,
     env: Value<Vec<Value<String>>>,
@@ -67,12 +68,25 @@ fn known(value: &Value<String>) -> Option<String> {
 impl GatewayRuntimeState {
     /// The launch, or `None` while any input is unknown.
     fn launch(&self) -> Option<Result<GatewayLaunch, nemoclaw_sdk::Error>> {
-        let (name, endpoint, data_path) = (
+        let (name, endpoint, data_path, telemetry) = (
             known(&self.name)?,
             known(&self.endpoint)?,
             known(&self.data_path)?,
+            known(&self.openshell_telemetry)?,
         );
-        Some(docker_gateway_launch(&name, &endpoint, &data_path))
+        let telemetry = match telemetry.as_str() {
+            "" => None,
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => {
+                return Some(Err(nemoclaw_sdk::Error::Conflict(
+                    "openshell_telemetry must be true or false",
+                )));
+            }
+        };
+        Some(docker_gateway_launch(
+            &name, &endpoint, &data_path, telemetry,
+        ))
     }
 
     /// The configuration file, or `None` while any input is unknown.
@@ -149,6 +163,7 @@ impl DataSource for GatewayRuntimeDataSource {
                     ("config", string(Optional, "Authored OpenShell gateway tables as JSON, in the chart's gatewayConfig format.")),
                     ("apf_endpoint", string(Optional, "APF's gRPC origin, when NemoClaw registers APF as the gateway's interceptor and provider-profile source.")),
                     ("apf_ca_env", string(Optional, "Caller environment variable naming the CA certificate file that verifies APF.")),
+                    ("openshell_telemetry", string(Optional, "Whether the gateway sends OpenShell telemetry, true or false, as the deployment decided when it was compiled; omitted, the container keeps OpenShell's default.")),
                     ("config_file", string(Computed, "The gateway's OpenShell configuration file.")),
                     ("apf_ca", string(Computed, "APF's CA certificate, copied into the gateway's storage; empty without one.")),
                 ]

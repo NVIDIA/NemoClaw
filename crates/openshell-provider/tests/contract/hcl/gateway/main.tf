@@ -19,6 +19,9 @@ data "openshell_docker_gateway_runtime" "gateway" {
   endpoint  = var.gateway_endpoint
   data_path = var.data_path
   config    = jsonencode({ "openshell.gateway" = { log_level = "debug" } })
+  # Recorded when the deployment was compiled; the provider never reads the
+  # caller's environment for it.
+  openshell_telemetry = "false"
 }
 
 # The managed Docker gateway's storage: its volume, key, and certificates.
