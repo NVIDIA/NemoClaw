@@ -110,7 +110,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-docs
         with:
@@ -122,31 +121,10 @@ jobs:
           path: .build/docs-tool
       - name: Make the build tool executable
         run: chmod +x "$NEMOCLAW_BUILD"
-      - name: Assemble v1 with the shared staging home
-        run: |
-          "$NEMOCLAW_BUILD" docs
-          v0_ref=origin/main
-          if git show-ref --verify --quiet refs/remotes/origin/v0; then v0_ref=origin/v0; fi
-          layout="$RUNNER_TEMP/v0-layout"
-          mkdir -p "$layout"
-          git archive "$v0_ref" docs fern scripts/generate-starter-prompt.mts scripts/fern-preview-config.mts | tar -x -C "$layout"
-          # The shared layout builder uses the same locked YAML dependency as the v0 import.
-          cp tools/docs/main/package{,-lock}.json "$layout/scripts/"
-          npm ci --ignore-scripts --prefix "$layout/scripts"
-          node "$layout/scripts/generate-starter-prompt.mts"
-          node "$layout/scripts/fern-preview-config.mts" "$RUNNER_TEMP/v1-staging" "$PWD/fern/_generated"
-          cp fern/staging.yml "$RUNNER_TEMP/v1-staging/fern/docs.yml"
-          cp fern/fern.config.json "$RUNNER_TEMP/v1-staging/fern/fern.config.json"
-          cd "$RUNNER_TEMP/v1-staging/fern"
-          FERN_VERSION=$(node -p "require('./fern.config.json').version")
-          npx --yes "fern-api@${FERN_VERSION}" check --local
       - name: Publish the official v1 staging site
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
-        run: |
-          cd "$RUNNER_TEMP/v1-staging/fern"
-          FERN_VERSION=$(node -p "require('./fern.config.json').version")
-          npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1
+        run: '"$NEMOCLAW_BUILD" fern staging'
       - name: Verify official staging routes
         env:
           STAGING: https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw
@@ -180,8 +158,8 @@ jobs:
     # Release candidates such as v0.1.0-rc.1 stage images and drafts; only a
     # final release publishes the documentation.
     if: >-
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v0.1.') &&
-      !contains(github.ref_name, '-') && vars.FERN_V1_PUBLIC_ENABLED == 'true'
+      github.event_name == 'push' && !github.event.deleted && startsWith(github.ref, 'refs/tags/v0.1.') &&
+      !contains(github.ref_name, '-') && !contains(github.ref_name, '+')
     environment: docs-v1-public
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -206,8 +184,7 @@ jobs:
           path: .build/docs-tool
       - name: Make the build tool executable
         run: chmod +x "$NEMOCLAW_BUILD"
-      - name: Publish main and v1 through the version selector
+      - name: Publish the tagged v1 product
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
-          FERN_V1_PUBLIC_ENABLED: ${{ vars.FERN_V1_PUBLIC_ENABLED }}
         run: '"$NEMOCLAW_BUILD" fern public'

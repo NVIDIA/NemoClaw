@@ -102,7 +102,6 @@ pub fn published_preview(identifier: &str, succeeded: bool, output: &str) -> Res
 
 /// The release identity, read from the workflow environment.
 pub struct Release {
-    pub enabled: Option<String>,
     pub ref_type: Option<String>,
     pub ref_name: Option<String>,
 }
@@ -111,31 +110,16 @@ impl Release {
     pub fn from_environment() -> Self {
         let var = |name| std::env::var(name).ok();
         Self {
-            enabled: var("FERN_V1_PUBLIC_ENABLED"),
             ref_type: var("GITHUB_REF_TYPE"),
             ref_name: var("GITHUB_REF_NAME"),
         }
     }
 
-    /// The release tag, `v0.1.PATCH` with an optional prerelease suffix, if
-    /// public publication is enabled for it. The `v1` branch ships 0.1 releases.
+    /// The final release tag for the v1 branch's 0.1 series.
     pub fn tag(&self) -> Result<&str> {
-        if self.enabled.as_deref() != Some("true") {
-            return Err(
-                "set FERN_V1_PUBLIC_ENABLED=true only after coordinating shared-site publication"
-                    .into(),
-            );
-        }
         let tag = self.ref_name.as_deref().unwrap_or("");
-        let version = tag.strip_prefix("v0.1.").unwrap_or("");
-        let (patch, suffix) = version.split_once('-').unwrap_or((version, ""));
-        let valid = self.ref_type.as_deref() == Some("tag")
-            && !patch.is_empty()
-            && patch.bytes().all(|b| b.is_ascii_digit())
-            && (!version.contains('-') || !suffix.is_empty())
-            && suffix
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
+        let version = tag.strip_prefix('v').and_then(crate::version::core);
+        let valid = self.ref_type.as_deref() == Some("tag") && matches!(version, Some((0, 1, _)));
         if valid {
             Ok(tag)
         } else {
@@ -299,6 +283,37 @@ pub(crate) fn main_guide(root: &Path, source: &str) -> Result<(String, String)> 
     Ok((revision, mdx))
 }
 
+/// Extract only reviewed files from the same immutable v0 revision used by the v1 guides.
+fn unpack_main(root: &Path, revision: &str, files: &[&str], destination: &Path) -> Result<()> {
+    ensure_main_revision(root, revision)?;
+    let archive = git(root)
+        .args(["archive", revision])
+        .args(files)
+        .stdin(Stdio::null())
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|_| "cannot run git archive")?;
+    if !archive.status.success() {
+        return Err("git archive of main's documentation failed".into());
+    }
+    tar::Archive::new(archive.stdout.as_slice())
+        .unpack(destination)
+        .map_err(|_| "cannot unpack main's documentation".into())
+}
+
+fn install_main_tools(dependencies: &Path, directory: &Path) -> Result<()> {
+    for name in ["package.json", "package-lock.json"] {
+        fs::copy(dependencies.join(name), directory.join(name))
+            .map_err(|_| format!("cannot copy {name}"))?;
+    }
+    status(
+        Command::new(windows_suffix("npm"))
+            .args(["ci", "--ignore-scripts"])
+            .current_dir(directory),
+        "npm ci for main's documentation generators",
+    )
+}
+
 /// Import main's documentation at its pinned revision, regenerating only when
 /// the revision or its locked generator dependency changes.
 fn prepare_main(root: &Path) -> Result<()> {
@@ -309,38 +324,28 @@ fn prepare_main(root: &Path) -> Result<()> {
     let identity = json!({
         "revision": revision,
         "dependencies": crate::hex(&Sha256::digest(&lock)),
-        "format": 2,
+        "format": 3,
     });
     let destination = root.join("fern/_main");
     let stamp = destination.join(".source.json");
     if read_json(&stamp).ok() != Some(identity.clone()) {
-        ensure_main_revision(root, &revision)?;
         let staging = tempfile::tempdir_in(root.join("fern"))
             .map_err(|_| "cannot create a staging directory")?;
-        let archive = git(root)
-            .args(["archive", &revision, "LICENSE", "docs", "fern"])
-            .args(MAIN_SCRIPTS.map(|script| format!("scripts/{script}.mts")))
-            .arg("scripts/check-docs-published-routes.mts")
-            .stdin(Stdio::null())
-            .stderr(Stdio::inherit())
-            .output()
-            .map_err(|_| "cannot run git archive")?;
-        if !archive.status.success() {
-            return Err("git archive of main's documentation failed".into());
-        }
-        tar::Archive::new(archive.stdout.as_slice())
-            .unpack(staging.path())
-            .map_err(|_| "cannot unpack main's documentation")?;
-        for name in ["package.json", "package-lock.json"] {
-            fs::copy(dependencies.join(name), staging.path().join(name))
-                .map_err(|_| format!("cannot copy {name}"))?;
-        }
-        status(
-            Command::new(windows_suffix("npm"))
-                .args(["ci", "--ignore-scripts", "--prefix"])
-                .arg(staging.path()),
-            "npm ci for main's documentation generators",
+        unpack_main(
+            root,
+            &revision,
+            &[
+                "LICENSE",
+                "README.md",
+                "docs",
+                "fern",
+                "scripts/generate-starter-prompt.mts",
+                "scripts/sync-agent-variant-docs.mts",
+                "scripts/check-docs-published-routes.mts",
+            ],
+            staging.path(),
         )?;
+        install_main_tools(&dependencies, staging.path())?;
         for script in MAIN_SCRIPTS {
             run_main_script(staging.path(), script, &[])?;
         }
@@ -470,6 +475,70 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Assemble a v1-only Product at the same base path on staging and production.
+/// The tag fixes both the v1 guides and the v0 revision that supplies their home and header.
+fn checked_product(root: &Path) -> Result<tempfile::TempDir> {
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let directory = temp.path().canonicalize().map_err(|e| e.to_string())?;
+    let layout = directory.join("layout");
+    let revision = main_revision(&root)?;
+    unpack_main(
+        &root,
+        &revision,
+        &[
+            "docs",
+            "fern",
+            "scripts/generate-starter-prompt.mts",
+            "scripts/fern-preview-config.mts",
+        ],
+        &layout,
+    )?;
+    install_main_tools(&root.join("tools/docs/main"), &layout)?;
+    run_main_script(&layout, "generate-starter-prompt", &[])?;
+    let project = directory.join("site");
+    status(
+        Command::new("node")
+            .arg(layout.join("scripts/fern-preview-config.mts"))
+            .arg(&project)
+            .arg(root.join("fern/_generated")),
+        "assemble the v1 product and shared home",
+    )?;
+    for (input, output) in [
+        ("product.yml", "docs.yml"),
+        ("fern.config.json", "fern.config.json"),
+    ] {
+        fs::copy(
+            root.join("fern").join(input),
+            project.join("fern").join(output),
+        )
+        .map_err(|e| format!("cannot install {input} into the v1 product: {e}"))?;
+    }
+    run_fern(&root, &["check", "--local"], Some(&project.join("fern")))?;
+    Ok(temp)
+}
+
+fn publish_product(root: &Path, instance: &str) -> Result<()> {
+    crate::schema::generate(root, true)?;
+    crate::docs::generate(root, false, None).map_err(|e| e.to_string())?;
+    let project = checked_product(root)?;
+    let directory = project.path().join("site/fern");
+    run_fern(
+        root,
+        &[
+            "generate",
+            "--docs",
+            "--instance",
+            &format!("{instance}/v1"),
+        ],
+        Some(&directory),
+    )
+}
+
+pub fn staging(root: &Path) -> Result<()> {
+    publish_product(root, STAGING)
+}
+
 /// Import main, check generated outputs, then validate v1 and the combined site.
 pub fn check(root: &Path) -> Result<()> {
     // Node resolves the imported `yaml` package from an absolute path.
@@ -479,6 +548,7 @@ pub fn check(root: &Path) -> Result<()> {
     crate::docs::generate(root, false, None).map_err(|e| e.to_string())?;
     crate::docs::generate(root, true, None).map_err(|e| e.to_string())?;
     validate_v1(root)?;
+    checked_product(root)?;
     // Main keeps its own route checker; Fern's stricter rule reports legacy
     // Markdown-download URLs and relative component links as broken.
     run_fern(root, &["check", "--local"], None)
@@ -527,12 +597,12 @@ pub fn delete(root: &Path, identifier: &str) -> Result<()> {
     }
 }
 
-/// Publish main and v1 from a tagged commit on v1's history.
+/// Publish the v1 Product from a final tag on v1 history.
 pub fn public(root: &Path, release: &Release) -> Result<()> {
     // Check the release identity before compiling, validating, or using a token.
     let tag = release.tag()?;
     let tagged = output(
-        git(root).args(["rev-parse", &format!("{tag}^{{commit}}")]),
+        git(root).args(["rev-parse", &format!("refs/tags/{tag}^{{commit}}")]),
         "git rev-parse",
     )?;
     let current = output(git(root).args(["rev-parse", "HEAD"]), "git rev-parse")?;
@@ -547,8 +617,7 @@ pub fn public(root: &Path, release: &Release) -> Result<()> {
         git(root).args(["merge-base", "--is-ancestor", "HEAD", "origin/v1"]),
         "the check that the tag is on v1's history",
     )?;
-    check(root)?;
-    run_fern(root, &["generate", "--docs", "--instance", PUBLIC], None)
+    publish_product(root, PUBLIC)
 }
 
 fn gh_json(arguments: &[&str]) -> Result<Value> {
