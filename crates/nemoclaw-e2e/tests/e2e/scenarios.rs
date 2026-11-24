@@ -37,9 +37,41 @@ const STUB_REPLY: &str = "nemoclaw-stub-reply";
 /// none.
 const STUB_KEY_ENV: &str = "NEMOCLAW_SCENARIO_MODEL_KEY";
 
+/// The platforms of the QA team's run IDs (`PLATFORM-HARNESS-NNN`), and
+/// DOCKER for any host with a Docker engine, which their plan does not name.
+const PLATFORMS: [&str; 5] = ["SPARK", "STATION", "RTXSPARKWSL2", "K8S", "DOCKER"];
+
+/// The HARNESS part of a deployment ID for a harness kind, such as HERMES for
+/// `nvidia.fabric.hermes`.
+fn harness_id(kind: &str) -> String {
+    kind.rsplit('.').next().unwrap_or_default().to_uppercase()
+}
+
+/// A deployment ID, `PLATFORM-HARNESS`, as the QA team's run IDs start.
+fn deployment_id(text: &str) -> Result<String, String> {
+    let (platform, harness) = text
+        .split_once('-')
+        .ok_or_else(|| format!("names `{text}`, not PLATFORM-HARNESS"))?;
+    if !PLATFORMS.contains(&platform) {
+        return Err(format!(
+            "names the platform `{platform}`: use one of {}",
+            PLATFORMS.join(", ")
+        ));
+    }
+    if harness.is_empty() || !harness.chars().all(|c| c.is_ascii_uppercase()) {
+        return Err(format!(
+            "names the harness `{harness}`: use capital letters"
+        ));
+    }
+    Ok(text.to_owned())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Row {
+    /// The deployment IDs, joined, which name the row in output.
     id: String,
+    /// One deployment ID for each harness the example deploys.
+    ids: Vec<String>,
     title: String,
     /// Whether the page lets the row run, by its On cell; a paused row never runs.
     on: bool,
@@ -236,8 +268,10 @@ fn parse(page: &str) -> Result<Vec<Row>, String> {
                         .map_or("", |c| &c.0)
                 )
             })?;
-            if !ids.insert(row.id.clone()) {
-                return Err(format!("the scenario {} appears twice", row.id));
+            for id in &row.ids {
+                if !ids.insert(id.clone()) {
+                    return Err(format!("the deployment {id} appears twice"));
+                }
             }
             rows.push(row);
         }
@@ -255,7 +289,11 @@ fn row(cells: &[Cell]) -> Result<Row, String> {
             Ok((text.as_str(), links))
         }
     };
-    let (id, _) = column("ID")?;
+    let ids: Vec<String> = column("ID")?
+        .0
+        .split(',')
+        .map(|id| deployment_id(id.trim()))
+        .collect::<Result<_, _>>()?;
     let (title, _) = column("Scenario")?;
     // The emoji may carry the emoji-presentation selector.
     let on = match column("On")?.0.trim_end_matches('\u{fe0f}') {
@@ -282,7 +320,8 @@ fn row(cells: &[Cell]) -> Result<Row, String> {
         other => return Err(format!("expects `{other}`: write one word or `any reply`")),
     };
     Ok(Row {
-        id: id.to_owned(),
+        id: ids.join(", "),
+        ids,
         title: title.trim().to_owned(),
         on,
         example,
@@ -608,7 +647,7 @@ fn run_row(row: &Row, host: &Host, bundle: &Bundle, root: &Path) -> Result<(), S
                 }),
         },
     )?;
-    let run = root.join(&row.id);
+    let run = root.join(row.ids.join("+"));
     let _ = fs::remove_dir_all(&run);
     let credentials = run.join("work").join("credentials");
     fs::create_dir_all(&credentials).map_err(|e| e.to_string())?;
@@ -658,7 +697,7 @@ fn page() {
         .ok()
         .map(|ids| ids.split(',').map(|id| id.trim().to_owned()).collect());
     if let Some(selected) = &selected {
-        let known: BTreeSet<_> = rows.iter().map(|row| row.id.clone()).collect();
+        let known: BTreeSet<_> = rows.iter().flat_map(|row| row.ids.clone()).collect();
         let unknown: Vec<_> = selected.difference(&known).collect();
         assert!(unknown.is_empty(), "no such scenarios: {unknown:?}");
     }
@@ -670,7 +709,10 @@ fn page() {
     );
     let mut outcomes = BTreeMap::new();
     for row in &rows {
-        let outcome = if selected.as_ref().is_some_and(|s| !s.contains(&row.id)) {
+        let outcome = if selected
+            .as_ref()
+            .is_some_and(|s| !row.ids.iter().any(|id| s.contains(id)))
+        {
             "not selected".to_owned()
         } else if let Some(reason) = host.skip_reason(row) {
             format!("skipped: {reason}")
@@ -717,7 +759,10 @@ mod tests {
     }
 
     fn by_id(id: &str) -> Row {
-        rows().into_iter().find(|row| row.id == id).unwrap()
+        rows()
+            .into_iter()
+            .find(|row| row.ids.iter().any(|known| known == id))
+            .unwrap()
     }
 
     /// The page's row, switched on, so that a decision depends only on its
@@ -740,6 +785,41 @@ mod tests {
     }
 
     #[test]
+    fn every_row_names_the_harnesses_its_example_deploys() {
+        for row in rows() {
+            let path = repository_root().join("examples").join(&row.example);
+            let document = Document::parse(fs::File::open(&path).unwrap()).unwrap();
+            let deployed: BTreeSet<String> = document
+                .sandboxes()
+                .map(|sandbox| harness_id(document.sandbox_harness(sandbox).unwrap().kind.as_str()))
+                .collect();
+            let named: BTreeSet<String> = row
+                .ids
+                .iter()
+                .map(|id| id.split_once('-').unwrap().1.to_owned())
+                .collect();
+            assert_eq!(named, deployed, "{}: {}", row.id, row.example);
+        }
+    }
+
+    #[test]
+    fn an_unknown_platform_fails_the_page_with_its_id() {
+        let page = format!(
+            "{TABLE}| ✅ | LAPTOP-OPENCLAW | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n"
+        );
+        let error = parse(&page).unwrap_err();
+        assert!(error.contains("`LAPTOP`"), "{error}");
+    }
+
+    #[test]
+    fn a_deployment_named_by_two_rows_fails_the_page() {
+        let page = format!(
+            "{TABLE}| ✅ | K8S-OPENCLAW, K8S-HERMES | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n| ✅ | K8S-HERMES | y | [a](a.yaml) | docker | stub | Hi. | any reply |\n"
+        );
+        assert!(parse(&page).unwrap_err().contains("K8S-HERMES"));
+    }
+
+    #[test]
     fn a_table_with_other_columns_fails_the_page() {
         let page =
             "| Scenario | Example | Needs |\n|---|---|---|\n| T-1 x | [a](a.yaml) | docker |\n";
@@ -749,31 +829,34 @@ mod tests {
     #[test]
     fn an_unknown_need_fails_the_page_with_its_name() {
         let page = format!(
-            "{TABLE}| ✅ | T-1 | x | [a](a.yaml) | docker, gpus GB10 | stub | Hi. | any reply |\n"
+            "{TABLE}| ✅ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker, gpus GB10 | stub | Hi. | any reply |\n"
         );
         let error = parse(&page).unwrap_err();
         assert!(
-            error.contains("T-1") && error.contains("`gpus GB10`"),
+            error.contains("DOCKER-OPENCLAW") && error.contains("`gpus GB10`"),
             "{error}"
         );
     }
 
     #[test]
     fn an_example_cell_without_a_link_fails_the_page() {
-        let page = format!("{TABLE}| ✅ | T-1 | x | a.yaml | docker | stub | Hi. | any reply |\n");
+        let page = format!(
+            "{TABLE}| ✅ | DOCKER-OPENCLAW | x | a.yaml | docker | stub | Hi. | any reply |\n"
+        );
         assert!(parse(&page).unwrap_err().contains("0 examples"));
     }
 
     #[test]
     fn an_empty_cell_fails_the_page() {
-        let page =
-            format!("{TABLE}| ✅ | T-1 | x | [a](a.yaml) | docker | stub |  | any reply |\n");
+        let page = format!(
+            "{TABLE}| ✅ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker | stub |  | any reply |\n"
+        );
         assert!(parse(&page).unwrap_err().contains("no Ask"));
     }
 
     #[test]
     fn a_repeated_scenario_fails_the_page() {
-        let line = "| ✅ | T-1 | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n";
+        let line = "| ✅ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n";
         assert!(
             parse(&format!("{TABLE}{line}{line}"))
                 .unwrap_err()
@@ -784,9 +867,9 @@ mod tests {
     #[test]
     fn a_laptop_runs_the_stub_row_and_says_why_it_skips_a_spark_row() {
         let mac = host("macos", "aarch64", &[]);
-        assert_eq!(mac.skip_reason(&on("T-144")), None);
+        assert_eq!(mac.skip_reason(&on("DOCKER-OPENCLAW")), None);
         assert_eq!(
-            mac.skip_reason(&on("T-172")).unwrap(),
+            mac.skip_reason(&on("SPARK-HERMES")).unwrap(),
             "needs a Linux host, an NVIDIA GPU named like `GB10`"
         );
     }
@@ -794,11 +877,16 @@ mod tests {
     #[test]
     fn a_dgx_spark_runs_its_rows_and_skips_the_station_and_kubernetes_rows() {
         let spark = host("linux", "aarch64", &["NVIDIA GB10"]);
-        for id in ["T-144", "T-172", "T-359", "T-019"] {
+        for id in ["DOCKER-OPENCLAW", "SPARK-HERMES", "SPARK-OPENCLAW"] {
             assert_eq!(spark.skip_reason(&on(id)), None, "{id}");
         }
-        assert!(spark.skip_reason(&on("T-439")).unwrap().contains("`GB300`"));
-        let kubernetes = spark.skip_reason(&on("T-528")).unwrap();
+        assert!(
+            spark
+                .skip_reason(&on("STATION-HERMES"))
+                .unwrap()
+                .contains("`GB300`")
+        );
+        let kubernetes = spark.skip_reason(&on("K8S-HERMES")).unwrap();
         assert!(
             kubernetes.contains("NEMOCLAW_CLUSTER_KUBECONFIG")
                 && kubernetes.contains("$NVIDIA_INFERENCE_API_KEY")
@@ -807,8 +895,9 @@ mod tests {
 
     #[test]
     fn a_paused_row_is_skipped_on_a_machine_that_has_its_needs() {
-        let page =
-            format!("{TABLE}| ⏸️ | T-1 | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n");
+        let page = format!(
+            "{TABLE}| ⏸️ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n"
+        );
         let row = parse(&page).unwrap().remove(0);
         let mac = host("macos", "aarch64", &[]);
         assert_eq!(mac.skip_reason(&row).unwrap(), "paused on the page");
@@ -816,10 +905,14 @@ mod tests {
 
     #[test]
     fn an_unknown_on_cell_fails_the_page_with_its_row() {
-        let page =
-            format!("{TABLE}| on | T-1 | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n");
+        let page = format!(
+            "{TABLE}| on | DOCKER-OPENCLAW | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n"
+        );
         let error = parse(&page).unwrap_err();
-        assert!(error.contains("T-1") && error.contains("`on`"), "{error}");
+        assert!(
+            error.contains("DOCKER-OPENCLAW") && error.contains("`on`"),
+            "{error}"
+        );
     }
 
     /// A digest reference that names the local image it stands for.
@@ -870,7 +963,7 @@ mod tests {
 
     #[test]
     fn a_stub_row_points_every_provider_at_the_stub_with_the_example_credential() {
-        let row = by_id("T-144");
+        let row = by_id("DOCKER-OPENCLAW");
         let bound = bound(&row, &row.example).unwrap();
         let spec = &bound.document["spec"];
         assert_eq!(
@@ -897,27 +990,27 @@ mod tests {
 
     #[test]
     fn a_served_row_keeps_its_model_on_free_ports_and_local_images() {
-        let row = by_id("T-172");
+        let row = by_id("SPARK-HERMES");
         let bound = bound(&row, &row.example).unwrap();
         let service = &bound.document["spec"]["services"]["super"];
         assert_eq!(service["serving"]["port"], 20002);
         assert_eq!(service["image"], fake_image("nc-prototype-vllm", "rust-v1"));
         assert!(bound.stub_credentials.is_empty());
-        assert_eq!(bound.targets["assistant"].get("answer"), None);
+        assert_eq!(bound.targets["assistant"]["answer"], "READY");
     }
 
     #[test]
     fn a_stub_row_on_an_example_that_serves_a_model_fails() {
         let row = Row {
             stub: true,
-            ..by_id("T-172")
+            ..by_id("SPARK-HERMES")
         };
         assert!(bound(&row, &row.example).err().unwrap().contains("serves"));
     }
 
     #[test]
     fn a_served_row_can_use_a_running_model_in_place_of_its_service() {
-        let row = by_id("T-359");
+        let row = by_id("SPARK-OPENCLAW");
         let running = Running {
             endpoint: "http://172.30.189.1:19110/v1".into(),
             model: "nemotron-3.5-super-vl".into(),
@@ -935,7 +1028,7 @@ mod tests {
 
     #[test]
     fn an_external_gateway_fails_to_bind() {
-        let row = by_id("T-144");
+        let row = by_id("DOCKER-OPENCLAW");
         assert!(
             bound(&row, "fabric-openclaw.yaml")
                 .err()
