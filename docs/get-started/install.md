@@ -184,6 +184,15 @@ Deployment YAML and state directories stay where you created them.
 
 ## Installing on Linux or macOS
 
+On macOS, open **Applications > Utilities > Terminal** to run these commands.
+For Apple silicon, set `PLATFORM=darwin_arm64` in step 1.
+If you download the archive in a browser, also download `SHA256SUMS` from the same release, then verify both files in Terminal before extracting.
+If the browser automatically extracts archives, keep the original `.tar.gz` for verification and extract that verified archive into the new installation directory in step 8.
+Finder can browse the bundle, but double-clicking `bin/nemoclaw` does not start onboarding.
+Keep the whole bundle together and run commands in Terminal.
+If macOS blocks execution, stop and record the exact warning, archive name, release, and signing evidence; do not remove quarantine or bypass Gatekeeper to qualify a release.
+For an unreleased revision, use [macOS from source](macos.md) instead.
+
 Run these commands from an empty download directory with `curl`, `tar`, and the [GitHub CLI](https://cli.github.com/) available. Stop on any download or verification failure. Do not unpack a failed download or substitute an archive from another tag.
 
 1. Select your platform and archive name.

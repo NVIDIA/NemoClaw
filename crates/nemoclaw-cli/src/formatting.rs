@@ -6,7 +6,7 @@ use crate::{
     dispatch::CommandResult,
     style::{Palette, Tone},
 };
-use nemoclaw_sdk::{Error, OperationResult, Outcome};
+use nemoclaw_sdk::{Error, OperationResult, Outcome, documentation_url};
 use std::{
     borrow::Cow,
     collections::BTreeSet,
@@ -436,10 +436,13 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     if let Some(connection) = &result.connection {
         output.push_str(&format!(
             "\nOpenShell gateway: {}\nOpenShell workspace: {}\n",
-            connection
-                .gateway_endpoint
-                .as_deref()
-                .map_or_else(|| UNPUBLISHED_GATEWAY.to_owned(), terminal_text),
+            connection.gateway_endpoint.as_deref().map_or_else(
+                || format!(
+                    "not published; forward a local port to the gateway pod, as {} describes",
+                    documentation_url("docs/build-deploy/kubernetes.md")
+                ),
+                terminal_text
+            ),
             terminal_text(&connection.workspace),
         ));
     }
@@ -640,7 +643,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             .unwrap_or_else(|| "unavailable".into());
         output.push_str(&format!("\nHost OpenShell client: {path}\n  Required by this NemoClaw CLI: {}; detected: {detected}.\n", terminal_text(&client.required)));
         if !client.compatible() {
-            output.push_str("  Before running the OpenShell commands, select the release-qualified client in a scoped directory and prepend it to this shell's PATH. Preserve other installations. Refer to docs/agents-inference/agents.md#selecting-the-host-openshell-client.\n");
+            output.push_str(&format!("  Before running the OpenShell commands, select the release-qualified client in a scoped directory and prepend it to this shell's PATH. Preserve other installations. Refer to {}.\n", documentation_url("docs/agents-inference/agents.md#selecting-the-host-openshell-client")));
         }
         output.push_str("  This host check does not verify the gateway version, compute driver, or inference.\n");
     }
@@ -672,11 +675,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     }
     output
 }
-
-/// What a managed cluster gateway without `expose` has instead of an address:
-/// each NemoClaw command forwards its own free port, and other clients forward
-/// one themselves.
-const UNPUBLISHED_GATEWAY: &str = "not published; forward a local port to the gateway pod, as docs/build-deploy/kubernetes.md describes";
 
 /// The commands that select this deployment's gateway and workspace, as the
 /// interface guide describes.
@@ -762,9 +760,10 @@ fn agent_invocation(
         }
     }
     if invocable {
-        output.push_str(
-            "  The sample sends one JSON prompt and can incur inference charges. --input FILE reads a sandbox file; --input - reads it from stdin; see docs/agents-inference/agents.md.\n",
-        );
+        output.push_str(&format!(
+            "  The sample sends one JSON prompt and can incur inference charges. --input FILE reads a sandbox file; --input - reads it from stdin; see {}.\n",
+            documentation_url("docs/agents-inference/agents.md"),
+        ));
     }
     output
 }
@@ -829,9 +828,10 @@ fn interface_access(result: &OperationResult, selected: bool, shell: Shell) -> S
         }
     }
     if !result.interfaces.is_empty() {
-        output.push_str(
-            "  The agent's own tools can read these tokens and reach these ports; see docs/agents-inference/interfaces.md.\n",
-        );
+        output.push_str(&format!(
+            "  The agent's own tools can read these tokens and reach these ports; see {}.\n",
+            documentation_url("docs/agents-inference/interfaces.md"),
+        ));
     }
     output
 }
@@ -923,7 +923,10 @@ pub(crate) fn render_error(
             "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
         )),
         Some(Error::DockerModelUpdateRefused { service }) => Some(Cow::Owned(format!(
-            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/agents-inference/inference.md#setting-container-limits-and-update-policy."
+            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See {}.",
+            documentation_url(
+                "docs/agents-inference/inference.md#setting-container-limits-and-update-policy"
+            ),
         ))),
         _ => None,
     };
@@ -1165,7 +1168,8 @@ mod tests {
         assert_eq!(text.matches("--no-tty -- cat").count(), 2, "{text}");
         assert_eq!(text.matches("Terminal:").count(), 2, "{text}");
         assert!(
-            text.contains("reach these ports; see docs/agents-inference/interfaces.md."),
+            text.contains("reach these ports; see https://github.com/NVIDIA/NemoClaw/blob/")
+                && text.contains("/docs/agents-inference/interfaces.md."),
             "{text}"
         );
         let machine: Value = serde_json::from_str(&render(
@@ -1207,7 +1211,8 @@ mod tests {
         let result = json!({"outcome": "succeeded", "changes": [], "connection": connection, "interfaces": interfaces()});
         let text = render(&["nemoclaw", "apply", "deployment.yaml"], result.clone());
         assert!(
-            text.contains("OpenShell gateway: not published; forward a local port to the gateway pod, as docs/build-deploy/kubernetes.md describes\n"),
+            text.contains("OpenShell gateway: not published; forward a local port to the gateway pod, as https://github.com/NVIDIA/NemoClaw/blob/")
+                && text.contains("/docs/build-deploy/kubernetes.md describes\n"),
             "{text}"
         );
         assert!(
@@ -1447,8 +1452,21 @@ $env:OPENSHELL_GATEWAY = 'stale'
                 "{command}: only the agent with a runtime is invocable:\n{text}"
             );
             assert!(
-                text.contains("reads it from stdin; see docs/agents-inference/agents.md."),
+                text.contains("https://github.com/NVIDIA/NemoClaw/blob/")
+                    && text.contains("/docs/agents-inference/agents.md")
+                    && !text.contains("/blob/v1/"),
                 "{command}: {text}"
+            );
+            let revision = text
+                .split("https://github.com/NVIDIA/NemoClaw/blob/")
+                .nth(1)
+                .unwrap()
+                .split('/')
+                .next()
+                .unwrap();
+            assert!(
+                revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "the first-request guide must identify an immutable source commit: {text}"
             );
             let machine: Value = serde_json::from_str(&render(
                 &["nemoclaw", command, "deployment.yaml", "-o", "json"],

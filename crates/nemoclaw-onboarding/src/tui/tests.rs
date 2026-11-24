@@ -1724,6 +1724,10 @@ fn a_discovered_image_is_named_when_its_question_is_skipped() {
     assert_ne!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
     let text = flat(&screen(&wizard, 160, 40));
     assert!(text.contains("Automatically selected image"), "{text}");
+    assert!(
+        text.contains("only image discovered for this harness"),
+        "{text}"
+    );
     assert!(text.contains(HERMES_IMAGE), "{text}");
     assert!(text.contains("back to change"), "{text}");
 }
@@ -2152,7 +2156,8 @@ fn without_a_local_image_for_the_harness_the_image_question_says_how_to_build_on
         .note()
         .expect("the question says why it suggests no image");
     assert!(
-        note.contains("https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"),
+        note.contains("/docs/build-deploy/build.md#building-agent-images")
+            && !note.contains("/blob/v1/"),
         "{note}"
     );
 }
@@ -2259,14 +2264,8 @@ async fn credentials_are_checked_when_review_opens_and_only_once() {
         "{text}"
     );
     // The key may be set but unreadable here, so getting a new one is no fix.
-    assert!(
-        text.contains(if cfg!(windows) {
-            "Run $env:NVIDIA_API_KEY = '...' before deployment"
-        } else {
-            "Run export NVIDIA_API_KEY=... before deployment"
-        }),
-        "{text}"
-    );
+    assert!(text.contains("hidden input"), "{text}");
+    assert!(!text.contains("export NVIDIA_API_KEY="), "{text}");
     assert!(!text.contains("Get a key at"), "{text}");
 }
 
@@ -2318,13 +2317,16 @@ async fn review_reads_the_image_once_and_says_how_to_get_an_absent_one() {
     for (width, height) in [(160, 40), (80, 30)] {
         let text = flat(&screen(&wizard, width, height));
         assert!(text.contains("not present"), "{width}x{height}: {text}");
-        // The link wraps on a narrow screen.
-        let link = if width >= 100 {
-            "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"
-        } else {
-            "building-agent-images"
-        };
-        assert!(text.contains(link), "{width}x{height}: {text}");
+        // Source-pinned links can wrap within any path segment.
+        let unwrapped: String = text
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '"')
+            .collect();
+        assert!(
+            unwrapped.contains("/docs/build-deploy/build.md#building-agent-images"),
+            "{width}x{height}: {text}"
+        );
+        assert!(!text.contains("/blob/v1/"), "{text}");
         assert!(!text.contains("not checked"), "{width}x{height}: {text}");
         assert!(
             !text.contains("not been observed"),
@@ -2417,15 +2419,7 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
             let text = flat(&screen(&wizard, width, height));
             assert!(text.contains(expected), "{width}x{height}: {text}");
             let unset = status == ObservationStatus::Unavailable;
-            // The command may wrap on a narrow screen; the URL is one word.
-            let mut hints = vec!["https://build.nvidia.com/settings/api-keys"];
-            if width >= 100 {
-                hints.push(if cfg!(windows) {
-                    "$env:NVIDIA_API_KEY = '...'"
-                } else {
-                    "export NVIDIA_API_KEY=..."
-                });
-            }
+            let hints = ["https://build.nvidia.com/settings/api-keys", "hidden input"];
             for hint in hints {
                 assert_eq!(
                     text.contains(hint),
@@ -2434,6 +2428,7 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
                 );
             }
             assert!(!text.contains("non-interactive"), "{text}");
+            assert!(!text.contains("export NVIDIA_API_KEY="), "{text}");
         }
         if status == ObservationStatus::Unavailable {
             // The detail wraps under the value, not back to the label column.

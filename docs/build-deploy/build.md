@@ -27,7 +27,7 @@ The following table lists what this guide builds and which deployments need each
 | Artifact | Build Host | Result | Needed By |
 |---|---|---|---|
 | [Native bundle](#building-a-native-bundle) | The client's platform, or another target with its toolchain | `dist/PLATFORM`, with the CLI in `dist/PLATFORM/bin` | Every deployment, through the CLI or the [Rust SDK](../references/sdk.md) |
-| [Agent image](#building-agent-images) | Native Linux ARM64 or AMD64, matching the sandbox host | A local image such as `nc-fabric:openclaw`, selected by digest in `sandboxes.<name>.image.ref` | Every sandbox |
+| [Agent image](#building-agent-images) | Linux ARM64 or AMD64 engine, matching the sandbox host; includes Docker Desktop ARM64 for the macOS Hermes path | A local image such as `nc-fabric:openclaw`, selected by digest in `sandboxes.<name>.image.ref` | Every sandbox |
 | [Runtime image](#building-a-runtime-image) | Native Linux ARM64 or AMD64, matching the model host | A local image such as `nc-prototype-vllm:rust-v1`, selected by digest in `spec.services.<name>.image` | Deployments with a managed vLLM, Ollama, or llama.cpp service |
 
 Build the artifacts in the following order:
@@ -42,6 +42,9 @@ Build the artifacts in the following order:
 
 Run every command in this guide from the repository root.
 
+On Apple silicon, [onboarding on macOS from source](../get-started/macos.md) connects the native bundle build to a Hermes deployment on Docker Desktop's ARM64 Linux VM.
+It includes Terminal entry, SDK linker diagnostics, and matching OpenShell client selection.
+
 On Windows ARM64, follow [onboarding through WSL2](../get-started/windows-wsl.md) before running Cargo.
 Native Windows ARM64 bundles are unavailable; use the Linux ARM64 toolchain inside WSL2.
 The first `cargo ci tools` command compiles its runner before installing tools, which can take several minutes.
@@ -49,7 +52,7 @@ The first `cargo ci tools` command compiles its runner before installing tools, 
 | Artifact | Requirements |
 |---|---|
 | Native bundle | Rust 1.100.0, pinned in [rust-toolchain.toml](../../rust-toolchain.toml); Protocol Buffers compiler (`protoc`) 36.2; a C toolchain for the TLS dependencies |
-| Agent images | Docker with Buildx on a native Linux ARM64 or AMD64 host; a Docker image store that retains repository digests for local builds, such as the tested containerd store; Rust, which runs the image builder and source downloader |
+| Agent images | Docker with Buildx on native Linux ARM64 or AMD64, or Docker Desktop's ARM64 Linux VM for the [macOS Hermes path](../get-started/macos.md); a Docker image store that retains repository digests for local builds, such as the tested containerd store; Rust, which runs the image builder and source downloader |
 | Runtime images | Docker with Buildx on a Linux ARM64 or AMD64 host; a Docker daemon that uses the containerd image store; Rust for the Ollama and llama.cpp images, which fetch their pinned sources |
 
 Initial builds need network access.
@@ -192,6 +195,10 @@ The API version alone does not identify a source revision.
 A source-derived provider version prevents reuse of a stale OpenTofu provider installation.
 Repository text uses LF on every platform, so checkout newline conversion does not change source-derived provider versions.
 
+CLI guide links use the checkout's Git commit.
+When building a source archive without `.git`, set `NEMOCLAW_DOCS_REVISION` to the archive's full 40-character source commit before building.
+Without that metadata, the CLI identifies the guide in the original source and reports that the documentation revision is unavailable.
+
 Keep the bundle unchanged while an operation uses it.
 A Docker or Podman deployment keeps the gateway image pin of the bundle that created it.
 Before you operate it with a bundle built from a different pin, refer to [the change path](usage.md#choosing-the-change-path).
@@ -212,7 +219,8 @@ When building from source, build an image for each harness that the deployment r
 
 Before you build an agent image, check the following:
 
-- The build host has the [agent image requirements](#preparing-the-build-host): a native Linux host whose architecture, ARM64 or AMD64, matches the image you build.
+- The build host has the [agent image requirements](#preparing-the-build-host): a Linux engine whose architecture, ARM64 or AMD64, matches the image you build.
+  For Hermes on Apple silicon, follow the [Docker Desktop procedure](../get-started/macos.md#building-the-hermes-image).
 - The Docker image store retains repository digests for local builds; [check the store](#checking-the-docker-image-store).
 
 To build an agent image and select it, perform the following steps:

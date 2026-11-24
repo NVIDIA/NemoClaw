@@ -74,6 +74,7 @@ The [43-second lifecycle recording](docs/assets/terminal-lifecycle-verbose.mp4) 
 - [Author deployment YAML with onboarding](docs/get-started/onboard.md).
 - [Browse shipped examples by use case and environment](examples/README.md).
 - [Build NemoClaw from source](docs/build-deploy/build.md) for a custom revision or build-only target.
+- [Build and onboard on an Apple silicon Mac](docs/get-started/macos.md), starting in Terminal.
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).

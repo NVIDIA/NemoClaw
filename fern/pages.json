@@ -41,6 +41,11 @@
           "slug": "install"
         },
         {
+          "title": "Onboarding on macOS From Source",
+          "source": "docs/get-started/macos.md",
+          "slug": "macos"
+        },
+        {
           "title": "Onboarding on Windows Through WSL2",
           "source": "docs/get-started/windows-wsl.md",
           "slug": "windows-wsl"

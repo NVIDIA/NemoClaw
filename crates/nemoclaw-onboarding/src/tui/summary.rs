@@ -206,13 +206,11 @@ fn credential_row(
     needed_by_plan: bool,
 ) -> Row {
     let stage = if needed_by_plan { "plan" } else { "apply" };
-    let export = if cfg!(windows) {
-        format!("$env:{reference} = '...'")
-    } else {
-        format!("export {reference}=...")
+    let run = || {
+        format!(
+            "Interactive nemoclaw {stage} asks for this value with hidden input. Keep it out of shell history and YAML."
+        )
     };
-    let run =
-        || format!("Run {export} before deployment; interactive {stage} asks for missing values.");
     let observed = observations.get(&CredentialRequest {
         reference: reference.into(),
     });
@@ -229,9 +227,7 @@ fn credential_row(
             Some(
                 ProviderPreset::for_credential_reference(reference)
                     .and_then(ProviderPreset::key_url)
-                    .map_or_else(run, |url| {
-                        format!("Get a key at {url}, then run {export} before nemoclaw {stage}.")
-                    }),
+                    .map_or_else(run, |url| format!("Get a key at {url}. {}", run())),
             ),
         ),
         Some(ObservationStatus::Unknown) => (
@@ -298,10 +294,11 @@ fn image_row(sandbox: NamedSandbox<'_>, target: Option<CompatibilityStatus>, abs
         image.clone()
     };
     if absent && target != Some(CompatibilityStatus::Conflict) {
+        let build_guide = nemoclaw_sdk::documentation_url(BUILD_AGENT_IMAGES);
         return Row {
             status: Some(Status::attention("not present")),
             detail: Some(format!(
-                "Apply pulls it from its registry; to build one instead, see {BUILD_AGENT_IMAGES}"
+                "Apply pulls it from its registry; to build one instead, see {build_guide}"
             )),
             ..Row::plain("Image", value)
         };

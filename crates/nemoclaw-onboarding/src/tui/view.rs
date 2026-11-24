@@ -183,6 +183,10 @@ impl JourneyWizard {
                 Style::new().fg(MUTED),
             )));
             lines.push(Line::from(Span::styled(
+                "It is the only image discovered for this harness.",
+                Style::new().fg(MUTED),
+            )));
+            lines.push(Line::from(Span::styled(
                 "Press ← back to change it.",
                 Style::new().fg(MUTED),
             )));
