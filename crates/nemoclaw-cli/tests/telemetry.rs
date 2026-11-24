@@ -96,6 +96,7 @@ fn apply_and_destroy_send_one_record_and_plan_and_export_none() {
     let guard = NetworkGuard::new();
     let fixture = Fixture::new();
     let receiver = Receiver::new(false);
+    let mut sent = Vec::new();
     for (args, operation) in [
         (&["apply", "INPUT"][..], Some("apply")),
         (&["destroy"][..], Some("destroy")),
@@ -107,45 +108,31 @@ fn apply_and_destroy_send_one_record_and_plan_and_export_none() {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(1), "{args:?}");
+        guard.assert_no_connection(&format!("{args:?}"));
         let records = receiver.take();
         let Some(operation) = operation else {
             assert!(records.is_empty(), "{args:?}: {records:?}");
             continue;
         };
         assert_eq!(records.len(), 1, "{args:?}");
-        let envelope = &records[0];
-        assert_eq!(envelope["eventSchemaVer"], "5.0");
-        let record = &envelope["events"][0]["parameters"];
+        assert_eq!(records[0]["eventSchemaVer"], "5.0");
+        let record = records[0]["events"][0]["parameters"].clone();
         assert_eq!(record["operation"], operation);
         assert_eq!(record["outcome"], "failed");
         assert_eq!(record["effect"], "other");
+        assert_ne!(record["failureStage"], "none");
         assert_eq!(record["testLabel"], "");
-        assert_ne!(record["installId"], "unknown");
-        guard.assert_no_connection(&format!("{args:?}"));
+        sent.push(record);
     }
-}
-
-#[test]
-fn records_carry_the_configuration_and_failure_stage() {
-    let guard = NetworkGuard::new();
-    let fixture = Fixture::new();
-    let receiver = Receiver::new(false);
-    sending(&fixture, &guard, &["apply", "INPUT"], &receiver.url)
-        .output()
-        .unwrap();
-    sending(&fixture, &guard, &["destroy"], &receiver.url)
-        .output()
-        .unwrap();
-    let records = receiver.take();
-    let (apply, destroy) = (
-        &records[0]["events"][0]["parameters"],
-        &records[1]["events"][0]["parameters"],
-    );
+    // `apply` read its input; `destroy` found no saved intent. One install ID.
+    let (apply, destroy) = (&sent[0], &sent[1]);
     assert_ne!(apply["computeDriver"], "unknown");
-    assert_ne!(apply["failureStage"], "none");
-    assert_eq!(apply["firstRun"], true);
     assert_eq!(destroy["computeDriver"], "unknown");
-    assert_eq!(destroy["firstRun"], false);
+    assert_eq!(
+        (&apply["firstRun"], &destroy["firstRun"]),
+        (&true.into(), &false.into())
+    );
+    assert_ne!(apply["installId"], "unknown");
     assert_eq!(destroy["installId"], apply["installId"]);
 }
 

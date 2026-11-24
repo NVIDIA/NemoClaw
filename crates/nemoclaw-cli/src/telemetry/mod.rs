@@ -16,9 +16,12 @@ pub mod project;
 pub mod record;
 pub mod send;
 
-use nemoclaw_sdk::{Progress, config::Document};
+use nemoclaw_sdk::{Change, Progress, config::Document};
 use record::{Effect, FailureStage, NvidiaSource, Operation, Outcome, Record};
 use std::sync::{Arc, Mutex};
+
+/// A finished command's `outcome`, `effect` and `failureStage`.
+pub type Ended = (Outcome, Effect, FailureStage);
 
 /// The last stage event a command emitted, for `failureStage`.
 #[derive(Clone, Default)]
@@ -38,7 +41,6 @@ impl Stage {
                 Progress::Applying => Some(FailureStage::Apply),
                 Progress::Readiness => Some(FailureStage::Finish),
                 Progress::Destroying => Some(FailureStage::Destroy),
-                Progress::Exporting => Some(FailureStage::Other),
                 _ => None,
             };
             if let Some(stage) = stage
@@ -50,71 +52,66 @@ impl Stage {
         })
     }
 
-    /// The failure stage of a command that failed now: `validate` before any stage event.
-    fn failed_at(&self) -> FailureStage {
-        self.0
-            .lock()
-            .ok()
-            .and_then(|last| *last)
-            .unwrap_or(FailureStage::Validate)
+    /// A command that failed or was cancelled: its failure stage is the last
+    /// stage event, `validate` before any.
+    pub fn failed(&self, cancelled: bool) -> Ended {
+        let stage = self.0.lock().ok().and_then(|last| *last);
+        let outcome = if cancelled {
+            Outcome::Cancelled
+        } else {
+            Outcome::Failed
+        };
+        (
+            outcome,
+            Effect::Other,
+            stage.unwrap_or(FailureStage::Validate),
+        )
     }
 }
 
-/// How a command that may send a record ended.
-pub enum Ended {
-    /// The OpenTofu actions of each change of a finished `apply` or `destroy`.
-    Succeeded(Vec<Vec<String>>),
-    Failed,
-    Cancelled,
+/// A command that succeeded, with the `effect` of its changes.
+pub fn succeeded(operation: Operation, changes: &[Change]) -> Ended {
+    let actions = || changes.iter().flat_map(|change| change.actions.iter());
+    let effect = match operation {
+        Operation::Onboard => Effect::Authored,
+        Operation::Destroy => Effect::Teardown,
+        Operation::Apply if actions().all(|action| matches!(action.as_str(), "no-op" | "read")) => {
+            Effect::None
+        }
+        Operation::Apply if actions().all(|action| action == "create") => Effect::Initial,
+        Operation::Apply => Effect::Update,
+        Operation::Other => Effect::Other,
+    };
+    (Outcome::Succeeded, effect, FailureStage::None)
 }
 
-/// A finished command, with the document it read (or wrote, for `onboard`).
-pub struct Finished<'a> {
-    pub operation: Operation,
-    pub ended: Ended,
-    pub stage: &'a Stage,
-    pub duration: std::time::Duration,
-    pub document: Option<&'a Document>,
-}
-
-/// Sends the record of `finished` when `label` (from [`gate::check`]) allows it.
-pub async fn report(label: Option<String>, finished: Finished<'_>) {
+/// Sends the record of a finished command when `label` (from [`gate::check`])
+/// allows it. `document` is the one the command read, or wrote for `onboard`.
+pub async fn report(
+    label: Option<String>,
+    operation: Operation,
+    ended: Ended,
+    duration: std::time::Duration,
+    document: Option<&Document>,
+) {
     let Some(label) = label else { return };
-    let (version, build_kind) = record::build();
-    let identity = identity::load(identity::directory().as_deref(), version);
-    send::send(&build(
-        finished,
-        label,
-        version,
-        build_kind,
-        identity,
-        host::detect(),
-    ))
-    .await;
+    let identity = identity::load(identity::directory().as_deref(), record::build().0);
+    let host = host::detect();
+    let record = build(operation, ended, duration, document, label, identity, host);
+    send::send(&record).await;
 }
 
 fn build(
-    finished: Finished<'_>,
+    operation: Operation,
+    (outcome, effect, failure_stage): Ended,
+    duration: std::time::Duration,
+    document: Option<&Document>,
     test_label: String,
-    version: &str,
-    build_kind: record::BuildKind,
     identity: identity::Identity,
     host: host::Host,
 ) -> Record {
-    let (outcome, effect, failure_stage) = match &finished.ended {
-        Ended::Succeeded(changes) => (
-            Outcome::Succeeded,
-            effect(finished.operation, changes),
-            FailureStage::None,
-        ),
-        Ended::Failed => (Outcome::Failed, Effect::Other, finished.stage.failed_at()),
-        Ended::Cancelled => (
-            Outcome::Cancelled,
-            Effect::Other,
-            finished.stage.failed_at(),
-        ),
-    };
-    let config = project::config(finished.document);
+    let (version, build_kind) = record::build();
+    let config = project::config(document);
     Record {
         nvidia_source: NvidiaSource::Nemoclaw,
         install_id: identity.install_id,
@@ -123,11 +120,11 @@ fn build(
         build_kind,
         version: version.into(),
         previous_version: identity.previous_version,
-        operation: finished.operation,
+        operation,
         outcome,
         effect,
         failure_stage,
-        duration_ms: u64::try_from(finished.duration.as_millis()).unwrap_or(u64::MAX),
+        duration_ms: u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
         os: host.os,
         arch: host.arch,
         host_context: host.host_context,
@@ -145,46 +142,30 @@ fn build(
     }
 }
 
-/// The `effect` of a command that succeeded, from the actions of its changes.
-fn effect(operation: Operation, changes: &[Vec<String>]) -> Effect {
-    let actions = || changes.iter().flat_map(|actions| actions.iter());
-    match operation {
-        Operation::Onboard => Effect::Authored,
-        Operation::Destroy => Effect::Teardown,
-        Operation::Apply if actions().all(|action| matches!(action.as_str(), "no-op" | "read")) => {
-            Effect::None
-        }
-        Operation::Apply if actions().all(|action| action == "create") => Effect::Initial,
-        Operation::Apply => Effect::Update,
-        Operation::Other => Effect::Other,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use record::{Arch, Cloud, ComputeDriver, DeploymentSource, Hardware, HostContext, Os};
 
-    fn actions(words: &[&str]) -> Vec<String> {
-        words.iter().map(|word| word.to_string()).collect()
+    fn change(actions: &[&str]) -> Change {
+        Change {
+            resource: "r".into(),
+            actions: actions.iter().map(|action| action.to_string()).collect(),
+            reason: None,
+        }
     }
 
     #[test]
-    fn apply_effect_follows_the_change_actions() {
-        let (noop, read, create, update) = (
-            actions(&["no-op"]),
-            actions(&["read"]),
-            actions(&["create"]),
-            actions(&["update"]),
-        );
-        let replace = actions(&["delete", "create"]);
+    fn effect_follows_the_change_actions() {
+        let effect = |operation, changes: &[Change]| succeeded(operation, changes).1;
+        let (noop, read, create) = (change(&["no-op"]), change(&["read"]), change(&["create"]));
         for (changes, expected) in [
             (vec![], Effect::None),
             (vec![noop.clone(), read], Effect::None),
             (vec![create.clone(), create.clone()], Effect::Initial),
             (vec![create.clone(), noop], Effect::Update),
-            (vec![update], Effect::Update),
-            (vec![replace], Effect::Update),
+            (vec![change(&["update"])], Effect::Update),
+            (vec![change(&["delete", "create"])], Effect::Update),
         ] {
             assert_eq!(effect(Operation::Apply, &changes), expected, "{changes:?}");
         }
@@ -196,7 +177,8 @@ mod tests {
     fn failure_stage_is_the_last_stage_event() {
         let stage = Stage::default();
         let progress = stage.watch(Arc::new(|_| {}));
-        assert_eq!(stage.failed_at(), FailureStage::Validate);
+        let failed_at = || stage.failed(false).2;
+        assert_eq!(failed_at(), FailureStage::Validate);
         for (event, expected) in [
             (Progress::Validating, FailureStage::Initialize),
             (Progress::Planning, FailureStage::Plan),
@@ -206,27 +188,12 @@ mod tests {
             (Progress::Destroying, FailureStage::Destroy),
         ] {
             progress(event);
-            assert_eq!(stage.failed_at(), expected);
+            assert_eq!(failed_at(), expected);
         }
-    }
-
-    fn host() -> host::Host {
-        host::Host {
-            os: Os::Linux,
-            arch: Arch::Arm64,
-            host_context: HostContext::Native,
-            deployment_source: DeploymentSource::None,
-            cloud: Cloud::None,
-            hardware: Hardware::Unknown,
-        }
-    }
-
-    fn identity() -> identity::Identity {
-        identity::Identity {
-            install_id: "0f8fad5b-d9cb-469f-a165-70867728950e".into(),
-            first_run: true,
-            previous_version: "none".into(),
-        }
+        assert_eq!(
+            stage.failed(true),
+            (Outcome::Cancelled, Effect::Other, FailureStage::Destroy)
+        );
     }
 
     #[test]
@@ -235,20 +202,27 @@ mod tests {
             include_bytes!("../../../../examples/onboarding/openclaw.yaml").as_slice(),
         )
         .unwrap();
-        let stage = Stage::default();
+        let identity = identity::Identity {
+            install_id: "0f8fad5b-d9cb-469f-a165-70867728950e".into(),
+            first_run: true,
+            previous_version: "none".into(),
+        };
+        let host = host::Host {
+            os: Os::Linux,
+            arch: Arch::Arm64,
+            host_context: HostContext::Native,
+            deployment_source: DeploymentSource::None,
+            cloud: Cloud::None,
+            hardware: Hardware::Unknown,
+        };
         let record = build(
-            Finished {
-                operation: Operation::Onboard,
-                ended: Ended::Succeeded(vec![]),
-                stage: &stage,
-                duration: std::time::Duration::from_millis(1500),
-                document: Some(&document),
-            },
+            Operation::Onboard,
+            succeeded(Operation::Onboard, &[]),
+            std::time::Duration::from_millis(1500),
+            Some(&document),
             String::new(),
-            "1.0.0",
-            record::BuildKind::Release,
-            identity(),
-            host(),
+            identity,
+            host,
         );
         assert_eq!(record.operation, Operation::Onboard);
         assert_eq!(record.outcome, Outcome::Succeeded);
@@ -260,31 +234,5 @@ mod tests {
             record.harnesses,
             ["nvidia.fabric.openclaw".to_string()].into()
         );
-    }
-
-    #[test]
-    fn a_failure_without_a_document_sends_the_unread_configuration() {
-        let stage = Stage::default();
-        stage.watch(Arc::new(|_| {}))(Progress::Planning);
-        let record = build(
-            Finished {
-                operation: Operation::Destroy,
-                ended: Ended::Cancelled,
-                stage: &stage,
-                duration: std::time::Duration::ZERO,
-                document: None,
-            },
-            "qa-run:case:attempt-1".into(),
-            "1.0.0-dev",
-            record::BuildKind::Dev,
-            identity(),
-            host(),
-        );
-        assert_eq!(record.outcome, Outcome::Cancelled);
-        assert_eq!(record.effect, Effect::Other);
-        assert_eq!(record.failure_stage, FailureStage::Plan);
-        assert_eq!(record.compute_driver, ComputeDriver::Unknown);
-        assert!(record.harnesses.is_empty());
-        assert_eq!(record.test_label, "qa-run:case:attempt-1");
     }
 }

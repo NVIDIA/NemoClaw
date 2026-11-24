@@ -87,35 +87,30 @@ async fn run() -> ExitCode {
     };
     let mut reporter = progress::Reporter::new(cli.progress, cli.verbose, context.header());
     let stage = telemetry::Stage::default();
-    let (result, document) = dispatch::run(
+    let mut document = None;
+    let result = dispatch::run(
         cli,
         tokio::io::stdin(),
         &cancel,
         &force_stop,
         stage.watch(context.progress(reporter.callback())),
+        &mut document,
     )
     .await;
     reporter.finish();
     signals.abort();
-    let ended = match &result {
-        Ok(dispatch::CommandResult::Operation(result)) => Some(telemetry::Ended::Succeeded(
-            result
-                .changes
-                .iter()
-                .map(|change| change.actions.clone())
-                .collect(),
-        )),
-        Ok(dispatch::CommandResult::Authored(saved)) => saved
-            .is_some()
-            .then(|| telemetry::Ended::Succeeded(Vec::new())),
-        Ok(dispatch::CommandResult::Export(_)) => None,
-        // `onboard` sends a record only when it writes the configuration.
-        Err(_) if operation == Some(telemetry::record::Operation::Onboard) => None,
-        Err(error) if formatting::error_exit_code(error.as_ref()) == 130 => {
-            Some(telemetry::Ended::Cancelled)
+    let ended = operation.and_then(|operation| match &result {
+        Ok(dispatch::CommandResult::Operation(result)) => {
+            Some(telemetry::succeeded(operation, &result.changes))
         }
-        Err(_) => Some(telemetry::Ended::Failed),
-    };
+        Ok(dispatch::CommandResult::Authored(Some(_))) => {
+            Some(telemetry::succeeded(operation, &[]))
+        }
+        Ok(_) => None,
+        // `onboard` sends a record only when it writes the configuration.
+        Err(_) if operation == telemetry::record::Operation::Onboard => None,
+        Err(error) => Some(stage.failed(formatting::error_exit_code(error.as_ref()) == 130)),
+    });
     let duration = started.elapsed();
     let code = match result {
         Ok(result) => {
@@ -143,14 +138,7 @@ async fn run() -> ExitCode {
     };
     // After the output is written; the send gives up within its time limit.
     if let Some((operation, ended)) = operation.zip(ended) {
-        let finished = telemetry::Finished {
-            operation,
-            ended,
-            stage: &stage,
-            duration,
-            document: document.as_ref(),
-        };
-        telemetry::report(label, finished).await;
+        telemetry::report(label, operation, ended, duration, document.as_ref()).await;
     }
     code
 }

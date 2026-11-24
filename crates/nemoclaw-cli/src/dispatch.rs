@@ -17,24 +17,9 @@ pub(crate) enum CommandResult {
     Operation(Box<OperationResult>),
 }
 
-/// Runs the command, and hands back with its result the document it read:
-/// the input of `apply`, the saved intent of `destroy`, or what `onboard` wrote.
+/// Runs the command, and puts in `read` the document it read: the input of
+/// `apply`, the saved intent of `destroy`, or the file `onboard` wrote.
 pub(crate) async fn run<R: AsyncRead + Unpin>(
-    cli: Cli,
-    stdin: R,
-    cancel: &CancellationToken,
-    force_stop: &CancellationToken,
-    progress: Arc<dyn Fn(Progress) + Send + Sync>,
-) -> (
-    Result<CommandResult, Box<dyn std::error::Error>>,
-    Option<Document>,
-) {
-    let mut read = None;
-    let result = execute(cli, stdin, cancel, force_stop, progress, &mut read).await;
-    (result, read)
-}
-
-async fn execute<R: AsyncRead + Unpin>(
     cli: Cli,
     mut stdin: R,
     cancel: &CancellationToken,
@@ -168,10 +153,10 @@ mod tests {
                     ForbiddenInput,
                     &CancellationToken::new(),
                     &CancellationToken::new(),
-                    Arc::new(|_| {})
+                    Arc::new(|_| {}),
+                    &mut None,
                 )
                 .await
-                .0
                 .is_err()
             );
         }
@@ -191,9 +176,9 @@ mod tests {
                 &CancellationToken::new(),
                 &CancellationToken::new(),
                 Arc::new(|_| {}),
+                &mut None,
             )
             .await
-            .0
             .err()
             .unwrap();
             assert!(!error.to_string().contains("secret-sentinel"));
