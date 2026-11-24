@@ -192,27 +192,30 @@ Report a line that isn't in this table to the user unchanged, without guessing a
 
 ## 7. Plan
 
-Put the bundle's `bin` on `PATH`, export the credential variables, and plan:
+Use the revision-matched bundle to review the separate deployment. Finish the configuration edits in steps 3 to 6 before applying, even if plan succeeds without them.
 
-```sh
-nemoclaw plan --state-dir STATE deployment.yaml
-```
+1. Put the bundle's `bin` directory on `PATH`.
+2. Have the user set the referenced credential variables without sharing their values.
+3. Preview the deployment:
 
-A diagnostic names the field to fix; fix it in `deployment.yaml` and plan again.
-Finish every edit in steps 3 to 6 before the first apply, even when `plan` succeeds without them.
-If OpenShell rejects a resource during the first apply, the state can refuse both a corrected apply and `destroy`, and the user must then remove that deployment's containers, network, and volumes by hand.
-A plan with deferred work exits 0, so read its deferred items.
-A new managed gateway can defer gateway checks, and a missing local image can defer its Fabric compatibility check. With the Docker inspection engine, apply acquires and checks the image before creating the gateway. See [usage](../../../docs/build-deploy/usage.md#pulling-from-private-registries).
-Resolve actionable deferred items, such as missing credentials, before apply.
+   ```sh
+   nemoclaw plan --state-dir STATE deployment.yaml
+   ```
 
-When the plan is complete, give the user:
+4. Review the changes, diagnostics, and deferred items. Exit status zero does not mean the plan is complete. In JSON output (`-o json`), `complete: false` means work is deferred. An `unverified` advisory alone does not make the plan incomplete.
+5. Resolve operator prerequisites, such as missing credentials, invalid configuration, required image metadata, or an omitted inspection engine.
+6. Rerun plan after corrections.
+7. Identify the checks that must wait for apply. A new managed gateway can defer checks until it is reachable. An image absent from a configured Docker or Podman inspection engine can defer Fabric compatibility. On that pull path, apply [acquires and checks the image](../../../docs/build-deploy/usage.md#pulling-from-private-registries) before creating the gateway or configuring the deployment.
+8. Give the user the review handoff:
 
-- the final YAML and a diff from the export;
-- each report line and what you did with it: written, already handled, or lost;
-- the state directory, gateway port, subnet, and image;
-- the next steps: `apply`, then the verification in the [evaluation guide](../../../docs/get-started/migration.md#evaluating-v1-beside-the-existing-deployment).
+   - The prepared YAML and a diff from the export.
+   - Each report line and whether you wrote, retained, or could not carry over its setting.
+   - The state directory, gateway port, subnet, and image reference.
+   - The plan's completeness and any apply-time checks still deferred.
 
-Apply only when the user asks.
+9. Apply only at the user's request, after resolving operator prerequisites and reviewing any remaining apply-time checks. Follow the [evaluation guide](../../../docs/get-started/migration.md#evaluating-v1-beside-the-existing-deployment) for apply and verification.
+
+If apply fails or is interrupted, preserve the state directory and original bundle. Follow [Recovering an Interrupted Operation](../../../docs/build-deploy/usage.md#recovering-an-interrupted-operation) before retrying or removing resources. If the user chooses to retire the deployment, that procedure explains when a destroy preview with the same state can proceed.
 
 ## Runs
 

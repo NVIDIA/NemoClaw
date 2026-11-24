@@ -245,18 +245,11 @@ Otherwise, continue with the [next steps](#next-steps).
 
 ### Image Selection Requirements
 
-Plan selects only the image that `image.ref` names:
+`image.ref` names the exact image to deploy. A harness identifier does not select an image. The named image must contain the selected Fabric adapter and runtime metadata for its `fabric-agent-ctl` command, environment, default policy, and executable grants.
 
-- Select an explicit image that contains the chosen Fabric adapter.
-  A harness identifier does not select a different image.
-- The selected image must still exist on the compute daemon, and the sandbox compute daemon must have access to that exact image.
-- Plan requires the image's runtime metadata to supply its `fabric-agent-ctl` command, environment, default policy, and executable grants.
-- For an external gateway, also set the `engine` of its `docker` or `podman` target to the engine that contains that same immutable sandbox image.
-  NemoClaw does not assume the client host's Docker socket and uses this engine only for image inspection.
-  Using it does not authorize managing the external gateway.
-
-A missing image, missing metadata, or omitted external engine stops planning with a diagnostic.
-Load a matching image or rebuild it, then retry.
+- **Docker or Podman with an inspection engine:** If the image isn't on the selected engine, plan defers the Fabric compatibility check instead of pulling the image. On this path, apply [acquires and checks the image](usage.md#pulling-from-private-registries) before creating the gateway or configuring the deployment. For an external gateway, set the target's `engine` to the engine used for sandbox images. NemoClaw doesn't assume the client host's Docker socket, and the engine setting doesn't make NemoClaw manage the external gateway.
+- **Missing inspection prerequisites:** A missing inspection engine on an external Docker or Podman target is not the same as an absent image on a configured engine. Fix the engine setting before retrying plan. If an image is present but lacks the required runtime metadata, use a compatible image or rebuild it with its catalog label.
+- **Kubernetes or OpenShift:** Supply the [metadata bundle that matches the image digest](kubernetes.md). Missing or invalid metadata blocks planning. The cluster pulls the image; NemoClaw doesn't use the Docker or Podman pull path for these targets.
 
 ### Image Labels and Discovery
 
