@@ -5,6 +5,8 @@
 
 Install NemoClaw Agent Configs v0.1.0 from a CLI archive or use the macOS or Windows installer if the release includes it. Both methods keep the CLI, OpenTofu, providers, and schemas together.
 
+The CLI sends NVIDIA a usage record when `apply` or `destroy` finishes or `onboard` saves the configuration; to turn it off, set `NEMOCLAW_DISABLE_TELEMETRY=1`, as [usage telemetry](../security/security.md#usage-telemetry) describes.
+
 ## Choosing the Archive
 
 Choose the archive for the machine running `nemoclaw`, not for the sandbox or GPU host. The [v0.1.0 release](https://github.com/NVIDIA/NemoClaw/releases/tag/v0.1.0) is the source for the archives, `SHA256SUMS`, and `release-evidence.json`. Consult the release evidence for platform signing results and any unsigned exception. Code signing and macOS notarization are separate checks. Linux uses archive provenance, not OS code signing.
