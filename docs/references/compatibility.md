@@ -66,7 +66,7 @@ Refer to [derived agent images](../build-deploy/derived-images.md).
 Provider type names, inputs, and outputs can change between releases.
 Each release's [provider guide](provider.md) and schema snapshots describe that release's types.
 
-The examples under [`examples/hcl`](../../examples/hcl) are supported with the release they ship in: [`travel`](../../examples/hcl/travel/main.tf), which an integration scenario applies unchanged, and [`travel-team`](../../examples/hcl/travel-team/README.md).
+The examples under [`examples/features`](../../examples/features) are supported with the release they ship in: [`travel`](../../examples/features/travel/hcl/main.tf), which an integration scenario applies unchanged, and [`travel-team`](../../examples/features/travel-team/hcl/README.md).
 Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and `tofu destroy` deletes everything the HCL manages, but refuses to run while the HCL or the provider protects one of its resources, as [Tearing the Configuration Down](../build-deploy/opentofu-project.md#tearing-the-configuration-down) describes.
 
 ## Import, Adoption, and State Backends

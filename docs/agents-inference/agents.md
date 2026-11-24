@@ -11,7 +11,7 @@ An SDK parser accepting a field doesn't establish native support.
 ## Configuring the Agent and the Harness
 
 Set `harness.kind` to the exact Fabric adapter identifier and select an image containing that adapter.
-For example, the [OpenClaw configuration](../../examples/inference-tuning.yaml) uses `nvidia.fabric.openclaw`.
+For example, the [OpenClaw configuration](../../examples/features/inference-tuning.yaml) uses `nvidia.fabric.openclaw`.
 Identifiers are opaque strings.
 NemoClaw doesn't translate short aliases or maintain a native harness allowlist.
 
@@ -33,7 +33,7 @@ The other sections of Fabric's agent configuration go where they belong, under F
 | `telemetry` and `relay` | `harness` | Telemetry providers and Relay plugins; see [Hermes Relay tracing](#hermes-relay-tracing) |
 
 Sandboxes that share a harness definition through `harnessRef` share its `runtime` and `telemetry`, and each agent keeps its own instructions, tools, and skills.
-The [travel team example](../../examples/travel-team.yaml) gives four researchers one harness definition and each its own instructions.
+The [travel team example](../../examples/features/travel-team/travel-team.yaml) gives four researchers one harness definition and each its own instructions.
 The deployment sets the configuration's `metadata`, `harness`, and `models`, `runtime.artifacts`, `runtime.keep_state` where both the CLI's Fabric catalog and the image's adapter accept it, and `environment.provider` and `environment.workspace`.
 An authored section that sets one of those fields to another value fails planning.
 See [the SDK configuration projection](../../crates/nemoclaw-sdk/src/fabric_config.rs) for the deployment boundary.
@@ -56,7 +56,7 @@ A successful generic invocation doesn't imply that every result has an `output.r
 
 Each sandbox owns one agent runtime and its selected model and provider attachments.
 Use several sandbox definitions to isolate agents, credentials, and lifecycles.
-The [multiple-agent example](../../examples/multiple-models.yaml) demonstrates shared inference definitions with independent sandbox selections.
+The [multiple-agent example](../../examples/features/multiple-models.yaml) demonstrates shared inference definitions with independent sandbox selections.
 An agent's model choices don't restrict other processes within its sandbox beyond the sandbox's provider and network policy.
 
 ### Running One Agent Request
@@ -152,7 +152,7 @@ Set the invocation timeout in the harness's `runtime.timeout_seconds`, which Nem
 Omission uses Fabric's default.
 NemoClaw doesn't choose a native timeout from the adapter name.
 The adapter's own startup, connection, and shutdown timeouts belong in `harness.settings` under the schema supplied by Fabric.
-See the [full OpenClaw example](../../examples/full-featured-openclaw.yaml) and [timeout budgets](inference.md#understanding-timeout-budgets).
+See the [full OpenClaw example](../../examples/platforms/docker/vllm/remote/amd64/full-featured-openclaw.yaml) and [timeout budgets](inference.md#understanding-timeout-budgets).
 
 ## OpenClaw Tracing
 
@@ -226,7 +226,7 @@ Exported YAML and OpenTofu state retain only the reference.
 Registering a key doesn't configure the harness to send it.
 The HCL travel team configures Hermes to send the placeholder in its MCP `Authorization` header and gives the credential profile an enforced MCP tool allowlist.
 A smaller Docker deployment verified that the MCP service received the key on both the quote and booking requests.
-See the [HCL travel-team test result](../../examples/hcl/travel-team/README.md#booking-authentication).
+See the [HCL travel-team test result](../../examples/features/travel-team/hcl/README.md#booking-authentication).
 The YAML `kind: api` integration creates a full-access REST rule for the endpoint's path subtree.
 An additional sandbox MCP allowlist doesn't restrict that rule.
 Use the HCL example when OpenShell must enforce which tools the agent can call on a key-authenticated endpoint.
@@ -436,7 +436,7 @@ agent:
 ```
 
 Use `provider: tavily` for Tavily.
-The [web search example](../../examples/web-search.yaml) shows two agents sharing one definition.
+The [web search example](../../examples/features/web-search.yaml) shows two agents sharing one definition.
 Set the referenced variable on the applying host through your secret-management mechanism.
 NemoClaw registers the search API as an [`openshell_api`](../references/provider.md#api-credentials) credential: a workspace-scoped provider profile and credential-bearing provider in OpenShell.
 The sandbox receives a placeholder, `BRAVE_API_KEY` or `TAVILY_API_KEY` even when the host reference has another name, and OpenShell substitutes the real key for authorized requests to the search API.
@@ -470,7 +470,7 @@ Native tool behavior, account quota, and live search results require separate qu
 
 ## Pi Model Selection
 
-The [Pi example](../../examples/fabric-pi.yaml) selects a model by name.
+The [Pi example](../../examples/agents/fabric-pi.yaml) selects a model by name.
 For a model Pi doesn't ship, which includes every model served through OpenShell's inference gateway, Pi needs the model's API, context window, and output limit.
 With the pinned Fabric, Pi also fails a request with `pi_model_error` unless `input` and `cost` are set, although Fabric's schema lists them as optional:
 

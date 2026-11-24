@@ -90,7 +90,7 @@ fn the_station_example_is_discovered_without_sending_it_to_the_generic_gpu_runne
     fs::create_dir_all(root.path().join("crates/nemoclaw-e2e/tests/e2e/hcl/tests")).unwrap();
     for (path, contents) in [
         (
-            "examples/gtc-dc/openclaw-dgx-station.yaml",
+            "examples/platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml",
             document("docker", VLLM),
         ),
         (

@@ -265,9 +265,11 @@ fn docker_model_update_policy_does_not_change_runtime_resources() {
 
 #[test]
 fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
-    let document =
-        Document::parse(include_bytes!("../../../examples/spark/two-models.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../examples/platforms/docker/vllm/dgx-spark/two-models.yaml")
+            .as_slice(),
+    )
+    .unwrap();
     let generations: Generations = [
         "workspace",
         "provider",
@@ -702,9 +704,10 @@ fn gateway_readiness_observes_the_exact_docker_provider_container() {
             .starts_with("http://127.0.0.1:")
     );
     assert_eq!(readiness["owner"], document.metadata.uid);
-    let podman =
-        Document::parse(include_bytes!("../../../examples/managed-podman.yaml").as_slice())
-            .unwrap();
+    let podman = Document::parse(
+        include_bytes!("../../../examples/platforms/podman/managed-podman.yaml").as_slice(),
+    )
+    .unwrap();
     let graph = compile_runtime(&podman, &generations, "0.1.0").unwrap();
     assert!(
         graph["data"]
@@ -770,7 +773,7 @@ fn local_gateways_compile_the_sdk_image_pin_their_documents_do_not_name() {
         .into();
     for source in [
         include_str!("fixtures/config/spark.yaml"),
-        include_str!("../../../examples/managed-podman.yaml"),
+        include_str!("../../../examples/platforms/podman/managed-podman.yaml"),
     ] {
         let document = Document::parse(source.as_bytes()).unwrap();
         let intent = serde_json::to_value(&document).unwrap();
@@ -786,8 +789,8 @@ fn local_gateways_compile_the_sdk_image_pin_their_documents_do_not_name() {
 #[test]
 fn portable_container_memory_limits_cover_shared_memory_and_recipe_preparation_on_docker() {
     for source in [
-        include_str!("../../../examples/spark/vllm.yaml"),
-        include_str!("../../../examples/managed-ollama-gpu.yaml"),
+        include_str!("../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"),
+        include_str!("../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama-gpu.yaml"),
         include_str!("fixtures/config/inline-recipe.yaml"),
     ] {
         let mut input: Value = serde_saphyr::from_str(source).unwrap();

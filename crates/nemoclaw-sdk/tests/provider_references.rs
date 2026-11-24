@@ -9,7 +9,7 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 
 fn input() -> Value {
-    crate::support::example("fabric-openclaw.yaml")
+    crate::support::example("agents/fabric-openclaw.yaml")
 }
 // Move the referenced deployment definition onto its route, which then names it.
 fn inline(mut value: Value) -> Value {
@@ -167,9 +167,9 @@ fn references_reject_missing_names_shadowing_and_distinct_inline_instances() {
 #[test]
 fn inline_managed_providers_reuse_named_service_runtime_and_defaults() {
     for input in [
-        include_str!("../../../examples/managed-ollama.yaml"),
-        include_str!("../../../examples/spark/vllm.yaml"),
-        include_str!("../../../examples/spark/remote-vllm.yaml"),
+        include_str!("../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"),
+        include_str!("../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"),
+        include_str!("../../../examples/platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml"),
     ] {
         let value: Value = serde_saphyr::from_str(input).unwrap();
         let shared = Document::parse(input.as_bytes()).unwrap();
@@ -207,7 +207,7 @@ fn inline_managed_providers_reuse_named_service_runtime_and_defaults() {
 #[test]
 fn selected_route_provider_updates_its_declared_scope_without_flattening() {
     let mut document = nemoclaw_sdk::config::Document::parse(
-        include_bytes!("../../../examples/multiple-providers.yaml").as_slice(),
+        include_bytes!("../../../examples/features/multiple-providers.yaml").as_slice(),
     )
     .unwrap();
     let sandbox = document.sandbox("researcher").unwrap();

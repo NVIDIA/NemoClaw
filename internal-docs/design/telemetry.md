@@ -168,7 +168,10 @@ NemoClaw does not detect the platform itself.
 A host without a valid marker is never counted as Brev.
 The image owners must set the marker.
 For Brev, the owners of the [brevdev/nemoclaw-image](https://github.com/brevdev/nemoclaw-image) repository set it.
-Host detection, which [#14681](https://github.com/NVIDIA/NemoClaw/issues/14681) tracks, will define the marker's name and location.
+
+The marker is the file `/etc/nemoclaw/deployment-source`.
+It holds one word on one line, such as `brev`.
+A well-formed word is up to 32 lowercase letters, digits, and `-`, starting with a letter.
 
 ## Record Rules
 

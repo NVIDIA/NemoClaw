@@ -18,7 +18,10 @@ fn parse(value: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
 /// the instructions for building one.
 #[test]
 fn omitted_or_empty_image_is_rejected_on_every_runtime() {
-    for name in ["fabric-openclaw.yaml", "managed-podman.yaml"] {
+    for name in [
+        "agents/fabric-openclaw.yaml",
+        "platforms/podman/managed-podman.yaml",
+    ] {
         for image in [None, Some(json!({})), Some(json!({"ref": ""}))] {
             let mut document = input(name);
             let sandbox = document["spec"]["sandboxes"]["assistant"]
@@ -45,9 +48,9 @@ fn omitted_or_empty_image_is_rejected_on_every_runtime() {
 #[test]
 fn defaulted_and_exported_documents_name_no_gateway_image() {
     for name in [
-        "spark/vllm.yaml",
-        "managed-ollama.yaml",
-        "managed-podman.yaml",
+        "platforms/docker/vllm/dgx-spark/vllm.yaml",
+        "platforms/docker/ollama/dgx-spark/managed-ollama.yaml",
+        "platforms/podman/managed-podman.yaml",
     ] {
         let document = parse(&input(name)).unwrap();
         let defaulted = serde_json::to_value(&document).unwrap();
@@ -63,7 +66,7 @@ fn defaulted_and_exported_documents_name_no_gateway_image() {
 
 #[test]
 fn application_references_do_not_enable_yaml_anchors_aliases_or_merges() {
-    let original = include_str!("../../../examples/fabric-openclaw.yaml");
+    let original = include_str!("../../../examples/agents/fabric-openclaw.yaml");
     for replacement in [
         "metadata: &metadata",
         "metadata: *metadata",
@@ -127,7 +130,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
 
 #[test]
 fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
-    let baseline = input("local.yaml");
+    let baseline = input("agents/local.yaml");
     for path in [
         "/apiVersion",
         "/kind",
@@ -161,7 +164,7 @@ fn required_fields_and_mutually_exclusive_provider_forms_are_rejected() {
 
 #[test]
 fn only_route_settings_permit_nested_null_values() {
-    let mut value = input("fabric-pi.yaml");
+    let mut value = input("agents/fabric-pi.yaml");
     let overrides = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides";
     value.pointer_mut(overrides).unwrap()["settings"] = json!({});
     let pointer = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/settings";

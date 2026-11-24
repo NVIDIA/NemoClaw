@@ -10,10 +10,10 @@ Use NemoClaw Agent Configs v0.1.0 to deploy one OpenClaw agent and verify a repl
 Use a shell on Linux or macOS with `curl`, `jq`, and `uuidgen`. Complete the [first-deployment prerequisites](prerequisites.md#before-the-first-deployment) before changing the gateway. Run the commands from a new directory on the client host. Keep the CLI, example, schema, and image on the same release.
 
 1. [Install the v0.1.0 CLI bundle](install.md).
-2. Download the [tagged OpenClaw example](https://github.com/NVIDIA/NemoClaw/blob/v0.1.0/examples/openclaw.yaml) as `deployment.yaml`.
+2. Download the [tagged OpenClaw example](https://github.com/NVIDIA/NemoClaw/blob/v0.1.0/examples/agents/openclaw.yaml) as `deployment.yaml`.
 
    ```sh
-   curl -fL https://raw.githubusercontent.com/NVIDIA/NemoClaw/v0.1.0/examples/openclaw.yaml -o deployment.yaml
+   curl -fL https://raw.githubusercontent.com/NVIDIA/NemoClaw/v0.1.0/examples/agents/openclaw.yaml -o deployment.yaml
    ```
 
 3. Record the OpenClaw image's `NAME@sha256:DIGEST` reference from the image table in the [v0.1.0 release notes on GitHub](https://github.com/NVIDIA/NemoClaw/releases/tag/v0.1.0). Do not use the example's placeholder or a mutable image tag.

@@ -476,7 +476,7 @@ fn harness_selection_does_not_determine_service_ownership() {
         "opencode",
     ] {
         for fixture in [
-            include_str!("../../../examples/spark/vllm.yaml"),
+            include_str!("../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"),
             include_str!("fixtures/config/managed-ollama.yaml"),
         ] {
             let mut document = Document::parse(fixture.as_bytes()).unwrap();
@@ -496,8 +496,10 @@ fn harness_selection_does_not_determine_service_ownership() {
             );
         }
     }
-    let mut claude =
-        Document::parse(include_str!("../../../examples/spark/vllm.yaml").as_bytes()).unwrap();
+    let mut claude = Document::parse(
+        include_str!("../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml").as_bytes(),
+    )
+    .unwrap();
     claude
         .spec
         .sandboxes
@@ -615,7 +617,7 @@ fn fabric_harness_identifiers_are_extensible_and_validated() {
 #[test]
 fn arbitrary_adapter_features_are_preserved_for_fabric_validation() {
     let mut tree: Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/full-featured-openclaw.yaml"
+        "../../../examples/platforms/docker/vllm/remote/amd64/full-featured-openclaw.yaml"
     ))
     .unwrap();
     // The selected image's Fabric schema, not a compiled name list, owns these

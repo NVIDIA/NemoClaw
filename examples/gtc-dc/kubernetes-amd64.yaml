@@ -1,1 +1,1 @@
-../kubernetes/hosted-nvidia.yaml
+../platforms/kubernetes/hosted-inference/hosted-nvidia.yaml
