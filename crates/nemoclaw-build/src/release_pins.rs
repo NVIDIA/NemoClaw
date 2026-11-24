@@ -191,6 +191,45 @@ mod tests {
     use serde_json::{Value, json};
 
     #[test]
+    fn each_release_exposes_its_own_host_client_pin_and_archives() {
+        let source: Value = serde_json::from_str(include_str!("../../../versions.json")).unwrap();
+        let current = source["openshell"].as_str().unwrap();
+        let inventory = serde_json::to_vec(&json!([{
+            "name": "hermes", "repository": "registry.example/hermes",
+            "index_digest": format!("sha256:{}", "a".repeat(64)),
+        }]))
+        .unwrap();
+        // Synthetic release fixtures: two share a client; one requires another.
+        for (tag, required) in [
+            ("v1.0.0-fixture", current),
+            ("v1.0.1-fixture", current),
+            ("v2.0.0-fixture", "999.0.0-fixture"),
+        ] {
+            let mut fixture = source.clone();
+            fixture["openshell"] = json!(required);
+            for tools in fixture["platforms"].as_object_mut().unwrap().values_mut() {
+                if let Some(archive) = tools.get_mut("openshell") {
+                    archive["url"] =
+                        json!(format!("https://releases.example/{required}/client.tar.gz"));
+                }
+            }
+            let generated: Value = serde_json::from_str(
+                &pins(&serde_json::to_vec(&fixture).unwrap(), &inventory, tag).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(generated["release"], tag);
+            assert_eq!(
+                generated["components"]["openshellClient"]["version"],
+                required
+            );
+            assert_eq!(
+                generated["components"]["openshellClient"]["archives"]["darwin_arm64"],
+                fixture["platforms"]["darwin_arm64"]["openshell"]
+            );
+        }
+    }
+
+    #[test]
     fn input_that_leaves_a_component_unpinned_or_ambiguous_pins_nothing() {
         let versions: Value = serde_json::from_str(include_str!("../../../versions.json")).unwrap();
         let image = |name: &str, digest: &str| {
