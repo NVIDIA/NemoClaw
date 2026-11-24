@@ -506,8 +506,10 @@ jobs:
           New-Item -ItemType Directory "$older/retired" | Out-Null
           Set-Content "$older/retired/only-in-older.txt" 'Only the older build installs this file.'
           $helper = "$env:RUNNER_TEMP/windows-installer.exe"
+          # The release's high compression takes over a minute here and installs
+          # the same files, so these builds use faster levels.
           & $helper build --bundle $older --version 0.0.1 --compression none --output "$env:RUNNER_TEMP/msi/older.msi"
-          & $helper build --bundle "dist/$env:TEST_PLATFORM" --output "$env:RUNNER_TEMP/msi/nemoclaw.msi"
+          & $helper build --bundle "dist/$env:TEST_PLATFORM" --compression mszip --output "$env:RUNNER_TEMP/msi/nemoclaw.msi"
       - name: Install, upgrade, downgrade, and uninstall
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
