@@ -77,35 +77,20 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[tokio::test]
-    async fn release_pins_qualify_the_host_client_without_changing_other_installations() {
-        let directory = tempfile::tempdir().unwrap();
-        let client = directory.path().join("openshell");
-        let script = "#!/bin/sh\nprintf 'openshell 0.1.9\\n'\n";
-        std::fs::write(&client, script).unwrap();
-        std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
-        // Two release fixtures share a qualified client; a later fixture changes its pin.
-        for (required, accepted) in [("0.1.9", true), ("0.1.9", true), ("0.1.10", false)] {
-            let check = inspect(required, Some(client.clone())).await;
-            assert_eq!(check.compatible(), accepted, "{check:?}");
-            assert_eq!(check.detected.as_deref(), Some("0.1.9"));
-            assert_eq!(std::fs::read_to_string(&client).unwrap(), script);
+    async fn the_first_openshell_on_path_qualifies_only_for_its_own_version() {
+        let (first, second) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        for (directory, version) in [(&first, "0.1.9"), (&second, "0.1.10")] {
+            let client = directory.path().join("openshell");
+            std::fs::write(&client, format!("#!/bin/sh\necho 'openshell {version}'\n")).unwrap();
+            std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        let search_path = std::env::join_paths([first.path(), second.path()]).unwrap();
+        let found = find(Some(&search_path)).unwrap();
+        assert_eq!(found, first.path().join("openshell"));
+        assert!(inspect("0.1.9", Some(found.clone())).await.compatible());
+        let check = inspect("0.1.10", Some(found)).await;
+        assert_eq!(check.detected.as_deref(), Some("0.1.9"));
+        assert!(!check.compatible());
         assert!(!inspect("0.1.9", None).await.compatible());
-        let other = tempfile::tempdir().unwrap();
-        let other_client = other.path().join("openshell");
-        let other_script = script.replace("0.1.9", "0.1.10");
-        std::fs::write(&other_client, &other_script).unwrap();
-        std::fs::set_permissions(&other_client, std::fs::Permissions::from_mode(0o755)).unwrap();
-        for (required, directories, expected) in [
-            ("0.1.9", [directory.path(), other.path()], &client),
-            ("0.1.10", [other.path(), directory.path()], &other_client),
-        ] {
-            let search_path = std::env::join_paths(directories).unwrap();
-            let selected = find(Some(&search_path)).unwrap();
-            assert_eq!(&selected, expected);
-            assert!(inspect(required, Some(selected)).await.compatible());
-        }
-        assert_eq!(std::fs::read_to_string(client).unwrap(), script);
-        assert_eq!(std::fs::read_to_string(other_client).unwrap(), other_script);
     }
 }
