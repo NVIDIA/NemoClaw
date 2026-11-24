@@ -1,0 +1,61 @@
+{
+  "SPDX-FileCopyrightText": "Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "kind": "nemoclaw-reviewed-openshell-runtime-evidence-v1",
+  "releaseTag": "v0.1.10",
+  "source": {
+    "repository": "ai-openshell/openshell",
+    "commit": "152c59d3178039e3fbb4a5595f9fff7216a6be92",
+    "url": "https://github.com/ai-openshell/openshell/tree/152c59d3178039e3fbb4a5595f9fff7216a6be92"
+  },
+  "release": {
+    "id": 456936095,
+    "url": "https://github.com/ai-openshell/openshell/releases/tag/v0.1.10",
+    "publishedAt": "2026-11-24T15:12:52Z"
+  },
+  "supervisor": {
+    "image": "quay.io/ai-openshell/supervisor@sha256:3bfb2f5a145a9e93495870682bf5fda242df76e0f3017a9279355e7606fbf3f2"
+  },
+  "artifacts": {
+    "cli": {
+      "asset": "openshell-x86_64-unknown-linux-musl.tar.gz",
+      "assetId": 787679608,
+      "url": "https://github.com/ai-openshell/openshell/releases/download/v0.1.10/openshell-x86_64-unknown-linux-musl.tar.gz",
+      "archiveBytes": 10993107,
+      "archiveSha256": "2467a09d839bb9af43bf1d649d72e77e596578cbd8e567b6e55a0c504c222f5f",
+      "binaryBytes": 28114344,
+      "binarySha256": "d5a9917ac5b774f15f98b3a5f5a5ccc5297bbe5a0bcc81dac7e12244c44e6c70",
+      "member": "openshell"
+    },
+    "gateway": {
+      "asset": "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+      "assetId": 787679613,
+      "url": "https://github.com/ai-openshell/openshell/releases/download/v0.1.10/openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+      "archiveBytes": 49444270,
+      "archiveSha256": "2d609a3fa586aacdd29834f66379bb6ec565549a6dc572285115d2c129d078ac",
+      "binaryBytes": 122301520,
+      "binarySha256": "ae8aeaf1e498ae605bc81953a941daffe0fd150c6b69ac46df90341c34f7619c",
+      "member": "openshell-gateway"
+    },
+    "standaloneSandbox": {
+      "asset": "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+      "assetId": 787679626,
+      "url": "https://github.com/ai-openshell/openshell/releases/download/v0.1.10/openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+      "archiveBytes": 4742247,
+      "archiveSha256": "4ee38fbf38a9d3f383f958f868f1eefabb31f1e095d4e08f44a1394ab0a0b95c",
+      "binaryBytes": 11770160,
+      "binarySha256": "31c58b2d4acadd1fd9b13033522e77b55bd80e00fe51e786579b00d9597a4900",
+      "member": "openshell-sandbox"
+    }
+  },
+  "verification": {
+    "reviewedAt": "2026-11-24",
+    "archiveChecksumsMatchedReleaseManifests": true,
+    "archiveBytesAndExtractedMemberHashesVerified": true,
+    "supervisorDigestMatchedRegistryManifest": true,
+    "ociSignaturesIndependentlyVerified": false,
+    "reproducibleBinaryRebuild": false,
+    "runtimeQualification": false
+  },
+  "scope": "Inert review evidence for the MCP runtime mapping test. This fixture does not authorize an installer release or alter upgrade admission."
+}

@@ -25,6 +25,7 @@ const MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS = [
   "0.1.5",
   "0.1.7",
   "0.1.9",
+  "0.1.10",
 ] as const;
 export type ManagedImageHarnessOpenShellVersion =
   (typeof MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS)[number];
