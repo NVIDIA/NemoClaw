@@ -14,14 +14,14 @@ Start with the product overview, then use the architecture and ecosystem guides 
 
 | Reader goal | Guide |
 |---|---|
-| Understand the product and choose an interface | [NemoClaw Overview](about/overview.md) |
+| Understand the product and choose an interface | [NemoClaw Agent Configs Overview](about/overview.md) |
 | Follow the components and deployment flow | [Architecture Overview](about/architecture-overview.md) |
 | Distinguish upstream responsibilities | [Ecosystem](about/ecosystem.md) |
 | Track NemoClaw Agent Configs releases | [Release Notes](changelog/overview.md) |
 
 ## Getting Started
 
-Check the prerequisites before following the first deployment; migration is a separate path for existing users.
+Start with the prerequisites for your first deployment. If you use NemoClaw v0, evaluate NemoClaw Agent Configs in a separate deployment without changing the original.
 
 | Reader goal | Guide |
 |---|---|
@@ -29,7 +29,7 @@ Check the prerequisites before following the first deployment; migration is a se
 | Install, upgrade, or uninstall a release's CLI | [Installing the CLI](get-started/install.md) |
 | Deploy OpenClaw with existing services and verify a reply | [First Deployment](get-started/first-deployment.md) |
 | Write YAML for a separate deployment | [Authoring Deployment YAML With Onboarding](get-started/onboard.md) |
-| Evaluate NemoClaw v0 settings without changing the original deployment | [Evaluate Agent Configs Alongside NemoClaw v0](get-started/migration.md) |
+| Evaluate NemoClaw v0 settings without changing the original deployment | [Evaluate NemoClaw Agent Configs Alongside NemoClaw v0](get-started/migration.md) |
 
 ## Building and Deploying
 
