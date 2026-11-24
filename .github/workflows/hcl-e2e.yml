@@ -268,7 +268,7 @@ jobs:
           read -ra names <<< "$RUNTIMES"
           {
             for name in "${names[@]}"; do
-              { sed -n '1{/^# syntax=/p}; /^FROM /p' "image/$name/Dockerfile"; echo 'RUN true'; } |
+              { sed -n '1{/^# syntax=/p;}; /^ARG /p; /^FROM /p' "image/$name/Dockerfile"; echo 'RUN true'; } |
                 docker buildx build --quiet --output type=cacheonly - &&
                 echo "Pulled the $name base after ${SECONDS}s."
             done
