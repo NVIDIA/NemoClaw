@@ -19,7 +19,7 @@ Until its first release, [build it from source](docs/build-deploy/build.md).
 <a href="docs/get-started/first-deployment.md">
   <picture>
     <source media="(max-width: 700px)" srcset="docs/assets/deployment-workflow-mobile.svg">
-    <img src="docs/assets/deployment-workflow.svg" alt="First deployment tutorial. Build the v1 bundle and matching agent images. Define agents, models, sandbox settings, network access, and volume mounts in deployment.yaml. Run nemoclaw plan, then nemoclaw apply. NeMo Fabric starts each agent in its own OpenShell sandbox.">
+    <img src="docs/assets/deployment-workflow.svg" alt="Define, plan, and apply a NemoClaw deployment. Open the first-deployment tutorial.">
   </picture>
 </a>
 

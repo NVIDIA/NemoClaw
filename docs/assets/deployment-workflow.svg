@@ -1,37 +1,93 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="326" viewBox="0 0 960 326" role="img" aria-labelledby="title desc">
+<?xml version="1.0" encoding="UTF-8"?>
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<title id="title">Deploy agents with NemoClaw</title>
-<desc id="desc">Build the v1 bundle and matching agent images. Define agents, models, sandbox settings, network access, and volume mounts in YAML. Preview and apply the deployment. Inside each OpenShell sandbox, NeMo Fabric configures and starts the agent.</desc>
-<style>
-text{font-family:Arial,Helvetica,sans-serif;fill:#f4f7fb}
-.heading{font-weight:700;font-size:30px}
-.step{font-weight:700;font-size:21px}
-.body{font-size:17px;fill:#c8d2e1}
-.code{font-family:Menlo,monospace;font-size:15px;fill:#dce4ee}
-.card{fill:#172033;stroke:#ff973c;stroke-width:2}
-.wire{stroke:#ff973c;stroke-width:2;fill:none}
-.boundary{fill:#111a28;stroke:#68778c;stroke-width:1.3}
-.small{font-size:17px;font-weight:700;fill:#f4f7fb}
-</style>
-<rect width="100%" height="100%" rx="12" fill="#0b1018"/>
-<text x="28" y="49" class="heading">Deploy agents with NemoClaw</text>
-<path class="wire" d="M264 131h20"/>
-<rect x="28" y="78" width="236" height="106" rx="9" class="card"/>
-<text x="44" y="111" class="step">Get NemoClaw</text>
-<text x="44" y="141" class="body">Build the v1 bundle and</text>
-<text x="44" y="164" class="body">matching agent images.</text>
-<path class="wire" d="M608 131h20"/>
-<rect x="284" y="78" width="324" height="106" rx="9" class="card"/>
-<text x="300" y="111" class="step">Define the deployment</text>
-<text x="300" y="141" class="body">Agents, models, sandbox settings,</text>
-<text x="300" y="164" class="body">network access, and volume mounts.</text>
-<rect x="628" y="78" width="304" height="106" rx="9" class="card"/>
-<text x="642" y="111" class="step">Preview and deploy</text>
-<text x="642" y="141" class="code">nemoclaw plan deployment.yaml</text>
-<text x="642" y="164" class="code">nemoclaw apply deployment.yaml</text>
-<path class="wire" d="M763 184v32"/>
-<rect x="313" y="216" width="619" height="84" rx="9" class="boundary"/>
-<text x="333" y="248" class="small">One OpenShell sandbox per agent</text>
-<text x="333" y="278" class="body"><tspan font-weight="bold" fill="#f4f7fb">NeMo Fabric</tspan> configures and starts the agent.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="326" viewBox="0 0 960 326" role="img" aria-labelledby="title">
+<title id="title">Define → Plan → Apply</title>
+  <defs>
+    <linearGradient id="background" x2="1" y2="1"><stop stop-color="#171715"/><stop offset=".55" stop-color="#0b0c0a"/><stop offset="1" stop-color="#070908"/></linearGradient>
+    <radialGradient id="halo"><stop stop-color="#76b900" stop-opacity=".09"/><stop offset="1" stop-color="#76b900" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pool"><stop stop-color="#a4ef37" stop-opacity=".45"/><stop offset=".35" stop-color="#76b900" stop-opacity=".15"/><stop offset="1" stop-color="#76b900" stop-opacity="0"/></radialGradient>
+    <linearGradient id="metal" x2=".8" y2="1"><stop stop-color="#f0e7d2"/><stop offset=".27" stop-color="#b9ac8e"/><stop offset=".65" stop-color="#625b49"/><stop offset="1" stop-color="#c7b993"/></linearGradient>
+    <linearGradient id="glass" x2=".8" y2="1"><stop stop-color="#30312b"/><stop offset=".52" stop-color="#181b15"/><stop offset="1" stop-color="#0c100b"/></linearGradient>
+    <linearGradient id="plate" x2="1" y2="1"><stop stop-color="#2a2f25"/><stop offset="1" stop-color="#10160d"/></linearGradient>
+    <linearGradient id="green" x2=".85" y2="1"><stop stop-color="#dcffa4"/><stop offset=".45" stop-color="#9cde36"/><stop offset="1" stop-color="#76b900"/></linearGradient>
+    <linearGradient id="side" x2="1" y2="1"><stop stop-color="#76b900"/><stop offset="1" stop-color="#263e0a"/></linearGradient>
+    <linearGradient id="wire"><stop stop-color="#494333" stop-opacity="0"/><stop offset=".55" stop-color="#8b7e5c"/><stop offset="1" stop-color="#c2b18a"/></linearGradient>
+  <linearGradient id="champagne" x1="0" y1="0" x2=".8" y2="1"><stop stop-color="#f3e9d0"/><stop offset=".35" stop-color="#cbbb91"/><stop offset=".7" stop-color="#77694c"/><stop offset="1" stop-color="#d8cba9"/></linearGradient>
+<radialGradient id="warm-light"><stop stop-color="#d0ba80" stop-opacity=".055"/><stop offset="1" stop-color="#c6b179" stop-opacity="0"/></radialGradient>
+</defs>
+<rect width="960" height="326" rx="16" fill="url(#background)"/>
+<rect x=".5" y=".5" width="959" height="325" rx="15.5" fill="none" stroke="#464033" stroke-opacity=".5"/>
+
+<ellipse cx="773" cy="157" rx="196" ry="154" fill="url(#halo)"/>
+<ellipse cx="182" cy="135" rx="144" ry="120" fill="url(#halo)" opacity=".28"/>
+<path d="M80 216H880" fill="none" stroke="#807458" stroke-opacity=".17"/>
+<g fill="#c1b08a"><circle cx="184" cy="216" r="1.6" opacity=".45"/><circle cx="480" cy="216" r="1.6" opacity=".65"/><circle cx="776" cy="216" r="1.6"/></g>
+<g fill="none" stroke="url(#wire)" stroke-width="1.2"><path d="M278 134H356m-6.4-5.6 6.4 5.6-6.4 5.6"/><path d="M598 134H676m-6.4-5.6 6.4 5.6-6.4 5.6"/></g>
+  <!-- A configuration sheet, with structure represented by strokes. -->
+  <g transform="translate(184 129.4) scale(.704)">
+    <circle r="111" fill="url(#warm-light)"/>
+    <circle r="108" fill="none" stroke="#a19065" stroke-opacity=".10" stroke-width=".8"/>
+    <path d="M-93-55A108 108 0 0 1 43-99" fill="none" stroke="url(#champagne)" stroke-width="1" stroke-opacity=".48"/>
+    <g fill="#d7c8a2" fill-opacity=".72"><circle cx="-93" cy="-55" r="2.1"/><circle cx="43" cy="-99" r="1.8"/></g>
+
+    <rect x="-48" y="-68" width="116" height="146" rx="6" fill="#10150e" stroke="#514c3f"/>
+    <rect x="-58" y="-78" width="116" height="146" rx="6" fill="url(#glass)" stroke="url(#metal)" stroke-width="1.5"/>
+    <path d="M-57-55H57" stroke="#a4b398" stroke-opacity=".16"/>
+    <circle cx="-42" cy="-66" r="2" fill="#76b900"/>
+    <circle cx="-34" cy="-66" r="2" fill="#64715a"/>
+    <circle cx="-26" cy="-66" r="2" fill="#514c3f"/>
+    <g fill="none" stroke-linecap="round" stroke-width="4">
+      <path d="M-35-31H-4" stroke="#a4db58"/>
+      <path d="M-22-12H21M-22 7H10" stroke="#c7c2b5"/>
+      <path d="M-35 27H-8" stroke="#a4db58"/>
+      <path d="M-22 46H27" stroke="#c7c2b5"/>
+    </g>
+    <path d="M-35-13V7M-35 45V47" stroke="#8c8168" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  <!-- The same deployment is previewed as separated, inspectable layers. -->
+  <g transform="translate(480 124.6) scale(.704)" stroke-linejoin="round">
+    <circle r="111" fill="url(#warm-light)"/>
+    <circle r="108" fill="none" stroke="#a19065" stroke-opacity=".10" stroke-width=".8"/>
+    <path d="M-72-80A108 108 0 0 1 103 32" fill="none" stroke="url(#champagne)" stroke-width="1" stroke-opacity=".48"/>
+    <g fill="#d7c8a2" fill-opacity=".72"><circle cx="-72" cy="-80" r="1.8"/><circle cx="103" cy="32" r="2.1"/></g>
+
+    <ellipse cy="82" rx="116" ry="29" fill="url(#pool)" opacity=".36"/>
+    <path d="M0-61V79M-84-13V31M84-13V31" stroke="#8fbb5b" stroke-opacity=".35" stroke-dasharray="3 6"/>
+    <path d="M-85 33 0-14 85 33 0 81Z" fill="url(#plate)" stroke="#6f6855"/>
+    <path d="M-85 6 0-42 85 6 0 54Z" fill="url(#plate)" stroke="#968a6e"/>
+    <path d="M-85-24 0-72 85-24 0 24Z" fill="url(#glass)" stroke="url(#metal)" stroke-width="1.5"/>
+    <g fill="none" stroke="#b9ab85" stroke-width="1.4">
+      <path d="M-43-24 0-48 43-24 0 0Z"/><path d="M-43-24H43M0-48V0"/>
+    </g>
+    <g fill="#d6c8a6"><circle cx="-43" cy="-24" r="3.5"/><circle cx="0" cy="-48" r="3.5"/><circle cx="43" cy="-24" r="3.5"/><circle cy="0" r="3.5"/></g>
+    <circle cy="-24" r="5.5" fill="#a6df51"/>
+    <path d="M-84 33 0 81 84 33" fill="none" stroke="#76b900" stroke-opacity=".65"/>
+  </g>
+  <!-- A running core sits inside a defined deployment boundary. -->
+  <g transform="translate(776 120.6) scale(.704)" stroke-linejoin="round">
+    <circle cy="10" r="111" fill="url(#warm-light)"/>
+    <circle cy="10" r="108" fill="none" stroke="#a19065" stroke-opacity=".12" stroke-width=".8"/>
+    <path d="M-72-70A108 108 0 0 1 77 86" fill="none" stroke="url(#champagne)" stroke-width="1" stroke-opacity=".48"/>
+    <g fill="#d7c8a2" fill-opacity=".8"><circle cx="-72" cy="-70" r="2.1"/><circle cx="77" cy="86" r="1.8"/></g>
+    <path d="M101-72v9m-4.5-4.5h9" fill="none" stroke="#e0d2b1" stroke-width="1" stroke-linecap="round" stroke-opacity=".65"/>
+
+    <ellipse cy="34" rx="107" ry="85" fill="url(#halo)"/>
+    <path d="M0-78 78-33V57L0 101-78 57V-33Z" fill="#76b900" fill-opacity=".025"/>
+    <path d="M-83 60 0 12 83 60 0 108Z" fill="#172011" stroke="#435635"/>
+    <path d="M-83 56 0 8 83 56 0 104Z" fill="url(#glass)" stroke="#a09578"/>
+    <path d="M-66 56 0 18 66 56 0 94Z" fill="#76b900" fill-opacity=".04" stroke="#76b900" stroke-opacity=".45"/>
+    <path d="M0-78V12M-78 57 0 12 78 57" fill="none" stroke="#91ad75" stroke-opacity=".35" stroke-dasharray="4 5"/>
+    <path d="M0-78 78-33 0 12-78-33Z" fill="#d1f9ab" fill-opacity=".035" stroke="url(#metal)" stroke-width="1.5"/>
+    <path d="M-78-33V57L0 101 78 57V-33M0 12V101" fill="none" stroke="url(#metal)" stroke-width="1.5"/>
+    <path d="M0-30 34-10 0 10-34-10Z" fill="url(#green)"/>
+    <path d="M-34-10 0 10V50L-34 30Z" fill="#76b900"/>
+    <path d="M0 10 34-10V30L0 50Z" fill="url(#side)"/>
+    <path d="M-34-10 0 10 34-10M0 10V50" fill="none" stroke="#e6ffb8" stroke-opacity=".65"/>
+    <g fill="#d6c8a6"><circle cy="-78" r="3"/><circle cx="-78" cy="-33" r="3"/><circle cx="78" cy="-33" r="3"/></g>
+
+
+  </g>
+
+<g fill="#f5f7f0" font-family="Arial, Helvetica, sans-serif" font-size="30.4" font-weight="400" text-anchor="middle"><text x="184" y="268">Define</text><text x="480" y="268">Plan</text><text x="776" y="268">Apply</text></g>
 </svg>
