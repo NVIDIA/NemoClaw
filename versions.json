@@ -1,7 +1,7 @@
 {
   "opentofu": "1.13.10",
   "openshell": "0.1.10",
-  "ollama": "0.40.16",
+  "ollama": "0.40.18",
   "platforms": {
     "linux_arm64": {
       "rustupInit": {
@@ -173,7 +173,7 @@
         "sha256": "73571b25326281d369087f469842c02444fe39faaecebda4d82ed21ff3a1c29d"
       },
       "bun-LICENSE.md": {
-        "url": "https://raw.githubusercontent.com/oven-sh/bun/38afee6c84fcf48c0edb2466aa4b27d287a59c30/LICENSE.md",
+        "url": "https://raw.githubusercontent.com/oven-sh/bun/a7733435cf40429e3b35c36072769df2052b80f1/LICENSE.md",
         "sha256": "362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd"
       },
       "codex-LICENSE": {
@@ -439,7 +439,7 @@
     },
     "ollama": {
       "ollama-LICENSE": {
-        "url": "https://raw.githubusercontent.com/ollama/ollama/d63b702609c4300a2ca07be2bdb0adb9834725e5/LICENSE",
+        "url": "https://raw.githubusercontent.com/ollama/ollama/924cc286cc592f49c481fa84e15fa60dbc75989e/LICENSE",
         "sha256": "5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226"
       }
     },

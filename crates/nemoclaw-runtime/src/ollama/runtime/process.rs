@@ -16,7 +16,7 @@ pub(crate) struct Readiness {
     resident: u64,
 }
 /// llama.cpp's own per-device `--fit` margin, `fit_params_target` in
-/// `common/common.h` of the llama.cpp revision Ollama v0.40.16 pins (b12177).
+/// `common/common.h` of the llama.cpp revision Ollama v0.40.18 pins (b12651).
 /// NemoClaw never sets a smaller one.
 const LLAMA_FIT_TARGET_MIB: u64 = 1024;
 
@@ -32,7 +32,7 @@ pub(crate) fn launch(
     let budget = hardware_capacity::budget(service, capacity)?;
     // `ollama serve --help` documents OLLAMA_GPU_OVERHEAD as a reserve on each
     // GPU, so the GPU with the most free memory sets it. Unified-memory GPUs
-    // report no framebuffer counters and get no reserve. Ollama v0.40.16 reads
+    // report no framebuffer counters and get no reserve. Ollama v0.40.18 reads
     // it only for logs, the default context size, and its MLX runner; GGUF
     // layer fitting uses llama.cpp's margin, LLAMA_ARG_FIT_TARGET, below.
     let overhead = capacity
