@@ -706,6 +706,15 @@ mod tests {
             said.contains("destroy requires existing deployment state"),
             "{said}"
         );
+        // TEMPORARY diagnostic: does a symbolic link to the CLI find its bundle?
+        let link = home.join("nemoclaw-link");
+        std::os::unix::fs::symlink(installed.join("bin/nemoclaw"), &link).unwrap();
+        let linked = output(
+            Command::new(&link)
+                .args(["plan", "--destroy"])
+                .current_dir(&home),
+        );
+        eprintln!("SYMLINK DIAGNOSTIC: {}", text(&linked));
 
         // Uninstall as docs/get-started/install.md describes.
         let removed =

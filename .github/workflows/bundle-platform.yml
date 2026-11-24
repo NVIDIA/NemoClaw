@@ -479,7 +479,7 @@ jobs:
           NEMOCLAW_INSTALLER_BUNDLE: ${{ github.workspace }}/dist/darwin_arm64
         run: |
           rustc --edition=2021 -D warnings --test tools/release/macos-installer.rs -o "$RUNNER_TEMP/installer-tests"
-          "$RUNNER_TEMP/installer-tests" --include-ignored --test-threads 1 --skip an_unsupported_mac
+          "$RUNNER_TEMP/installer-tests" --include-ignored --test-threads 1 --skip an_unsupported_mac --nocapture
 
   # An Intel Mac and a Mac older than the installer's minimum macOS must refuse
   # it with its reason. The test builds the installer from a stand-in bundle, so
