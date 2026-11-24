@@ -36,7 +36,6 @@
     <Property Id="ARPHELPLINK" Value="https://github.com/NVIDIA/NemoClaw/blob/v1/docs/get-started/install.md" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/NVIDIA/NemoClaw/issues" />
     <Property Id="ARPURLUPDATEINFO" Value="https://github.com/NVIDIA/NemoClaw/releases" />
-    <Property Id="ARPNOMODIFY" Value="1" />
 
     <!-- %LOCALAPPDATA%\Programs\NemoClaw holds the bundle unchanged: the
          CLI finds its bundle from bin\nemoclaw.exe's location. -->
@@ -59,7 +58,8 @@
       </Component>
     </Feature>
 
-    <!-- Welcome and license, progress, and finish pages. -->
+    <!-- Welcome and license, progress, and finish pages. WixUI_Minimal also
+         hides Modify in Installed apps, which has nothing to change. -->
     <ui:WixUI Id="WixUI_Minimal" />
     <WixVariable Id="WixUILicenseRtf" Value="$(LicenseRtf)" />
     <WixVariable Id="WixUIBannerBmp" Value="$(ArtworkDir)\banner.bmp" />
