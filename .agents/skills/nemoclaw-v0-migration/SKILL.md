@@ -1,15 +1,14 @@
 ---
 name: nemoclaw-v0-migration
-description: Turn a V0 NemoClaw `config export` file into a v1 deployment YAML that `nemoclaw plan` accepts. Reads the export's report header, fills each gap with a v1 setting confirmed in v1's docs and the Fabric adapter's schema, and tells the user what v1 cannot carry. Use when a user moves an OpenClaw or Hermes deployment from V0 (main) to v1.
+description: Use a report-capable NemoClaw v0 configuration export to prepare YAML for a separate OpenClaw or Hermes deployment with NemoClaw Agent Configs. Check settings against the matching documentation and Fabric adapter schema, and explain which settings cannot carry over. This skill does not move the existing deployment or its data.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Migrate a V0 Export to v1
+# Preparing a Separate Deployment From a NemoClaw v0 Export
 
-This skill starts from the YAML that V0's `nemoclaw config export` writes and ends with a v1 deployment YAML that `nemoclaw plan` accepts.
-It creates a separate v1 deployment beside the V0 one, as [migration](../../../docs/get-started/migration.md) describes.
+Use the YAML from NemoClaw v0's `nemoclaw config export` to prepare and review a plan for a separate NemoClaw Agent Configs deployment. Follow the [evaluation guide](../../../docs/get-started/migration.md) before applying that plan.
 
 ## Boundaries
 

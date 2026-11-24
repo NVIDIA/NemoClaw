@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-user-guide
-description: Find revision-matched NemoClaw user guidance for deployment, inference, agents, recovery, SDK use, and migration between main and v1. Use when helping a user operate NemoClaw or find its documentation.
+description: Find revision-matched NemoClaw guidance for deployment, inference, agents, recovery, and SDK use. Use this skill to find operational documentation or evaluate NemoClaw Agent Configs in a separate deployment alongside NemoClaw v0.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -32,7 +32,8 @@ If the executable and the documentation disagree, establish which deployment the
 | Inference API, models, recipes, or SSH placement | [Inference](../../../docs/agents-inference/inference.md), [models](../../../docs/agents-inference/models.md), [recipes](../../../docs/agents-inference/recipes.md), [remote service](../../../docs/agents-inference/remote-service.md) |
 | Native agents, dashboards, or integrations | [Agents](../../../docs/agents-inference/agents.md), [interfaces](../../../docs/agents-inference/interfaces.md) |
 | SDK, provider, accepted fields, or flags | [SDK](../../../docs/references/sdk.md), [provider](../../../docs/references/provider.md), [configuration](../../../docs/reference/configuration.md), [CLI](../../../docs/references/cli.md) |
-| Earlier-product migration or security | [Migration](../../../docs/get-started/migration.md), the [V0 migration skill](../nemoclaw-v0-migration/SKILL.md), [security](../../../docs/security/security.md), [sandbox policy](../../../docs/security/sandbox-network.md) |
+| Evaluate Agent Configs alongside NemoClaw v0 | [Separate deployment guide](../../../docs/get-started/migration.md), [NemoClaw v0 export skill](../nemoclaw-v0-migration/SKILL.md) |
+| Security or network policy | [Security](../../../docs/security/security.md), [sandbox policy](../../../docs/security/sandbox-network.md) |
 
 Read only the sources for the task, and follow their verification and recovery steps.
 **TBD** marks something not yet verified.

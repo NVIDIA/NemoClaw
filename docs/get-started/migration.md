@@ -47,7 +47,7 @@ These checks aren't a conversion mechanism.
 The earlier product's `nemoclaw config export` writes v1 YAML for one sandbox.
 The report-capable exporter assigns a new UUID but keeps the earlier gateway port and writes an image placeholder.
 If your version of NemoClaw v0 does not include the report-capable exporter, skip export and [author separate deployment YAML](onboard.md) using the settings you can carry over.
-The [V0 migration skill](../../.agents/skills/nemoclaw-v0-migration/SKILL.md) completes it; an assistant with this checkout can follow it, or you can follow its steps yourself.
+Use the [NemoClaw v0 export skill](../../.agents/skills/nemoclaw-v0-migration/SKILL.md) to prepare YAML for the separate deployment. You can follow its steps yourself or ask an assistant with access to this checkout.
 It leaves the earlier deployment untouched and moves no native data.
 
 1. On the NemoClaw v0 host, export the sandbox using a CLI that includes the [report-capable exporter](https://github.com/NVIDIA/NemoClaw/pull/14602) from revision `7892283831683e8b8b7a167b5cf1006d7bc262a5`:
