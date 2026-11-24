@@ -39,3 +39,18 @@ products:
 redirects:
   - source: /nemoclaw/v1
     destination: /nemoclaw/v1/home
+  # Keep these aliases in sync with the combined preview in docs.yml.
+  - source: /nemoclaw/v1/testing
+    destination: /nemoclaw/v1/index
+  - source: /nemoclaw/v1/testing/fixtures
+    destination: /nemoclaw/v1/index
+  - source: /nemoclaw/v1/testing/live
+    destination: /nemoclaw/v1/index
+  - source: /nemoclaw/v1/releases
+    destination: /nemoclaw/v1/release-notes
+  - source: /nemoclaw/v1/contributing
+    destination: /nemoclaw/v1/index
+  - source: /nemoclaw/v1/configuration-schema
+    destination: /nemoclaw/v1/reference/configuration
+  - source: /nemoclaw/v1/documentation-build
+    destination: /nemoclaw/v1/index

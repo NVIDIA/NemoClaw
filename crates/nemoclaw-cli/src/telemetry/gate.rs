@@ -31,7 +31,7 @@ fn decide(var: impl Fn(&str) -> Option<String>) -> Option<String> {
     {
         return None;
     }
-    // A label that is set must be valid; an empty one is not, as in Classic.
+    // A label that is set must be valid; an empty one is not, as in NemoClaw v0.
     match var("NEMOCLAW_TELEMETRY_TEST_LABEL") {
         None => Some(String::new()),
         Some(label) if !label.is_empty() && matches(TEST_LABEL_PATTERN, &label) => Some(label),

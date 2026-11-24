@@ -9,12 +9,7 @@ Every deployment needs a bundle and an agent image built from the same source re
 
 ## Choosing This Guide
 
-No NemoClaw release is published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
-Release candidates are draft releases that only users with push access to this repository can see, and their images are in internal packages.
-Until a release is published, everyone else builds NemoClaw from source with this guide.
-Maintainers can instead [install a draft release's CLI](../get-started/install.md).
-
-After a release is published, [install its CLI](../get-started/install.md) and use the images that the release lists by digest.
+For v0.1.0 on an archive target, [install the CLI bundle](../get-started/install.md) and use the images listed by digest in that release.
 Build from source instead in the following situations:
 
 | Situation | What to Build |
@@ -98,7 +93,7 @@ docker info --format '{{json .DriverStatus}}'
 ```
 
 The output includes `["driver-type","io.containerd.snapshotter.v1"]` when the daemon uses the containerd store.
-Runtime images require it, and Docker's classic image store is unsupported for them.
+Runtime images require the containerd image store.
 Agent images require a store that retains repository digests for local builds, and containerd is the tested store.
 On Docker Desktop, enable **Settings > General > Use containerd for pulling and storing images**, then apply the change and restart if prompted.
 The stores are separate: existing images and containers remain on disk but are hidden while their store is inactive.
@@ -133,7 +128,7 @@ To build a bundle for the host's platform and check its CLI, perform the followi
    Verified inputs assembled at dist/linux_arm64 (VERSION)
    ```
 
-   `VERSION` is the release version at a clean release tag, and otherwise a development version derived from the source, such as `0.1.0-dev.5db7cd2995277923`.
+   Local builds report a development version derived from the source, such as `0.1.0-dev.5db7cd2995277923`. The release CI run for the tag supplies the release version.
 
 2. Optional: Copy `dist/PLATFORM` to a dedicated directory, and use the copy in the following steps.
 
@@ -213,7 +208,7 @@ Before you operate it with a bundle built from a different pin, refer to [the ch
 ## Building Agent Images
 
 Every sandbox requires `image.ref`: an agent image pinned by its immutable digest.
-No default agent image is published, so build one for each harness that the deployment runs.
+When building from source, build an image for each harness that the deployment runs.
 
 Before you build an agent image, check the following:
 
@@ -265,18 +260,11 @@ Otherwise, continue with the [next steps](#next-steps).
 
 ### Image Selection Requirements
 
-Plan selects only the image that `image.ref` names:
+`image.ref` names the exact image to deploy. A harness identifier does not select an image. The named image must contain the selected Fabric adapter and runtime metadata for its `fabric-agent-ctl` command, environment, default policy, and executable grants.
 
-- Select an explicit image that contains the chosen Fabric adapter.
-  A harness identifier does not select a different image.
-- The selected image must still exist on the compute daemon, and the sandbox compute daemon must have access to that exact image.
-- Plan requires the image's runtime metadata to supply its `fabric-agent-ctl` command, environment, default policy, and executable grants.
-- For an external gateway, also set the `engine` of its `docker` or `podman` target to the engine that contains that same immutable sandbox image.
-  NemoClaw does not assume the client host's Docker socket and uses this engine only for image inspection.
-  Using it does not authorize managing the external gateway.
-
-A missing image, missing metadata, or omitted external engine stops planning with a diagnostic.
-Load a matching image or rebuild it, then retry.
+- **Docker or Podman with an inspection engine:** If the image isn't on the selected engine, plan defers the Fabric compatibility check instead of pulling the image. On this path, apply [acquires and checks the image](usage.md#pulling-from-private-registries) before creating the gateway or configuring the deployment. For an external gateway, set the target's `engine` to the engine used for sandbox images. NemoClaw doesn't assume the client host's Docker socket, and the engine setting doesn't make NemoClaw manage the external gateway.
+- **Missing inspection prerequisites:** A missing inspection engine on an external Docker or Podman target is not the same as an absent image on a configured engine. Fix the engine setting before retrying plan. If an image is present but lacks the required runtime metadata, use a compatible image or rebuild it with its catalog label.
+- **Kubernetes or OpenShift:** Supply the [metadata bundle that matches the image digest](kubernetes.md). Missing or invalid metadata blocks planning. The cluster pulls the image; NemoClaw doesn't use the Docker or Podman pull path for these targets.
 
 ### Image Labels and Discovery
 
@@ -480,7 +468,7 @@ Destroy omits image compatibility gates, so a mismatched image alone does not pr
 
 Removing a source-built bundle removes only local tools.
 It does not stop deployments, remove images, or revoke credentials.
-There is no v1 `uninstall` command or package-manager installation to reverse for a source-built bundle.
+NemoClaw Agent Configs has no `uninstall` command. A source-built bundle has no package-manager installation to reverse.
 
 To remove a bundle, perform the following steps:
 

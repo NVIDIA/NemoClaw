@@ -3,7 +3,6 @@
 
 # Current Limits
 
-NemoClaw Agent Configs is a release candidate and has no published final release.
 This page lists what Agent Configs does not do yet or has not tested, with the open GitHub issue that tracks each where one exists.
 Other pages state a limit where it affects a procedure and link the same issue.
 Unlike these limits, the responsibilities in [Out of Scope](out-of-scope.md) are left to other components by design.
@@ -23,16 +22,15 @@ A row marked **not verified** names the run that would check it.
 
 ## Installation and Releases
 
-Release archives exist only on draft releases.
-The [macOS installer](../get-started/install.md#installing-with-the-macos-installer) is on draft releases too.
-There is no published package.
+Use the [CLI archive](../get-started/install.md), or the [macOS](../get-started/install.md#installing-with-the-macos-installer) or [Windows](../get-started/install.md#installing-with-the-windows-installer) installer if the release includes it.
 Keep the matching bundle for an existing deployment.
 The following installation and release limits apply:
 
 | Limit | Issue | Last Verified |
 |---|---|---|
-| No published final release: the [release archives](../get-started/install.md) are on draft releases, which only maintainers see. Others [build the bundle from source](../build-deploy/build.md#building-a-native-bundle). | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`291723b`][v1-291723b]: issue, and only draft releases exist |
-| The macOS installer isn't signed or notarized: release candidates attach it unsigned, and a final release leaves it out, until a Developer ID Installer certificate signs it. Its pages and artwork are placeholders pending NVIDIA brand review. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | **not verified**: the first release candidate staged with the installer |
+| Archive provenance, OS signing, and macOS notarization are separate checks. Use the release's evidence record for platform results. | [#14621](https://github.com/NVIDIA/NemoClaw/issues/14621) | [Signing record contract](../../.github/scripts/record-cli-signing.sh); final platform results not verified |
+| The macOS installer requires Apple silicon and macOS 15 or later. A final release includes the installer only if it's signed and notarized. If unavailable, install the `darwin_arm64` archive. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [Installer and signing workflow](../../.github/workflows/release.yml); final installer availability not verified |
+| The Windows installer comes only with a release whose Windows executables are signed: without Windows signing, staging builds none. Its artwork and icon await NVIDIA brand and trademark review under [#14836](https://github.com/NVIDIA/NemoClaw/issues/14836). | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | **not verified**: the first release candidate staged with the installer |
 | Releases don't include a `claude` agent image: it bundles Anthropic's proprietary Claude Code CLI, which NVIDIA can't redistribute. Build it locally as [Building Agent Images](../build-deploy/build.md#building-agent-images) describes. | [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) | [`43c9dc9`][v1-43c9dc9]: issue |
 | The SDK and provider packages are not published. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | No support policy or enterprise deployment qualification. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue |
@@ -127,7 +125,7 @@ The following data and cleanup limits apply:
 |---|---|---|
 | Native conversation continuity across runtime replacement. | [Per-harness limits](../build-deploy/state.md#choosing-what-to-retain-for-each-harness), which depend on Fabric and the selected harness | [`cb8ef25`][v1-cb8ef25]: docs |
 | Durable data for generic application containers: their writable volume is disposable, and replacement or destroy can lose it. This differs from caller-supplied volumes mounted in an agent sandbox. | By design: [application storage](../build-deploy/container-services.md#deciding-whether-the-image-fits) | [`e7e1857`][v1-e7e1857]: docs |
-| Moving data from the earlier product to Agent Configs and back. | No NemoClaw procedure: native data belongs to the harness, and moving its storage belongs to the platform ([migration](../get-started/migration.md)) | [`cb8ef25`][v1-cb8ef25]: docs |
+| Transferring native data between NemoClaw v0 and NemoClaw Agent Configs. | No NemoClaw procedure. The harness owns native data, and the platform owns storage transfer. See [how to evaluate NemoClaw Agent Configs in a separate deployment](../get-started/migration.md). | [`cb8ef25`][v1-cb8ef25]: docs |
 | Keeping a sandbox across a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: after the gateway runs again, the sandbox refuses the supervisor that OpenShell starts for it and goes to `Error` with `StartFailed`, and the next apply replaces it, which deletes its files outside mounted volumes and its conversation history. A graceful restart, such as `docker restart`, keeps the sandbox. | [#13953](https://github.com/NVIDIA/NemoClaw/issues/13953), [NVIDIA/OpenShell#4910](https://github.com/NVIDIA/OpenShell/issues/4910) | [`291723b`][v1-291723b]: issue, plus a DGX Spark run where 9 of 9 SIGKILLed gateways lost their Hermes sandbox and 12 of 12 graceful restarts kept it |
 | Keeping a sandbox's files and conversations across a change to its policy's filesystem, Landlock, or process settings: OpenShell applies them only when a sandbox starts, so the change replaces the sandbox. Network rules, middleware bindings, and grants change in place. | No open issue: OpenShell's [policy guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/policies/manage-policies.mdx#how-changes-take-effect) | [`ca452e0`][v1-ca452e0]: code, OpenShell |
 
@@ -163,7 +161,7 @@ The following SDK and provider limits apply:
 
 ## Documentation Site
 
-Select the v1 guide explicitly and match its source revision to the bundle before using hosted instructions.
+Select the NemoClaw Agent Configs guide explicitly and match its source revision to the bundle before using hosted instructions.
 The following documentation site limits apply:
 
 | Limit | Issue | Last Verified |
@@ -173,7 +171,7 @@ The following documentation site limits apply:
 | Packaged installation of the documentation skill for assistant clients | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 
 Managed [llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) accepts pinned public GGUF files on one CUDA GPU.
-General tool use, multimodal input, other models and Classic host parity need separate qualification.
+General tool use, multimodal input, other models and parity with NemoClaw v0 host settings need separate qualification.
 Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006).
 
 [v1-5b83ffc]: https://github.com/NVIDIA/NemoClaw/tree/5b83ffc8e6ae46c4e5eec2466ed847cb223addad

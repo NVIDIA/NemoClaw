@@ -11,7 +11,8 @@
 
 The license page is generated from the bundle's `LICENSE` and its `licenses` directory.
 
-The artwork and the pages' colors are placeholders pending NVIDIA brand and trademark review; they use no NVIDIA logo.
+The Quiet Orbit artwork uses NVIDIA green and fine gold geometry around a cube in the lower left sidebar.
+The artwork and the pages' colors await NVIDIA brand and trademark review under [#14836](https://github.com/NVIDIA/NemoClaw/issues/14836); the artwork uses no NVIDIA logo.
 
 ## Regenerating the Artwork
 

@@ -4,7 +4,7 @@
 # Security and Credential Ownership
 
 Select controls for the actual sandbox image, engine host, gateway, and inference endpoint.
-Parser acceptance and protocol fixtures do not establish security qualification on a deployment host.
+Verify the [CLI archive's provenance](../get-started/install.md) before extracting it and pin runtime images by digest. Artifact verification does not qualify the sandbox or inference endpoint. Parser acceptance and protocol fixtures do not establish security qualification on a deployment host.
 
 ## Isolation and Trust
 
@@ -12,7 +12,10 @@ NVIDIA OpenShell enforces the declared sandbox policy.
 NVIDIA NeMo Fabric runs the native agent within that sandbox.
 Use [sandbox policy](sandbox-network.md) for filesystem, process, egress, and proxy configuration.
 An explicit policy replaces the preset.
-A change to network rules, middleware bindings, or grants updates the running sandbox in place; a change to filesystem, Landlock, or process settings replaces the sandbox, deleting its files and conversations (except on mounted volumes).
+A change to network rules, middleware bindings, or grants updates the running sandbox in place and closes connections opened under its previous rules.
+A change to filesystem, Landlock, or process settings replaces the sandbox, as does any change to a policy APF governs.
+Replacement deletes the sandbox's files and conversations except on mounted volumes.
+See [how policy changes take effect](sandbox-network.md#verifying-and-changing-the-configuration).
 
 The isolated preset uses Landlock `best_effort`.
 Unavailable restrictions are not enforced.

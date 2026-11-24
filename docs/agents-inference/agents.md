@@ -162,15 +162,15 @@ Headless operation follows the same public Fabric invocation boundary.
 The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/76bde16c40747062001bd6ea5f5d13cadab3d706/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
-With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory.
-Run these steps from the pinned v1 worktree root on the client host:
+With the [v0.1.0 OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. Run these steps from the directory that holds `deployment.yaml`:
 
 1. [Select the deployment's gateway and workspace](interfaces.md#selecting-the-gateway-and-workspace) in this terminal.
 
 2. Read the runtime ID from a plan using the deployment's original YAML, state directory, and credential environment.
 
    ```sh
-   RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml | jq -er '.agents.assistant.runtimeId') || exit 1
+   nemoclaw plan -o json --progress off --non-interactive --state-dir .nemoclaw-first deployment.yaml > applied-plan.json &&
+     RUNTIME_ID=$(jq -er '.agents.assistant.runtimeId | strings | select(length > 0)' applied-plan.json)
    ```
 
    If the lookup fails, stop and inspect the apply result instead of invoking with an empty ID.
@@ -185,12 +185,14 @@ Run these steps from the pinned v1 worktree root on the client host:
 
    `--agent` selects the deployment's YAML `agent.name`.
 
-4. Check the command exit status.
+4. Verify that the command exited successfully.
+5. Verify that the outer `status` is `succeeded`.
+6. Verify that `result.status` is `succeeded`.
+   If the command failed or either status is missing or not `succeeded`, stop and consult [native diagnostics](../observability/troubleshooting.md#reading-native-service-logs).
+7. Verify that `result.output.response` contains `READY`.
+   If the reply is missing or unexpected, stop and consult [inference and agent readiness](../observability/troubleshooting.md#inference-and-agent-readiness).
+   Other adapters can use different output fields, and one reply does not establish general model compatibility.
 
-5. Check `result.status`. A successful invocation reports `result.status: succeeded`.
-
-6. Inspect `result.output` for the adapter's reply.
-   Don't assume every adapter uses the same output fields or that one reply establishes general model compatibility.
 If later invocations fail with `runtime_unavailable`, plan and apply again: apply starts a new runtime in the same sandbox.
 If the plan shows no change, replace the sandbox using the [CLI replacement procedure](../build-deploy/usage.md#replacing-workloads-after-an-unusable-runtime).
 To reach an agent from the client host, see [agent interfaces](interfaces.md).

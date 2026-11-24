@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 /// A lowercase random UUID (v4), or `unknown` when the install ID file cannot be written.
 pub const INSTALL_ID_PATTERN: &str =
     "^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|unknown)$";
-/// Empty, or `qa-<run>:<case>:attempt-<n>`, the rule NemoClaw Classic uses.
+/// Empty, or `qa-<run>:<case>:attempt-<n>`, the rule NemoClaw v0 uses.
 pub const TEST_LABEL_PATTERN: &str =
     "^(?:|qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2})$";
 

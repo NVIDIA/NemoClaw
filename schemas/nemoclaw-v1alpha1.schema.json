@@ -1500,7 +1500,7 @@
               "type": "string"
             },
             "sandboxEnv": {
-              "description": "Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to NEMOCLAW_API_<registration>_KEY.",
+              "description": "Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to `NEMOCLAW_API_<registration>_KEY`.",
               "errorMessage": "api sandboxEnv must be an environment variable name",
               "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
               "patternErrorMessage": "api sandboxEnv must be an environment variable name",

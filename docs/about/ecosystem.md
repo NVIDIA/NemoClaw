@@ -40,6 +40,6 @@ Follow [the image build guide](../build-deploy/build.md#building-agent-images) f
 
 ## Matching the Components to Your Deployment
 
-Use the bundle, image, schema, and documentation from the same NemoClaw revision.
+Use the bundle, image, schema, and documentation from the same NemoClaw release. For a source build, match them to its revision.
 An adapter available in Fabric doesn't establish compatibility with your NemoClaw image, model, or platform.
 Check [Fabric harnesses](../references/fabric-harnesses.md), [compatibility across releases](../references/compatibility.md), and [current limits](../resources/limits.md) before choosing a configuration.
