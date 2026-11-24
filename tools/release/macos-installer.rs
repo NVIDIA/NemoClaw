@@ -773,13 +773,38 @@ mv "$1/usr/local/nemoclaw.previous" "$1/usr/local/nemoclaw"
             .join("licenses/removed-in-the-new-release")
             .is_file());
 
-        // Fail after the real preinstall has moved the previous bundle, before
-        // Installer writes the replacement. Scripts are not payload rollback.
+        // Let preinstall succeed, but make one payload directory read-only.
+        // This exercises Installer's extraction failure, rather than a script
+        // exiting before Installer attempts to write the replacement.
+        let image = scratch.0.join("read-only.dmg");
+        run(Command::new("hdiutil")
+            .args([
+                "create",
+                "-size",
+                "16m",
+                "-fs",
+                "HFS+",
+                "-volname",
+                "NemoClawFault",
+            ])
+            .arg(&image))
+        .unwrap();
+        let mounted = installed.join("libexec");
+        let prepared = scratch.0.join("extraction-failure-prepared");
+        // Quote fixture paths as shell data, including on runners whose
+        // temporary directory contains spaces or single quotes.
+        let quote = |path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
         let failed_work = scratch.0.join("failed-upgrade");
         stage(&bundle, &failed_work, &bundle_version, "v1", MINIMUM_MACOS).unwrap();
         write(
             &failed_work.join("scripts/preinstall"),
-            format!("{PREINSTALL}\nexit 1\n").as_bytes(),
+            format!(
+                "{PREINSTALL}\nmkdir -p {mount}\nhdiutil attach -readonly -nobrowse -mountpoint {mount} {image}\ntouch {prepared}\n",
+                mount = quote(&mounted),
+                image = quote(&image),
+                prepared = quote(&prepared),
+            )
+            .as_bytes(),
             0o755,
         )
         .unwrap();
@@ -792,6 +817,19 @@ mv "$1/usr/local/nemoclaw.previous" "$1/usr/local/nemoclaw"
         )
         .unwrap();
         let result = install(&failed_package);
+        // Detach before any assertions or recovery so the fixture cannot
+        // obstruct restoring the old bundle if an assertion fails.
+        let detached = output(
+            Command::new("sudo")
+                .args(["hdiutil", "detach"])
+                .arg(&mounted),
+        );
+        assert!(detached.status.success(), "{}", text(&detached));
+        assert!(
+            prepared.is_file(),
+            "preinstall must succeed before testing payload extraction: {}",
+            text(&result)
+        );
         assert!(!result.status.success(), "{}", text(&result));
         let previous = Path::new("/usr/local/nemoclaw.previous");
         assert!(
@@ -799,6 +837,14 @@ mv "$1/usr/local/nemoclaw.previous" "$1/usr/local/nemoclaw"
             "the failed installer lost its recovery copy"
         );
         // Compare bytes: packaging intentionally normalizes source permissions.
+        for (name, (expected, _)) in tree(&old) {
+            assert_eq!(fs::read(previous.join(&name)).unwrap(), expected, "{name}");
+        }
+        let retry = install(&new_package);
+        assert!(
+            !retry.status.success(),
+            "retrying before recovery must refuse to overwrite the previous bundle"
+        );
         for (name, (expected, _)) in tree(&old) {
             assert_eq!(fs::read(previous.join(&name)).unwrap(), expected, "{name}");
         }
