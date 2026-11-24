@@ -78,6 +78,7 @@ jobs:
                   or .filename == "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.5.json"
                   or .filename == "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.7.json"
                   or .filename == "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.9.json"
+                  or .filename == "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.10.json"
                   or .filename == "src/lib/actions/sandbox/runtime/hermes-lifecycle.ts"
                   or .filename == "src/lib/hermes-managed-route.ts"
                   or .filename == "src/lib/inference/native-provider/catalog.ts"
