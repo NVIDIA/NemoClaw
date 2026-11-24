@@ -1,0 +1,21 @@
+{
+  "Version": "0.1.0-rc.3",
+  "Rust": "1.100.0",
+  "OpenTofu": "1.13.9",
+  "Files": {
+    "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "bin/nemoclaw.exe": "beb683729ebf5987649dec44e49a0669aaec062d6074dec6a5d97945f6e00121",
+    "libexec/tofu.exe": "7a71d4627b169710267f2b89c9be98e3d03fdf77b55b21714bffd7db1d321117",
+    "licenses/OpenTofu-LICENSE": "142b957651baf401646dd7f3d855cb7c4f6f0921d645faa27e7cb540bc33cf4c",
+    "licenses/docker-provider-LICENSE": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+    "licenses/helm-provider-LICENSE": "4e2bb185ebd706f76329206869ccb348b92b6236100cfb07775fe31530dab0d5",
+    "providers/registry.opentofu.org/hashicorp/helm/3.3.0/windows_amd64/terraform-provider-helm_v3.3.0_x5.exe": "449e92efd2a0a860daaac0021a8ebd1065d8051049335877616efd9a06227acc",
+    "providers/registry.opentofu.org/kreuzwerker/docker/4.7.0/windows_amd64/terraform-provider-docker_v4.7.0.exe": "3a8b85de4b80dfe663f896ccbdbb58138da65494578dea983d112cb4277f582f",
+    "providers/registry.opentofu.org/nvidia/fabric/0.1.0-rc.3/windows_amd64/terraform-provider-fabric_v0.1.0-rc.3.exe": "aa5700cf8eef7b3c29c9cfa700d863d9fdf3ad29c45dd2eaa6e86d675dd04715",
+    "providers/registry.opentofu.org/nvidia/host/0.1.0-rc.3/windows_amd64/terraform-provider-host_v0.1.0-rc.3.exe": "6f6b01956099fd921eaf9f0e9ebe7556ec373f21b47d869d34fe7520c06f88ca",
+    "providers/registry.opentofu.org/nvidia/ollama/0.1.0-rc.3/windows_amd64/terraform-provider-ollama_v0.1.0-rc.3.exe": "3ba68bc4ed39f33d657da58c7f0d53558d43fc9ed095e582e97a4fa10d39615f",
+    "providers/registry.opentofu.org/nvidia/openshell/0.1.0-rc.3/windows_amd64/terraform-provider-openshell_v0.1.0-rc.3.exe": "a82352a21030f325e23ac9af81b04b3c1f261b2deae197ea9698721e00cd9038",
+    "providers/registry.opentofu.org/nvidia/vllm/0.1.0-rc.3/windows_amd64/terraform-provider-vllm_v0.1.0-rc.3.exe": "1ba2a5f67efcb1ef88d0af12d608d95e2f2b0d50110d4119ff6c81e20e5e9af6",
+    "schemas/nemoclaw-v1alpha1.schema.json": "d7975f1431c8b32cb6ca4b512fbaeb108dff9acf7bbe01f89c5b15f8a5c28fcf"
+  }
+}
