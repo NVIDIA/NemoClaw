@@ -220,11 +220,11 @@ pub(super) fn validate_sandbox_inputs(
         // The authored explicit policy replaces the launch's; managed grants
         // join either.
         if input.explicit.is_some() {
-            InputError::at("policy_json", error.0).within(&["explicit"])
+            InputError::at("policy_json", error.to_string()).within(&["explicit"])
         } else if !input.managed.is_empty() {
-            InputError::at("policy_json", error.0).within(&["managed"])
+            InputError::at("policy_json", error.to_string()).within(&["managed"])
         } else {
-            InputError::at("launch_json", error.0)
+            InputError::at("launch_json", error.to_string())
         }
     })?;
     Ok(())

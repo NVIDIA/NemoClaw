@@ -328,10 +328,11 @@ impl JourneyWizard {
                     .iter()
                     .take(5)
                     .map(|issue| {
-                        Line::from(Span::styled(
-                            terminal_text(&format!("{}: {}", issue.path(), issue.rule())),
-                            Style::new().fg(WARNING),
-                        ))
+                        let text = match issue.path() {
+                            "" => issue.rule().to_owned(),
+                            path => format!("{path}: {}", issue.rule()),
+                        };
+                        Line::from(Span::styled(terminal_text(&text), Style::new().fg(WARNING)))
                     }),
             );
             lines.extend(template_value_lines(resolution.kept()));

@@ -597,7 +597,7 @@ fn inference_providers_are_keyed_by_name_in_both_scopes() {
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("spec.sandboxes[assistant].inferenceProviders[local]")
+        error.starts_with("spec.sandboxes.assistant.inferenceProviders.local (line ")
             && error.contains("shadow"),
         "{error}"
     );
@@ -796,7 +796,8 @@ fn a_gateway_image_is_rejected_as_an_unknown_field() {
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("at spec.gateway") && error.contains(": unknown fields are not allowed"),
+            error.starts_with("spec.gateway (line ")
+                && error.contains(": unknown fields are not allowed"),
             "{file}: {error}"
         );
     }
@@ -842,7 +843,7 @@ fn managed_podman_requires_an_explicit_engine() {
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("schema at spec.gateway.target.podman.engine (line") && error.contains(rule),
+        error.starts_with("spec.gateway.target.podman.engine (line") && error.contains(rule),
         "{error}"
     );
 }
@@ -923,7 +924,7 @@ fn schema_errors_identify_the_contract_without_echoing_input_values_or_map_keys(
     let error = Document::parse(value.to_string().as_bytes())
         .unwrap_err()
         .to_string();
-    assert!(error.contains("schema"), "{error}");
+    assert!(error.contains("spec.harnesses (line "), "{error}");
     assert!(!error.contains("SECRET-MAP-KEY"), "{error}");
 }
 

@@ -169,6 +169,7 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 
 Handled operation errors use the selected format: text on stderr, or one JSON result on stdout with `outcome: failed` or `outcome: interrupted`.
 The failure object includes `operation`, `stateDirectory`, optional `input`, and `error.message`.
+For an invalid document, `error.diagnostics` lists its errors in document order, at most 20, each with its `message` and, when the error has a place, its `path`, such as `spec.sandboxes.coding.agent.auth`, and its `line` and `column` in the input.
 When available, `remainingState` describes the known effects and `help` supplies a next step.
 Apply and destroy failures before a mutating subprocess launches report “No runtime resources changed.”
 Local planning state might still have been written.

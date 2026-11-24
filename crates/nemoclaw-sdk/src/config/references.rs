@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::source::DefinitionSource;
+use super::validation::Placed;
 use super::{ConfigError, Document, Harness, Inference, Route, Sandbox};
 
 /// A sandbox definition and its name, the key of its `spec.sandboxes` entry.
@@ -24,6 +25,8 @@ pub(crate) struct ScopedInference<'a> {
     pub inference: &'a Inference,
     pub sandbox: Option<NamedSandbox<'a>>,
     pub path: String,
+    /// The JSON pointer of the definition.
+    pub pointer: String,
 }
 impl<'a> ScopedInference<'a> {
     fn new(
@@ -39,14 +42,32 @@ impl<'a> ScopedInference<'a> {
             || format!("{base}.agent.inference"),
             |name| format!("{base}.inferences[{}]", diagnostic_name(name)),
         );
+        let base =
+            sandbox.map_or_else(|| "/spec".into(), |s| format!("/spec/sandboxes/{}", s.name));
+        let pointer = name.map_or_else(
+            || format!("{base}/agent/inference"),
+            |name| format!("{base}/inferences/{name}"),
+        );
         Self {
             inference,
             sandbox,
             path,
+            pointer,
         }
     }
     pub fn route_path(&self, route: &Route) -> String {
         format!("{}.routes[{}]", self.path, diagnostic_name(&route.name))
+    }
+    /// The JSON pointer of one of the definition's routes.
+    pub fn route_pointer(&self, route: &Route) -> String {
+        let routes = &self.inference.routes;
+        match routes
+            .iter()
+            .position(|candidate| std::ptr::eq(candidate, route))
+        {
+            Some(index) => format!("{}/routes/{index}", self.pointer),
+            None => self.pointer.clone(),
+        }
     }
 }
 
@@ -85,7 +106,9 @@ impl Document {
             agent.inference.as_ref(),
             agent.inference_ref.as_deref(),
             "agent requires exactly one of inference or inferenceRef",
-        )? {
+        )
+        .at(&format!("/spec/sandboxes/{}/agent", sandbox.name))?
+        {
             DefinitionSource::Inline(inference) => {
                 Ok(ScopedInference::new(inference, Some(sandbox), None))
             }
@@ -100,10 +123,6 @@ impl Document {
                     .map(|inference| ScopedInference::new(inference, Some(sandbox), Some(name)))
                     .ok_or_else(|| {
                         missing_reference(
-                            &format!(
-                                "spec.sandboxes[{}].agent.inferenceRef",
-                                diagnostic_name(sandbox.name)
-                            ),
                             "inference",
                             name,
                             self.spec
@@ -112,6 +131,10 @@ impl Document {
                                 .chain(sandbox.inferences.keys())
                                 .map(String::as_str),
                         )
+                        .or_at(&format!(
+                            "/spec/sandboxes/{}/agent/inferenceRef",
+                            sandbox.name
+                        ))
                     })
             }
         }
@@ -144,25 +167,31 @@ impl Document {
     }
 
     pub(super) fn validate_inference_references(&self) -> Result<(), ConfigError> {
+        let mut errors = super::validation::Errors::default();
         for sandbox in self.sandboxes() {
-            if sandbox
+            let pointer = format!("/spec/sandboxes/{}", sandbox.name);
+            if let Some(name) = sandbox
                 .inferences
                 .keys()
-                .any(|name| self.spec.inferences.contains_key(name))
+                .find(|name| self.spec.inferences.contains_key(*name))
             {
-                return Err(ConfigError::new(
+                errors.push(ConfigError::at(
+                    format!("{pointer}/inferences/{name}"),
                     "inference names must not shadow enclosing definitions",
                 ));
             }
-            self.sandbox_inference(sandbox)?;
+            errors.check(&pointer, self.sandbox_inference(sandbox));
         }
         for selection in self.inference_definitions() {
-            selection.inference.validate_choices()?;
+            errors.check(&selection.pointer, selection.inference.validate_choices());
             for route in &selection.inference.routes {
-                self.route_provider(route, &selection)?;
+                errors.check(
+                    &selection.route_pointer(route),
+                    self.route_provider(route, &selection),
+                );
             }
         }
-        Ok(())
+        errors.finish()
     }
 }
 
@@ -199,28 +228,31 @@ impl Document {
     }
 
     pub(super) fn validate_harness_references(&self) -> Result<(), ConfigError> {
+        let mut errors = super::validation::Errors::default();
+        for (name, harness) in &self.spec.harnesses {
+            errors.check(&format!("/spec/harnesses/{name}"), harness.validate());
+        }
         for sandbox in self.sandboxes() {
-            if sandbox
+            let pointer = format!("/spec/sandboxes/{}", sandbox.name);
+            if let Some(name) = sandbox
                 .harnesses
                 .keys()
-                .any(|name| self.spec.harnesses.contains_key(name))
+                .find(|name| self.spec.harnesses.contains_key(*name))
             {
-                return Err(ConfigError::new(
+                errors.push(ConfigError::at(
+                    format!("{pointer}/harnesses/{name}"),
                     "harness names must not shadow enclosing definitions",
                 ));
             }
-            for harness in self
-                .spec
-                .harnesses
-                .values()
-                .chain(sandbox.harnesses.values())
-                .chain(sandbox.harness.iter())
-            {
-                harness.validate()?;
+            for (name, harness) in &sandbox.harnesses {
+                errors.check(&format!("{pointer}/harnesses/{name}"), harness.validate());
             }
-            self.sandbox_harness(sandbox)?;
+            if let Some(harness) = &sandbox.harness {
+                errors.check(&format!("{pointer}/harness"), harness.validate());
+            }
+            errors.check(&pointer, self.sandbox_harness(sandbox));
         }
-        Ok(())
+        errors.finish()
     }
 }
 
@@ -274,8 +306,9 @@ pub(super) fn diagnostic_name(name: &str) -> &str {
         "<invalid name>"
     }
 }
+/// A reference to no visible definition, for the caller to place at the
+/// reference.
 pub(crate) fn missing_reference<'a>(
-    path: &str,
     kind: &str,
     name: &str,
     visible: impl Iterator<Item = &'a str>,
@@ -286,8 +319,8 @@ pub(crate) fn missing_reference<'a>(
     } else {
         names.into_iter().collect::<Vec<_>>().join(", ")
     };
-    ConfigError(format!(
-        "{path}: unknown {kind} {name:?}; visible definitions: {choices}",
+    ConfigError::from(format!(
+        "unknown {kind} {name:?}; visible definitions: {choices}",
         name = diagnostic_name(name)
     ))
 }
@@ -302,14 +335,15 @@ impl<'a> NamedSandbox<'a> {
             sandbox.harness.as_ref(),
             sandbox.harness_ref.as_deref(),
             "sandbox requires exactly one of harness or harnessRef",
-        )? {
+        )
+        .at(&format!("/spec/sandboxes/{}", self.name))?
+        {
             DefinitionSource::Inline(harness) => Ok(harness),
             DefinitionSource::Reference(name) => harnesses
                 .get(name)
                 .or_else(|| sandbox.harnesses.get(name))
                 .ok_or_else(|| {
                     missing_reference(
-                        &format!("spec.sandboxes[{}].harnessRef", diagnostic_name(self.name)),
                         "harness",
                         name,
                         harnesses
@@ -317,6 +351,7 @@ impl<'a> NamedSandbox<'a> {
                             .chain(sandbox.harnesses.keys())
                             .map(String::as_str),
                     )
+                    .or_at(&format!("/spec/sandboxes/{}/harnessRef", self.name))
                 }),
         }
     }

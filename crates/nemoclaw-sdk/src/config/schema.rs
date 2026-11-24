@@ -91,6 +91,6 @@ pub use nemoclaw_runtime::schema::integer_range;
 mod runtime;
 pub use runtime::unexplained_rules;
 pub(crate) use runtime::{
-    validate_definition, validate_document, validate_input, validate_property, validate_service,
-    validate_tuning,
+    locate, validate_definition, validate_document, validate_input, validate_property,
+    validate_service, validate_tuning,
 };
