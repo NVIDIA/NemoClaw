@@ -308,7 +308,13 @@ fn prepare_executable(source: &Path, destination: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn submit_3s(archive: &Path, scratch: &Path, id: &str, secret: &str) -> Result<()> {
+fn submit_3s(
+    input: &Path,
+    scratch: &Path,
+    result_filename: &str,
+    id: &str,
+    secret: &str,
+) -> Result<()> {
     capture(
         Command::new("nvsec")
             .env("HOME", scratch)
@@ -329,12 +335,12 @@ fn submit_3s(archive: &Path, scratch: &Path, id: &str, secret: &str) -> Result<(
                 "ssa",
                 "--input_file",
             ])
-            .arg(archive)
+            .arg(input)
             .args(["--download", "--timeout", "600", "--result_dir"])
             .arg(scratch)
             .args([
                 "--result_filename",
-                "signed.zip",
+                result_filename,
                 "--nspect_id",
                 "NSPECT-SQ44-PJFM",
             ]),
@@ -364,7 +370,7 @@ fn sign(bundle: &Path) -> Result<()> {
                 .arg(&member),
             None,
         )?;
-        submit_3s(&archive, &scratch.0, &id, &secret)?;
+        submit_3s(&archive, &scratch.0, "signed.zip", &id, &secret)?;
         // Read just the expected member; never extract service-returned paths.
         let listing = capture(Command::new("unzip").arg("-Z1").arg(&signed), None)?;
         if listing != format!("{member}\n").as_bytes() {
@@ -392,7 +398,8 @@ fn sign(bundle: &Path) -> Result<()> {
     Ok(())
 }
 // Installer packages retain their .pkg extension so 3S selects pkg signing.
-// Never unpack service-returned paths; replace the input only after validation.
+// Submit the package directly: a ZIP selects application signing in 3S.
+// Replace the input only after the returned package passes validation.
 fn sign_package_with(
     package: &Path,
     scratch: &Path,
@@ -414,25 +421,9 @@ fn sign_package_with(
         fs::set_permissions(&payload, fs::Permissions::from_mode(0o644))
             .map_err(|_| "Could not set package permissions")?;
     }
-    let archive = scratch.join("input.zip");
-    let signed = scratch.join("signed.zip");
-    capture(
-        Command::new("zip")
-            .current_dir(scratch)
-            .args(["-q", "-X"])
-            .arg(&archive)
-            .arg(member),
-        None,
-    )?;
-    submit(&archive, &signed)?;
-    let listing = capture(Command::new("unzip").arg("-Z1").arg(&signed), None)?;
-    if listing != format!("{member}\n").as_bytes() {
-        return Err("Unexpected 3S package archive layout".into());
-    }
-    let bytes = capture(
-        Command::new("unzip").arg("-p").arg(&signed).arg(member),
-        None,
-    )?;
+    let signed = scratch.join("signed.pkg");
+    submit(&payload, &signed)?;
+    let bytes = fs::read(&signed).map_err(|_| "3S did not return a signed installer")?;
     if !bytes.starts_with(b"xar!") {
         return Err("3S did not return an installer package".into());
     }
@@ -445,7 +436,7 @@ fn sign_package(package: &Path) -> Result<()> {
     let (id, secret, token) = credentials()?;
     drop(token);
     sign_package_with(package, &scratch.0, |archive, _| {
-        submit_3s(archive, &scratch.0, &id, &secret)
+        submit_3s(archive, &scratch.0, "signed.pkg", &id, &secret)
     })
 }
 fn notarize(bundle: &Path) -> Result<()> {
@@ -564,66 +555,38 @@ mod tests {
         assert!(admit_with("sign-macos-installer-3s", || Err("denied".into())).is_err());
     }
     #[test]
-    fn package_signing_returns_only_the_expected_package_and_preserves_input_on_failure() {
+    fn package_signing_submits_a_pkg_and_preserves_input_on_failure() {
         let root = env::temp_dir().join(format!("nemoclaw-package-test-{}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let package = root.join("nemoclaw-v0.1.0-rc.1-darwin_arm64.pkg");
         let work = root.join("work");
         fs::create_dir(&work).unwrap();
-        for failure in ["none", "service", "extra", "empty"] {
+        for failure in ["none", "service", "invalid", "empty"] {
             fs::write(&package, b"xar!unsigned package").unwrap();
             let result = sign_package_with(&package, &work, |input, output| {
-                if failure == "service" {
-                    return Err("submission failed".into());
-                }
-                let unpack = root.join("service");
-                fs::create_dir(&unpack).unwrap();
-                capture(
-                    Command::new("unzip")
-                        .arg("-q")
-                        .arg(input)
-                        .arg("-d")
-                        .arg(&unpack),
-                    None,
-                )?;
-                let member = package.file_name().unwrap();
                 assert_eq!(
-                    fs::read(unpack.join(member)).unwrap(),
-                    b"xar!unsigned package"
+                    input.extension().unwrap(),
+                    "pkg",
+                    "3S selects package signing from the input extension"
                 );
+                assert_eq!(fs::read(input).unwrap(), b"xar!unsigned package");
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
                     assert_eq!(
-                        fs::metadata(unpack.join(member))
-                            .unwrap()
-                            .permissions()
-                            .mode()
-                            & 0o777,
+                        fs::metadata(input).unwrap().permissions().mode() & 0o777,
                         0o644
                     );
                 }
-                fs::write(
-                    unpack.join(member),
-                    if failure == "empty" {
-                        b"".as_slice()
-                    } else {
-                        b"xar!signed package".as_slice()
-                    },
-                )
-                .unwrap();
-                if failure == "extra" {
-                    fs::write(unpack.join("unexpected.pkg"), b"xar!other").unwrap();
+                if failure == "service" {
+                    return Err("submission failed".into());
                 }
-                capture(
-                    Command::new("zip")
-                        .current_dir(&unpack)
-                        .args(["-q", "-r"])
-                        .arg(output)
-                        .arg("."),
-                    None,
-                )?;
-                fs::remove_dir_all(unpack).unwrap();
+                let bytes = match failure {
+                    "empty" => b"".as_slice(),
+                    "invalid" => b"not a package".as_slice(),
+                    _ => b"xar!signed package".as_slice(),
+                };
+                fs::write(output, bytes).unwrap();
                 Ok(())
             });
             if failure == "none" {

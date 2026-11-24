@@ -96,7 +96,7 @@ The `macos-installer` job assembles that bundle on `macos-15` as staging does, f
 `SHA256SUMS` lists the installer, the [evidence record](#evidence-record) describes it, and a final release attests it with the archives.
 
 The `sign-macos-installer-3s` job submits the installer to NVIDIA 3S through the same Vault-issued SSA identity and `SIGNING_MACOS` scope as executable signing.
-The ZIP preserves the `.pkg` filename so the service selects package signing with a Developer ID Installer certificate.
+The helper submits the `.pkg` directly so the service selects package signing with a Developer ID Installer certificate; wrapping it in a ZIP selects application signing.
 No Installer certificate or private key is stored in GitHub.
 The job runs outside the `release-signing` environment so its Vault identity remains bound to the protected release tag.
 Only the trusted security controller's helper runs with SSA access; the installer is treated as data.
