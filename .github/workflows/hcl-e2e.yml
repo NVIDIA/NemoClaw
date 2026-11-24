@@ -201,9 +201,6 @@ jobs:
       TEST_PLATFORM: ${{ needs.cases.outputs.platform }}
       PERSISTENT: ${{ needs.cases.outputs.persistent }}
       NEMOCLAW_HCL_CASE: ${{ matrix.case }}
-      # Cache only eligible local vLLM documents; host provisioning owns the
-      # optional root helper and persistent disk, including on RTX runners.
-      NEMOCLAW_HCL_MODEL_CACHE: ${{ contains(fromJSON(needs.cases.outputs.cases).runners.gpu, matrix.case) }}
       NEMOCLAW_TEST_BUNDLE: ${{ github.workspace }}/dist/${{ needs.cases.outputs.platform }}
     steps:
       - name: Recheck the copied PR head
@@ -396,7 +393,7 @@ jobs:
           "$executable" hcl_live::docker_cleanup --exact --ignored --nocapture
           test "$destroyed" = true
       - name: Release this run's cached model mount
-        if: always()
+        if: always() && needs.cases.outputs.persistent == 'true'
         run: |
           [[ -n ${NEMOCLAW_HCL_RUN:-} && -f ${NEMOCLAW_HCL_DOCUMENT:-} ]] || exit 0
           executable="$GITHUB_WORKSPACE/.build/e2e"

@@ -209,23 +209,27 @@ Each scenario applies, requires its selected agent to reply `READY`, and destroy
 Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>-<case-id>/`. Published reports contain outcomes and candidate/UID/case identity only.
 Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
 
-For Nemotron vLLM cases on Station, DGX Spark, and RTX PRO 6000, host provisioning can install the root-owned
+For persistent Nemotron vLLM cases, host provisioning can install the root-owned
 `/usr/local/libexec/colorunner-model-cache` helper. A successful cold run publishes
 its verified model files. Subsequent runs mount those files read-only into a
 fresh model volume; engine caches, status, credentials, and deployment state stay
-per run. Managed and external DGX setup install the helper; the RTX runner image
-owner must install it separately from a reviewed controller revision. E2E cache
-eligibility is limited to pinned `nvidia/NVIDIA-Nemotron-*` repositories. Current
-RTX Qwen cases stay uncached; switching an RTX case to Nemotron can use the
-prepared cache without changing this lane integration. This change does not
-select or qualify that future model. The E2E workflow does not configure host storage. Hosts without a compatible helper keep
-the original acquisition path. The `named-services` capability permits services
-such as `nemotron`; older helpers still serve `super` and leave other names
-uncached. Only one managed vLLM service on `unix:///var/run/docker.sock` is eligible;
-Qwen, other models, Ollama, llama.cpp, remote engines, and multiple vLLM services keep their original
-paths. The cache survives image replacement on an intact host, but does not
-provide cross-host persistence. Verify whether the RTX runner preserves that disk
-between jobs before expecting a warm hit.
+per run. Managed and external DGX setup install the helper. E2E cache eligibility
+is limited to pinned `nvidia/NVIDIA-Nemotron-*` repositories in the `super` service
+on `unix:///var/run/docker.sock`. Qwen, other models and engines, remote Docker,
+and multiple vLLM services keep their original paths. The RTX PRO 6000 lane is
+unchanged. The workflow does not configure host storage. Hosts without the
+helper keep the original acquisition path. The cache survives image replacement
+on an intact host, but does not provide cross-host persistence.
+
+RTX Spark is the separate ARM64 Windows/WSL target. Its existing Nemotron
+[example](../../examples/platforms/docker/vllm/rtx-spark-wsl2/openclaw-windows-wsl2-rtx-spark.yaml)
+uses the same `super` service and cache protocol. Install the trusted helper
+inside its owned Linux guest with its Docker daemon. Automated rollout depends
+on authenticated Windows/WSL preparation and an RTX Spark E2E lane, neither of
+which this workflow enables. Track these prerequisites in
+[#14554](https://github.com/NVIDIA/NemoClaw/issues/14554) and
+[#13936](https://github.com/NVIDIA/NemoClaw/issues/13936). Qualify cache reuse and cleanup through WSL
+stop/start and Windows reboot before claiming RTX Spark readiness.
 
 The case records cache availability and publication or release outcomes in
 `reports/model-cache.json`. Invalid entries fall back to acquisition before
@@ -249,13 +253,11 @@ NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
   "$run/e2e" hcl_live::docker_cleanup --exact --ignored --nocapture
 ```
 
-For an eligible vLLM run with the host cache installed, release its mount after
-SDK destroy and independent Docker cleanup succeed. Set `document` and
-`executable` to the original bound configuration and E2E executable. DGX retains
-them at `$run/case.yaml` and `$run/e2e`; RTX uses the selected case document and
-`$GITHUB_WORKSPACE/.build/e2e`. RTX's run directory is `$RUNNER_TEMP/hcl` and its
-bundle is under the workspace. Retain those private inputs before the runner is
-replaced if manual recovery is needed:
+For a retained run with the host cache installed, release its mount after SDK
+destroy and independent Docker cleanup succeed. Set `document` and `executable`
+to its original bound configuration and E2E executable. DGX retains them at
+`$run/case.yaml` and `$run/e2e`. RTX Spark recovery must run inside the same owned
+WSL guest once that lane is available:
 
 ```bash
 NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$document" \
