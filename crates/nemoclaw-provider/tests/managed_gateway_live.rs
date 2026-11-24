@@ -11,7 +11,10 @@ use nemoclaw_provider::docker::Engine;
 use nemoclaw_sdk::{
     compile::runtime_targets,
     config::{ComputeDriver, DEFAULT_GATEWAY_IMAGE, Document},
-    managed::{GENERATION_LABEL, OWNER_LABEL, SANDBOX_RUNTIME_IMAGE, SUPERVISOR_IMAGE, Spec},
+    managed::{
+        GENERATION_LABEL, OPENSHELL_TELEMETRY_ENV, OWNER_LABEL, SANDBOX_RUNTIME_IMAGE,
+        SUPERVISOR_IMAGE, Spec, gateway_telemetry_enabled,
+    },
 };
 use openshell_sdk::{
     DeleteOptions, EdgeAuthInterceptor, ExecOptions, OpenShellClient, SandboxPhase, SandboxRef,
@@ -41,6 +44,7 @@ fn gateway_spec(variable: &str) -> Spec {
         .unwrap();
     let mut spec = Spec::from_gateway_row(&storage.kind, &storage.values).unwrap();
     spec.layout = 2;
+    spec.telemetry = Some(gateway_telemetry_enabled());
     spec.gateway.target.local_mut().unwrap().port = document
         .spec
         .gateway
@@ -118,6 +122,16 @@ async fn start(api: &Docker, engine: &Engine, spec: &Spec) -> OpenShellClient {
         )
         .await
         .unwrap();
+    let env = api
+        .inspect_container(&created.id, None)
+        .await
+        .unwrap()
+        .config
+        .unwrap()
+        .env
+        .unwrap_or_default();
+    let telemetry = format!("{OPENSHELL_TELEMETRY_ENV}={}", gateway_telemetry_enabled());
+    assert!(env.contains(&telemetry), "gateway lacks {telemetry}");
     api.start_container(&created.id, None).await.unwrap();
     let client = client(spec);
     ready(api, spec, &client).await;
