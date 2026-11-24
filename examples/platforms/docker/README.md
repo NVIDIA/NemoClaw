@@ -1,9 +1,20 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# OpenClaw on Docker with Hosted Inference
+# Docker Examples
 
-[openclaw-hosted.yaml](openclaw-hosted.yaml) creates a managed Docker gateway and one OpenClaw sandbox using NVIDIA hosted inference.
+| Scenario | Examples |
+|---|---|
+| Hosted inference without a local GPU | [OpenClaw starter](../../onboarding/openclaw.yaml), with the procedure in this README |
+| Managed Ollama on DGX Spark | [OpenClaw and Hermes](ollama/dgx-spark/README.md) |
+| Managed vLLM on DGX Spark | [One or several agents and model services](vllm/dgx-spark/README.md) |
+| Managed vLLM on DGX Station | [Qwen and Nemotron configurations](vllm/dgx-station/README.md) |
+| Managed vLLM on RTX Spark through WSL2 | [Nemotron variants](vllm/rtx-spark-wsl2/README.md) |
+| Remote AMD64 vLLM with a local Docker gateway | [Three OpenClaw sandboxes and a shared policy](vllm/remote/amd64/README.md) |
+
+## OpenClaw with Hosted Inference
+
+[openclaw.yaml](../../onboarding/openclaw.yaml) creates a managed Docker gateway and one OpenClaw sandbox using NVIDIA hosted inference.
 It starts no local model service and needs no local GPU.
 This is also the starter configuration consumed by the authoring tools.
 
@@ -11,7 +22,7 @@ This is also the starter configuration consumed by the authoring tools.
 
 1. Complete the [native bundle and agent-image build prerequisites](../../../docs/build-deploy/build.md).
    Build the OpenClaw image for the Linux architecture of the Docker engine that will run the sandbox, and make its immutable reference available there.
-2. Copy `examples/platforms/docker/openclaw-hosted.yaml` into a private deployment directory using the [shared procedure](../../README.md#prepare-and-run-a-yaml-example).
+2. Copy `examples/onboarding/openclaw.yaml` into a private deployment directory using the [shared procedure](../../README.md#prepare-and-run-a-yaml-example).
 3. Replace the deployment UID and agent image reference, and select the Docker engine if its default socket does not apply.
    Keep the hosted endpoint and model, or select a compatible model available to your account.
 4. Supply `NVIDIA_API_KEY` to the applying process through a protected environment facility.

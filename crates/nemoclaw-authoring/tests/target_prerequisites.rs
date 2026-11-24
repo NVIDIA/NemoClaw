@@ -13,10 +13,9 @@ use nemoclaw_sdk::{
 use serde_json::json;
 
 fn express() -> JourneyDefinition {
-    let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../examples/platforms/docker/openclaw-hosted.yaml"
-    ))
-    .unwrap();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
     JourneyDefinition::new("express", base).omit([
         "adapter:nvidia.fabric.openclaw:/agent_id",
         "adapter:nvidia.fabric.openclaw:/channel_config",

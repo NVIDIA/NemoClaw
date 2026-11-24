@@ -64,7 +64,7 @@ fn substituted(original: &proto::Sandbox, field: &str) -> proto::Sandbox {
 async fn sandbox_teardown_requires_owned_identity_but_not_its_previous_configuration() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let binding = create_sandbox(&client, "openclaw").await;
+    let binding = create_sandbox(&client, "local").await;
     let key = key(&binding);
     let original = fixture.state.lock().unwrap().sandboxes[&key].clone();
     for field in ["id", "owner", "generation"] {
@@ -112,7 +112,7 @@ async fn sandbox_teardown_requires_owned_identity_but_not_its_previous_configura
 async fn ready_sandbox_teardown_needs_owned_identity_but_not_active_policy_status() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let binding = create_sandbox(&client, "openclaw").await;
+    let binding = create_sandbox(&client, "local").await;
     let key = key(&binding);
     let original = fixture.state.lock().unwrap().sandboxes[&key].clone();
     fixture.state.lock().unwrap().fail_read = Some(("policy", tonic::Code::Unavailable));
@@ -222,7 +222,7 @@ async fn gateway_validation_rejections_preserve_details_for_credential_free_muta
 #[tokio::test]
 async fn a_service_name_profile_and_a_sandbox_without_grants_pass_endpoint_ambiguity_checks() {
     const HOST: &str = "qwen.models.svc.cluster.local";
-    for name in ["openclaw", "hermes-auth"] {
+    for name in ["local", "hermes-auth"] {
         let fixture = Fixture::start().await;
         let client = client(&fixture, Arc::new(Keys));
         let mut rows = fixture_rows(name);
@@ -456,7 +456,7 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
 async fn a_rejected_exposure_keeps_the_endpoints_the_update_would_remove() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let created = create_sandbox(&client, "openclaw").await;
+    let created = create_sandbox(&client, "local").await;
     let with = |services: &str| {
         let mut row = created.clone();
         row.insert(services::FIELD.into(), services.into());
@@ -495,7 +495,7 @@ async fn a_rejected_exposure_keeps_the_endpoints_the_update_would_remove() {
 async fn an_exited_sandbox_is_observed_with_its_exit() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let sandbox = create_sandbox(&client, "openclaw").await;
+    let sandbox = create_sandbox(&client, "local").await;
     let observed = client
         .read("sandbox", &sandbox, false)
         .await
@@ -544,7 +544,7 @@ async fn an_exited_sandbox_is_observed_with_its_exit() {
 async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let targets = fixture_rows("openclaw");
+    let targets = fixture_rows("local");
     let rows = create(&client, &targets).await;
     let effects = fixture.state.lock().unwrap().effects;
     for ((kind, _), row) in targets.iter().zip(&rows) {
@@ -613,7 +613,7 @@ async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
 async fn sandbox_exec_uses_the_bound_workspace_and_rejects_substituted_identity() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let binding = create_sandbox(&client, "openclaw").await;
+    let binding = create_sandbox(&client, "local").await;
     assert_ne!(binding["workspace"], "default");
     let command = vec!["fixture".into()];
     let mut incomplete = binding.clone();
@@ -656,7 +656,7 @@ async fn sandbox_exec_uses_the_bound_workspace_and_rejects_substituted_identity(
 async fn sandbox_exec_deadline_bounds_a_stream_that_never_finishes() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let sandbox = create_sandbox(&client, "openclaw").await;
+    let sandbox = create_sandbox(&client, "local").await;
     fixture.state.lock().unwrap().exec_stalled = true;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(3),
@@ -696,7 +696,7 @@ async fn failed_readback_retains_each_created_identity_until_explicit_recovery()
     for failed_kind in ["workspace", "provider_profile", "provider", "sandbox"] {
         let fixture = Fixture::start().await;
         let client = client(&fixture, Arc::new(EnvironmentSecrets));
-        for (kind, row) in fixture_rows("openclaw") {
+        for (kind, row) in fixture_rows("local") {
             if kind != failed_kind {
                 assert!(client.ensure(kind, &row).await.error().is_none());
                 continue;

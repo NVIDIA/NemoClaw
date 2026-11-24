@@ -5,23 +5,27 @@
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
-  name: fabric-openclaw
-  uid: c892587f-6439-44b5-9a70-a43e8936461f
+  name: openclaw
+  uid: d55b73c4-cdd7-48b4-b883-dd7d0e8d37da
 spec:
   gateway:
     management: external
     target:
-      docker: {}
-    endpoint: http://127.0.0.1:17681
+      docker:
+        # Replace with the Docker engine holding the sandbox image; name a
+        # Podman engine under target.podman instead.
+        engine: unix:///var/run/docker.sock
+    endpoint: http://127.0.0.1:17671
   inferenceProviders:
     local:
       provider: openai
-      endpoint: http://172.20.0.1:11446/v1
+      api: openai-responses
+      endpoint: https://inference.example.com/v1
   sandboxes:
     assistant:
       image:
-        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#building-agent-images.
-        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        # Replace with the digest from a fresh OpenClaw image build; see docs/agents-inference/inference.md.
+        ref: local-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
       harness:
@@ -33,4 +37,5 @@ spec:
             - name: primary
               providerRef: local
               overrides:
-                model: qwen3:4b
+                model: example-reasoning-model
+                maxTokens: 8192

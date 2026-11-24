@@ -1,1 +1,1 @@
-../platforms/dgx-spark/openclaw-nemotron-super.yaml
+../platforms/docker/vllm/dgx-spark/openclaw-dgx-spark.yaml

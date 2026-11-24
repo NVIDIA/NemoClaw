@@ -69,10 +69,9 @@ fn host(docker: ObservationStatus, podman: ObservationStatus) -> RecordedHost {
 /// the environment queries have been answered by `host`.
 fn suggested_runtime(host: &RecordedHost, template: &str) -> Option<Value> {
     let capabilities = Capabilities::available();
-    let yaml = String::from_utf8(
-        include_bytes!("../../../examples/platforms/docker/openclaw-hosted.yaml").to_vec(),
-    )
-    .unwrap();
+    let yaml =
+        String::from_utf8(include_bytes!("../../../examples/onboarding/openclaw.yaml").to_vec())
+            .unwrap();
     // The example names its target exactly once.
     let yaml = yaml.replace("docker: {}", &format!("{template}: {{}}"));
     let base = PartialDocument::from_yaml(yaml.as_bytes()).unwrap();

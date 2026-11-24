@@ -450,7 +450,7 @@ mod tests {
             (
                 "inference_service",
                 "vllm_runtime",
-                include_str!("../../../examples/platforms/dgx-spark/vllm.yaml"),
+                include_str!("../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"),
                 None,
             ),
             (
@@ -468,13 +468,17 @@ mod tests {
             (
                 "ollama_service",
                 "ollama_runtime",
-                include_str!("../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"),
+                include_str!(
+                    "../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"
+                ),
                 None,
             ),
             (
                 "ollama_service",
                 "ollama_runtime",
-                include_str!("../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"),
+                include_str!(
+                    "../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"
+                ),
                 Some(UUID),
             ),
         ] {

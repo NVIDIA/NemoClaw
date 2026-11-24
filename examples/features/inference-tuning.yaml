@@ -11,9 +11,7 @@ spec:
   gateway:
     management: external
     target:
-      docker:
-        # Select the engine that holds the sandbox image for inspection.
-        engine: unix:///var/run/docker.sock
+      docker: {}
     endpoint: http://127.0.0.1:17671
   inferenceProviders:
     local:

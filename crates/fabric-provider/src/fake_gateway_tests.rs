@@ -100,7 +100,7 @@ fn operations(fixture: &Fixture, operation: &str) -> usize {
 async fn an_agent_starts_once_its_bridge_serves_and_stops_when_removed() {
     let fixture = Fixture::start().await;
     let client = client(&fixture);
-    let sandbox = create_sandbox(&client, "openclaw").await;
+    let sandbox = create_sandbox(&client, "fabric-openclaw").await;
     let desired = desired(&sandbox);
     // Until `fabric-agent-ctl serve` listens, start is asked again.
     fixture.state.lock().unwrap().host_unavailable_starts = 2;
@@ -193,7 +193,7 @@ fn reply(fixture: &Fixture, envelope: Option<String>) {
 async fn reading_an_agent_finds_a_runtime_that_no_longer_runs() {
     let fixture = Fixture::start().await;
     let client = client(&fixture);
-    let sandbox = create_sandbox(&client, "openclaw").await;
+    let sandbox = create_sandbox(&client, "fabric-openclaw").await;
     let fabric = AgentBackend(client.clone());
     let started = fabric.ensure("agent", &desired(&sandbox)).await;
     assert!(started.error().is_none(), "{:?}", started.error());
@@ -271,7 +271,7 @@ async fn reading_an_agent_finds_a_runtime_that_no_longer_runs() {
 async fn an_agent_whose_runtime_stopped_starts_again_in_its_sandbox() {
     let fixture = Fixture::start().await;
     let client = client(&fixture);
-    let sandbox = create_sandbox(&client, "openclaw").await;
+    let sandbox = create_sandbox(&client, "fabric-openclaw").await;
     let fabric = AgentBackend(client.clone());
     let agent = fabric
         .ensure("agent", &desired(&sandbox))
@@ -316,7 +316,7 @@ async fn removing_an_agent_whose_sandbox_exited_stops_nothing() {
     for phase in [proto::SandboxPhase::Error, proto::SandboxPhase::Completed] {
         let fixture = Fixture::start().await;
         let client = client(&fixture);
-        let sandbox = create_sandbox(&client, "openclaw").await;
+        let sandbox = create_sandbox(&client, "fabric-openclaw").await;
         let desired = desired(&sandbox);
         let fabric = AgentBackend(client.clone());
         let started = fabric.ensure("agent", &desired).await;
@@ -343,7 +343,7 @@ async fn removing_an_agent_whose_sandbox_exited_stops_nothing() {
 async fn terminal_startup_reports_phase_and_exit_without_echoing_backend_text() {
     let fixture = Fixture::start().await;
     let client = client(&fixture);
-    let binding = create_sandbox(&client, "openclaw").await;
+    let binding = create_sandbox(&client, "fabric-openclaw").await;
     let key = key(&binding);
     for phase in [proto::SandboxPhase::Error, proto::SandboxPhase::Completed] {
         {
@@ -382,7 +382,7 @@ async fn rejected_configuration_stops_startup_without_exec_and_preserves_binding
     use proto::{ConfigurationAdmissionState, SandboxConfigurationAdmission, SandboxPhase};
     let fixture = Fixture::start().await;
     let client = client(&fixture);
-    let binding = create_sandbox(&client, "openclaw").await;
+    let binding = create_sandbox(&client, "local").await;
     let key = key(&binding);
     let effects = fixture.state.lock().unwrap().effects;
     for (message, expected) in [
@@ -534,7 +534,7 @@ async fn a_restarted_runtime_starts_with_the_same_agent_document_as_the_first() 
     // runtime restarted in the same sandbox must send the first one's document.
     let fixture = Fixture::start().await;
     let client = client(&fixture);
-    let sandbox = create_sandbox(&client, "hermes").await;
+    let sandbox = create_sandbox(&client, "fabric-hermes").await;
     let fabric = AgentBackend(client.clone());
     let started = fabric
         .ensure("agent", &desired_with(&sandbox, &kept_state_config()))
@@ -575,7 +575,7 @@ async fn an_image_whose_adapter_keeps_no_state_starts_its_agent_without_kept_sta
     ] {
         let fixture = Fixture::start().await;
         let client = client(&fixture);
-        let sandbox = create_sandbox(&client, "hermes").await;
+        let sandbox = create_sandbox(&client, "fabric-hermes").await;
         let mut desired = desired_with(&sandbox, &kept_state_config());
         desired.insert(
             nemoclaw_fabric::agent::HARNESS_CATALOG.into(),
@@ -593,7 +593,7 @@ async fn an_image_whose_adapter_keeps_no_state_starts_its_agent_without_kept_sta
 async fn a_failed_runtime_that_holds_kept_state_stops_before_another_starts() {
     let fixture = Fixture::start().await;
     let client = client(&fixture);
-    let sandbox = create_sandbox(&client, "hermes").await;
+    let sandbox = create_sandbox(&client, "fabric-hermes").await;
     let fabric = AgentBackend(client.clone());
     let started = fabric
         .ensure("agent", &desired_with(&sandbox, &kept_state_config()))
@@ -628,7 +628,7 @@ async fn a_failed_runtime_that_holds_kept_state_stops_before_another_starts() {
 async fn refusals_over_kept_state_or_a_busy_runtime_report_fabrics_code() {
     let fixture = Fixture::start().await;
     let client = client(&fixture);
-    let sandbox = create_sandbox(&client, "hermes").await;
+    let sandbox = create_sandbox(&client, "fabric-hermes").await;
     let fabric = AgentBackend(client.clone());
     let desired = desired_with(&sandbox, &kept_state_config());
 

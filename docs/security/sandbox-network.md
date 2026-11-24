@@ -102,7 +102,7 @@ A network can combine it with inline `grants` when no name appears in both.
 A reference to an undefined name fails and lists the defined names.
 A definition that no sandbox selects is validated but applies to none.
 Refer to [the authoring rule](../build-deploy/configuration-references.md#the-authoring-rule).
-The [full-featured OpenClaw example](../../examples/features/combined-openclaw.yaml) gives three sandboxes one policy.
+The [full-featured OpenClaw example](../../examples/platforms/docker/vllm/remote/amd64/full-featured-openclaw.yaml) gives three sandboxes one policy.
 
 ## Runtime Filesystem Access
 

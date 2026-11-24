@@ -16,12 +16,12 @@ On Windows without Git symlink support, use the canonical paths linked from the 
 | OpenClaw | [YAML](openclaw-dgx-spark.yaml) | [YAML](openclaw-dgx-station.yaml) | [YAML](openclaw-windows-wsl2-rtx-spark.yaml) |
 | Deep Agents | [YAML](deepagents-dgx-spark.yaml) | [YAML](deepagents-dgx-station.yaml) | [YAML](deepagents-windows-wsl2-rtx-spark.yaml) |
 
-For prerequisites, memory budgets, image preparation, plan/apply, agent requests, retained teardown, and verification evidence, follow the [Nemotron Super deployment profiles](../platforms/nemotron-super.md).
+For prerequisites, memory budgets, image preparation, plan/apply, agent requests, retained teardown, and verification evidence, follow the [Nemotron Super deployment profiles](../guides/nemotron-super.md).
 The recorded Spark runs cover Hermes and Deep Agents; they do not establish readiness for the other combinations.
 Check the guide's qualification boundary before selecting an event target.
 
 ## AMD64 Kubernetes with NVIDIA Cloud Inference
 
 The [YAML](kubernetes-amd64.yaml) and [HCL](kubernetes-amd64.tf) aliases select the canonical Kubernetes hosted-inference configurations.
-Follow their [setup and verification instructions](../platforms/nemotron-super.md#amd64-kubernetes-with-nvidia-cloud-inference).
+Follow their [setup and verification instructions](../guides/nemotron-super.md#amd64-kubernetes-with-nvidia-cloud-inference).
 This profile requires live validation.

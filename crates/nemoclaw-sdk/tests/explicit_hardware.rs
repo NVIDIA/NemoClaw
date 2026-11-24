@@ -7,7 +7,7 @@ use nemoclaw_sdk::{config::Document, config::schema::input_schema, services::Ser
 use serde_json::{Value, json};
 
 fn input() -> Value {
-    crate::support::example("platforms/dgx-spark/vllm.yaml")
+    crate::support::example("platforms/docker/vllm/dgx-spark/vllm.yaml")
 }
 
 #[test]

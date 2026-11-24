@@ -324,7 +324,7 @@ jobs:
             test ! -e "$NEMOCLAW_HCL_RUN"
             mkdir -p "$NEMOCLAW_HCL_RUN"
             document="$NEMOCLAW_HCL_RUN/case.yaml"
-            cp "examples/platforms/$TARGET/openclaw-nemotron-super.yaml" "$document"
+            cp "examples/platforms/docker/vllm/$TARGET/openclaw-$TARGET.yaml" "$document"
             # Station's qualified model stays separate from the Spark template.
             if [[ $TARGET == dgx-station ]]; then
               bindings+=(

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 #[test]
 fn adapter_defined_interfaces_survive_without_sdk_registration() {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/local.yaml")).unwrap();
     for interfaces in [
         json!({"custom-frontend":{"transport":"stdio", "future":null}}),
         json!({"dashboard":{"port":8642,"bind":"127.0.0.1"}}),
@@ -38,7 +38,7 @@ fn adapter_defined_interfaces_survive_without_sdk_registration() {
 #[test]
 fn interface_configuration_requires_an_object() {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/local.yaml")).unwrap();
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for invalid in [json!(null), json!([]), json!(true), json!("dashboard")] {
         value["spec"]["sandboxes"]["assistant"]["harness"]["settings"] = invalid;

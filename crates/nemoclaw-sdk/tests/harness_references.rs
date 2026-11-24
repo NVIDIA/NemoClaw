@@ -7,8 +7,10 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 
 fn input() -> Value {
-    let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap();
+    let mut value: Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/agents/fabric-openclaw.yaml"
+    ))
+    .unwrap();
     value["spec"]["sandboxes"]["assistant"]["harness"] =
         json!({"kind":"openclaw", "runtime":{"timeout_seconds":900}});
     value

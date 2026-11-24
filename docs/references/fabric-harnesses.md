@@ -14,17 +14,17 @@ The packaged harnesses support these configurations:
 
 | `harness.kind` | Agents per Sandbox | Gateway and Inference Management | Maintained Example |
 |---|---|---|---|
-| `nvidia.fabric.openclaw` | One, with named model choices | External or managed | [OpenClaw](../../examples/agents/openclaw.yaml) |
-| `nvidia.fabric.hermes` | One | External or managed | [Hermes](../../examples/agents/hermes.yaml), [managed Hermes](../../examples/platforms/dgx-spark/hermes-ollama.yaml) |
-| `nvidia.fabric.langchain.deepagents` | One | External or managed, subject to API compatibility | [Deep Agents](../../examples/agents/deepagents.yaml) |
-| `nvidia.fabric.claude` | One | External or managed, subject to Anthropic Messages compatibility | [Claude](../../examples/agents/claude.yaml) |
-| `nvidia.fabric.codex` | One | External or managed, subject to API compatibility | [Codex](../../examples/agents/codex.yaml) |
-| `nvidia.fabric.mini-swe-agent` | One | External or managed, subject to API compatibility | [Mini SWE Agent](../../examples/agents/mini-swe-agent.yaml) |
-| `nvidia.fabric.nooa` | One | External or managed, subject to API compatibility | [Nooa](../../examples/agents/nooa.yaml) |
-| `nvidia.fabric.nooa.bench-agent` | One | External or managed, subject to API compatibility | [Nooa Bench](../../examples/agents/nooa-bench.yaml) |
-| `nvidia.fabric.remote-agent` | One | External or managed, subject to API compatibility | [Remote Agent](../../examples/agents/remote-agent.yaml) |
-| `nvidia.fabric.pi` | One | External or managed, subject to API compatibility | [Pi](../../examples/agents/pi.yaml) |
-| `nvidia.fabric.opencode` | One | External or managed, subject to API compatibility | [OpenCode](../../examples/agents/opencode.yaml) |
+| `nvidia.fabric.openclaw` | One, with named model choices | External or managed | [OpenClaw](../../examples/agents/fabric-openclaw.yaml) |
+| `nvidia.fabric.hermes` | One | External or managed | [Hermes](../../examples/agents/fabric-hermes.yaml), [managed Hermes](../../examples/platforms/docker/ollama/dgx-spark/managed-hermes.yaml) |
+| `nvidia.fabric.langchain.deepagents` | One | External or managed, subject to API compatibility | [Deep Agents](../../examples/agents/fabric.yaml) |
+| `nvidia.fabric.claude` | One | External or managed, subject to Anthropic Messages compatibility | [Claude](../../examples/agents/fabric-claude.yaml) |
+| `nvidia.fabric.codex` | One | External or managed, subject to API compatibility | [Codex](../../examples/agents/fabric-codex.yaml) |
+| `nvidia.fabric.mini-swe-agent` | One | External or managed, subject to API compatibility | [Mini SWE Agent](../../examples/agents/fabric-mini-swe-agent.yaml) |
+| `nvidia.fabric.nooa` | One | External or managed, subject to API compatibility | [Nooa](../../examples/agents/fabric-nooa.yaml) |
+| `nvidia.fabric.nooa.bench-agent` | One | External or managed, subject to API compatibility | [Nooa Bench](../../examples/agents/fabric-nooa-bench.yaml) |
+| `nvidia.fabric.remote-agent` | One | External or managed, subject to API compatibility | [Remote Agent](../../examples/agents/fabric-remote-agent.yaml) |
+| `nvidia.fabric.pi` | One | External or managed, subject to API compatibility | [Pi](../../examples/agents/fabric-pi.yaml) |
+| `nvidia.fabric.opencode` | One | External or managed, subject to API compatibility | [OpenCode](../../examples/agents/fabric-opencode.yaml) |
 
 Managed inference means an accepted Ollama or vLLM service configuration, with that mode's prerequisites.
 It does not promise arbitrary model compatibility.

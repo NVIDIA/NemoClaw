@@ -360,7 +360,7 @@ Onboarding:
 Examples and builds:
 
 - New examples: [an application container beside an agent](../../examples/features/application-container.yaml) and [GPU autoscaling on Kubernetes](../../examples/platforms/kubernetes/gpu-autoscaling/README.md).
-- The [GTC DC](../../examples/platforms/nemotron-super.md) Kubernetes profile runs one OpenClaw and one Hermes agent on a managed gateway, in YAML or HCL, and keeps their files on PVCs.
+- The [GTC DC](../../examples/guides/nemotron-super.md) Kubernetes profile runs one OpenClaw and one Hermes agent on a managed gateway, in YAML or HCL, and keeps their files on PVCs.
   The local templates allow 8,192 output tokens.
 - Linux bundles are built on Ubuntu 22.04 and need glibc 2.35 or newer.
   Ubuntu 22.04 is the oldest supported Linux.
@@ -468,7 +468,7 @@ These changes between the `v0.1.0-rc11` and `v0.1.0-rc12` tags affect existing d
     See [current limits](../../docs/resources/limits.md#platforms-models-and-placement).
   - On an external gateway, `runtime` and `engine` become the target: `runtime: {provider: podman}` with `engine: unix:///run/user/1000/podman/podman.sock` becomes `target: {podman: {engine: unix:///run/user/1000/podman/podman.sock}}`, and `runtime: {provider: kubernetes}` becomes `target: {kubernetes: {}}`.
   - JSON results omit `connection.gatewayEndpoint` for a managed Kubernetes or OpenShift gateway without `expose`.
-  - In hand-written HCL, `openshell_kubernetes_storage`, `openshell_kubernetes_auth`, and `openshell_kubernetes_gateway` take no `endpoint`, and `openshell_gateway` takes `kubernetes` without `endpoint`, with `target` in the specification's `settings`, as in [the Kubernetes HCL example](../../examples/platforms/kubernetes/hosted-nvidia.tf).
+  - In hand-written HCL, `openshell_kubernetes_storage`, `openshell_kubernetes_auth`, and `openshell_kubernetes_gateway` take no `endpoint`, and `openshell_gateway` takes `kubernetes` without `endpoint`, with `target` in the specification's `settings`, as in [the Kubernetes HCL example](../../examples/platforms/kubernetes/hosted-inference/hosted-nvidia.tf).
   - In the Rust SDK, `ManagedGateway` and `ExternalGateway` hold `target`, a `ManagedTarget` or an `ExternalTarget`, `Runtime` is removed, and `ManagedKubernetes` has no `image_pull_secrets`.
 
 ### Breaking Changes in v0.1.0-rc11
@@ -535,7 +535,7 @@ These changes between the `v0.1.0-rc10` and `v0.1.0-rc11` tags affect existing d
 - With Fabric at NVIDIA/NeMo-Fabric `main` `135147a0`, an OpenClaw agent's `skills.bundled` also selects the skills that OpenClaw's own extensions ship, such as `canvas`.
   An extension skill that the selection leaves out no longer loads.
   An agent doesn't start when `nvidia.fabric.nooa` has no `workflow.target_id`, or when the Deep Agents `local_shell` backend has neither `tools.enabled` nor `execute` in `tools.blocked`.
-- The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
+- The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/features/travel/hcl/main.tf) do.
 
 ### Breaking Changes in v0.1.0-rc10
 

@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 fn input() -> Value {
     let mut value: Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/platforms/dgx-spark/vllm.yaml"
+        "../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"
     ))
     .unwrap();
     let service = &mut value["spec"]["services"]["qwen"];
@@ -182,7 +182,7 @@ fn native_serving_schema_rejects_ambiguous_budgets_and_unsafe_overrides() {
 fn native_container_contract_and_remote_example_preserve_declared_settings() {
     use nemoclaw_sdk::{compile, managed::Spec};
     let doc = Document::parse(
-        include_str!("../../../examples/platforms/remote-inference/openclaw-nemotron-amd64.yaml")
+        include_str!("../../../examples/platforms/podman/vllm/remote/amd64/nemotron-amd64.yaml")
             .as_bytes(),
     )
     .unwrap();

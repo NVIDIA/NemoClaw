@@ -1,1 +1,1 @@
-../platforms/windows-wsl2-rtx-spark/hermes-nemotron-super.yaml
+../platforms/docker/vllm/rtx-spark-wsl2/hermes-windows-wsl2-rtx-spark.yaml

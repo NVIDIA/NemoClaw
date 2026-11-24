@@ -43,7 +43,7 @@ fn failure_json_and_progress_stay_separate_when_either_stream_is_redirected() {
     let config = directory.path().join("input.yaml");
     fs::write(
         &config,
-        include_str!("../../../examples/features/inference-tuning.yaml"),
+        include_str!("../../../examples/agents/openclaw.yaml"),
     )
     .unwrap();
     for operation in ["plan", "apply", "destroy"] {

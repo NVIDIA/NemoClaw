@@ -6,9 +6,11 @@ use serde_json::{Value, json};
 
 #[test]
 fn anthropic_with_claude_should_work() {
-    let desired = DesiredState::from_yaml(include_bytes!("../../../examples/agents/claude.yaml"))
-        .provider_endpoint("https://api.anthropic.com/v1")
-        .provider_credential("ANTHROPIC_API_KEY");
+    let desired = DesiredState::from_yaml(include_bytes!(
+        "../../../examples/agents/fabric-claude.yaml"
+    ))
+    .provider_endpoint("https://api.anthropic.com/v1")
+    .provider_credential("ANTHROPIC_API_KEY");
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
@@ -28,9 +30,11 @@ fn anthropic_with_claude_should_work() {
 
 #[test]
 fn anthropic_compatible_endpoint_should_work() {
-    let desired = DesiredState::from_yaml(include_bytes!("../../../examples/agents/claude.yaml"))
-        .provider_endpoint("https://anthropic.example.com/v1")
-        .provider_credential("COMPATIBLE_ANTHROPIC_API_KEY");
+    let desired = DesiredState::from_yaml(include_bytes!(
+        "../../../examples/agents/fabric-claude.yaml"
+    ))
+    .provider_endpoint("https://anthropic.example.com/v1")
+    .provider_credential("COMPATIBLE_ANTHROPIC_API_KEY");
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
@@ -103,7 +107,7 @@ fn openrouter_endpoint_should_work() {
 
 #[test]
 fn deep_agents_should_work() {
-    let yaml = include_bytes!("../../../examples/agents/deepagents.yaml");
+    let yaml = include_bytes!("../../../examples/agents/fabric.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
@@ -114,7 +118,9 @@ fn deep_agents_should_work() {
 
 #[test]
 fn multiple_openclaw_sandboxes_with_policy_tools_and_observability_should_work() {
-    let yaml = include_bytes!("../../../examples/features/combined-openclaw.yaml");
+    let yaml = include_bytes!(
+        "../../../examples/platforms/docker/vllm/remote/amd64/full-featured-openclaw.yaml"
+    );
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     let sandboxes = desired["spec"]["sandboxes"].as_object().unwrap();
@@ -134,7 +140,7 @@ fn multiple_openclaw_sandboxes_with_policy_tools_and_observability_should_work()
 
 #[test]
 fn pi_should_work() {
-    let yaml = include_bytes!("../../../examples/agents/pi.yaml");
+    let yaml = include_bytes!("../../../examples/agents/fabric-pi.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
@@ -145,7 +151,8 @@ fn pi_should_work() {
 
 #[test]
 fn managed_ollama_should_work() {
-    let yaml = include_bytes!("../../../examples/platforms/dgx-spark/openclaw-ollama.yaml");
+    let yaml =
+        include_bytes!("../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     let service = desired["spec"]["inferenceProviders"]["local"]["serviceRef"]
@@ -157,7 +164,7 @@ fn managed_ollama_should_work() {
 #[test]
 fn managed_vllm_should_work() {
     let yaml =
-        include_bytes!("../../../examples/platforms/remote-inference/openclaw-nemotron-amd64.yaml");
+        include_bytes!("../../../examples/platforms/podman/vllm/remote/amd64/nemotron-amd64.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     let service = desired["spec"]["inferenceProviders"]["nemotron"]["serviceRef"]
@@ -173,7 +180,7 @@ fn managed_vllm_should_work() {
 #[test]
 fn external_ollama_proxy_should_work() {
     let desired = DesiredState::from_yaml(include_bytes!(
-        "../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"
+        "../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"
     ))
     .external_ollama_proxy();
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
@@ -194,7 +201,7 @@ fn external_ollama_proxy_should_work() {
 #[test]
 fn managed_podman_with_an_explicit_gateway_port_should_work() {
     let desired = DesiredState::from_yaml(include_bytes!(
-        "../../../examples/platforms/podman/deepagents-external-inference.yaml"
+        "../../../examples/platforms/podman/managed-podman.yaml"
     ))
     .gateway_port(17891);
     let document = Document::parse(desired.yaml().as_bytes()).unwrap();
@@ -216,7 +223,7 @@ fn managed_podman_with_an_explicit_gateway_port_should_work() {
 
 #[test]
 fn openclaw_should_work() {
-    let yaml = include_bytes!("../../../examples/features/inference-tuning.yaml");
+    let yaml = include_bytes!("../../../examples/agents/openclaw.yaml");
     let document = Document::parse(yaml.as_slice()).unwrap();
     let desired = normalized(&document);
     assert_eq!(
@@ -465,7 +472,9 @@ struct DesiredState {
 
 impl DesiredState {
     fn openclaw() -> Self {
-        Self::from_yaml(include_bytes!("../../../examples/agents/openclaw.yaml"))
+        Self::from_yaml(include_bytes!(
+            "../../../examples/agents/fabric-openclaw.yaml"
+        ))
     }
 
     fn from_yaml(yaml: &[u8]) -> Self {

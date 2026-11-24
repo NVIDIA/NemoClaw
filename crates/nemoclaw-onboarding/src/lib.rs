@@ -169,7 +169,7 @@ mod tests {
     fn template_runs_replace_only_the_identity_and_preserve_the_source() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("template.yaml");
-        let original = include_bytes!("../../../examples/platforms/docker/openclaw-hosted.yaml");
+        let original = include_bytes!("../../../examples/onboarding/openclaw.yaml");
         std::fs::write(&path, original).unwrap();
         let capabilities = Capabilities::available();
         let first = load_journey(Source::Template(&path), &capabilities).unwrap();
@@ -193,10 +193,9 @@ mod tests {
             "configuration exceeds 1 MiB"
         );
 
-        let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
-            "../../../examples/platforms/docker/openclaw-hosted.yaml"
-        ))
-        .unwrap();
+        let mut values: serde_json::Value =
+            serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+                .unwrap();
         let second = values["spec"]["sandboxes"]["assistant"].clone();
         values["spec"]["sandboxes"]["second"] = second;
         let yaml = serde_json::to_vec(&values).unwrap();
@@ -209,10 +208,9 @@ mod tests {
     fn unknown_adapter_template_keeps_authored_settings_and_reports_unverified_schema() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("unknown.yaml");
-        let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
-            "../../../examples/platforms/docker/openclaw-hosted.yaml"
-        ))
-        .unwrap();
+        let mut values: serde_json::Value =
+            serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+                .unwrap();
         values["spec"]["sandboxes"]["assistant"]["harness"] = serde_json::json!({
             "kind": "fixture-reopen-adapter",
             "settings": {"custom_option": "retained"}
@@ -252,8 +250,8 @@ mod tests {
     #[test]
     fn bundled_template_is_supported_by_the_questionnaire() {
         let capabilities = Capabilities::available();
-        let template = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/platforms/docker/openclaw-hosted.yaml");
+        let template =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/onboarding/openclaw.yaml");
         let state = load_journey(Source::Template(&template), &capabilities).unwrap();
         assert_eq!(
             state

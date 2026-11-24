@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The GTC DC AMD64 Kubernetes example, examples/platforms/kubernetes/hosted-nvidia.yaml,
+# The GTC DC AMD64 Kubernetes example, examples/gtc-dc/kubernetes-amd64.yaml,
 # compiled and planned against the inference and image metadata fixtures.
 # Kubernetes operations and Helm are mocked; the other providers are real.
 # The plan must install a managed Kubernetes gateway and
@@ -34,7 +34,7 @@ run "fixtures" {
   command = plan
 
   module {
-    source = "./examples/platforms/kubernetes/hosted-nvidia"
+    source = "./examples/gtc-dc/kubernetes-amd64"
   }
 
   plan_options {
@@ -46,7 +46,7 @@ run "plan" {
   command = plan
 
   module {
-    source = "./examples/platforms/kubernetes/hosted-nvidia"
+    source = "./examples/gtc-dc/kubernetes-amd64"
   }
 
   assert {

@@ -163,7 +163,7 @@ fn root_adapter_alternatives_accept_json_object_input() {
     catalog.adapters = vec![adapter];
     let capabilities = Capabilities::from_catalog(&catalog);
     let mut values: Value = serde_saphyr::from_slice(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     values["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
@@ -202,7 +202,7 @@ fn resolver_failure_is_not_reported_as_a_finished_questionnaire() {
     catalog.adapters = vec![first, second];
     let capabilities = Capabilities::from_catalog(&catalog);
     let mut values: Value = serde_saphyr::from_slice(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     values["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
@@ -238,7 +238,7 @@ fn resolver_failure_is_not_reported_as_a_finished_questionnaire() {
 fn configured_target_prerequisite_blocks_save_until_observed() {
     let capabilities = Capabilities::available();
     let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     let state = JourneyDefinition::new("target-gated", base)
@@ -275,7 +275,7 @@ fn configured_target_prerequisite_blocks_save_until_observed() {
 fn wizard_uses_the_shared_resolver_for_an_sdk_form_choice() {
     let capabilities = Capabilities::available();
     let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     values["spec"]["sandboxes"]["assistant"]["agent"]
@@ -342,7 +342,7 @@ fn a_template_sandbox_keeps_its_name_in_questions_and_text() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("template.yaml");
     let mut values: Value = serde_saphyr::from_slice(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     let sandboxes = values["spec"]["sandboxes"].as_object_mut().unwrap();
@@ -693,7 +693,7 @@ fn the_configuration_file_opens_under_the_summary_as_the_saved_yaml() {
 #[test]
 fn a_template_with_search_and_grants_summarizes_both() {
     let mut values: Value = serde_saphyr::from_slice(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     values["spec"]["integrations"] = serde_json::json!({
@@ -853,7 +853,7 @@ fn a_template_value_is_saved_even_when_it_matches_the_sdk_default() {
     let directory = tempfile::tempdir().unwrap();
     let template = directory.path().join("template.yaml");
     let mut values: Value = serde_saphyr::from_slice(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     values["spec"]["gateway"]["target"]["docker"]["port"] = 17681.into();
@@ -909,7 +909,7 @@ fn another_harness_omits_its_optional_settings_and_asks_required_ones() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("template.yaml");
     let mut values: Value = serde_saphyr::from_slice(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     values["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
@@ -973,7 +973,7 @@ fn default_journey_suggests_its_own_name_and_lists_nothing_from_a_template() {
 #[test]
 fn template_values_kept_by_omission_are_listed_at_review() {
     let mut values: Value = serde_saphyr::from_slice(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     values["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
@@ -1019,7 +1019,7 @@ fn template_values_kept_by_omission_are_listed_at_review() {
 #[test]
 fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/platforms/dgx-spark/local-and-hosted.yaml");
+        .join("../../examples/platforms/docker/vllm/dgx-spark/local-and-hosted.yaml");
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Template(&path), &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
@@ -1062,7 +1062,7 @@ fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
 #[test]
 fn a_template_with_several_routes_gets_a_model_row_for_each() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/platforms/dgx-spark/local-and-hosted.yaml");
+        .join("../../examples/platforms/docker/vllm/dgx-spark/local-and-hosted.yaml");
     let wizard = reviewing_template(&path);
     let text = flat(&screen(&wizard, 160, 60));
     for row in [
@@ -1148,7 +1148,10 @@ fn an_unchanged_journey_resolves_once_until_an_answer_or_observation_changes_it(
     assert_eq!(wizard.resolutions(), 3);
 
     let document = Document::parse(
-        include_bytes!("../../../../examples/platforms/dgx-spark/openclaw-ollama.yaml").as_slice(),
+        include_bytes!(
+            "../../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"
+        )
+        .as_slice(),
     )
     .unwrap();
     let engine = discovery_queries(&document, None)
@@ -1451,7 +1454,7 @@ async fn enter_accepts_the_runtime_this_machine_can_run_and_targets_its_engine()
 fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
     let capabilities = Capabilities::available();
     let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     let state = JourneyDefinition::new("conflicted-target", base)
@@ -1782,7 +1785,7 @@ fn an_image_the_engine_could_not_list_is_still_asked() {
 /// `local`.
 fn template_at_the_image_question(edit: impl FnOnce(&mut Value), local: &[&str]) -> JourneyWizard {
     let mut values: Value = serde_saphyr::from_slice(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     edit(&mut values);
@@ -2307,7 +2310,7 @@ fn missing_catalog_key_does_not_occupy_the_error_slot_or_hide_engine_failures() 
     };
     let capabilities = Capabilities::available();
     let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     let mut state = JourneyDefinition::new("catalog-note", base)
@@ -2689,7 +2692,7 @@ fn review_scroll_stops_at_the_last_line_and_shows_a_scrollbar() {
 fn an_unverified_target_the_journey_requires_blocks_saving_in_the_error_colour() {
     let capabilities = Capabilities::available();
     let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../../examples/platforms/docker/openclaw-hosted.yaml"
+        "../../../../examples/onboarding/openclaw.yaml"
     ))
     .unwrap();
     let state = JourneyDefinition::new("target-gated", base)

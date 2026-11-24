@@ -588,13 +588,15 @@ fn agents_keep_their_state_where_the_adapter_accepts_it() {
         let doc = nemoclaw_sdk::config::Document::parse(text).unwrap();
         nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandboxes().next().unwrap()).unwrap()
     };
-    let hermes = project(include_bytes!("../../../examples/agents/hermes.yaml"));
-    assert_eq!(hermes["runtime"]["keep_state"], true, "{hermes}");
-    let openclaw = project(include_bytes!(
-        "../../../examples/features/inference-tuning.yaml"
+    let hermes = project(include_bytes!(
+        "../../../examples/agents/fabric-hermes.yaml"
     ));
+    assert_eq!(hermes["runtime"]["keep_state"], true, "{hermes}");
+    let openclaw = project(include_bytes!("../../../examples/agents/openclaw.yaml"));
     assert_eq!(openclaw["runtime"]["keep_state"], true, "{openclaw}");
-    let remote = project(include_bytes!("../../../examples/agents/remote-agent.yaml"));
+    let remote = project(include_bytes!(
+        "../../../examples/agents/fabric-remote-agent.yaml"
+    ));
     assert!(remote["runtime"].get("keep_state").is_none(), "{remote}");
 }
 
@@ -615,7 +617,7 @@ fn an_image_whose_adapter_keeps_no_state_runs_without_kept_state() {
         }
     }
     let document = nemoclaw_sdk::config::Document::parse(
-        include_bytes!("../../../examples/agents/hermes.yaml").as_slice(),
+        include_bytes!("../../../examples/agents/fabric-hermes.yaml").as_slice(),
     )
     .unwrap();
     let mut checked = 0;
@@ -639,7 +641,7 @@ fn generated_base_urls_go_only_to_adapters_that_accept_them() {
     // Fabric rejects a normalized field an adapter does not accept, so the SDK
     // sends its generated base URL only where the descriptor accepts one.
     let remote = nemoclaw_sdk::config::Document::parse(
-        include_bytes!("../../../examples/agents/remote-agent.yaml").as_slice(),
+        include_bytes!("../../../examples/agents/fabric-remote-agent.yaml").as_slice(),
     )
     .unwrap();
     let config =
@@ -655,7 +657,7 @@ fn generated_base_urls_go_only_to_adapters_that_accept_them() {
     );
 
     let openclaw = nemoclaw_sdk::config::Document::parse(
-        include_bytes!("../../../examples/features/inference-tuning.yaml").as_slice(),
+        include_bytes!("../../../examples/agents/openclaw.yaml").as_slice(),
     )
     .unwrap();
     let config =
@@ -672,7 +674,7 @@ fn opencode_trusts_the_plain_http_model_hosts_the_deployment_names() {
     // Fabric's OpenCode adapter refuses a plain-HTTP model endpoint outside
     // loopback unless its harness settings list the host, so the deployment
     // lists the hosts of the endpoints it sends.
-    let text = include_str!("../../../examples/agents/opencode.yaml");
+    let text = include_str!("../../../examples/agents/fabric-opencode.yaml");
     let project = |text: &str| {
         let doc = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
         nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandboxes().next().unwrap()).unwrap()
@@ -711,7 +713,7 @@ fn opencode_trusts_the_plain_http_model_hosts_the_deployment_names() {
     assert_eq!(config["harness"]["settings"], json!({}), "{config}");
 
     // Pi declares the setting too, for its Relay gateway.
-    let pi = project(include_str!("../../../examples/agents/pi.yaml"));
+    let pi = project(include_str!("../../../examples/agents/fabric-pi.yaml"));
     assert_eq!(
         pi["harness"]["settings"]["insecure_http_model_hosts"],
         json!(["172.20.0.1"]),
@@ -719,7 +721,7 @@ fn opencode_trusts_the_plain_http_model_hosts_the_deployment_names() {
     );
 
     // Hermes declares no such setting, and Fabric rejects undeclared settings.
-    let hermes = project(include_str!("../../../examples/agents/hermes.yaml"));
+    let hermes = project(include_str!("../../../examples/agents/fabric-hermes.yaml"));
     assert!(
         hermes["models"]["default"]["base_url"]
             .as_str()
@@ -734,7 +736,7 @@ fn openclaw_fetches_hosts_that_policy_dns_answers() {
     // OpenShell's policy DNS answers every name from 198.18.0.0/15 and decides
     // each connection itself; OpenClaw's fetch tools refuse that range unless
     // told it belongs to such a proxy.
-    let text = include_str!("../../../examples/features/inference-tuning.yaml");
+    let text = include_str!("../../../examples/agents/openclaw.yaml");
     let project = |text: &str| {
         let doc = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
         nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandboxes().next().unwrap()).unwrap()
@@ -760,7 +762,7 @@ fn openclaw_fetches_hosts_that_policy_dns_answers() {
     );
 
     // Hermes declares no such setting, and Fabric rejects undeclared settings.
-    let hermes = project(include_str!("../../../examples/agents/hermes.yaml"));
+    let hermes = project(include_str!("../../../examples/agents/fabric-hermes.yaml"));
     assert_eq!(hermes["harness"]["settings"], json!({}), "{hermes}");
 }
 
@@ -768,7 +770,7 @@ fn openclaw_fetches_hosts_that_policy_dns_answers() {
 fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
     // Pi declares `api`, `context_window`, and `max_tokens` as model extensions.
     let pi = nemoclaw_sdk::config::Document::parse(
-        include_bytes!("../../../examples/agents/pi.yaml").as_slice(),
+        include_bytes!("../../../examples/agents/fabric-pi.yaml").as_slice(),
     )
     .unwrap();
     let model = &nemoclaw_sdk::fabric_config::for_sandbox(&pi, pi.sandbox("assistant").unwrap())
@@ -780,7 +782,7 @@ fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
     // OpenClaw declares a model `api` too, so it calls each provider with
     // the API the provider declares: an anthropic provider gets the Messages
     // API, which carries the key in x-api-key where OpenShell places it.
-    let text = include_str!("../../../examples/features/inference-tuning.yaml");
+    let text = include_str!("../../../examples/agents/openclaw.yaml");
     let openclaw = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
     let config =
         nemoclaw_sdk::fabric_config::for_sandbox(&openclaw, openclaw.sandbox("assistant").unwrap())
@@ -820,7 +822,7 @@ fn declared_model_extensions_get_the_provider_api_and_authored_fields() {
 
 #[test]
 fn routes_set_the_harness_provider_and_sampling() {
-    let text = include_str!("../../../examples/features/inference-tuning.yaml");
+    let text = include_str!("../../../examples/agents/openclaw.yaml");
     let plain = nemoclaw_sdk::config::Document::parse(text.as_bytes()).unwrap();
     let model =
         &nemoclaw_sdk::fabric_config::for_sandbox(&plain, plain.sandbox("assistant").unwrap())
@@ -885,10 +887,8 @@ fn plan_rejections(input: &serde_json::Value) -> Vec<String> {
 
 /// The shipped example with its harness replaced.
 fn example_with_harness(kind: &str) -> serde_json::Value {
-    let mut input: serde_json::Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/features/inference-tuning.yaml"
-    ))
-    .unwrap();
+    let mut input: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap();
     input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(kind);
     input
 }
@@ -1007,10 +1007,8 @@ fn a_configuration_the_adapter_accepts_plans() {
 
 #[test]
 fn null_sampling_extensions_remain_unset_for_adapter_acceptance() {
-    let mut input: serde_json::Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/features/inference-tuning.yaml"
-    ))
-    .unwrap();
+    let mut input: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap();
     input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(NO_TUNING);
     input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"] = json!({"model":"test-model", "extensions": {"max_tokens":null,"temperature":null,"top_p":null}});
     let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
@@ -1047,7 +1045,7 @@ fn assess_nooa_example(
     use nemoclaw_sdk::config::Document;
     use nemoclaw_sdk::fabric_capabilities::{assess_fabric, requirements_for_sandbox};
     let mut input: serde_json::Value =
-        serde_saphyr::from_str(include_str!("../../../examples/agents/nooa.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/fabric-nooa.yaml")).unwrap();
     edit(&mut input["spec"]["sandboxes"]["assistant"]);
     let doc = Document::parse(input.to_string().as_bytes()).unwrap();
     let requirements = requirements_for_sandbox(&doc, doc.sandbox("assistant").unwrap()).unwrap();

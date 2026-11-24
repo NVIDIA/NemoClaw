@@ -3,7 +3,7 @@
 
 # Configuring an SSH Model Service
 
-The [remote-vllm.yaml](../../examples/platforms/dgx-spark/remote-vllm.yaml) example manages a Docker inference service through SSH while an existing native NVIDIA OpenShell gateway owns Podman sandboxes.
+The [remote-vllm.yaml](../../examples/platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml) example manages a Docker inference service through SSH while an existing native NVIDIA OpenShell gateway owns Podman sandboxes.
 Declare the service under `spec.services.<name>` and select it from an inference provider with `serviceRef`.
 Its `placement.engine` selects the SSH Docker endpoint, and the rest of `placement` selects its private Docker network.
 Its `publication` declares the private host address and inference URL that OpenShell can reach.
@@ -33,8 +33,8 @@ Use a fresh deployment UID and a dedicated state directory.
 From the repository root, preview and apply the configuration:
 
 ```sh
-nemoclaw plan --state-dir .local/remote examples/platforms/dgx-spark/remote-vllm.yaml
-nemoclaw apply --state-dir .local/remote examples/platforms/dgx-spark/remote-vllm.yaml
+nemoclaw plan --state-dir .local/remote examples/platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml
+nemoclaw apply --state-dir .local/remote examples/platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml
 ```
 
 Apply creates retained model storage and provider-managed inference compute on the SSH target, waits for application readiness, then configures the sandbox's OpenShell route.

@@ -57,9 +57,10 @@ fn plan_reads_only_gateway_cluster_and_image_metadata_references() {
         ["TEST_IMAGE_METADATA", "TEST_KUBECONFIG"]
     );
     // Search and API integrations are registered by apply, like inference.
-    let travel =
-        Document::parse(include_bytes!("../../../examples/features/travel-team.yaml").as_slice())
-            .unwrap();
+    let travel = Document::parse(
+        include_bytes!("../../../examples/features/travel-team/travel-team.yaml").as_slice(),
+    )
+    .unwrap();
     assert_eq!(
         travel.credential_names(),
         ["BOOKINGS_API_KEY", "BRAVE_API_KEY", "NVIDIA_API_KEY"]

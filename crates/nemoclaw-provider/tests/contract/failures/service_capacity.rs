@@ -20,7 +20,8 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
         fs::write(root.join(file), value.to_string()).unwrap();
     }
     let document = Document::parse(
-        include_bytes!("../../../../../examples/platforms/dgx-spark/two-models.yaml").as_slice(),
+        include_bytes!("../../../../../examples/platforms/docker/vllm/dgx-spark/two-models.yaml")
+            .as_slice(),
     )
     .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
@@ -158,7 +159,8 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 fn ollama_reads_reject_a_vllm_contract() {
     let document = Document::parse(
-        include_bytes!("../../../../../examples/platforms/dgx-spark/two-models.yaml").as_slice(),
+        include_bytes!("../../../../../examples/platforms/docker/vllm/dgx-spark/two-models.yaml")
+            .as_slice(),
     )
     .unwrap();
     let mut value = serde_json::to_value(document).unwrap();

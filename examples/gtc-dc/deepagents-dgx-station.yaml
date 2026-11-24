@@ -1,1 +1,1 @@
-../platforms/dgx-station/deepagents-nemotron-super.yaml
+../platforms/docker/vllm/dgx-station/deepagents-dgx-station.yaml

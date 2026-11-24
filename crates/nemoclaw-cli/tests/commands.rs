@@ -318,7 +318,7 @@ fn failed_progress_is_visible_without_verbose_and_stays_on_stderr() {
 
 fn write_credential_document(directory: &std::path::Path) -> std::path::PathBuf {
     let path = directory.join("credential-input.yaml");
-    let yaml = include_str!("../../../examples/features/inference-tuning.yaml").replace(
+    let yaml = include_str!("../../../examples/agents/openclaw.yaml").replace(
         "      endpoint: https://inference.example.com/v1",
         "      endpoint: https://inference.example.com/v1\n      credential: {env: STORY_CREDENTIAL_KEY}",
     );
@@ -541,7 +541,7 @@ fn onboarding_requires_a_terminal_without_loading_a_bundle_or_creating_state() {
     let state = directory.path().join("state");
     let destination = directory.path().join("authored.yaml");
     let template = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/platforms/docker/openclaw-hosted.yaml");
+        .join("../../examples/onboarding/openclaw.yaml");
     let original = fs::read(&template).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
         .arg("onboard")

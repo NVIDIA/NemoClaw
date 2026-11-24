@@ -10,17 +10,19 @@ For a managed gateway and hosted inference, start with the [Docker example](../p
 
 | Configuration | Purpose and additional setup |
 |---|---|
-| [openclaw.yaml](openclaw.yaml) | OpenClaw with one model route |
-| [hermes.yaml](hermes.yaml) | Hermes with one model route; select a model and context size that meet the [Hermes requirements](../../docs/agents-inference/inference.md#sizing-the-context-for-hermes) |
-| [deepagents.yaml](deepagents.yaml) | LangChain Deep Agents with one model route |
-| [claude.yaml](claude.yaml) | Claude with an Anthropic Messages-compatible endpoint |
-| [codex.yaml](codex.yaml) | Codex with an OpenAI Responses-compatible endpoint |
-| [mini-swe-agent.yaml](mini-swe-agent.yaml) | Mini SWE Agent with its cost-tracking setting |
-| [nooa.yaml](nooa.yaml) | Nooa with the coding-agent workflow target |
-| [nooa-bench.yaml](nooa-bench.yaml) | Nooa Bench adapter |
-| [opencode.yaml](opencode.yaml) | OpenCode running on Bun inside its agent image |
-| [pi.yaml](pi.yaml) | Pi with explicit model context, input, and cost metadata |
-| [remote-agent.yaml](remote-agent.yaml) | Fabric's Remote Agent adapter; replace both the inference endpoint and the harness's `settings.base_url` |
+| [fabric-openclaw.yaml](fabric-openclaw.yaml) | OpenClaw with one model route |
+| [local.yaml](local.yaml) | OpenClaw using an existing local endpoint |
+| [openclaw.yaml](openclaw.yaml) | OpenClaw with explicit Docker image inspection, Responses API, and an output-token limit |
+| [fabric-hermes.yaml](fabric-hermes.yaml) | Hermes with one model route; select a model and context size that meet the [Hermes requirements](../../docs/agents-inference/inference.md#sizing-the-context-for-hermes) |
+| [fabric.yaml](fabric.yaml) | LangChain Deep Agents with one model route |
+| [fabric-claude.yaml](fabric-claude.yaml) | Claude with an Anthropic Messages-compatible endpoint |
+| [fabric-codex.yaml](fabric-codex.yaml) | Codex with an OpenAI Responses-compatible endpoint |
+| [fabric-mini-swe-agent.yaml](fabric-mini-swe-agent.yaml) | Mini SWE Agent with its cost-tracking setting |
+| [fabric-nooa.yaml](fabric-nooa.yaml) | Nooa with the coding-agent workflow target |
+| [fabric-nooa-bench.yaml](fabric-nooa-bench.yaml) | Nooa Bench adapter |
+| [fabric-opencode.yaml](fabric-opencode.yaml) | OpenCode running on Bun inside its agent image |
+| [fabric-pi.yaml](fabric-pi.yaml) | Pi with explicit model context, input, and cost metadata |
+| [fabric-remote-agent.yaml](fabric-remote-agent.yaml) | Fabric's Remote Agent adapter; replace both the inference endpoint and the harness's `settings.base_url` |
 
 ## Prepare and Verify
 

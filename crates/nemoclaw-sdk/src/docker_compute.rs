@@ -1079,7 +1079,8 @@ mod tests {
     #[test]
     fn shared_image_rejects_incompatible_target_architectures() {
         let document = Document::parse(
-            include_bytes!("../../../examples/platforms/dgx-spark/two-models.yaml").as_slice(),
+            include_bytes!("../../../examples/platforms/docker/vllm/dgx-spark/two-models.yaml")
+                .as_slice(),
         )
         .unwrap();
         let generations: Generations = [
@@ -1109,7 +1110,8 @@ mod tests {
     #[test]
     fn remote_network_and_pulled_images_are_shared_by_engine_and_digest() {
         let document = Document::parse(
-            include_bytes!("../../../examples/platforms/dgx-spark/two-models.yaml").as_slice(),
+            include_bytes!("../../../examples/platforms/docker/vllm/dgx-spark/two-models.yaml")
+                .as_slice(),
         )
         .unwrap();
         let generations: Generations = [

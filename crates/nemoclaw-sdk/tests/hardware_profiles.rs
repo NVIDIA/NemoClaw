@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 
 fn input(hardware: Value) -> Value {
     let mut value: Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/platforms/dgx-spark/vllm.yaml"
+        "../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"
     ))
     .unwrap();
     value["spec"]["services"]["qwen"]["hardware"] = hardware;
@@ -68,13 +68,13 @@ fn hardware_failures_report_the_requirement_and_observation() {
         format!("{UUID}: hardware.minDriverMajor requires at least 580; observed 570")
     );
     let mut ollama_document: Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"
+        "../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama-gpu.yaml"
     ))
     .unwrap();
-    ollama_document["spec"]["services"]["ollama-server"]["hardware"] =
+    ollama_document["spec"]["services"]["qwen"]["hardware"] =
         json!({"profile":"h100", "architecture":"amd64"});
     let ollama_document = Document::parse(ollama_document.to_string().as_bytes()).unwrap();
-    let ServiceDefinition::Ollama(ollama) = &ollama_document.spec.services["ollama-server"] else {
+    let ServiceDefinition::Ollama(ollama) = &ollama_document.spec.services["qwen"] else {
         panic!("expected Ollama")
     };
     let ollama_error =
@@ -159,14 +159,14 @@ fn a_dedicated_memory_service_at_the_reserve_floor_starts_when_26_gib_are_availa
     );
 
     let mut ollama: Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"
+        "../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama-gpu.yaml"
     ))
     .unwrap();
-    ollama["spec"]["services"]["ollama-server"]["hardware"] =
+    ollama["spec"]["services"]["qwen"]["hardware"] =
         json!({"profile": "l4", "architecture": "amd64"});
-    ollama["spec"]["services"]["ollama-server"]["memory"]["hostReserveGiB"] = json!(6);
+    ollama["spec"]["services"]["qwen"]["memory"]["hostReserveGiB"] = json!(6);
     let document = Document::parse(ollama.to_string().as_bytes()).unwrap();
-    let ServiceDefinition::Ollama(service) = &document.spec.services["ollama-server"] else {
+    let ServiceDefinition::Ollama(service) = &document.spec.services["qwen"] else {
         panic!("expected Ollama")
     };
     let check = |available| {

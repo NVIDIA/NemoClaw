@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn unfinished_apply_without_complete_runtime_state_explains_how_to_recover() {
         let document = Document::parse(
-            include_bytes!("../../../../../examples/agents/openclaw.yaml").as_slice(),
+            include_bytes!("../../../../../examples/agents/fabric-openclaw.yaml").as_slice(),
         )
         .unwrap();
         let mut record = Record::new(document).unwrap();
@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn teardown_can_finish_a_failed_removal_of_a_reconstructible_resource() {
         let document = Document::parse(
-            include_bytes!("../../../../../examples/agents/openclaw.yaml").as_slice(),
+            include_bytes!("../../../../../examples/agents/fabric-openclaw.yaml").as_slice(),
         )
         .unwrap();
         let mut record = Record::new(document).unwrap();

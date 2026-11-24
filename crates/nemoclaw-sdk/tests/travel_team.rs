@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! The YAML travel team expresses what the hand-written HCL example in
-//! examples/hcl/travel-team declares, sandbox by sandbox.
+//! examples/features/travel-team/hcl declares, sandbox by sandbox.
 use nemoclaw_sdk::compile::{Generations, targets};
 use nemoclaw_sdk::config::Document;
 use serde_json::{Value, json};
@@ -9,8 +9,10 @@ use serde_json::{Value, json};
 const RESEARCHERS: [&str; 4] = ["flights", "stays", "transport", "attractions"];
 
 fn document() -> Document {
-    Document::parse(include_bytes!("../../../examples/features/travel-team.yaml").as_slice())
-        .expect("the travel team parses")
+    Document::parse(
+        include_bytes!("../../../examples/features/travel-team/travel-team.yaml").as_slice(),
+    )
+    .expect("the travel team parses")
 }
 
 /// The HCL example's settings for each role: its inference provider, model

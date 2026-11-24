@@ -77,7 +77,7 @@ pub struct Needs {
 pub fn files(id: &str) -> [String; 2] {
     if id == STATION_CASE {
         return [
-            "examples/platforms/dgx-station/openclaw-nemotron-super.yaml".into(),
+            "examples/platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml".into(),
             format!("crates/nemoclaw-e2e/tests/e2e/hcl/manual/{id}.tftest.hcl"),
         ];
     }

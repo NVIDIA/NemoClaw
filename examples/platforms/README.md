@@ -3,20 +3,19 @@
 
 # Platform Examples
 
-Choose the environment that will own the gateway and inference service.
+Choose the gateway/sandbox backend: Docker, Kubernetes, OpenShift, or Podman.
+Within each backend, examples are grouped by runtime or scenario, with hardware variants where needed.
+The model server can run on a different engine or host; its placement does not change the gateway's backend folder.
 Each family documents its required images, credentials, setup, expected results, and verification limits.
 
-| Environment | Starting point |
+| Backend | Starting point |
 |---|---|
-| Docker with hosted inference, no local GPU | [One OpenClaw agent](docker/README.md) |
-| Rootless Linux Podman with existing inference | [One Deep Agents runtime](podman/README.md) |
-| DGX Spark | [Local models, shared inference, several models, and hosted routes](dgx-spark/README.md) |
-| DGX Station | [OpenClaw and shared inference on a single GB300](dgx-station/README.md) |
-| Windows WSL2 RTX Spark | [Nemotron Super hardware variants](windows-wsl2-rtx-spark/README.md) |
-| A remote AMD64 GPU host | [SSH-managed Nemotron inference](remote-inference/README.md) |
+| Docker | [Hosted inference, Ollama, local vLLM, and remote model services](docker/README.md) |
+| Podman | [Managed gateways and remote model services](podman/README.md) |
 | Kubernetes | [Managed or external gateways, authentication, storage, and in-cluster inference](kubernetes/README.md) |
 | OpenShift | [Managed or external gateways](openshift/README.md) |
 
-The [Nemotron Super guide](nemotron-super.md) shares preparation and memory requirements across its Spark, Station, and WSL2 variants.
+To start with a machine or model, use the [hardware](../guides/by-hardware.md) or [model](../guides/by-model.md) guide.
+The [Nemotron Super guide](../guides/nemotron-super.md) shares preparation and memory requirements across its Spark, Station, and WSL2 variants.
 The [GTC DC index](../gtc-dc/README.md) links to these canonical files through event aliases.
 Hardware variants remain separate because admission checks, memory accounting, and live evidence differ.

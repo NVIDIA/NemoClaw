@@ -108,9 +108,9 @@ The following paths have different prerequisites and retention behavior:
 | You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../../examples/features/inference-tuning.yaml), [Hermes authentication](../../examples/features/hermes-auth.yaml) |
 | NemoClaw should run Ollama on a declared NVIDIA GPU | Declare a service with `kind: ollama`, hardware requirements, a pinned runtime image, a model name and digest, memory, and serving settings | [Managed Ollama](#running-managed-ollama) |
 | Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#using-external-ollama-through-a-managed-proxy) |
-| You run a model server in a Kubernetes or OpenShift gateway's cluster | External `endpoint` naming its Service, `http://<service>.<namespace>.svc.cluster.local:<port>/v1`, and an optional credential reference; follow [in-cluster model servers](../build-deploy/kubernetes.md#using-a-model-server-in-the-cluster) | [In-cluster vLLM](../../examples/platforms/kubernetes/in-cluster-vllm.yaml), [in-cluster Ollama](../../examples/platforms/kubernetes/in-cluster-ollama.yaml) |
-| NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../../examples/platforms/dgx-spark/vllm.yaml) |
-| The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../../examples/platforms/dgx-spark/remote-vllm.yaml) |
+| You run a model server in a Kubernetes or OpenShift gateway's cluster | External `endpoint` naming its Service, `http://<service>.<namespace>.svc.cluster.local:<port>/v1`, and an optional credential reference; follow [in-cluster model servers](../build-deploy/kubernetes.md#using-a-model-server-in-the-cluster) | [In-cluster vLLM](../../examples/platforms/kubernetes/vllm/in-cluster-vllm.yaml), [in-cluster Ollama](../../examples/platforms/kubernetes/ollama/in-cluster-ollama.yaml) |
+| NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml) |
+| The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../../examples/platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Use an immutable image that packages the recipe's reviewed tools, and declare an [inline recipe](recipes.md) | [Recipe declaration](recipes.md#declaration) |
 
 Service ownership doesn't depend on the harness.
@@ -237,7 +237,7 @@ Changing the model, native settings, or image replaces the agent's sandbox, dele
 ## Running Managed Ollama
 
 Declare `kind: ollama` under `spec.services` to run Ollama through the same package-independent installer contract as vLLM.
-The [GPU example](../../examples/platforms/dgx-spark/openclaw-ollama.yaml) selects NVIDIA DGX Spark and a pinned public Qwen3 model.
+The [GPU example](../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml) selects NVIDIA DGX Spark and a pinned public Qwen3 model.
 Before applying, choose a fresh deployment UID and state directory, a current agent image, and a hardware profile matching the inference host.
 The inference host needs Linux, Docker with NVIDIA container GPU access, an NVIDIA GPU for the container (the host's only GPU, or the one that [`container.gpuDevices`](#setting-container-limits-and-update-policy) selects), and enough host memory, GPU memory, and disk for the declared budget.
 Use the [hardware profile reference](models.md#choosing-a-hardware-profile) for other GPU families and explicit CPU architecture.
@@ -537,7 +537,7 @@ Configure that service's limits separately.
 The SDK doesn't infer native support from an adapter name or from accepting the YAML structure.
 
 The managed Ollama examples for OpenClaw set the service's `serving.contextTokens` to `32768`.
-The [managed Hermes example](../../examples/platforms/dgx-spark/hermes-ollama.yaml) sets `65536`, because [Hermes needs at least `64000`](#sizing-the-context-for-hermes).
+The [managed Hermes example](../../examples/platforms/docker/ollama/dgx-spark/managed-hermes.yaml) sets `65536`, because [Hermes needs at least `64000`](#sizing-the-context-for-hermes).
 An operator-reported OpenClaw prompt used 19,947 tokens in one setup, before allowing space for a reply.
 Size the model, KV cache, and GPU memory for the selected context.
 The OpenClaw adapter owns how it uses the context window.
@@ -549,8 +549,8 @@ The pinned Hermes Agent requires a model context window of at least 64,000 token
 It reads the window from the model server.
 Route settings don't change it.
 For a Hermes route to managed vLLM or Ollama, set `serving.contextTokens` between `64000` and the schema maximum, `65536`, and choose a model that supports that context.
-The [managed Hermes example](../../examples/platforms/dgx-spark/hermes-ollama.yaml) serves `nemotron-3-nano:4b`, whose 256K-token native window covers that range.
-`Qwen/Qwen3-4B`, used by the [Spark vLLM example](../../examples/platforms/dgx-spark/vllm.yaml), has a 40,960-token native window, so it can't be served at Hermes's 64,000-token minimum.
+The [managed Hermes example](../../examples/platforms/docker/ollama/dgx-spark/managed-hermes.yaml) serves `nemotron-3-nano:4b`, whose 256K-token native window covers that range.
+`Qwen/Qwen3-4B`, used by the [Spark vLLM example](../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml), has a 40,960-token native window, so it can't be served at Hermes's 64,000-token minimum.
 With `qwen3:0.6b` at `serving.contextTokens: 32768`, below Hermes's minimum, Hermes still started and replied in the `docker-openclaw-hermes-ollama` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios).
 One reply doesn't qualify that setup.
 In one operator test, Hermes answered a request through cluster vLLM serving `Qwen/Qwen3-4B-Instruct-2507` with `serving.contextTokens: 65536`.

@@ -1,1 +1,1 @@
-../platforms/windows-wsl2-rtx-spark/openclaw-nemotron-super.yaml
+../platforms/docker/vllm/rtx-spark-wsl2/openclaw-windows-wsl2-rtx-spark.yaml

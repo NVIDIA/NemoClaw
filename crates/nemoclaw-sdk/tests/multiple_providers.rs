@@ -31,8 +31,10 @@ fn hosted(mut value: Value) -> Value {
 }
 #[test]
 fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
-    let input: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap();
+    let input: Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/agents/fabric-openclaw.yaml"
+    ))
+    .unwrap();
     let mut value = hosted(input);
     let mut other = value["spec"]["sandboxes"]["assistant"].clone();
     other["agent"]["inference"]["routes"]
@@ -203,7 +205,7 @@ fn a_sandbox_with_more_than_32_attached_providers_is_rejected_by_name() {
 #[test]
 fn managed_inference_remains_owned_when_the_default_uses_a_hosted_provider() {
     let mut value: Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/platforms/dgx-spark/vllm.yaml"
+        "../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"
     ))
     .unwrap();
     let local_name = value["spec"]["inferenceProviders"]
@@ -241,7 +243,7 @@ fn managed_inference_remains_owned_when_the_default_uses_a_hosted_provider() {
 #[test]
 fn managed_ollama_installs_while_an_external_provider_is_the_default() {
     let value: Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"
+        "../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"
     ))
     .unwrap();
     let local_name = value["spec"]["inferenceProviders"]
@@ -277,7 +279,7 @@ fn managed_ollama_installs_while_an_external_provider_is_the_default() {
 #[test]
 fn multiple_selected_ollama_installers_have_independent_resources_and_dependencies() {
     let mut value: Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"
+        "../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"
     ))
     .unwrap();
     let mut other = value["spec"]["inferenceProviders"]["local"].clone();
@@ -313,7 +315,7 @@ fn multiple_selected_ollama_installers_have_independent_resources_and_dependenci
 #[test]
 fn managed_services_have_independent_storage_credentials_and_dependencies() {
     let mut value: Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/platforms/dgx-spark/vllm.yaml"
+        "../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"
     ))
     .unwrap();
     let first = "qwen";

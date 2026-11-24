@@ -1,1 +1,1 @@
-../platforms/dgx-station/hermes-nemotron-super.yaml
+../platforms/docker/vllm/dgx-station/hermes-dgx-station.yaml

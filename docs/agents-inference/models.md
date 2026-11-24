@@ -151,9 +151,9 @@ Use [external inference configuration](inference.md#preparing-an-external-endpoi
 Mutable branches and tags are rejected so a later apply can't silently change weights.
 The OpenShell route's model must match `serving.modelName` when declared, or the repository name when it's omitted.
 
-Choose a scenario from the [NVIDIA DGX Spark examples](../../examples/platforms/dgx-spark/README.md), including small Pi, multiple agents, shared inference, two local models, and a hosted model.
-The original vLLM configuration without a preparation recipe is [examples/platforms/dgx-spark/vllm.yaml](../../examples/platforms/dgx-spark/vllm.yaml).
-For the exact single-GB300 configuration tested on DGX Station, use the [Station example](../../examples/platforms/dgx-station/README.md) and preserve its qualification boundary.
+Choose a scenario from the [NVIDIA DGX Spark examples](../../examples/platforms/docker/vllm/dgx-spark/README.md), including small Pi, multiple agents, shared inference, two local models, and a hosted model.
+The original vLLM configuration without a preparation recipe is [vllm.yaml](../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml).
+For the exact single-GB300 configuration tested on DGX Station, use the [Station example](../../examples/platforms/docker/vllm/dgx-station/README.md) and preserve its qualification boundary.
 The runtime image digest in each example refers to a locally built artifact, not a published registry image.
 Build the runtime locally and use the digest reported by your build.
 
@@ -442,7 +442,7 @@ The [runtime reporter](../../crates/nemoclaw-runtime/src/vllm/runtime/mod.rs), [
 
 ## Configuring Nemotron on an AMD64 GPU Host
 
-[The Nemotron example](../../examples/platforms/remote-inference/openclaw-nemotron-amd64.yaml) declares the pinned NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 model, served name, native parsers, 65,536-token context, one sequence, and 4,096-token batch.
+[The Nemotron example](../../examples/platforms/podman/vllm/remote/amd64/nemotron-amd64.yaml) declares the pinned NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 model, served name, native parsers, 65,536-token context, one sequence, and 4,096-token batch.
 Its source pins and adaptation are recorded in the [vLLM runtime notice](../../image/vllm/NOTICE.md).
 It uses `kind: vllm` serving with no preparation recipe.
 

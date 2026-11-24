@@ -19,7 +19,10 @@ fn generations() -> Generations {
     .into()
 }
 fn example() -> Value {
-    serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap()
+    serde_saphyr::from_str(include_str!(
+        "../../../examples/agents/fabric-openclaw.yaml"
+    ))
+    .unwrap()
 }
 fn graph(value: &Value) -> Value {
     compile(

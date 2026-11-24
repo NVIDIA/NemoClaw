@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The GTC DC Windows WSL2 RTX Spark examples, examples/platforms/windows-wsl2-rtx-spark/*-nemotron-super.yaml, compiled
+# The GTC DC Windows WSL2 RTX Spark examples, examples/gtc-dc/*-windows-wsl2-rtx-spark.yaml, compiled
 # unchanged and planned against the fixtures with the real OpenShell, Fabric,
 # host, and vLLM providers. Each plan must create a managed Docker gateway, the
 # Nemotron Super vLLM service that the vLLM provider validated for the
@@ -22,7 +22,7 @@ run "hermes_fixtures" {
   command = plan
 
   module {
-    source = "./examples/platforms/windows-wsl2-rtx-spark/hermes-nemotron-super"
+    source = "./examples/gtc-dc/hermes-windows-wsl2-rtx-spark"
   }
 
   plan_options {
@@ -34,7 +34,7 @@ run "hermes" {
   command = plan
 
   module {
-    source = "./examples/platforms/windows-wsl2-rtx-spark/hermes-nemotron-super"
+    source = "./examples/gtc-dc/hermes-windows-wsl2-rtx-spark"
   }
 
   assert {
@@ -67,7 +67,7 @@ run "openclaw_fixtures" {
   command = plan
 
   module {
-    source = "./examples/platforms/windows-wsl2-rtx-spark/openclaw-nemotron-super"
+    source = "./examples/gtc-dc/openclaw-windows-wsl2-rtx-spark"
   }
 
   plan_options {
@@ -79,7 +79,7 @@ run "openclaw" {
   command = plan
 
   module {
-    source = "./examples/platforms/windows-wsl2-rtx-spark/openclaw-nemotron-super"
+    source = "./examples/gtc-dc/openclaw-windows-wsl2-rtx-spark"
   }
 
   assert {
@@ -112,7 +112,7 @@ run "deepagents_fixtures" {
   command = plan
 
   module {
-    source = "./examples/platforms/windows-wsl2-rtx-spark/deepagents-nemotron-super"
+    source = "./examples/gtc-dc/deepagents-windows-wsl2-rtx-spark"
   }
 
   plan_options {
@@ -124,7 +124,7 @@ run "deepagents" {
   command = plan
 
   module {
-    source = "./examples/platforms/windows-wsl2-rtx-spark/deepagents-nemotron-super"
+    source = "./examples/gtc-dc/deepagents-windows-wsl2-rtx-spark"
   }
 
   assert {

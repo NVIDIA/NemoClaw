@@ -261,7 +261,7 @@ spec:
 On OpenShift, `expose.route` has the chart create a Route for the endpoint's host with `passthrough` TLS termination: the cluster's router forwards each encrypted connection, by the host name the client sends, to the chart's gateway Service, which stays inside the cluster.
 Only the `openshift` target takes `expose.route`.
 On other clusters, use `expose.service`.
-[The Route example](../../examples/platforms/kubernetes/published-route.yaml) publishes one with the `oidc` profile.
+[The Route example](../../examples/platforms/openshift/published-route.yaml) publishes one with the `oidc` profile.
 No automated test runs a Route, because CI has no OpenShift cluster.
 CI checks the Route that the pinned chart renders from NemoClaw's values.
 
@@ -694,7 +694,7 @@ spec:
 - **Ollama:** Its health endpoint answers before it has a model, and it doesn't pull one when a request names it.
   Pull the route's model into the server before the first agent request.
 
-Start from [the in-cluster vLLM example](../../examples/platforms/kubernetes/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../../examples/platforms/kubernetes/in-cluster-ollama.yaml) for a server without a key.
+Start from [the in-cluster vLLM example](../../examples/platforms/kubernetes/vllm/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../../examples/platforms/kubernetes/ollama/in-cluster-ollama.yaml) for a server without a key.
 
 ## Destroying a Deployment
 

@@ -34,10 +34,9 @@ fn credential_availability_never_contains_the_value() {
 #[test]
 fn endpoint_requests_deduplicate_shared_routes_and_preserve_harness_api_defaults() {
     use nemoclaw_sdk::{config::Document, inference_discovery::endpoint_requests};
-    let document = Document::parse(
-        include_bytes!("../../../examples/platforms/docker/openclaw-hosted.yaml").as_slice(),
-    )
-    .unwrap();
+    let document =
+        Document::parse(include_bytes!("../../../examples/onboarding/openclaw.yaml").as_slice())
+            .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
     value["spec"]["inferenceProviders"]["nvidia-prod"]
         .as_object_mut()

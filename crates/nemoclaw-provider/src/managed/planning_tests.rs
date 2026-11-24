@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 fn runtime_specs() -> Vec<Spec> {
     let document = Document::parse(
-        include_bytes!("../../../../examples/platforms/dgx-spark/vllm.yaml").as_slice(),
+        include_bytes!("../../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml").as_slice(),
     )
     .unwrap();
     let generations = [

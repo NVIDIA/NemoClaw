@@ -10,10 +10,7 @@ use nemoclaw_sdk::fabric_catalog::FabricCatalog;
 use serde_json::{Value, json};
 
 fn supplied() -> Value {
-    serde_saphyr::from_slice(include_bytes!(
-        "../../../examples/platforms/docker/openclaw-hosted.yaml"
-    ))
-    .unwrap()
+    serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml")).unwrap()
 }
 
 fn journey(values: Value, capabilities: &Capabilities) -> nemoclaw_authoring::JourneyState {
@@ -269,10 +266,9 @@ fn newly_advertised_fabric_harness_is_a_choice_without_code_registration() {
 #[test]
 fn offline_catalog_absence_does_not_prevent_an_independent_rename() {
     let capabilities = Capabilities::from_harnesses([]);
-    let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../examples/platforms/docker/openclaw-hosted.yaml"
-    ))
-    .unwrap();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
     let mut state = JourneyDefinition::new("offline-rename", base)
         .ask(["/metadata/name"])
         .start(&capabilities)
@@ -302,10 +298,9 @@ fn offline_catalog_absence_does_not_prevent_an_independent_rename() {
 #[test]
 fn missing_adapter_schema_keeps_independent_deployment_questions_available() {
     let capabilities = Capabilities::from_harnesses([]);
-    let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../examples/platforms/docker/openclaw-hosted.yaml"
-    ))
-    .unwrap();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
     let state = JourneyDefinition::new("offline-deployment", base)
         .ask([JourneyScope::DeploymentFields])
         .start(&capabilities)

@@ -6,7 +6,7 @@ use nemoclaw_sdk::{
 };
 use serde_json::{Value, json};
 fn input() -> Value {
-    crate::support::example("agents/openclaw.yaml")
+    crate::support::example("agents/fabric-openclaw.yaml")
 }
 fn choices() -> Value {
     let mut value = input();
@@ -82,7 +82,7 @@ fn ambiguous_defaults_and_duplicate_choices_are_rejected() {
 #[test]
 fn pi_choices_preserve_native_metadata_and_provider_credentials() {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/agents/pi.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/fabric-pi.yaml")).unwrap();
     let mut provider = value["spec"]["inferenceProviders"]["local"].clone();
     provider["endpoint"] = json!("https://hosted.example/v1");
     provider["credential"] = json!({"env":"HOSTED_KEY"});

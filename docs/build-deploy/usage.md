@@ -66,7 +66,7 @@ See [service constraints](../agents-inference/inference.md#combining-local-and-h
 Use a local rootless Linux Podman engine through its Unix API socket.
 Rootful operation, remote Podman engines, and other operating systems are untested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-Set `gateway.target` to `podman`, with `engine` naming the local Podman API service's Unix socket, as [the Podman example](../../examples/platforms/podman/deepagents-external-inference.yaml) does:
+Set `gateway.target` to `podman`, with `engine` naming the local Podman API service's Unix socket, as [the Podman example](../../examples/platforms/podman/managed-podman.yaml) does:
 
 ```yaml
 gateway:

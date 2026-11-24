@@ -61,9 +61,7 @@ fn supplied_deployment_field_is_asked_before_unrelated_required_answers() {
 #[test]
 fn unknown_supplied_deployment_field_can_be_removed() {
     let capabilities = Capabilities::available();
-    let mut supplied = example("platforms/docker/openclaw-hosted.yaml")
-        .supplied()
-        .clone();
+    let mut supplied = example("onboarding/openclaw.yaml").supplied().clone();
     supplied["spec"]["gateway"]["enginee"] = json!("unix:///var/run/docker.sock");
     let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("unknown-deployment-field", base)
@@ -95,7 +93,9 @@ fn unknown_supplied_deployment_field_can_be_removed() {
 #[test]
 fn deployment_questions_carry_titles_and_sdk_descriptions() {
     let capabilities = Capabilities::available();
-    let resolution = journey("agents/pi.yaml").resolve(&capabilities).unwrap();
+    let resolution = journey("agents/fabric-pi.yaml")
+        .resolve(&capabilities)
+        .unwrap();
     let endpoint = resolution
         .question("/spec/gateway/endpoint")
         .expect("gateway endpoint question");
@@ -109,7 +109,7 @@ fn deployment_questions_carry_titles_and_sdk_descriptions() {
 #[test]
 fn external_gateway_questions_preserve_deployment_and_reject_invalid_or_stale_answers() {
     let capabilities = Capabilities::available();
-    let mut state = journey("agents/pi.yaml");
+    let mut state = journey("agents/fabric-pi.yaml");
     let resolution = state.resolve(&capabilities).unwrap();
     assert!(resolution.question("/spec/gateway/endpoint").is_some());
     assert!(
@@ -149,7 +149,7 @@ fn external_gateway_questions_preserve_deployment_and_reject_invalid_or_stale_an
 #[test]
 fn managed_service_questions_use_sdk_types_and_keep_recipe_as_one_value() {
     let capabilities = Capabilities::available();
-    let mut state = journey("platforms/dgx-spark/remote-vllm.yaml");
+    let mut state = journey("platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml");
     let resolution = state.resolve(&capabilities).unwrap();
     for path in [
         "/spec/services/qwen/placement/engine",
@@ -180,9 +180,7 @@ fn managed_service_questions_use_sdk_types_and_keep_recipe_as_one_value() {
 #[test]
 fn optional_supplied_deployment_field_can_be_omitted_through_the_shared_question() {
     let capabilities = Capabilities::available();
-    let mut supplied = example("platforms/docker/openclaw-hosted.yaml")
-        .supplied()
-        .clone();
+    let mut supplied = example("onboarding/openclaw.yaml").supplied().clone();
     supplied["spec"]["gateway"]["target"]["docker"]["imagePullPolicy"] = json!("Never");
     let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("optional-deployment", base)
@@ -210,7 +208,7 @@ fn optional_supplied_deployment_field_can_be_omitted_through_the_shared_question
 #[test]
 fn deployment_questions_follow_the_selected_sdk_hardware_form() {
     let capabilities = Capabilities::available();
-    let dedicated = journey("platforms/remote-inference/openclaw-nemotron-amd64.yaml");
+    let dedicated = journey("platforms/podman/vllm/remote/amd64/nemotron-amd64.yaml");
     let question = dedicated
         .resolve(&capabilities)
         .unwrap()
@@ -220,7 +218,7 @@ fn deployment_questions_follow_the_selected_sdk_hardware_form() {
     assert!(question.required());
     assert_eq!(question.choices(), &[json!("amd64")]);
 
-    let profiled = journey("platforms/dgx-spark/remote-vllm.yaml");
+    let profiled = journey("platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml");
     let question = profiled
         .resolve(&capabilities)
         .unwrap()
@@ -303,5 +301,5 @@ fn single_sandbox_examples_offer_existing_sdk_values_without_changing_them() {
         );
         covered += 1;
     }
-    assert!(covered > 0, "must exercise single-sandbox examples");
+    assert_eq!(covered, 44);
 }

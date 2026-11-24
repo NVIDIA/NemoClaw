@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 fn input() -> Value {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/local.yaml")).unwrap();
     value["spec"]["sandboxes"]["assistant"]["network"] = json!({
         "policy": {"explicit": {
             "version": 1,

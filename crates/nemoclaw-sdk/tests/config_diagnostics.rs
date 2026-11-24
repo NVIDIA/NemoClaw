@@ -37,7 +37,7 @@ fn schema_failure_names_the_service_field_constraint_and_source_position() {
 
 #[test]
 fn schema_failure_identifies_array_indices_and_expected_type_without_values() {
-    let mut input = source("agents/openclaw.yaml");
+    let mut input = source("agents/fabric-openclaw.yaml");
     let mut second = input["spec"]["sandboxes"]["assistant"].clone();
     second["agent"]["inference"]["routes"][0]["overrides"] = json!("PRIVATE_SENTINEL");
     input["spec"]["sandboxes"]["second"] = second;
@@ -94,7 +94,7 @@ fn empty_input_is_distinct_from_an_invalid_root_value() {
 
 #[test]
 fn explicit_core_tags_are_rejected_without_rejecting_tag_text_inside_strings() {
-    let input = source("agents/openclaw.yaml");
+    let input = source("agents/fabric-openclaw.yaml");
     let yaml = serde_saphyr::to_string(&input).unwrap();
     let name = input["metadata"]["name"].as_str().unwrap();
     for replacement in [
@@ -122,7 +122,7 @@ fn explicit_core_tags_are_rejected_without_rejecting_tag_text_inside_strings() {
 
 #[test]
 fn flow_document_columns_count_characters_and_do_not_include_values() {
-    let mut input = source("agents/openclaw.yaml");
+    let mut input = source("agents/fabric-openclaw.yaml");
     input["spec"]["inferenceProviders"]["local"]["endpoint"] = json!("http://é.example.com/v1");
     input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"] =
         json!("PRIVATE_SENTINEL");
@@ -142,7 +142,7 @@ fn flow_document_columns_count_characters_and_do_not_include_values() {
 
 #[test]
 fn collection_tags_are_rejected_and_quoted_or_block_tag_text_is_preserved() {
-    let input = source("agents/openclaw.yaml");
+    let input = source("agents/fabric-openclaw.yaml");
     let yaml = serde_saphyr::to_string(&input).unwrap();
     for tagged in [
         yaml.replacen("metadata:", "metadata: !!map", 1),
@@ -184,13 +184,12 @@ fn a_missing_service_image_reports_the_digest_pin_rule_at_its_service() {
 
 fn local_yaml() -> String {
     std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/agents/openclaw.yaml"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/agents/local.yaml"),
     )
     .unwrap()
 }
 
-/// `examples/agents/openclaw.yaml` after `edit`, which must change it.
+/// `examples/agents/local.yaml` after `edit`, which must change it.
 fn edited(edit: impl FnOnce(String) -> String) -> String {
     let original = local_yaml();
     let text = edit(original.clone());
@@ -244,7 +243,7 @@ fn schema_rules_without_their_own_message_still_explain_the_failure() {
         (
             edited(|yaml| {
                 yaml.replace(
-                    "      endpoint: http://172.20.0.1:11446/v1\n",
+                    "      endpoint: http://172.20.0.1:11436/v1\n",
                     "      serviceRef: ollama\n      credential:\n        env: OPENAI_API_KEY\n",
                 )
             }),
@@ -333,8 +332,8 @@ fn an_unknown_field_is_reported_at_its_key_with_a_declared_name() {
     for key in ["lables", "PRIVATE_SENTINEL"] {
         let text = edited(|yaml| {
             yaml.replace(
-                "  uid: c892587f-6439-44b5-9a70-a43e8936461f\n",
-                &format!("  uid: c892587f-6439-44b5-9a70-a43e8936461f\n  {key}: {{team: a}}\n"),
+                "  uid: 87d485ad-fba7-4197-9eaa-aa97cc97446b\n",
+                &format!("  uid: 87d485ad-fba7-4197-9eaa-aa97cc97446b\n  {key}: {{team: a}}\n"),
             )
         });
         assert_eq!(

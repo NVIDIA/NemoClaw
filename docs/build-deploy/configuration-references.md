@@ -180,7 +180,7 @@ For integration examples, see [define and attach integrations](../agents-inferen
 
 ## Combining Supported Features
 
-The [full-featured OpenClaw example](../../examples/features/combined-openclaw.yaml) combines a managed gateway, remote authenticated vLLM, explicit ownership and GPU requirements, three agents in separate sandboxes that share one harness definition and one explicit network policy, a runtime timeout, and tool restrictions.
+The [full-featured OpenClaw example](../../examples/platforms/docker/vllm/remote/amd64/full-featured-openclaw.yaml) combines a managed gateway, remote authenticated vLLM, explicit ownership and GPU requirements, three agents in separate sandboxes that share one harness definition and one explicit network policy, a runtime timeout, and tool restrictions.
 All three agents select the same provider and inference settings.
 It passes the SDK parser and JSON Schema checks, but this combined deployment hasn't been qualified against live services.
 Replace the image placeholders, deployment UID, SSH alias, addresses, and model settings for your hosts before use.
@@ -193,10 +193,10 @@ No single active configuration exercises every schema branch:
 | Alternative | Example or guide | Why separate |
 |---|---|---|
 | Inline provider or integration | [Inline provider](../../examples/features/inline-inference.yaml), [inline integration](../agents-inference/agents.md#web-search) | A consumer can't both inline and reference the same definition |
-| Managed Ollama or an existing endpoint | [Managed Ollama](../../examples/platforms/dgx-spark/openclaw-ollama.yaml), [external endpoint](../../examples/features/inference-tuning.yaml) | Each provider selects one service connection; see the [Ollama deployment limits](../agents-inference/inference.md#combining-local-and-hosted-providers) |
+| Managed Ollama or an existing endpoint | [Managed Ollama](../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml), [external endpoint](../../examples/features/inference-tuning.yaml) | Each provider selects one service connection; see the [Ollama deployment limits](../agents-inference/inference.md#combining-local-and-hosted-providers) |
 | Existing Ollama through an authenticated proxy | [Proxy guide](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy) | Alternative provider mode to managed vLLM |
 | Hermes provider authentication or Relay tracing | [Authentication](../../examples/features/hermes-auth.yaml), [Relay](../agents-inference/agents.md#hermes-relay-tracing) | The full-featured example selects OpenClaw |
-| Pi model extensions | [Pi example](../../examples/agents/pi.yaml) | Pi needs a context window for a model it doesn't ship |
+| Pi model extensions | [Pi example](../../examples/agents/fabric-pi.yaml) | Pi needs a context window for a model it doesn't ship |
 | Model preparation recipe | [Recipe declaration](../agents-inference/recipes.md#declaration) | Separate model, image, and hardware contract |
 | External gateway credentials and mTLS | [Gateway fields](../reference/configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |
 

@@ -14,13 +14,17 @@ You need Docker, a source-built native bundle and agent image, and an NVIDIA API
 | Deploy one agent using an existing gateway and model endpoint | [Agent configurations](agents/README.md) |
 | Share models, select several providers, set policies, or add tools | [Configuration features](features/README.md) |
 | Run inference locally or deploy to another environment | [Platform configurations](platforms/README.md) |
-| Author resources directly in OpenTofu HCL | [HCL projects](hcl/README.md) |
+| Author resources directly in OpenTofu HCL | [HCL projects](features/README.md#hcl-projects) |
+| Find examples by hardware, harness, runtime, model, or capability | [Discovery guides](guides/README.md) |
 | Prepare a GTC DC target | [GTC DC readiness index](gtc-dc/README.md) |
 
 `agents/` contains the smallest configurations that demonstrate each harness.
-`features/` demonstrates configuration capabilities and combinations.
-`platforms/` owns configurations whose gateway, hardware, or model-service setup matters.
-`hcl/` contains authored OpenTofu projects and their supporting files.
+`features/` demonstrates individual capabilities and combinations, including web search, permissions, multiple sandboxes, multiple providers, and travel-agent configurations.
+`platforms/` contains environment-specific deployments, organized by gateway/sandbox backend, then runtime or scenario, then hardware where it distinguishes variants.
+The backends are Docker, Kubernetes, OpenShift, and Podman; a remote model server's engine does not determine the backend folder.
+Each example has one canonical location. The guides link to those files without copying configurations.
+Authored HCL projects and their supporting files stay with their scenario.
+`onboarding/` retains the starter used by the authoring tools.
 `gtc-dc/` preserves event paths as relative symlinks to canonical platform configurations.
 Edit the canonical file; do not replace an event symlink with a copy.
 On a Windows checkout without symlink support, open the canonical platform path instead.
@@ -36,7 +40,7 @@ The [first-deployment tutorial](../docs/get-started/first-deployment.md) is a se
 
    ```sh
    mkdir -p .local/example
-   cp examples/platforms/docker/openclaw-hosted.yaml .local/example/deployment.yaml
+   cp examples/onboarding/openclaw.yaml .local/example/deployment.yaml
    ```
 
 2. Assign a fresh `metadata.uid` from `uuidgen` and replace the image references with immutable references from your builds.
@@ -92,13 +96,7 @@ Platform READMEs record existing live evidence and its environment limits.
 Unless a README identifies such evidence, treat live deployment and agent responses as unverified for that example.
 Moving a file or passing configuration checks does not qualify another model, harness, or platform.
 
-## Consolidated Paths
+## Existing Deployments
 
-| Previous paths | Canonical configuration |
-|---|---|
-| `local.yaml`, `fabric-openclaw.yaml` | [agents/openclaw.yaml](agents/openclaw.yaml) |
-| `openclaw.yaml`, `inference-tuning.yaml` | [features/inference-tuning.yaml](features/inference-tuning.yaml) |
-| `managed-ollama.yaml`, `managed-ollama-gpu.yaml` | [platforms/dgx-spark/openclaw-ollama.yaml](platforms/dgx-spark/openclaw-ollama.yaml) |
-
-The retained files keep one configuration from each pair; incidental model selections, addresses, and optional settings from the redundant copies are not additional deployment scenarios.
+The organization preserves filenames and configuration values, including variants with similar settings.
 Existing deployments must keep their own identity, configuration, and state when using these examples for reference.

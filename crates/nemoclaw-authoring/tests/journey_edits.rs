@@ -8,10 +8,7 @@ use nemoclaw_sdk::fabric_catalog::FabricCatalog;
 use serde_json::{Value, json};
 
 fn base_values() -> Value {
-    serde_saphyr::from_slice(include_bytes!(
-        "../../../examples/platforms/docker/openclaw-hosted.yaml"
-    ))
-    .unwrap()
+    serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml")).unwrap()
 }
 
 fn partial(values: &Value) -> PartialDocument {
@@ -184,7 +181,7 @@ fn accepted_and_omitted_native_settings_can_be_revisited() {
 fn exact_and_scope_api_guidance_use_the_same_selected_provider_policy() {
     let capabilities = Capabilities::available();
     let values: Value = serde_saphyr::from_slice(include_bytes!(
-        "../../../examples/platforms/dgx-spark/local-and-hosted.yaml"
+        "../../../examples/platforms/docker/vllm/dgx-spark/local-and-hosted.yaml"
     ))
     .unwrap();
     let api = "/spec/inferenceProviders/hosted/api";

@@ -8,7 +8,7 @@ pub const SOURCE_ROOTS: &[&str] = &[
     "versions.json",
     "LICENSE",
     "crates",
-    "examples/platforms/docker/openclaw-hosted.yaml",
+    "examples/onboarding/openclaw.yaml",
     "image/llama-cpp",
     "image/ollama",
     "image/supervisor",

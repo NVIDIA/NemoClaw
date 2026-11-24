@@ -65,7 +65,8 @@ async fn podman_gateway_rechecks_network_and_image_prerequisites_before_saved_pl
     }).await;
     let e = Installation::new();
     let document = Document::parse(
-        include_bytes!("../../../../../examples/platforms/dgx-spark/vllm.yaml").as_slice(),
+        include_bytes!("../../../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml")
+            .as_slice(),
     )
     .unwrap();
     let generations = [

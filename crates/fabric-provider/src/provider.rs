@@ -230,7 +230,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        let rows = contract_rows("openclaw");
+        let rows = contract_rows("fabric-openclaw");
         let row = |kind: &str| {
             rows.iter()
                 .find(|(name, _)| *name == kind)
@@ -334,7 +334,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        let rows = contract_rows("openclaw");
+        let rows = contract_rows("fabric-openclaw");
         let row = |kind: &str| {
             rows.iter()
                 .find(|(name, _)| *name == kind)

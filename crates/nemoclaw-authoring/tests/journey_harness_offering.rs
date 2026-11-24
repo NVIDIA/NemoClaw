@@ -12,10 +12,9 @@ const HERMES: &str = "nvidia.fabric.hermes";
 const CLAUDE: &str = "nvidia.fabric.claude";
 
 fn template(harness: &str) -> Value {
-    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
-        "../../../examples/platforms/docker/openclaw-hosted.yaml"
-    ))
-    .unwrap();
+    let mut values: Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
     values["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(harness);
     values
 }

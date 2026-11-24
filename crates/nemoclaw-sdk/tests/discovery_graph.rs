@@ -97,10 +97,9 @@ fn kinds(queries: &[DiscoveryQuery]) -> Vec<String> {
 
 #[test]
 fn plan_queries_list_the_reads_of_a_managed_gateway_with_a_hosted_route() {
-    let document = Document::parse(
-        include_bytes!("../../../examples/platforms/docker/openclaw-hosted.yaml").as_slice(),
-    )
-    .unwrap();
+    let document =
+        Document::parse(include_bytes!("../../../examples/onboarding/openclaw.yaml").as_slice())
+            .unwrap();
     let queries = plan_queries(&document).unwrap();
     assert_eq!(
         kinds(&queries),

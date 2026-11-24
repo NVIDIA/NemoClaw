@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 fn managed(driver: &str, config: Option<Value>) -> Result<Document, String> {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/agents/deepagents.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/fabric.yaml")).unwrap();
     value["spec"]["gateway"] = json!({"management": "managed"});
     if driver == "podman" {
         value["spec"]["gateway"]["target"] =
@@ -175,7 +175,7 @@ fn tables_must_be_maps_or_lists_of_maps() {
 #[test]
 fn an_external_gateway_takes_no_config() {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/agents/deepagents.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/fabric.yaml")).unwrap();
     value["spec"]["gateway"]["config"] = json!({"openshell.gateway": {"log_level": "debug"}});
     let error = Document::parse(value.to_string().as_bytes())
         .unwrap_err()

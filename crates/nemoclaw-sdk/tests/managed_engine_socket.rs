@@ -54,7 +54,7 @@ fn gateway_spec(document: &Document) -> Spec {
 /// for Podman, the bind in the container the provider creates.
 fn bound_socket(driver: &str, engine: &str) -> String {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/agents/deepagents.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/fabric.yaml")).unwrap();
     value["spec"]["gateway"] =
         json!({"management": "managed", "target": {driver: {"engine": engine}}});
     let document = parse(&value);
@@ -139,7 +139,7 @@ fn a_managed_gateway_binds_the_engine_socket_of_the_macos_vm_behind_its_unix_soc
 fn services_on_a_managed_gateway_on_a_named_pipe_use_its_engine() {
     // A managed inference service runs on the gateway's engine.
     let mut vllm: Value = serde_saphyr::from_str(include_str!(
-        "../../../examples/platforms/dgx-spark/vllm.yaml"
+        "../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"
     ))
     .unwrap();
     vllm["spec"]["gateway"]["target"]["docker"]["engine"] = json!(DOCKER_DESKTOP);
@@ -174,7 +174,7 @@ fn services_on_a_managed_gateway_on_a_named_pipe_use_its_engine() {
 #[test]
 fn a_managed_gateway_refuses_an_engine_on_another_host() {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/agents/deepagents.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/fabric.yaml")).unwrap();
     for engine in [
         "ssh://operator@gpu-box",
         "npipe:////remote/pipe/docker_engine",

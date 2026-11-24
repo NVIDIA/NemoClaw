@@ -1,1 +1,1 @@
-../platforms/kubernetes/hosted-nvidia.tf
+../platforms/kubernetes/hosted-inference/hosted-nvidia.tf
