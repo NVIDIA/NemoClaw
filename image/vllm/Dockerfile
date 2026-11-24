@@ -19,6 +19,7 @@ COPY --from=sources --chmod=u=rwX,go=rX \
     /rust-notice-knurling-rs--defmt--4a8cdb44891ed57b8ff5a023b6bec7137c48708f--LICENSE-APACHE \
     /rust-notice-knurling-rs--defmt--4a8cdb44891ed57b8ff5a023b6bec7137c48708f--LICENSE-MIT \
     /rust-notice-dimakudosh--difflib--f035fb8e656f27119e23eca9d5b996df14f3885e--LICENSE \
+    /rust-notice-redox-os--seahash--74c02182146d1edd7c91a9e6eddefc7390682a70--LICENSE \
     /source/upstream-notices/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     set -eu; \
@@ -31,6 +32,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM vllm/vllm-openai@sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1
 COPY --from=uv-source --chmod=u=rwX,go=rX /out/uv-source.tar.gz /out/uv-cargo-source.tar.gz /opt/nemoclaw/source/
 COPY --from=sources --chmod=u=rwX,go=rX /tokenizers-source.tar.gz /opt/nemoclaw/source/tokenizers/
+COPY --from=sources --chmod=u=rwX,go=rX /orjson-source.tar.gz /opt/nemoclaw/source/orjson/
 COPY --from=sources --chmod=u=rwX,go=rX /mooncake-LICENSE /opt/nemoclaw/source/mooncake/
 COPY --from=sources --chmod=u=rwX,go=rX \
     /mooncake-go-github.com--coreos--go-semver--v0.3.0.zip \

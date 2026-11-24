@@ -613,6 +613,14 @@
       "rust-notice-dimakudosh--difflib--f035fb8e656f27119e23eca9d5b996df14f3885e--LICENSE": {
         "url": "https://raw.githubusercontent.com/DimaKudosh/difflib/f035fb8e656f27119e23eca9d5b996df14f3885e/LICENSE",
         "sha256": "6725d1437fc6c77301f2ff0e7d52914cf4f9509213e1078dc77d9356dbe6eac5"
+      },
+      "rust-notice-redox-os--seahash--74c02182146d1edd7c91a9e6eddefc7390682a70--LICENSE": {
+        "url": "https://raw.githubusercontent.com/redox-unofficial-mirrors/seahash/74c02182146d1edd7c91a9e6eddefc7390682a70/LICENSE",
+        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+      },
+      "orjson-source.tar.gz": {
+        "url": "https://files.pythonhosted.org/packages/f2/72/380b97dc45bd162d23afe5194721ef678d9eac7cfaa549fe2873f7f0a518/orjson-3.13.0.tar.gz",
+        "sha256": "d1de5eb04485110c5da4c657e49168995d55e076b1ce60f1a042e254f4186c4f"
       }
     }
   },
