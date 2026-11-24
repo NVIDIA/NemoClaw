@@ -51,6 +51,15 @@ Plan and apply:
 - Plan and apply no longer fail with `managed runtime environment drifted` when `NEMOCLAW_DISABLE_TELEMETRY` differs from the value a Podman gateway was created with.
   NemoClaw records the gateway's OpenShell telemetry setting when it plans the deployment, so the next plan with the other value replaces the gateway and keeps its storage, as it does for a Docker gateway.
 
+Gateways:
+
+- A managed `kubernetes` or `openshift` gateway takes `dataStorageClass`, the StorageClass of its data volume, and `resources`, its container's CPU and memory requests and limits, which the chart takes as written ([#14588](https://github.com/NVIDIA/NemoClaw/issues/14588)).
+  See [Choosing the Gateway's StorageClass and Resources](../../docs/build-deploy/kubernetes.md#choosing-the-gateways-storageclass-and-resources).
+  Plan refuses a changed `dataStorageClass` on an existing deployment, memory in units other than whole `Mi` or `Gi`, and a request above its limit.
+  Before, the volume took the cluster's default StorageClass, and the gateway always requested 250m CPU and 256Mi and was limited to 1 CPU and 2Gi.
+- On the `openshift` target, the shared supervisor that `supervisor_topology = "gateway"` selects also leaves its UID, group, and `fsGroup` to OpenShift, as the gateway does.
+  Before, the chart ran it as UID and group 65534, which `restricted-v2` refuses.
+
 ### Changes in v0.1.0-rc12
 
 These changes reached `v1` between the `v0.1.0-rc11` and `v0.1.0-rc12` tags.
@@ -363,6 +372,9 @@ See [migration](../../docs/get-started/migration.md) for where each earlier task
 
 These changes since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affect existing deployments or documents:
 
+- The intent record is now version 33, so this release refuses any deployment that `v0.1.0-rc12` or an earlier build of this branch created, without changing its state.
+  Destroy each one with the bundle that created it, then create it again with this release.
+  See [compatibility](../../docs/references/compatibility.md#deployment-state).
 - Agent images register the Fabric workflow targets they install, so plan checks a sandbox with a `workflow` against Fabric's compatibility check too ([#14600](https://github.com/NVIDIA/NemoClaw/issues/14600)).
   A document that sets a field the workflow's adapter doesn't accept, such as a route's `maxTokens` for NOOA, or a `workflow.target_id` the image doesn't register, now fails plan naming that field.
   Before, plan passed it and the agent failed to start after apply created resources.

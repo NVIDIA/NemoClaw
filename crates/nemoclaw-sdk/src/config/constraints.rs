@@ -56,6 +56,15 @@ pub const GATEWAY_ENGINE: &str = "unix:///var/run/docker.sock";
 /// The address clients dial for a managed cluster gateway with `expose`: a
 /// lowercase DNS name or IPv4 address and an explicit nonzero port.
 pub(crate) const KUBERNETES_EXPOSED_GATEWAY_ENDPOINT: &str = r"^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$";
+/// A Kubernetes object name that must be a DNS subdomain, such as a ConfigMap's
+/// or a StorageClass's.
+pub(crate) const KUBERNETES_SUBDOMAIN_NAME: &str =
+    r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$";
+/// A CPU quantity: cores with up to three decimals, or whole millicores.
+pub(crate) const KUBERNETES_CPU: &str = r"^(?:[0-9]{1,6}(?:\.[0-9]{1,3})?|[1-9][0-9]{0,8}m)$";
+/// A memory quantity in whole mebibytes or gibibytes. Kubernetes also accepts
+/// a lowercase `m`, thousandths of a byte, which no gateway can run with.
+pub(crate) const KUBERNETES_MEMORY: &str = r"^[1-9][0-9]{0,8}(?:Mi|Gi)$";
 pub(crate) const NETWORK_TIER: &str = "isolated";
 /// Sandboxes in a document with a Kubernetes or OpenShift gateway. The cluster
 /// schedules their pods; a document is one gateway, namespace and state, so

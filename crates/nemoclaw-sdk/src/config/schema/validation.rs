@@ -200,7 +200,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         authentication,
         "caConfigMap",
         json!({
-            "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$",
+            "pattern": c::KUBERNETES_SUBDOMAIN_NAME,
             "x-nemoclaw-error": "caConfigMap must be a Kubernetes ConfigMap name"
         }),
     );
@@ -221,6 +221,35 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "else": {"not": {"anyOf": oidc_fields.iter().map(|field| json!({"required": [field]})).collect::<Vec<_>>()}}
         }
     ]);
+    property(
+        &mut defs["ManagedKubernetes"],
+        "dataStorageClass",
+        json!({
+            "pattern": c::KUBERNETES_SUBDOMAIN_NAME,
+            "x-nemoclaw-error": "dataStorageClass must be a Kubernetes StorageClass name"
+        }),
+    );
+    // Quantities have one spelling each, so plan can compare a request with
+    // its limit.
+    let quantities = &mut defs["GatewayResourceList"];
+    property(
+        quantities,
+        "cpu",
+        json!({
+            "pattern": c::KUBERNETES_CPU,
+            "x-nemoclaw-error": "resources cpu must be a quoted number of cores with up to three decimals, such as \"1\" or \"0.5\", or millicores, such as 250m"
+        }),
+    );
+    property(
+        quantities,
+        "memory",
+        json!({
+            "pattern": c::KUBERNETES_MEMORY,
+            "x-nemoclaw-error": "resources memory must be a whole number of Mi or Gi, such as 512Mi or 2Gi"
+        }),
+    );
+    quantities["x-nemoclaw-error"] =
+        json!("resources requests and limits take only cpu and memory");
     property(
         &mut defs["Spec"],
         "sandboxes",
@@ -412,7 +441,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-        "A managed kubernetes or openshift target requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without expose, the document names no endpoint: each command forwards a free local port to the gateway pod. With it, expose.endpoint names a lowercase DNS name or IPv4 address and an explicit port. expose.service has the chart's NodePort Service publish that port, which Kubernetes checks against the cluster's node-port range; expose.route, only on the openshift target, has the chart's pass-through Route publish the host, which must be a DNS name, at the port the cluster's router serves. Managed inference services are excluded. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
+        "A managed kubernetes or openshift target requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox, and the StorageClass that dataStorageClass names or else a default one, are platform prerequisites that are not checked. Each request in resources must not exceed its limit, compared in millicores or mebibytes. Without expose, the document names no endpoint: each command forwards a free local port to the gateway pod. With it, expose.endpoint names a lowercase DNS name or IPv4 address and an explicit port. expose.service has the chart's NodePort Service publish that port, which Kubernetes checks against the cluster's node-port range; expose.route, only on the openshift target, has the chart's pass-through Route publish the host, which must be a DNS name, at the port the cluster's router serves. Managed inference services are excluded. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
         "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",
