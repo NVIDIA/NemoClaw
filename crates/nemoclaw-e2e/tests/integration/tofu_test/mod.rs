@@ -141,6 +141,9 @@ fn every_scenario_test_names_its_inputs() {
                 "dgx-station-openclaw-nemotron" => {
                     Path::new(EXAMPLES).join("gtc-dc/openclaw-dgx-station.yaml")
                 }
+                "dgx-station-hermes-nemotron" => {
+                    Path::new(EXAMPLES).join("gtc-dc/hermes-dgx-station.yaml")
+                }
                 "dgx-spark-openclaw-nemotron" => {
                     Path::new(EXAMPLES).join("gtc-dc/openclaw-dgx-spark.yaml")
                 }
