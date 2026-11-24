@@ -47,7 +47,7 @@ These checks aren't a conversion mechanism.
 The earlier product's `nemoclaw config export` writes v1 YAML for one sandbox.
 The report-capable exporter assigns a new UUID but keeps the earlier gateway port and writes an image placeholder.
 If your version of NemoClaw v0 does not include the report-capable exporter, skip export and [author separate deployment YAML](onboard.md) using the settings you can carry over.
-Use the [NemoClaw v0 export skill](../../.agents/skills/nemoclaw-v0-migration/SKILL.md) to prepare YAML for the separate deployment. You can follow its steps yourself or ask an assistant with access to this checkout.
+Follow [Preparing a Separate Deployment From a NemoClaw v0 Export](../../.agents/skills/nemoclaw-v0-migration/SKILL.md) yourself or with an assistant that has access to this checkout.
 It leaves the earlier deployment untouched and moves no native data.
 
 1. On the NemoClaw v0 host, export the sandbox using a CLI that includes the [report-capable exporter](https://github.com/NVIDIA/NemoClaw/pull/14602) from revision `7892283831683e8b8b7a167b5cf1006d7bc262a5`:
@@ -62,7 +62,7 @@ It leaves the earlier deployment untouched and moves no native data.
 2. Read the comment block at the top of the export.
    Each line names a setting the export left out, replaced with a placeholder, or rewrote.
    If the first line is not `# nemoclaw-export-report: 1`, stop and [author a separate YAML file](onboard.md) instead.
-3. Ask the assistant to read `.agents/skills/nemoclaw-v0-migration/SKILL.md` and complete the export.
+3. Ask the assistant to read `.agents/skills/nemoclaw-v0-migration/SKILL.md` and prepare the separate deployment YAML.
    It assigns a fresh UUID, state directory, and free gateway port, selects an agent image, replaces the parts of the policy that describe the earlier image, writes the settings v1 can hold, and lists the ones it can't.
 4. Review the completed YAML for a free gateway port and an immutable agent image reference.
 5. Review the list of settings the conversion could not carry over.

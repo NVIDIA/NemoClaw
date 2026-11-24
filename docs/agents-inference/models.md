@@ -69,7 +69,7 @@ The pinned OpenClaw might also request its default OpenAI utility model, which a
 OpenClaw documents `utilityModel` for those auxiliary requests, but the pinned NVIDIA NeMo Fabric adapter's settings schema rejects it ([NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679)).
 Don't patch the native image or substitute a model alias to hide that mismatch.
 Other NIM engines and distributed inference are unsupported.
-Distributed inference is outside V0 parity scope.
+Distributed inference is outside the scope of parity with NemoClaw v0.
 
 Build the opt-in `nim` Bake target and select its resulting immutable image digest.
 It adds the supervisor to NIM 2.0.12 without modifying native scripts or nginx.
