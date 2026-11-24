@@ -9,7 +9,7 @@ run "fixtures" {
   command = plan
 
   module {
-    source = "./examples/kubernetes/external-gateway"
+    source = "./examples/platforms/kubernetes/external-gateway"
   }
 
   plan_options {
@@ -19,13 +19,13 @@ run "fixtures" {
 
 run "deploy" {
   module {
-    source = "./examples/kubernetes/external-gateway"
+    source = "./examples/platforms/kubernetes/external-gateway"
   }
 }
 
 run "replace_assistant" {
   module {
-    source = "./examples/kubernetes/external-gateway"
+    source = "./examples/platforms/kubernetes/external-gateway"
   }
 
   variables {
@@ -40,7 +40,7 @@ run "replace_assistant" {
 # Teardown's plan observes what the replacement left; cleanup is fast again.
 run "teardown" {
   module {
-    source = "./examples/kubernetes/external-gateway"
+    source = "./examples/platforms/kubernetes/external-gateway"
   }
 
   variables {

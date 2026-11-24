@@ -79,7 +79,7 @@ fn a_cluster_service_endpoint_reads_no_catalog_while_https_and_private_addresses
         ("https://inference.example.com/v1", true),
         ("http://10.0.0.5:8000/v1", true),
     ] {
-        let mut input = crate::support::example("kubernetes/external-gateway.yaml");
+        let mut input = crate::support::example("platforms/kubernetes/external-gateway.yaml");
         input["spec"]["inferenceProviders"]["inference"]["endpoint"] = serde_json::json!(endpoint);
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
         let requests = endpoint_requests(&document).unwrap();

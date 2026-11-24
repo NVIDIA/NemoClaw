@@ -95,7 +95,7 @@ fn fixture_files() -> Vec<(String, String)> {
             ".github/workflows/bundle-platform.yml",
             "name: native\n".into(),
         ),
-        ("examples/local.yaml", "kind: Deployment\n".into()),
+        ("examples/agents/local.yaml", "kind: Deployment\n".into()),
         ("versions.json", "{}\n".into()),
         (".dockerignore", "*\n".into()),
         (".github/workflows/images.yml", "name: images\n".into()),
@@ -454,7 +454,7 @@ fn live_build_packages_and_their_inputs_run_live_suites() {
             "crates/openshell-provider/src/lib.rs",
             "image/vllm/Dockerfile",
             "image/fabric/Dockerfile",
-            "examples/local.yaml",
+            "examples/agents/local.yaml",
             "versions.json",
             ".config/nextest.toml",
             ".github/workflows/bundle-platform.yml",
@@ -1446,7 +1446,7 @@ fn changing_the_station_example_selects_only_its_qualified_hardware_case() {
             .join("crates/nemoclaw-e2e/cases/docker-one.yaml"),
     )
     .unwrap();
-    let example = "examples/gtc-dc/openclaw-dgx-station.yaml";
+    let example = "examples/platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml";
     let base = repo.commit(&[
         (example, Some(&document)),
         (

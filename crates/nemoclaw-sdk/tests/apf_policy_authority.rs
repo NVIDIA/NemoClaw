@@ -20,7 +20,9 @@ const APF_ENDPOINT: &str = "https://host.docker.internal:18202";
 
 /// A managed Docker gateway on which NemoClaw registers APF itself.
 fn registered(ca: bool) -> Value {
-    let mut value = example(include_str!("../../../examples/managed-hermes.yaml"));
+    let mut value = example(include_str!(
+        "../../../examples/platforms/docker/ollama/dgx-spark/managed-hermes.yaml"
+    ));
     let mut apf = json!({"registration": "managed", "endpoint": APF_ENDPOINT});
     if ca {
         apf["tls"] = json!({"ca": {"env": "APF_CA_FILE"}});
@@ -65,8 +67,8 @@ fn values(document: &Document, kind: &str) -> std::collections::BTreeMap<String,
 fn either_gateway_mode_accepts_apf_as_the_policy_authority() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for source in [
-        include_str!("../../../examples/local.yaml"),
-        include_str!("../../../examples/managed-hermes.yaml"),
+        include_str!("../../../examples/agents/local.yaml"),
+        include_str!("../../../examples/platforms/docker/ollama/dgx-spark/managed-hermes.yaml"),
     ] {
         let value = governed(example(source));
         assert!(validator.is_valid(&value), "{value}");
@@ -81,7 +83,7 @@ fn either_gateway_mode_accepts_apf_as_the_policy_authority() {
 
 #[test]
 fn apf_serves_every_credential_profile_on_a_governed_gateway() {
-    let source = include_str!("../../../examples/travel-team.yaml");
+    let source = include_str!("../../../examples/features/travel-team/travel-team.yaml");
     // The travel team registers inference, the booking API, and web search,
     // which is an API credential too.
     let credentials = |document: &Document| {
@@ -120,7 +122,10 @@ fn apf_serves_every_credential_profile_on_a_governed_gateway() {
 
 #[test]
 fn without_a_policy_authority_nemoclaw_authors_the_policy() {
-    let document = parse(&example(include_str!("../../../examples/local.yaml"))).unwrap();
+    let document = parse(&example(include_str!(
+        "../../../examples/agents/local.yaml"
+    )))
+    .unwrap();
     assert!(!values(&document, "sandbox").contains_key("policy_authority"));
     assert!(!values(&document, "inference").contains_key("policy_authority"));
 }
@@ -128,7 +133,7 @@ fn without_a_policy_authority_nemoclaw_authors_the_policy() {
 #[test]
 fn an_unknown_policy_authority_is_rejected() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let mut value = example(include_str!("../../../examples/local.yaml"));
+    let mut value = example(include_str!("../../../examples/agents/local.yaml"));
     value["spec"]["gateway"]["policyAuthority"] = json!({"other": {}});
     assert!(!validator.is_valid(&value));
     assert!(parse(&value).is_err());
@@ -229,7 +234,7 @@ fn nemoclaw_registers_apf_only_where_it_owns_the_gateway_file() {
         );
     };
     // An external gateway's operator registers its interceptors.
-    let mut value = example(include_str!("../../../examples/local.yaml"));
+    let mut value = example(include_str!("../../../examples/agents/local.yaml"));
     value["spec"]["gateway"]["policyAuthority"] =
         json!({"apf": {"registration": "managed", "endpoint": APF_ENDPOINT}});
     rejected(&value, "external gateway");
@@ -277,7 +282,7 @@ fn an_apf_governed_sandbox_cannot_author_select_or_extend_its_own_policy() {
         json!({"grants": {"docs": grant}}),
         json!({"grantRefs": ["own"]}),
     ] {
-        let mut value = governed(example(include_str!("../../../examples/local.yaml")));
+        let mut value = governed(example(include_str!("../../../examples/agents/local.yaml")));
         value["spec"]["policies"] = json!({"own": policy["explicit"]});
         value["spec"]["grants"] = json!({"own": grant});
         value["spec"]["sandboxes"]["assistant"]["network"] = network.clone();

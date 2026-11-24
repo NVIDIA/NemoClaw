@@ -16,9 +16,11 @@ use std::sync::{
 };
 
 pub(crate) fn specs() -> Vec<String> {
-    let document =
-        Document::parse(include_bytes!("../../../../../examples/spark/two-models.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../../examples/platforms/docker/vllm/dgx-spark/two-models.yaml")
+            .as_slice(),
+    )
+    .unwrap();
     specs_for(&document)
 }
 fn specs_for(document: &Document) -> Vec<String> {
@@ -328,9 +330,11 @@ async fn capacity_reads_resolve_each_listed_gpu_by_index_or_uuid() {
 
 /// The runtime contracts of [`h100_services`].
 fn specs_for_h100() -> Vec<String> {
-    let mut document =
-        Document::parse(include_bytes!("../../../../../examples/spark/two-models.yaml").as_slice())
-            .unwrap();
+    let mut document = Document::parse(
+        include_bytes!("../../../../../examples/platforms/docker/vllm/dgx-spark/two-models.yaml")
+            .as_slice(),
+    )
+    .unwrap();
     for (service, budget) in document
         .spec
         .services
@@ -465,9 +469,11 @@ async fn capacity_observation_counts_combined_budgets_and_largest_reserve_once()
         Some((200, json!({"ID":"engine"}).to_string().into_bytes()))
     })
     .await;
-    let mut document =
-        Document::parse(include_bytes!("../../../../../examples/spark/two-models.yaml").as_slice())
-            .unwrap();
+    let mut document = Document::parse(
+        include_bytes!("../../../../../examples/platforms/docker/vllm/dgx-spark/two-models.yaml")
+            .as_slice(),
+    )
+    .unwrap();
     let nemoclaw_sdk::services::ServiceDefinition::Vllm(service) =
         document.spec.services.get_mut("smart").unwrap()
     else {

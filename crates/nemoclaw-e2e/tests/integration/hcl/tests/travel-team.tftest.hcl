@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# examples/hcl/travel-team, authored HCL applied unchanged with the bundle's
+# examples/features/travel-team/hcl, authored HCL applied unchanged with the bundle's
 # providers: six Hermes agents in for_each sandboxes, each with its own model,
 # registrations, and grants. This scenario owns the example's per-role wiring
 # and a hosted-model change that replaces only the agents that use it.
@@ -28,7 +28,7 @@ run "fixtures" {
 
 run "deploy" {
   module {
-    source = "./examples/hcl/travel-team"
+    source = "./examples/features/travel-team/hcl"
   }
 
   variables {
@@ -152,7 +152,7 @@ run "observe" {
 
 run "change_frontier" {
   module {
-    source = "./examples/hcl/travel-team"
+    source = "./examples/features/travel-team/hcl"
   }
 
   variables {
@@ -184,7 +184,7 @@ run "change_frontier" {
 
 run "teardown" {
   module {
-    source = "./examples/hcl/travel-team"
+    source = "./examples/features/travel-team/hcl"
   }
 
   variables {

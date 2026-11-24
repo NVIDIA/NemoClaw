@@ -1355,9 +1355,10 @@ fn conditional_native_model_settings_survive_a_model_change_and_sdk_roundtrip() 
 #[test]
 fn sparse_journey_asks_existing_deployment_fields_and_checks_complete_sdk_edits() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/spark/remote-vllm.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("deployment", base)
         .ask([JourneyScope::DeploymentFields])
         .start(&capabilities)
@@ -1846,7 +1847,8 @@ fn target_question_offers_the_sdk_schema_targets_in_order() {
 fn an_external_gateway_offers_the_same_targets() {
     let capabilities = Capabilities::available();
     let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/fabric-pi.yaml")).unwrap();
+        PartialDocument::from_yaml(include_bytes!("../../../examples/agents/fabric-pi.yaml"))
+            .unwrap();
     let mut state = JourneyDefinition::new("target", base)
         .ask(["/spec/gateway/target"])
         .start(&capabilities)
@@ -2455,8 +2457,10 @@ fn missing_catalog_key_keeps_curated_suggestions_without_allowing_delegation() {
 #[test]
 fn delegation_is_refused_for_a_route_backed_by_a_managed_service() {
     let capabilities = Capabilities::available();
-    let base = PartialDocument::from_yaml(include_bytes!("../../../examples/managed-ollama.yaml"))
-        .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("delegate", base)
         .ask(["/spec/sandboxes/assistant/harness/kind"])
         .start(&capabilities)
@@ -2513,7 +2517,7 @@ fn delegation_is_refused_before_a_harness_is_accepted() {
 fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
     let capabilities = Capabilities::available();
     let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../examples/spark/local-and-hosted.yaml"
+        "../../../examples/platforms/docker/vllm/dgx-spark/local-and-hosted.yaml"
     ))
     .unwrap();
     let mut state = JourneyDefinition::new("routes", base)
@@ -2597,7 +2601,7 @@ fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
 fn referenced_inference_routes_are_selected_and_edited_through_the_same_journey() {
     let capabilities = Capabilities::available();
     let mut document = nemoclaw_sdk::config::Document::parse(
-        &include_bytes!("../../../examples/multiple-providers.yaml")[..],
+        &include_bytes!("../../../examples/features/multiple-providers.yaml")[..],
     )
     .unwrap();
     document
@@ -2675,7 +2679,7 @@ fn referenced_inference_routes_are_selected_and_edited_through_the_same_journey(
 fn referenced_harness_settings_are_owned_by_the_referenced_definition() {
     let capabilities = Capabilities::available();
     let mut document = nemoclaw_sdk::config::Document::parse(
-        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+        &include_bytes!("../../../examples/features/multiple-models.yaml")[..],
     )
     .unwrap();
     document
@@ -2715,7 +2719,7 @@ fn referenced_harness_settings_are_owned_by_the_referenced_definition() {
 fn revisiting_a_referenced_harness_choice_does_not_create_an_inline_harness() {
     let capabilities = Capabilities::available();
     let mut document = nemoclaw_sdk::config::Document::parse(
-        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+        &include_bytes!("../../../examples/features/multiple-models.yaml")[..],
     )
     .unwrap();
     document
@@ -2751,7 +2755,7 @@ fn revisiting_a_referenced_harness_choice_does_not_create_an_inline_harness() {
 fn referenced_model_settings_are_written_to_the_selected_route() {
     let capabilities = Capabilities::available();
     let mut document = nemoclaw_sdk::config::Document::parse(
-        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+        &include_bytes!("../../../examples/features/multiple-models.yaml")[..],
     )
     .unwrap();
     document
@@ -2809,7 +2813,7 @@ fn workflow_answers_belong_to_the_agent_when_the_harness_is_referenced() {
     },"provenance":[]})];
     let capabilities = Capabilities::from_catalog(&catalog);
     let mut document = nemoclaw_sdk::config::Document::parse(
-        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+        &include_bytes!("../../../examples/features/multiple-models.yaml")[..],
     )
     .unwrap();
     document
@@ -2858,7 +2862,7 @@ fn workflow_answers_belong_to_the_agent_when_the_harness_is_referenced() {
 #[test]
 fn omitting_an_implicit_api_keeps_the_sdk_default_without_writing_an_override() {
     let capabilities = Capabilities::available();
-    let bytes = include_bytes!("../../../examples/explicit-policy.yaml");
+    let bytes = include_bytes!("../../../examples/features/explicit-policy.yaml");
     let original = nemoclaw_sdk::config::Document::parse(&bytes[..]).unwrap();
     let base = PartialDocument::from_yaml(bytes).unwrap();
     let mut state = JourneyDefinition::new("implicit-api", base)
@@ -2890,8 +2894,10 @@ fn omitting_an_implicit_api_keeps_the_sdk_default_without_writing_an_override() 
 #[test]
 fn absent_optional_adapter_settings_remain_unsupplied_until_answered() {
     let capabilities = Capabilities::available();
-    let base = PartialDocument::from_yaml(include_bytes!("../../../examples/explicit-policy.yaml"))
-        .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/features/explicit-policy.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("optional-adapter", base)
         .ask([JourneyScope::ActiveAdapterSettings])
         .start(&capabilities)
@@ -2945,7 +2951,7 @@ fn editing_a_route_model_preserves_explicit_credential_references() {
 fn route_preset_changes_only_the_selected_external_provider() {
     let capabilities = Capabilities::available();
     let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../examples/spark/local-and-hosted.yaml"
+        "../../../examples/platforms/docker/vllm/dgx-spark/local-and-hosted.yaml"
     ))
     .unwrap();
     let mut state = JourneyDefinition::new("route-presets", base)
@@ -3567,7 +3573,7 @@ fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
 fn changing_the_second_provider_api_reopens_its_route_model() {
     let capabilities = Capabilities::available();
     let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../examples/spark/local-and-hosted.yaml"
+        "../../../examples/platforms/docker/vllm/dgx-spark/local-and-hosted.yaml"
     ))
     .unwrap();
     let mut state = JourneyDefinition::new("second-provider-api", base)

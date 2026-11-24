@@ -217,7 +217,8 @@ mod tests {
     #[test]
     fn kubernetes_teardown_retains_only_established_storage_without_gateway_dependencies() {
         let document = Document::parse(
-            include_bytes!("../../../examples/kubernetes/managed-development.yaml").as_slice(),
+            include_bytes!("../../../examples/platforms/kubernetes/managed-development.yaml")
+                .as_slice(),
         )
         .unwrap();
         let generations = crate::state::Record::new(document.clone())
