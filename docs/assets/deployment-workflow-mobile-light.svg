@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="516" viewBox="0 0 360 516" role="img" aria-labelledby="title">
+<title id="title">Define → Plan → Apply</title>
+  <defs>
+    <radialGradient id="halo"><stop stop-color="#76b900" stop-opacity=".09"/><stop offset="1" stop-color="#76b900" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pool"><stop stop-color="#a4ef37" stop-opacity=".45"/><stop offset=".35" stop-color="#76b900" stop-opacity=".15"/><stop offset="1" stop-color="#76b900" stop-opacity="0"/></radialGradient>
+    <linearGradient id="metal" x2=".8" y2="1"><stop stop-color="#806b38"/><stop offset=".27" stop-color="#9a8452"/><stop offset=".65" stop-color="#675730"/><stop offset="1" stop-color="#917841"/></linearGradient>
+    <linearGradient id="glass" x2=".8" y2="1"><stop stop-color="#ffffff"/><stop offset=".52" stop-color="#f4f5ee"/><stop offset="1" stop-color="#e7ebe0"/></linearGradient>
+    <linearGradient id="plate" x2="1" y2="1"><stop stop-color="#f2f5eb"/><stop offset="1" stop-color="#e4eadb"/></linearGradient>
+    <linearGradient id="green" x2=".85" y2="1"><stop stop-color="#dcffa4"/><stop offset=".45" stop-color="#9cde36"/><stop offset="1" stop-color="#76b900"/></linearGradient>
+    <linearGradient id="side" x2="1" y2="1"><stop stop-color="#76b900"/><stop offset="1" stop-color="#263e0a"/></linearGradient>
+    <linearGradient id="wire"><stop stop-color="#494333" stop-opacity="0"/><stop offset=".55" stop-color="#8b7e5c"/><stop offset="1" stop-color="#806a37"/></linearGradient>
+<linearGradient id="down" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#494333" stop-opacity="0"/><stop offset=".55" stop-color="#8b7e5c"/><stop offset="1" stop-color="#806a37"/></linearGradient><linearGradient id="champagne" x1="0" y1="0" x2=".8" y2="1"><stop stop-color="#8c7136"/><stop offset=".35" stop-color="#a78b4c"/><stop offset=".7" stop-color="#745e30"/><stop offset="1" stop-color="#9a7d3d"/></linearGradient>
+<radialGradient id="warm-light"><stop stop-color="#d0ba80" stop-opacity=".055"/><stop offset="1" stop-color="#c6b179" stop-opacity="0"/></radialGradient>
+</defs>
+
+<ellipse cx="96" cy="415" rx="170" ry="150" fill="url(#halo)"/>
+<ellipse cx="96" cy="88" rx="145" ry="120" fill="url(#halo)" opacity=".28"/>
+<g fill="none" stroke="url(#down)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M96 149V183m-5-6 5 6 5-6"/><path d="M96 312V346m-5-6 5 6 5-6"/></g>
+<g fill="none" stroke="#807458" stroke-opacity=".17"><path d="M187 119H315M187 282H315M187 445H315"/></g>
+<g fill="#957c44"><circle cx="187" cy="119" r="1.6" opacity=".45"/><circle cx="187" cy="282" r="1.6" opacity=".65"/><circle cx="187" cy="445" r="1.6"/></g>
+  <!-- A configuration sheet, with structure represented by strokes. -->
+  <g transform="translate(96 88) scale(.64)">
+    <circle r="111" fill="url(#warm-light)"/>
+    <circle r="108" fill="none" stroke="#a19065" stroke-opacity=".10" stroke-width=".8"/>
+    <path d="M-93-55A108 108 0 0 1 43-99" fill="none" stroke="url(#champagne)" stroke-width="1" stroke-opacity=".48"/>
+    <g fill="#94763a" fill-opacity=".72"><circle cx="-93" cy="-55" r="2.1"/><circle cx="43" cy="-99" r="1.8"/></g>
+
+    <rect x="-48" y="-68" width="116" height="146" rx="6" fill="#eef1e7" stroke="#a69d82"/>
+    <rect x="-58" y="-78" width="116" height="146" rx="6" fill="url(#glass)" stroke="url(#metal)" stroke-width="1.5"/>
+    <path d="M-57-55H57" stroke="#a4b398" stroke-opacity=".16"/>
+    <circle cx="-42" cy="-66" r="2" fill="#76b900"/>
+    <circle cx="-34" cy="-66" r="2" fill="#64715a"/>
+    <circle cx="-26" cy="-66" r="2" fill="#a69d82"/>
+    <g fill="none" stroke-linecap="round" stroke-width="4">
+      <path d="M-35-31H-4" stroke="#5f9200"/>
+      <path d="M-22-12H21M-22 7H10" stroke="#59634e"/>
+      <path d="M-35 27H-8" stroke="#5f9200"/>
+      <path d="M-22 46H27" stroke="#59634e"/>
+    </g>
+    <path d="M-35-13V7M-35 45V47" stroke="#8c8168" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  <!-- The same deployment is previewed as separated, inspectable layers. -->
+  <g transform="translate(96 251) scale(.64)" stroke-linejoin="round">
+    <circle r="111" fill="url(#warm-light)"/>
+    <circle r="108" fill="none" stroke="#a19065" stroke-opacity=".10" stroke-width=".8"/>
+    <path d="M-72-80A108 108 0 0 1 103 32" fill="none" stroke="url(#champagne)" stroke-width="1" stroke-opacity=".48"/>
+    <g fill="#94763a" fill-opacity=".72"><circle cx="-72" cy="-80" r="1.8"/><circle cx="103" cy="32" r="2.1"/></g>
+
+    <ellipse cy="82" rx="116" ry="29" fill="url(#pool)" opacity=".36"/>
+    <path d="M0-61V79M-84-13V31M84-13V31" stroke="#8fbb5b" stroke-opacity=".35" stroke-dasharray="3 6"/>
+    <path d="M-85 33 0-14 85 33 0 81Z" fill="url(#plate)" stroke="#6f6855"/>
+    <path d="M-85 6 0-42 85 6 0 54Z" fill="url(#plate)" stroke="#968a6e"/>
+    <path d="M-85-24 0-72 85-24 0 24Z" fill="url(#glass)" stroke="url(#metal)" stroke-width="1.5"/>
+    <g fill="none" stroke="#8c7847" stroke-width="1.4">
+      <path d="M-43-24 0-48 43-24 0 0Z"/><path d="M-43-24H43M0-48V0"/>
+    </g>
+    <g fill="#8b7138"><circle cx="-43" cy="-24" r="3.5"/><circle cx="0" cy="-48" r="3.5"/><circle cx="43" cy="-24" r="3.5"/><circle cy="0" r="3.5"/></g>
+    <circle cy="-24" r="5.5" fill="#a6df51"/>
+    <path d="M-84 33 0 81 84 33" fill="none" stroke="#76b900" stroke-opacity=".65"/>
+  </g>
+  <!-- A running core sits inside a defined deployment boundary. -->
+  <g transform="translate(96 414) scale(.64)" stroke-linejoin="round">
+    <circle cy="10" r="111" fill="url(#warm-light)"/>
+    <circle cy="10" r="108" fill="none" stroke="#a19065" stroke-opacity=".12" stroke-width=".8"/>
+    <path d="M-72-70A108 108 0 0 1 77 86" fill="none" stroke="url(#champagne)" stroke-width="1" stroke-opacity=".48"/>
+    <g fill="#94763a" fill-opacity=".8"><circle cx="-72" cy="-70" r="2.1"/><circle cx="77" cy="86" r="1.8"/></g>
+    <path d="M101-72v9m-4.5-4.5h9" fill="none" stroke="#94763a" stroke-width="1" stroke-linecap="round" stroke-opacity=".65"/>
+
+    <ellipse cy="34" rx="107" ry="85" fill="url(#halo)"/>
+    <path d="M0-78 78-33V57L0 101-78 57V-33Z" fill="#76b900" fill-opacity=".025"/>
+    <path d="M-83 60 0 12 83 60 0 108Z" fill="#e4e9db" stroke="#435635"/>
+    <path d="M-83 56 0 8 83 56 0 104Z" fill="url(#glass)" stroke="#a09578"/>
+    <path d="M-66 56 0 18 66 56 0 94Z" fill="#76b900" fill-opacity=".04" stroke="#76b900" stroke-opacity=".45"/>
+    <path d="M0-78V12M-78 57 0 12 78 57" fill="none" stroke="#91ad75" stroke-opacity=".35" stroke-dasharray="4 5"/>
+    <path d="M0-78 78-33 0 12-78-33Z" fill="#d1f9ab" fill-opacity=".035" stroke="url(#metal)" stroke-width="1.5"/>
+    <path d="M-78-33V57L0 101 78 57V-33M0 12V101" fill="none" stroke="url(#metal)" stroke-width="1.5"/>
+    <path d="M0-30 34-10 0 10-34-10Z" fill="url(#green)"/>
+    <path d="M-34-10 0 10V50L-34 30Z" fill="#76b900"/>
+    <path d="M0 10 34-10V30L0 50Z" fill="url(#side)"/>
+    <path d="M-34-10 0 10 34-10M0 10V50" fill="none" stroke="#e6ffb8" stroke-opacity=".65"/>
+    <g fill="#8b7138"><circle cy="-78" r="3"/><circle cx="-78" cy="-33" r="3"/><circle cx="78" cy="-33" r="3"/></g>
+
+
+  </g>
+
+<g fill="#24292f" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="400"><text x="187" y="99">Define</text><text x="187" y="262">Plan</text><text x="187" y="425">Apply</text></g>
+</svg>

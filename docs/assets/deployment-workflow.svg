@@ -4,7 +4,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="326" viewBox="0 0 960 326" role="img" aria-labelledby="title">
 <title id="title">Define → Plan → Apply</title>
   <defs>
-    <linearGradient id="background" x2="1" y2="1"><stop stop-color="#171715"/><stop offset=".55" stop-color="#0b0c0a"/><stop offset="1" stop-color="#070908"/></linearGradient>
     <radialGradient id="halo"><stop stop-color="#76b900" stop-opacity=".09"/><stop offset="1" stop-color="#76b900" stop-opacity="0"/></radialGradient>
     <radialGradient id="pool"><stop stop-color="#a4ef37" stop-opacity=".45"/><stop offset=".35" stop-color="#76b900" stop-opacity=".15"/><stop offset="1" stop-color="#76b900" stop-opacity="0"/></radialGradient>
     <linearGradient id="metal" x2=".8" y2="1"><stop stop-color="#f0e7d2"/><stop offset=".27" stop-color="#b9ac8e"/><stop offset=".65" stop-color="#625b49"/><stop offset="1" stop-color="#c7b993"/></linearGradient>
@@ -16,8 +15,6 @@
   <linearGradient id="champagne" x1="0" y1="0" x2=".8" y2="1"><stop stop-color="#f3e9d0"/><stop offset=".35" stop-color="#cbbb91"/><stop offset=".7" stop-color="#77694c"/><stop offset="1" stop-color="#d8cba9"/></linearGradient>
 <radialGradient id="warm-light"><stop stop-color="#d0ba80" stop-opacity=".055"/><stop offset="1" stop-color="#c6b179" stop-opacity="0"/></radialGradient>
 </defs>
-<rect width="960" height="326" rx="16" fill="url(#background)"/>
-<rect x=".5" y=".5" width="959" height="325" rx="15.5" fill="none" stroke="#464033" stroke-opacity=".5"/>
 
 <ellipse cx="773" cy="157" rx="196" ry="154" fill="url(#halo)"/>
 <ellipse cx="182" cy="135" rx="144" ry="120" fill="url(#halo)" opacity=".28"/>
