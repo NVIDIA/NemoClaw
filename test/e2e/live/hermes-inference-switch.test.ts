@@ -6,6 +6,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { DEFAULT_HOSTED_INFERENCE_BASE_URL } from "../fixtures/hosted-inference.ts";
 import {
@@ -16,7 +17,7 @@ import {
   env,
   envHash,
   expectAuthenticatedBaselineInventoryRequest,
-  expectNativeLocalHermesTurn,
+  expectHermesEndpointTurn,
   expectAuthenticatedProxyResolutionRequests,
   expectOpenAiProvider,
   hasAuthenticatedProxyResolutionRequest,
@@ -38,6 +39,7 @@ import {
   registryState,
   runHermesCliPongWithRetry,
   runHermesNvidiaDiscordRebuild,
+  rebuildHermesCustomBaseline,
   runHermesInferenceSetWithRetry,
   runHermesPongWithRetry,
   SANDBOX_NAME,
@@ -80,6 +82,8 @@ test(
         "reapply Hermes inference after CLI and verify integrity",
         "verify NVIDIA inference after Discord state rebuild",
         "prove split provider/model credential resolution",
+        "onboard and exercise the custom Hermes hosted route",
+        "rebuild the custom Hermes route without a host credential",
       ],
     },
   },
@@ -189,10 +193,11 @@ test(
     });
     progress.phase("prove native local Hermes startup and model switch");
     mockBaseline &&
-      (await expectNativeLocalHermesTurn({
+      (await expectHermesEndpointTurn({
         sandbox,
         endpoint: mockBaseline,
         model: MOCK_BASELINE_MODEL,
+        attempts: publicApiKey ? 1 : undefined,
         artifactName: "hermes-native-local-startup",
         redactionValues,
         onEvidence: async (evidence) => {
@@ -225,9 +230,10 @@ test(
       ));
     localSwitch && expect(localSwitch.exitCode, resultText(localSwitch)).toBe(0);
     mockBaseline &&
-      (await expectNativeLocalHermesTurn({
+      (await expectHermesEndpointTurn({
         sandbox,
         endpoint: mockBaseline,
+        attempts: publicApiKey ? 1 : undefined,
         model: localModel,
         artifactName: "hermes-native-local-after-model-switch",
         redactionValues,
@@ -581,5 +587,35 @@ test(
     expect(proxyResolutionCli.stdout).toMatch(/\bPONG\b/iu);
 
     expectAuthenticatedProxyResolutionRequests(mockBaseline, requestOffset, proxyResolutionModel);
+
+    const customTunnel =
+      mockBaseline &&
+      publicApiKey &&
+      (await startPublicMcpHttpsTunnel({
+        cleanup,
+        cloudflaredBin: "/usr/bin/cloudflared",
+        label: "Hermes custom hosted rebuild",
+        progress,
+        server: {
+          port: Number(new URL(mockBaseline.baseUrl).port),
+          close: () => mockBaseline.close(),
+        },
+        originProtocol: "http",
+        readinessPath: "/v1/models",
+        readinessStatus: 401,
+      }));
+    mockBaseline &&
+      customTunnel &&
+      (await rebuildHermesCustomBaseline({
+        endpointUrl: `${customTunnel.origin}/v1`,
+        host,
+        sandbox,
+        endpoint: mockBaseline,
+        apiKey,
+        model: localModel,
+        redactionValues,
+        progress,
+        artifacts,
+      }));
   },
 );

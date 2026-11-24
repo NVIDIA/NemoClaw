@@ -55,18 +55,27 @@ An invalid or uninspectable recognized authority file stops the transfer instead
 
 For OpenClaw NVIDIA Endpoints, NemoClaw preserves `${NVIDIA_INFERENCE_API_KEY}` only in the generated `inference` provider entry for `https://integrate.api.nvidia.com/v1`. This reference is not a raw credential. A different provider, endpoint, or value stops the transfer.
 
-For Hermes NVIDIA Endpoints, NemoClaw preserves `${NVIDIA_INFERENCE_API_KEY}` only in a validated managed `nvidia-prod` route in `.hermes/config.yaml`.
-The route must use `https://integrate.api.nvidia.com/v1` and have matching model and provider metadata.
-The placeholder must appear in all three managed fields:
+For Hermes hosted routes, NemoClaw preserves one non-secret credential reference only in a validated managed route in `.hermes/config.yaml`.
+The archived provider must be the provider registered for the sandbox, and the reference must match that provider:
+
+- NVIDIA Endpoints, OpenAI, Anthropic, Gemini, and OpenRouter use their fixed endpoint and credential variable. For NVIDIA Endpoints the reference is `${NVIDIA_INFERENCE_API_KEY}` and the endpoint is `https://integrate.api.nvidia.com/v1`.
+- Hermes Provider uses `${OPENAI_API_KEY}`. The endpoint is its default endpoint, or the endpoint returned by authenticated login when that is the endpoint registered for the sandbox.
+- Other OpenAI-compatible and Anthropic-compatible endpoints use `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}`.
+  The archived endpoint must match the agent endpoint generated from the registered route and API, or its validated provider binding.
+  Hermes uses the OpenAI-compatible surface of an Anthropic-compatible endpoint: registration keeps the logical endpoint, such as `https://host.example/team`, while the binding and agent configuration use `https://host.example/team/v1`.
+  If registration conflicts with the binding's logical endpoint, API, or credential variable, NemoClaw strips the reference.
+  It must not use `localhost`, `127.0.0.1`, `[::1]`, or `inference.local`.
+
+The route also needs matching model and provider metadata, and the reference must appear in all three managed fields:
 
 - `model.api_key`.
-- `providers.nvidia-prod.api_key`.
-- The `api_key` field of the single `nvidia-prod` entry in `custom_providers`.
+- `providers.<provider>.api_key`.
+- The `api_key` field of the single matching entry in `custom_providers`.
 
 These references are not raw credentials.
 If these checks fail, normal credential sanitization applies.
 This exception does not apply to configuration backups or other files.
-After restore, NemoClaw replaces these references with a current OpenShell provider-bound credential handle before restarting Hermes.
+After restore, NemoClaw replaces the NVIDIA Endpoints reference with a current OpenShell provider-bound credential handle before restarting Hermes.
 
 <AgentOnly variant="hermes">
 Rebuild also [repairs an already-stripped route](https://github.com/NVIDIA/NemoClaw/pull/14153) when all three fields contain exactly `[STRIPPED_BY_MIGRATION]`.
