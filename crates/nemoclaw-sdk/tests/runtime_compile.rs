@@ -435,6 +435,8 @@ fn caller_volumes_remain_external_through_changes_restore_and_recreation() {
     ]}});
     let mut value = serde_json::to_value(baseline).unwrap();
     value["spec"]["sandboxes"]["assistant"]["driverConfig"] = mounts.clone();
+    value["spec"]["gateway"]["config"]["openshell.drivers.docker"] =
+        json!({"allow_driver_config": true});
     let baseline = Document::parse(value.to_string().as_bytes()).unwrap();
     value["spec"]["sandboxes"]["assistant"]["agent"]["tools"] =
         json!({"enabled": ["fixture-shell"]});

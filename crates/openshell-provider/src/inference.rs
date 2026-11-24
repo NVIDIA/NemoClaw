@@ -10,7 +10,7 @@ pub(super) fn provider_names(text: &str) -> Result<Vec<String>, ObservationError
     }
     let names: Vec<String> = serde_json::from_str(text).map_err(|_| ObservationError::Query)?;
     let unique: std::collections::BTreeSet<_> = names.iter().collect();
-    if names.len() > 128
+    if names.len() > nemoclaw_openshell::SANDBOX_PROVIDERS
         || unique.len() != names.len()
         || names
             .iter()

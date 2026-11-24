@@ -141,8 +141,20 @@ impl ResourceAdapter {
                 .copied()
                 .filter(|field| matches!(config.get(*field), Some(Value::Unknown)))
                 .collect();
-            if let Err(requirement) = check(&known, &unknown) {
-                diags.root_error("Invalid configuration", requirement.into_owned());
+            if let Err(error) = check(&known, &unknown) {
+                match error.field {
+                    Some(field) => {
+                        let attribute = self.definition.attribute_of(field);
+                        let path = error
+                            .within
+                            .iter()
+                            .fold(AttributePath::new(attribute), |path, step| {
+                                path.attribute(*step)
+                            });
+                        diags.error(format!("Invalid {attribute}"), error.reason, path);
+                    }
+                    None => diags.root_error("Invalid configuration", error.reason),
+                }
                 return None;
             }
         }
@@ -736,18 +748,20 @@ mod tests {
     /// even while others are unknown; the check learns which ones are.
     #[test]
     fn related_inputs_are_validated_together() {
-        fn check(known: &Row, unknown: &[&str]) -> Result<(), std::borrow::Cow<'static, str>> {
+        fn check(known: &Row, unknown: &[&str]) -> Result<(), crate::InputError> {
             if unknown.contains(&"limit") {
                 return Ok(());
             }
             let number = |field: &str| known[field].parse::<u32>().unwrap();
             if number("count") > number("limit") {
-                return Err("count exceeds limit".into());
+                return Err(crate::InputError::at("limit", "count exceeds limit"));
             }
             Ok(())
         }
-        let definition =
-            Definition::new("pool", &["count", "limit", "other"], &[]).validate_inputs(check);
+        // The limit is a typed input, so the diagnostic names its attribute.
+        let definition = Definition::new("pool", &["count", "limit", "other"], &[])
+            .validate_inputs(check)
+            .structured("limits", "limit", crate::shape::Shape::Json);
         let adapter = ResourceAdapter::new(definition, Arc::new(UnusedBackend));
         let config = |limit: Value<String>| -> State {
             [
@@ -775,10 +789,9 @@ mod tests {
                 .validate_config(&mut diags, &config(Value::Value("2".into())))
                 .is_none()
         );
-        assert!(
-            format!("{diags:?}").contains("count exceeds limit"),
-            "{diags:?}"
-        );
+        assert_eq!(diags.errors.len(), 1, "{diags:?}");
+        assert_eq!(diags.errors[0].detail, "count exceeds limit");
+        assert_eq!(diags.errors[0].attribute, AttributePath::new("limits"));
     }
 
     /// A derived attribute is a function of inputs: known while planning once

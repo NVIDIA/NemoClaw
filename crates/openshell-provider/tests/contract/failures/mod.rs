@@ -8,4 +8,5 @@ mod capabilities;
 mod gateway_installation;
 mod gateway_readiness;
 mod gateway_storage;
+mod plan_inputs;
 mod standalone;

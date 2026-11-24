@@ -29,8 +29,58 @@ pub type ValidateAttribute =
 
 /// Checks inputs that constrain each other: the known ones, and the names of
 /// those still unknown. Explains a rejection without echoing values.
-pub type ValidateInputs =
-    fn(known: &Row, unknown: &[&str]) -> Result<(), std::borrow::Cow<'static, str>>;
+pub type ValidateInputs = fn(known: &Row, unknown: &[&str]) -> Result<(), InputError>;
+
+/// Why inputs that constrain each other were rejected: the row field at fault,
+/// when one is, and an explanation that echoes no value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputError {
+    /// The row field whose value is rejected; the diagnostic names the
+    /// OpenTofu attribute that holds it.
+    pub field: Option<&'static str>,
+    /// Nested attributes or blocks under the field's attribute that hold the
+    /// rejected value.
+    pub within: Vec<&'static str>,
+    pub reason: std::borrow::Cow<'static, str>,
+}
+
+impl InputError {
+    /// A rejection of the value in row `field`.
+    pub fn at(field: &'static str, reason: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+        Self {
+            field: Some(field),
+            within: Vec::new(),
+            reason: reason.into(),
+        }
+    }
+    /// The rejection concerns `steps`, nested under the field's attribute.
+    pub fn within(mut self, steps: &[&'static str]) -> Self {
+        self.within.extend_from_slice(steps);
+        self
+    }
+}
+
+impl From<std::borrow::Cow<'static, str>> for InputError {
+    fn from(reason: std::borrow::Cow<'static, str>) -> Self {
+        Self {
+            field: None,
+            within: Vec::new(),
+            reason,
+        }
+    }
+}
+
+impl From<&'static str> for InputError {
+    fn from(reason: &'static str) -> Self {
+        std::borrow::Cow::Borrowed(reason).into()
+    }
+}
+
+impl From<String> for InputError {
+    fn from(reason: String) -> Self {
+        std::borrow::Cow::<'static, str>::Owned(reason).into()
+    }
+}
 
 /// Computes an attribute from the known inputs, given the names of those still
 /// unknown; `None` while the inputs it needs are unknown.
@@ -278,6 +328,21 @@ impl Definition {
     pub fn describe(mut self, describe: Describe) -> Self {
         self.describe = Some(describe);
         self
+    }
+    /// The OpenTofu attribute that holds row `field`: the typed input or the
+    /// `ref` input that carries it, or else the field itself.
+    pub fn attribute_of(&self, field: &'static str) -> &'static str {
+        self.structured
+            .iter()
+            .find(|structured| structured.field == field)
+            .map(|structured| structured.attribute)
+            .or_else(|| {
+                self.references
+                    .iter()
+                    .find(|reference| reference.fields.iter().any(|(_, row)| *row == field))
+                    .map(|reference| reference.attribute)
+            })
+            .unwrap_or(field)
     }
     pub fn is_optional(&self, field: &str) -> bool {
         self.optional.contains(&field)
