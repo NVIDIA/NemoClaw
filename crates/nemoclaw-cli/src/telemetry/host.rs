@@ -345,9 +345,9 @@ mod tests {
     fn every_hardware() {
         let gpu = |device: &'static str| -> Vec<(&'static str, &'static str)> {
             vec![
-                ("/sys/bus/pci/devices/0000:01:00.0/vendor", "0x10de\n"),
-                ("/sys/bus/pci/devices/0000:01:00.0/class", "0x030200\n"),
-                ("/sys/bus/pci/devices/0000:01:00.0/device", device),
+                ("/sys/bus/pci/devices/gpu0/vendor", "0x10de\n"),
+                ("/sys/bus/pci/devices/gpu0/class", "0x030200\n"),
+                ("/sys/bus/pci/devices/gpu0/device", device),
                 (PRODUCT, "PowerEdge R760xa\n"),
             ]
         };
