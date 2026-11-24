@@ -209,13 +209,20 @@ Each scenario applies, requires its selected agent to reply `READY`, and destroy
 Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>-<case-id>/`. Published reports contain outcomes and candidate/UID/case identity only.
 Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
 
-For the Station cases, Colorunner can install the root-owned
+For the Station, DGX Spark, and RTX PRO 6000 vLLM cases, host provisioning can install the root-owned
 `/usr/local/libexec/colorunner-model-cache` helper. A successful cold run publishes
 its verified model files. Subsequent runs mount those files read-only into a
 fresh model volume; engine caches, status, credentials, and deployment state stay
-per run. Hosts without the helper keep the original acquisition path. This cache
-survives image replacement on the same host, but does not provide cross-host
-persistence. Spark does not use it.
+per run. Managed and external DGX setup install the helper; the RTX runner image
+owner must install it separately from a reviewed controller revision. The E2E
+workflow does not configure host storage. Hosts without a compatible helper keep
+the original acquisition path. The `named-services` capability permits services
+such as RTX's `qwen`; older helpers still serve `super` and leave other names
+uncached. Only one managed vLLM service on `unix:///var/run/docker.sock` is eligible;
+Ollama, llama.cpp, remote engines, and multiple vLLM services keep their original
+paths. The cache survives image replacement on an intact host, but does not
+provide cross-host persistence. Verify whether the RTX runner preserves that disk
+between jobs before expecting a warm hit.
 
 The case records cache availability and publication or release outcomes in
 `reports/model-cache.json`. Invalid entries fall back to acquisition before
@@ -224,12 +231,12 @@ recovers this run's mount after SDK destroy and independent Docker cleanup. Its
 `reports/model-cache-cleanup.json` must confirm success. Recovery preserves live
 holders, container references, and mounts whose identity cannot be established.
 Do not remove their journals or force-unmount to bypass a failed cleanup.
-Qualify the coordinated Colorunner and NemoClaw revisions on an owned GB300,
+Qualify the coordinated controller and NemoClaw revisions on each owned target,
 including cancellation recovery, before unattended use; see
 [#13994](https://github.com/NVIDIA/NemoClaw/issues/13994).
 
 The [Spark scenario](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-spark-openclaw-nemotron.tftest.hcl), including model download and load, must fit the existing 60-minute job budget with the downloads and cleanup; the model startup timeout does not extend that job budget. Do not reuse an existing deployment as evidence of a fresh run.
-To recover a failed run, set `run` to its retained directory and use the original executables:
+To recover a failed DGX run, set `run` to its retained directory and use the original executables:
 
 ```bash
 "$run/bundle/bin/nemoclaw" destroy --output json --progress off --state-dir "$run/deployment"
@@ -237,13 +244,17 @@ NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
   "$run/e2e" hcl_live::docker_cleanup --exact --ignored --nocapture
 ```
 
-For a Station run with the host cache installed, release its mount after those
-commands succeed. Set `NEMOCLAW_HCL_CASE` to that run's selected case ID:
+For an eligible vLLM run with the host cache installed, release its mount after
+SDK destroy and independent Docker cleanup succeed. Set `document` and
+`executable` to the original bound configuration and E2E executable. DGX retains
+them at `$run/case.yaml` and `$run/e2e`; RTX uses the selected case document and
+`$GITHUB_WORKSPACE/.build/e2e`. RTX's run directory is `$RUNNER_TEMP/hcl` and its
+bundle is under the workspace. Retain those private inputs before the runner is
+replaced if manual recovery is needed:
 
 ```bash
-NEMOCLAW_HCL_CASE=dgx-station-openclaw-nemotron \
-  NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
-  "$run/e2e" hcl_live::model_cache_cleanup --exact --ignored --nocapture
+NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$document" \
+  "$executable" hcl_live::model_cache_cleanup --exact --ignored --nocapture
 ```
 
 ## Spark and Fabric
