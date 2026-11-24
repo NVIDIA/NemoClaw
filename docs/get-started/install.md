@@ -68,8 +68,20 @@ A final release attaches the installer only when it's signed and notarized. If t
 
    You can also open the verified package in Finder and follow the installer's pages.
 
-7. Open a new Terminal window to load the updated `PATH`.
-8. Run `nemoclaw --version` and check that it reports `nemoclaw 0.1.0`.
+7. If you previously installed an archive, remove its `PATH` export from your shell's startup file, such as `~/.zshrc` or `~/.bashrc`.
+   That export can put the archive's CLI before the installer's CLI, even in a new Terminal window.
+   Keep the archive's directory if existing deployments still need that version; run it by its full path.
+
+8. Open a new Terminal window to load the updated `PATH`, then check which CLI it selects:
+
+   ```sh
+   command -v nemoclaw
+   nemoclaw --version
+   ```
+
+   Expect `/usr/local/nemoclaw/bin/nemoclaw` and `nemoclaw 0.1.0`.
+   If another path appears, remove that installation's `PATH` entry from your shell configuration and open another Terminal window.
+   Windows that were already open do not have the new `PATH`.
 
 Keep `/usr/local/nemoclaw` intact and run the CLI from your deployment directory. Continue to the [first-deployment guide](first-deployment.md).
 
@@ -77,11 +89,35 @@ Keep `/usr/local/nemoclaw` intact and run the CLI from your deployment directory
 
 The installer replaces `/usr/local/nemoclaw`. Deployments still need the release that created them.
 
+It moves `/usr/local/nemoclaw` to `/usr/local/nemoclaw.previous` before installing the new bundle, so no old files remain in the installed directory.
+After the replacement payload installs successfully, it removes the previous bundle.
+If installation fails before that cleanup, it retains the previous bundle for [recovery](#recovering-from-a-failed-macos-installer-upgrade).
+
 1. If existing deployments need the current release, [extract that release's archive](#installing-on-linux-or-macos) into a separate directory so you can run its CLI by absolute path.
 2. Install the new release's package.
 
+### Recovering from a Failed macOS Installer Upgrade
+
+If `/usr/local/nemoclaw.previous` remains after an unsuccessful upgrade, restore it before retrying.
+The installer refuses to replace this recovery copy.
+Close any running CLI operations, then run:
+
+```sh
+sudo sh -c 'set -eu
+test -d /usr/local/nemoclaw.previous
+rm -rf /usr/local/nemoclaw
+mv /usr/local/nemoclaw.previous /usr/local/nemoclaw'
+/usr/local/nemoclaw/bin/nemoclaw --version
+```
+
+The directory check stops the command before removal if there is no recovery copy.
+This restores the previous bundle and removes the incomplete replacement, without changing deployment directories or shell settings.
+Recovery is manual; the installer does not roll back automatically.
+If no previous bundle exists, retry the installer to replace an incomplete first installation.
+
 ### Uninstalling with the macOS Installer
 
+If an upgrade failed, [restore the previous bundle](#recovering-from-a-failed-macos-installer-upgrade) first.
 Keep the matching archive if a deployment or retained resources still need this release. To retire a deployment first, follow the [general uninstall guidance](#uninstalling).
 Remove the CLI, the `PATH` entry, and the package's record:
 
