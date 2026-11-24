@@ -23,6 +23,7 @@ import { createPackageFixture } from "./helpers/package-fixture";
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const sdkName = "@nvidia/openshell-sdk";
 const publicDependencies = [
+  "@ai-openshell/sdk",
   "@bufbuild/protobuf",
   "@connectrpc/connect",
   "@connectrpc/connect-node",
@@ -68,8 +69,8 @@ function fixture() {
     version: "1.0.0",
     exports: { "./*": "./*" },
     files: ["ci/", "dist/", "scripts/"],
-    bundleDependencies: sourceManifest.bundleDependencies.filter(
-      (name: string) => name === sdkName,
+    bundleDependencies: sourceManifest.bundleDependencies.filter((name: string) =>
+      [sdkName, ...publicDependencies].includes(name),
     ),
     optionalDependencies: Object.fromEntries(
       [sdkName, ...publicDependencies].map((name) => [
@@ -254,7 +255,7 @@ console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolic
 
   it("rejects a changed archive before creating an npm cache", () => {
     const { root, probe } = fixture();
-    const archive = path.join(root, "scripts/vendor/openshell-sdk/nvidia-openshell-sdk-0.1.9.tgz");
+    const archive = path.join(root, "scripts/vendor/openshell-sdk/nvidia-openshell-sdk-0.1.10.tgz");
     writeFileSync(archive, "corrupted archive");
     const result = probe("prepare");
     expect(result.status).toBe(1);

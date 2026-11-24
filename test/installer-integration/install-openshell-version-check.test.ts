@@ -1288,7 +1288,7 @@ exit 0`,
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "NemoClaw requires exact stable OpenShell 0.1.9; the dev channel is not supported.",
+      `NemoClaw requires exact stable OpenShell ${REQUIRED_OPENSHELL_VERSION}; the dev channel is not supported.`,
     );
     expect(result.stdout).not.toContain("Installing OpenShell from release 'dev'");
   });

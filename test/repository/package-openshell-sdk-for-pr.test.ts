@@ -259,17 +259,17 @@ export async function githubRequest(route, token) {
     expect(artifactDirectory).toBe(source.output);
     expect(fs.readdirSync(artifactDirectory).sort()).toEqual([
       "nvidia-openshell-sdk-0.0.116.tgz",
-      "nvidia-openshell-sdk-0.1.9.tgz",
+      "nvidia-openshell-sdk-0.1.10.tgz",
     ]);
     expect(source.requests.map(({ packageSpec }) => packageSpec)).toEqual([
       "@nvidia/openshell-sdk@0.0.116",
-      "@nvidia/openshell-sdk@0.1.9",
+      "@nvidia/openshell-sdk@0.1.10",
     ]);
     expect(source.requests[1]).toMatchObject({
       expectedIntegrity:
-        "sha512-UYv+9YuA+s/JCjg3nzK1EIgxMj/iw1/Unw8J5pGhGYLjO+jXxUqiJdtfiIxS4LOyr1Xhn+3DRUhrf61jXE06yQ==",
+        "sha512-IGRHqQZ38AHbtx6mfyrpVRrHjSwg+jaSxKVOsuqKUUftdrN4FNe0FosNUbIq/KDmTQPRURbm+JPWg9mRmvaetg==",
       tarballUrl:
-        "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.9/99882402cf986d8fe061b852b8262ac55622e5a7",
+        "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.10/09792a4aca8e55bc312bda80bfebc4dec441c0e3",
     });
     expect(source.remove).toHaveBeenCalledTimes(2);
   });
@@ -281,7 +281,7 @@ export async function githubRequest(route, token) {
     expect(artifactDirectory).toBe(source.output);
     expect(source.requests.map(({ packageSpec }) => packageSpec)).toEqual([
       "@nvidia/openshell-sdk@0.0.116",
-      "@nvidia/openshell-sdk@0.1.9",
+      "@nvidia/openshell-sdk@0.1.10",
     ]);
   });
 
