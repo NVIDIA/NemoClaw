@@ -222,10 +222,18 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
         }
     }
     // A changed agent configuration replaces the sandbox, through a
-    // terraform_data holding the configuration Fabric receives.
-    assert_eq!(
-        sandbox["lifecycle"]["replace_triggered_by"],
-        json!(["terraform_data.agent_worker"])
+    // terraform_data holding the configuration Fabric receives, and so does
+    // a new credential value in the registration the sandbox attaches.
+    let triggers = sandbox["lifecycle"]["replace_triggered_by"]
+        .as_array()
+        .unwrap();
+    assert_eq!(triggers.len(), 2, "{triggers:?}");
+    assert_eq!(triggers[0], "terraform_data.agent_worker");
+    let registration = triggers[1].as_str().unwrap();
+    assert!(
+        registration.starts_with("openshell_inference.")
+            && registration.ends_with(".credential_digest"),
+        "{registration}"
     );
     let configuration = &resources["terraform_data"]["agent_worker"];
     let input: serde_json::Value =
@@ -580,6 +588,61 @@ fn sandboxes_request_the_cpu_and_memory_their_author_chose() {
         nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
         doc,
         "the document must round-trip with its sizes"
+    );
+}
+
+/// A sandbox restarts for a new credential value only in a registration it
+/// attaches: its replacement triggers list those registrations' digests.
+#[test]
+fn only_sandboxes_that_attach_a_registration_restart_for_its_credential() {
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.integrations = serde_json::from_value(serde_json::json!({
+        "bookings": {"kind":"api", "endpoints":["https://bookings.example.com/mcp"],
+            "credential":{"env":"BOOKINGS_API_KEY"}}
+    }))
+    .unwrap();
+    let mut reader = document.spec.sandboxes["assistant"].clone();
+    reader.agent.name = "reader".into();
+    document.spec.sandboxes.insert("reader".into(), reader);
+    let assistant = document.spec.sandboxes.get_mut("assistant").unwrap();
+    assistant.agent.integration_refs = vec!["bookings".into()];
+    let graph = compile(&document, &ownership_generations(), "0.1.0").unwrap();
+    let triggers = |sandbox: &str| -> Vec<String> {
+        graph["resource"]["openshell_sandbox"][sandbox]["lifecycle"]["replace_triggered_by"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|trigger| trigger.as_str().unwrap().to_owned())
+            .collect()
+    };
+    let api = graph["resource"]["openshell_api"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap();
+    let inference = graph["resource"]["openshell_inference"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap();
+    let digest = |kind: &str, name: &str| format!("openshell_{kind}.{name}.credential_digest");
+    assert_eq!(
+        triggers("assistant"),
+        [
+            "terraform_data.agent_assistant".to_owned(),
+            digest("inference", inference),
+            digest("api", api),
+        ]
+    );
+    assert_eq!(
+        triggers("reader"),
+        [
+            "terraform_data.agent_reader".to_owned(),
+            digest("inference", inference)
+        ]
     );
 }
 

@@ -203,7 +203,7 @@ It takes:
 
 Plans reject a missing `server` or `binaries`.
 The schema lists them as optional so that when one of the two OpenShell objects disappears, the next plan shows drift.
-A rotated credential reference updates the registration in place. Adding or removing authentication, or any other change, replaces the resource, and removal deletes both objects.
+A rotated credential reference, or a new value behind the same `credential_env`, updates the registration in place, as [credential digests](#credential-digests) describes. Adding or removing authentication, or any other change, replaces the resource, and removal deletes both objects.
 A sandbox that attaches it also needs a policy that allows traffic to the server's endpoint.
 Its `ref` has type `openshell_provider`, so sandboxes take it in `providers`.
 Generated graphs register each selected inference provider this way, passing a literal `inference_server` object built from the provider definition rather than a readiness read's `ref`.
@@ -285,7 +285,7 @@ A DNS name receives no private-network grant.
 `binaries` must list the absolute paths of the callers allowed to use the credential.
 
 The provider resolves the host variable during apply and sends its value to OpenShell's credential store.
-OpenTofu state and the exported `ref` contain the variable name, never its value.
+OpenTofu state and the exported `ref` contain the variable name and a [digest](#credential-digests) of the value, never the value itself.
 OpenShell projects a credential placeholder into `NEMOCLAW_API_BOOKING_KEY` for `name = "booking"`.
 The agent does not receive the stored credential value.
 Set `sandbox_env` to project it under another name, such as a variable the sandbox's tools already read.
@@ -294,10 +294,9 @@ Give each a different `sandbox_env`, or list every URL that shares a key in one 
 The registration is named `booking` and its profile `nemoclaw-api-booking`.
 
 Changing `credential_env` updates the stored credential in place on the next apply, retaining the registration and attached sandbox.
-Changing only the value of the same host variable does not create a plan change.
-Use a new variable reference to rotate it.
+A new value behind the same host variable updates the registration in place, as [credential digests](#credential-digests) describes.
 Credential propagation to an already-running client has not been qualified.
-An unchanged plan reads the binding without resolving the host secret.
+Plan reads the host variable only to check it against the digest, and only when its environment holds the variable.
 A missing profile is recreated in place.
 A missing registration replaces the reconstructible pair without replacing its sandbox.
 Foreign ownership or an incomplete observation stops planning.
@@ -306,6 +305,21 @@ To remove the credential, first detach or explicitly remove sandboxes using its 
 Removal deletes the registration and its owned profile.
 It does not unset the host variable or revoke the key at the API service.
 Endpoint, REST or MCP policy, authentication and executable changes replace the pair. Arrange for attached sandboxes to detach or be replaced first.
+
+#### Credential Digests
+
+`openshell_inference` and `openshell_api` record `credential_digest`, an Argon2id digest of the credential value the registration holds, when they take that value from `credential_env`.
+OpenShell can't report a registered value, so the provider records the digest when it registers the value, with a random salt and OWASP's minimum Argon2id parameters, and observations keep it.
+The schema marks it sensitive, so plans hide it.
+It is empty for a registration without a credential or with a `credential_source`.
+
+When a plan's environment holds the variable `credential_env` names and its value doesn't match the digest, the plan updates the registration in place and leaves `credential_digest` unknown, and apply registers the value and records its digest.
+A plan whose environment doesn't hold the variable keeps the digest and plans no change.
+A changed `credential_env` also leaves the digest unknown.
+A registration that an earlier provider release created has no digest; its first observation that can read the variable records the digest of the value it holds then, without updating the registration.
+
+The provider never replaces a sandbox for a new credential.
+NemoClaw's deployment graph lists the digest of each registration a sandbox attaches in the sandbox's `lifecycle.replace_triggered_by`, so a new value, or a recreated registration, replaces that sandbox and its agent.
 
 ### OpenShell Gateway Installation
 
@@ -543,7 +557,7 @@ Each resource is reconciled and protected as follows:
 
 | Resource | Reconciliation | Protection |
 |---|---|---|
-| Inference and API credentials | Create the profile and then the registration. Recreate a missing profile and rotate a credential reference in place. Replace on any other input change or a missing registration. | The same checks for both objects. A failure between them records the identity, so the next apply replaces the resource. |
+| Inference and API credentials | Create the profile and then the registration. Recreate a missing profile, and update in place for a rotated credential reference or a new credential value. Replace on any other input change or a missing registration. | The same checks for both objects. A failure between them records the identity, so the next apply replaces the resource. |
 | Fabric agent | Apply the public Fabric document. Replace the agent on any input change. | Verify the parent sandbox identity. Refuse a replacement unless the sandbox is replaced too. |
 | Sandbox | Create and observe the declared sandbox. Update its service exposures and network rules in place. Replace it on any other change to its specification. | Replacement and deletion delete its files and conversation history. Data that must survive belongs on a mounted volume. |
 | Workspace | Create and observe. Delete only during explicit teardown. | Refuse replacement and automatic recreation of a missing binding. `lifecycle { prevent_destroy = true }` retains it, as generated graphs do during apply. |

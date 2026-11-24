@@ -44,6 +44,11 @@ Plan and apply:
   Before, apply failed after creating the gateway, which remained until destroy.
 - Plan and the `nemoclaw onboard` review report an agent image that the engine doesn't hold as not present, and link the [agent image build instructions](../../docs/build-deploy/build.md#building-agent-images).
   See [pulling from private registries](../../docs/build-deploy/usage.md#pulling-from-private-registries).
+- Apply detects a new value behind an unchanged inference, web search, or API credential reference, and registers it ([#14803](https://github.com/NVIDIA/NemoClaw/issues/14803)).
+  The OpenShell provider records an Argon2id digest of each value it registers as the registration's `credential_digest`; a plan that reads another value updates the registration in place, and the deployment replaces each sandbox that attaches the registration, so its agent starts with the new value.
+  See [rotating credentials](../../docs/security/credential-rotation.md).
+  `nemoclaw plan` doesn't read these credentials, so it shows no change for a new value, and a recreated registration now also replaces the sandboxes that attach it.
+  Before, apply reported no resource changes, and running agents kept the old value until their sandboxes were replaced for another reason.
 - An agent image whose adapter doesn't accept `runtime.keep_state`, such as one built from another Fabric revision than the CLI's, plans and runs without it ([#14798](https://github.com/NVIDIA/NemoClaw/issues/14798)).
   Each of its runtimes gets its own state folder.
   Before, plan and the `nemoclaw onboard` review rejected it over `harness.runtime.keep_state`, a field the configuration doesn't need to set.

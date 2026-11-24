@@ -10,6 +10,7 @@ pub mod agent;
 mod client;
 mod composite;
 mod connected;
+mod credential;
 mod driver_config;
 mod gateway_source;
 mod gpu;
@@ -585,6 +586,28 @@ fn inference_sandbox_env(known: &Row, unknown: &[&str]) -> Option<String> {
     })
 }
 
+/// The digest of the credential value a registration holds, which NemoClaw
+/// records when it registers the value, since OpenShell never reports it. A
+/// plan that reads another value in the registration's credential variable,
+/// or names another variable, leaves the digest unknown, and the registration
+/// updates in place with the value. NemoClaw's deployment graph replaces the
+/// sandboxes that attach the registration when the digest changes, so their
+/// agents start with the value. Empty when the registration takes
+/// no credential from a variable, or holds one recorded before NemoClaw kept
+/// digests and not yet observed.
+trait CredentialDigest {
+    fn credential_digest(self) -> Self;
+}
+impl CredentialDigest for nemoclaw_tofu::Definition {
+    fn credential_digest(self) -> Self {
+        use credential::CREDENTIAL_DIGEST;
+        self.computed(CREDENTIAL_DIGEST, credential::plan)
+            .unknown_when_changed(CREDENTIAL_DIGEST, "credential_env")
+            .optional(&[CREDENTIAL_DIGEST])
+            .sensitive(&[CREDENTIAL_DIGEST])
+    }
+}
+
 /// OpenShell objects and their planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
     use nemoclaw_openshell::api::{MCP_POLICY, REST_POLICY};
@@ -633,7 +656,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         ])
         .validate_inputs(composite::validate_api)
         .replaces(binaries_changes)
-        .derived("registration", provider_registration),
+        .derived("registration", provider_registration)
+        .credential_digest(),
         // An inference server's profile and registration, as one resource
         // whose owner is its workspace's and whose endpoint and credential
         // come from the server's ref. A rotated credential reference updates
@@ -678,7 +702,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         .validate_inputs(composite::validate_inference)
         .replaces(inference_changes)
         .derived("registration", provider_registration)
-        .derived("sandbox_env", inference_sandbox_env),
+        .derived("sandbox_env", inference_sandbox_env)
+        .credential_digest(),
         Definition::new(
             "sandbox",
             &[
