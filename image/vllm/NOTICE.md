@@ -16,8 +16,8 @@ The upstream image retains its vLLM and installed dependency notices.
 `uv-source.tar.gz` retains uv 0.13.8's original release source, including its workspace notices.
 `uv-cargo-source.tar.gz` retains every external package in that release's Cargo lock, its vendor configuration, and recovered original notices from crate-recorded revisions and a difflib revision whose Rust files match the published crate.
 This includes astral-pubgrub 0.7.1, astral-version-ranges 0.2.3, option-ext 0.2.0, and priority-queue 2.7.0, which offer MPL-2.0 terms.
-To resolve those sources offline, extract the original source into a directory, extract the Cargo archive into that same root, and run `cargo metadata --locked --offline --format-version 1` there.
-`cargo build --locked --offline --release -p uv` uses those sources and also needs the upstream build prerequisites.
+With Rust 1.100.0 installed, to resolve those sources offline, extract the original source into a directory, extract the Cargo archive into that same root, and run `RUSTUP_TOOLCHAIN=1.100.0 cargo metadata --locked --offline --format-version 1` there.
+`RUSTUP_TOOLCHAIN=1.100.0 cargo build --locked --offline --release -p uv` uses those sources and also needs the upstream build prerequisites.
 These materials do not establish a byte-identical rebuild or resolve the remaining notice provenance and redistribution decisions in #14815.
 
 `tokenizers/tokenizers-source.tar.gz` retains Tokenizers 0.23.3's original source distribution and Apache-2.0 notice, which its installed wheel omits.
