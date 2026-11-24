@@ -26,6 +26,8 @@ Until every package exists, `v1` pushes skip pushing images with a warning, and 
 
 ## Staging From a Tag
 
+Before creating a final tag, [check its release notes at the commit you intend to tag](../../.agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md) and complete the [publishing requirements](#publishing).
+For a release candidate, record changes in the [internal release candidate notes](release-candidates.md).
 Push a semver tag on a `v1` commit, starting with `v0.1.0-rc.1`; the `v1` branch ships 0.1 releases.
 Version tags are permanent: a repository rule forbids deleting them.
 
