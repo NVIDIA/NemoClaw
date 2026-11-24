@@ -110,6 +110,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-docs
         with:
@@ -121,10 +122,48 @@ jobs:
           path: .build/docs-tool
       - name: Make the build tool executable
         run: chmod +x "$NEMOCLAW_BUILD"
-      - name: Publish v1 without replacing main staging
+      - name: Assemble v1 with the shared staging home
+        run: |
+          "$NEMOCLAW_BUILD" docs
+          v0_ref=origin/main
+          if git show-ref --verify --quiet refs/remotes/origin/v0; then v0_ref=origin/v0; fi
+          layout="$RUNNER_TEMP/v0-layout"
+          mkdir -p "$layout"
+          git archive "$v0_ref" docs fern scripts/generate-starter-prompt.mts scripts/fern-preview-config.mts | tar -x -C "$layout"
+          # The shared layout builder uses the same locked YAML dependency as the v0 import.
+          cp tools/docs/main/package{,-lock}.json "$layout/scripts/"
+          npm ci --ignore-scripts --prefix "$layout/scripts"
+          node "$layout/scripts/generate-starter-prompt.mts"
+          node "$layout/scripts/fern-preview-config.mts" "$RUNNER_TEMP/v1-staging" "$PWD/fern/_generated"
+          cp fern/staging.yml "$RUNNER_TEMP/v1-staging/fern/docs.yml"
+          cp fern/fern.config.json "$RUNNER_TEMP/v1-staging/fern/fern.config.json"
+          cd "$RUNNER_TEMP/v1-staging/fern"
+          FERN_VERSION=$(node -p "require('./fern.config.json').version")
+          npx --yes "fern-api@${FERN_VERSION}" check --local
+      - name: Publish the official v1 staging site
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
-        run: '"$NEMOCLAW_BUILD" fern preview --id nemoclaw-v1'
+        run: |
+          cd "$RUNNER_TEMP/v1-staging/fern"
+          FERN_VERSION=$(node -p "require('./fern.config.json').version")
+          npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1
+      - name: Verify official staging routes
+        env:
+          STAGING: https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw
+        run: |
+          fetch=(curl --fail --silent --show-error --location --max-time 15 --retry 6 --retry-delay 10 --retry-all-errors --output /dev/null --write-out '%{url_effective}')
+          home=$("${fetch[@]}" "$STAGING/v1")
+          if [[ "${home%/}" != "$STAGING/v1/home" ]]; then
+            echo "::error::The v1 staging entry point opened $home"
+            exit 1
+          fi
+          for page in v1/release-notes v1/llms.txt v1/overview.md v0/user-guide/openclaw/home; do
+            url=$("${fetch[@]}" "$STAGING/$page")
+            if [[ "${url%/}" != "$STAGING/$page" ]]; then
+              echo "::error::$page opened $url"
+              exit 1
+            fi
+          done
       - name: Remove merged v1 PR previews
         env:
           GH_TOKEN: ${{ github.token }}

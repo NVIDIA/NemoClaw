@@ -419,6 +419,12 @@ fn validate_v1(root: &Path) -> Result<()> {
         return Err("Fern must define exactly one v1 version".into());
     }
     config["versions"] = Value::Array(versions);
+    // Staging has its own Fern project. The isolated v1 checker cannot resolve
+    // its cross-product links to v0 or its hosted Markdown and llms.txt routes.
+    config["instances"]
+        .as_array_mut()
+        .ok_or("Fern must define documentation instances")?
+        .retain(|instance| instance["url"] != STAGING);
     if let Some(object) = config.as_object_mut() {
         for legacy in ["redirects", "css", "experimental", "js"] {
             object.remove(legacy);

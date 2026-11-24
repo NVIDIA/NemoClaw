@@ -130,11 +130,13 @@ Manual runs perform validation only.
 |---|---|
 | Same-repository PR targeting `v1` with `FERN_TOKEN` | `nemoclaw-v1-pr-N` preview, with one updated PR comment |
 | PR targeting another branch, fork PR, Dependabot PR, or PR without the token | Validation only |
-| Push to `v1` | Stable `nemoclaw-v1` preview; delete associated merged v1 PR previews after success |
+| Push to `v1` | Publish the official v1 staging site, then delete associated merged v1 PR previews |
 | `v0.1.*` tag without a prerelease part (not `-rc1`), with public publication enabled | Both versions on the existing public site, after checking that the tagged commit is reachable from `origin/v1` |
 
-The stable staging URL is `https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw` after its first successful publish.
-It uses main's staging instance only in Fern preview mode; publishing it does not replace main's staging pages.
+The [official v1 staging home](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/home) uses the same home page and product selector as v0.
+The staging job renders the guides from the pushed v1 commit and assembles the home from the v0 branch (main until v0 exists).
+The [staging configuration](../../fern/staging.yml) gives this publisher the `/nemoclaw/v1` base path. The v0 workflow owns the parent site.
+After publication, the **Verify official staging routes** step checks the v1 home redirect, release notes, Markdown endpoints, and v0 home.
 Failed validation blocks publication.
 Publication jobs run the build tool that validation compiled from the same commit, so they set up only Node and npm.
 Rerun a failed publication job after correcting credentials or service availability.

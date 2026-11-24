@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+instances:
+  - url: nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1
+    multi-source: true
+
+title: NVIDIA NemoClaw
+global-theme: nvidia
+header: ./components/DocsHeader.tsx
+favicon: ./assets/NVIDIA_symbol.svg
+logo:
+  right-text: NemoClaw
+  href: /nemoclaw/v1/home
+layout:
+  searchbar-placement: header
+  tabs-placement: header
+css:
+  - ./main.css
+experimental:
+  mdx-components:
+    - ../docs/_components
+    - ./components
+navbar-links:
+  - type: github
+    value: https://github.com/NVIDIA/NemoClaw
+
+products:
+  - display-name: v0
+    href: https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v0/user-guide/openclaw/home
+    target: _self
+  - display-name: v1
+    slug: /
+    path: ./v1/navigation.yml
+
+redirects:
+  - source: /nemoclaw/v1
+    destination: /nemoclaw/v1/home
