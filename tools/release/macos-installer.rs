@@ -244,7 +244,7 @@ function supported_mac() {{
     if (system.compareVersions(system.version.ProductVersion, '{minimum}') < 0) {{
         my.result.type = 'Fatal';
         my.result.title = '{macos_title}';
-        my.result.message = 'This Mac runs macOS ' + system.version.ProductVersion + '. {MACOS_MESSAGE}';
+        my.result.message = 'This Mac runs macOS ' + system.version.ProductVersion + '. {macos_title} {MACOS_MESSAGE}';
         return false;
     }}
     return true;
@@ -763,15 +763,14 @@ mod tests {
         let said = text(&result);
         eprintln!("{said}");
         assert!(!result.status.success(), "{said}");
-        let expected = if intel {
-            [INTEL_TITLE.to_owned(), INTEL_MESSAGE.to_owned()]
+        // The installer command prints the refusal's message; Installer.app
+        // also shows its title.
+        let reason = if intel {
+            INTEL_MESSAGE.to_owned()
         } else {
-            [macos_title(minimum), MACOS_MESSAGE.to_owned()]
+            macos_title(minimum)
         };
-        assert!(
-            expected.iter().any(|reason| said.contains(reason.as_str())),
-            "{said}"
-        );
+        assert!(said.contains(&reason), "{said}");
         assert!(!Path::new(INSTALL_DIR).exists());
     }
 }
