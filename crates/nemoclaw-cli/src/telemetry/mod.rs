@@ -11,5 +11,6 @@
 
 pub mod gate;
 pub mod identity;
+pub mod project;
 pub mod record;
 pub mod send;
