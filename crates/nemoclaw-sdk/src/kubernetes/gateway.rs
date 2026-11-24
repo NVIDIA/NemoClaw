@@ -34,7 +34,8 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         "supervisor": {"image": image(pins::SUPERVISOR_IMAGE)},
         "sandbox": {"image": image(pins::SANDBOX_RUNTIME_IMAGE)},
         "server": {
-            "telemetryEnabled": false,
+            // The chart sets OPENSHELL_TELEMETRY_ENABLED from this value.
+            "telemetryEnabled": crate::managed::gateway_telemetry_enabled(),
             "disableTls": false,
             "tls": {
                 "enableMtls": true,

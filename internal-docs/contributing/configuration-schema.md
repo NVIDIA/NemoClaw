@@ -32,6 +32,7 @@ From the repository root:
 4. If needed, update the [conditional schema rules](../../crates/nemoclaw-sdk/src/config/schema/validation.rs).
    Write patterns that ECMA-262 and RE2 validators both compile: end them with `$`, and use no lookaround and no `\u` escapes.
    The SDK's validator treats `$` as the end of input; some Python, Java, and .NET validators also let `$` match before a final newline.
+   Give a `not` rule an `x-nemoclaw-error` message unless it only excludes fields or values, which diagnostics describe from the schema as "must not set" or "must not be".
 5. Regenerate the artifacts:
 
 ```sh
@@ -41,7 +42,7 @@ cargo run --locked -p nemoclaw-build -- schema
 The command replaces `schemas/nemoclaw-v1alpha1.schema.json` and `docs/reference/configuration.md` from the compiled SDK.
 It contacts no deployment services and creates no runtime resources.
 Review both generated diffs with the source change.
-Generation fails when a public field or object has no description.
+Generation fails when a public field or object has no description, or when a `not` rule's failure could only be reported as the bare keyword.
 
 Run the focused tests and freshness check:
 

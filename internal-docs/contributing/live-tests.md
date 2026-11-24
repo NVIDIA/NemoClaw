@@ -199,6 +199,26 @@ Each scenario applies, requires OpenClaw to reply `READY`, and destroys; indepen
 
 Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>/`. Published reports contain outcomes and candidate/UID/case identity only.
 Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
+
+For the Station case, Colorunner can install the root-owned
+`/usr/local/libexec/colorunner-model-cache` helper. A successful cold run publishes
+its verified model files. Subsequent runs mount those files read-only into a
+fresh model volume; engine caches, status, credentials, and deployment state stay
+per run. Hosts without the helper keep the original acquisition path. This cache
+survives image replacement on the same host, but does not provide cross-host
+persistence. Spark does not use it.
+
+The case records cache availability and publication or release outcomes in
+`reports/model-cache.json`. Invalid entries fall back to acquisition before
+mounting; uncertain mount state fails the case. A separate always-run cleanup
+recovers this run's mount after SDK destroy and independent Docker cleanup. Its
+`reports/model-cache-cleanup.json` must confirm success. Recovery preserves live
+holders, container references, and mounts whose identity cannot be established.
+Do not remove their journals or force-unmount to bypass a failed cleanup.
+Qualify the coordinated Colorunner and NemoClaw revisions on an owned GB300,
+including cancellation recovery, before unattended use; see
+[#13994](https://github.com/NVIDIA/NemoClaw/issues/13994).
+
 The [Spark scenario](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-spark-openclaw-nemotron.tftest.hcl), including model download and load, must fit the existing 60-minute job budget with the downloads and cleanup; the model startup timeout does not extend that job budget. Do not reuse an existing deployment as evidence of a fresh run.
 To recover a failed run, set `run` to its retained directory and use the original executables:
 
@@ -206,6 +226,15 @@ To recover a failed run, set `run` to its retained directory and use the origina
 "$run/bundle/bin/nemoclaw" destroy --output json --progress off --state-dir "$run/deployment"
 NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
   "$run/e2e" hcl_live::docker_cleanup --exact --ignored --nocapture
+```
+
+For a Station run with the host cache installed, release its mount after those
+commands succeed:
+
+```bash
+NEMOCLAW_HCL_CASE=dgx-station-openclaw-nemotron \
+  NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
+  "$run/e2e" hcl_live::model_cache_cleanup --exact --ignored --nocapture
 ```
 
 ## Spark and Fabric

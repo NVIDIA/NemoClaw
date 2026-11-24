@@ -152,6 +152,9 @@ impl JourneyWizard {
     /// Answer an image question the engine's images settle, then forget what
     /// the old state resolved to.
     fn changed(&mut self) {
+        // An image chosen for the user that the review's read rejects is asked
+        // for again, with why.
+        self.state.withdraw_rejected_images(&self.observations);
         let before = self.state.clone();
         if self
             .state

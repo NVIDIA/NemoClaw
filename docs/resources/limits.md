@@ -79,7 +79,7 @@ The following inference limits apply:
 | Hermes does not reject a managed Ollama window below its 64,000-token minimum. Refer to [sizing the context for Hermes](../agents-inference/inference.md#sizing-the-context-for-hermes). | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) | [`cb8ef25`][v1-cb8ef25]: Hermes, issue |
 | Native NVIDIA NIM's full tool inventory, default 8K context, general task reliability, cross-host cache restoration, and other model and profile combinations remain unqualified. Use the [bounded BF16 candidate configuration](../agents-inference/models.md#native-nim-candidate). | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556), [NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679) | Refer to the [source-specific qualification record](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) |
 | llama.cpp bearer authentication protects inference. Native model inventory and health remain public. A key does not provide inventory confidentiality. | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) | Refer to the [source-specific qualification record](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) |
-| Model Router. | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
+| Model Router. | By design: the deprecated `llm-router` was retired ([#14066](https://github.com/NVIDIA/NemoClaw/issues/14066)); configure Switchyard routing through [Hermes Relay](../agents-inference/agents.md#hermes-relay-tracing) | [`5b83ffc`][v1-5b83ffc]: code, docs |
 | A provider that uses Gemini's native API. Onboarding's Google Gemini preset connects through Gemini's OpenAI-compatible endpoint. | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous. | No open issue | [`cb8ef25`][v1-cb8ef25]: docs |
 | More than 32 providers attached to one sandbox: OpenShell refuses more, and its inference providers, its web search and each `api` integration count one each. | By design: OpenShell's limit per sandbox | [`cb8ef25`][v1-cb8ef25]: code, OpenShell |
@@ -128,6 +128,7 @@ The following data and cleanup limits apply:
 | Durable data for generic application containers: their writable volume is disposable, and replacement or destroy can lose it. This differs from caller-supplied volumes mounted in an agent sandbox. | By design: [application storage](../build-deploy/container-services.md#deciding-whether-the-image-fits) | [`e7e1857`][v1-e7e1857]: docs |
 | Moving data from the earlier product to Agent Configs and back. | No NemoClaw procedure: native data belongs to the harness, and moving its storage belongs to the platform ([migration](../get-started/migration.md)) | [`cb8ef25`][v1-cb8ef25]: docs |
 | Keeping a sandbox across a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: after the gateway runs again, the sandbox refuses the supervisor that OpenShell starts for it and goes to `Error` with `StartFailed`, and the next apply replaces it, which deletes its files outside mounted volumes and its conversation history. A graceful restart, such as `docker restart`, keeps the sandbox. | [#13953](https://github.com/NVIDIA/NemoClaw/issues/13953), [NVIDIA/OpenShell#4910](https://github.com/NVIDIA/OpenShell/issues/4910) | [`291723b`][v1-291723b]: issue, plus a DGX Spark run where 9 of 9 SIGKILLed gateways lost their Hermes sandbox and 12 of 12 graceful restarts kept it |
+| Keeping a sandbox's files and conversations across a change to its policy's filesystem, Landlock, or process settings: OpenShell applies them only when a sandbox starts, so the change replaces the sandbox. Network rules, middleware bindings, and grants change in place. | No open issue: OpenShell's [policy guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/policies/manage-policies.mdx#how-changes-take-effect) | [`ca452e0`][v1-ca452e0]: code, OpenShell |
 
 ## Security
 
@@ -174,6 +175,7 @@ Managed [llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-lla
 General tool use, multimodal input, other models and Classic host parity need separate qualification.
 Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006).
 
+[v1-5b83ffc]: https://github.com/NVIDIA/NemoClaw/tree/5b83ffc8e6ae46c4e5eec2466ed847cb223addad
 [v1-cb8ef25]: https://github.com/NVIDIA/NemoClaw/tree/cb8ef25252ffffbca051787adb4711c96ebfcf28
 [v1-ca452e0]: https://github.com/NVIDIA/NemoClaw/tree/ca452e0ecb79c03914ecb775c4d9437f67db9449
 [v1-c30c3f1]: https://github.com/NVIDIA/NemoClaw/tree/c30c3f1b3fbf9d825d13fd4497c98b35ef33f1ee
@@ -184,3 +186,4 @@ Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#is
 [v1-43c9dc9]: https://github.com/NVIDIA/NemoClaw/tree/43c9dc9cea1dea3bd59057fd18d96ed799475e9c
 [v1-1636069]: https://github.com/NVIDIA/NemoClaw/tree/1636069b91f402242a35714fde1011042c3f1f70
 [v1-1b5574f]: https://github.com/NVIDIA/NemoClaw/tree/1b5574f18137bb4a94b695dfa86b4be5e1c8d8e6
+[v1-ca452e0]: https://github.com/NVIDIA/NemoClaw/tree/ca452e0ecb79c03914ecb775c4d9437f67db9449

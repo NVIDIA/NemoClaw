@@ -41,6 +41,7 @@ pub(super) fn create_sandbox_request(
             template: Some(proto::SandboxTemplate {
                 image: value(want, "image").into(),
                 driver_config: crate::driver_config::request(value(want, "driver_config_json"))?,
+                resources: crate::limits::request(value(want, "cpu"), value(want, "memory")),
                 ..Default::default()
             }),
             resource_requirements: crate::gpu::request(value(want, "gpu_count"))?,
@@ -390,6 +391,75 @@ impl ConnectedOpenShellGateway {
             }))
             .await
             .map_err(|error| remote_error(&error))?;
+        Ok(())
+    }
+
+    /// A sandbox's latest policy revision, with its policy; none before it
+    /// has one.
+    pub(crate) async fn policy_status(
+        &self,
+        workspace: &str,
+        sandbox: &str,
+    ) -> Result<Option<proto::GetSandboxPolicyStatusResponse>, ObservationError> {
+        authoritative(
+            self.client
+                .raw_grpc()
+                .get_sandbox_policy_status(self.request(proto::GetSandboxPolicyStatusRequest {
+                    sandbox: sandbox.into(),
+                    workspace_scope: Some(proto::workspace_selector(workspace)),
+                    ..Default::default()
+                }))
+                .await,
+        )
+    }
+
+    /// Change the bound sandbox's network rules and middleware bindings to
+    /// `want`'s, keeping the settings it started with, as `openshell policy
+    /// set` does. The new revision keeps the filesystem paths of the policy
+    /// the sandbox holds now, so it keeps those OpenShell added when it
+    /// started. Returns that policy.
+    pub(crate) async fn update_policy(
+        &self,
+        want: &Row,
+    ) -> Result<proto::SandboxPolicy, ObservationError> {
+        let grants = self.sandbox_cluster_grants(want).await?;
+        let declared = network::granted_row_policy(want, &grants)?;
+        let current = self
+            .policy_status(value(want, "workspace"), value(want, "name"))
+            .await?
+            .and_then(|status| status.revision)
+            .and_then(|revision| revision.policy)
+            .ok_or(ObservationError::Incomplete)?;
+        self.set_policy(want, network::updated_policy(&current, declared)?)
+            .await?;
+        Ok(current)
+    }
+
+    /// Make `policy` the bound sandbox's policy, as `openshell policy set`
+    /// does, and record `row`'s policy input with the new revision.
+    pub(crate) async fn set_policy(
+        &self,
+        row: &Row,
+        policy: proto::SandboxPolicy,
+    ) -> Result<(), ObservationError> {
+        let input = value(row, "policy_json");
+        let response = self
+            .client
+            .raw_grpc()
+            .update_config(self.request(proto::UpdateConfigRequest {
+                sandbox: value(row, "name").into(),
+                workspace_scope: Some(proto::workspace_selector(value(row, "workspace"))),
+                policy: Some(policy),
+                annotations: [(agent::POLICY.into(), input.into())].into(),
+                ..Default::default()
+            }))
+            .await
+            .map_err(|error| remote_rejection(RejectableOperation::UpdateConfig, &error))?
+            .into_inner();
+        // The sandbox records the policy input with its policy.
+        if response.annotations.get(agent::POLICY).map(String::as_str) != Some(input) {
+            return Err(ObservationError::Incomplete);
+        }
         Ok(())
     }
 

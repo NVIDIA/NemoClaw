@@ -413,10 +413,12 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             true,
         )
     };
+    let mut local_image = forbid(&["metadata"]);
+    local_image["x-nemoclaw-error"] = json!(c::IMAGE_METADATA_TARGETS);
     root["allOf"] = json!([{
         "if": cluster(),
         "then": at("spec/sandboxes/*/image", json!({"required": ["metadata"]}), true),
-        "else": at("spec/sandboxes/*/image", forbid(&["metadata"]), false)
+        "else": at("spec/sandboxes/*/image", local_image, false)
     }]);
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": cluster(),
@@ -451,6 +453,24 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "The parser checks memory threshold ordering and GPU/KV budget relationships; that a recipe's GPU belongs to a hardware profile's GPU family; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
     ]);
+    describe_slug_keys(root);
+}
+
+/// Say what a definition's name may contain wherever map keys name
+/// definitions, since a pattern alone reads as noise and the key is never shown.
+fn describe_slug_keys(schema: &mut Value) {
+    match schema {
+        Value::Object(object) => {
+            if let Some(names) = object.get_mut("propertyNames")
+                && names["pattern"] == c::SLUG
+            {
+                names["x-nemoclaw-error"] = json!(c::SLUG_KEYS_ERROR);
+            }
+            object.values_mut().for_each(describe_slug_keys);
+        }
+        Value::Array(items) => items.iter_mut().for_each(describe_slug_keys),
+        _ => {}
+    }
 }
 
 /// Give each gateway target a definition of its own, so editors offer only

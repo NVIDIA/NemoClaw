@@ -12,6 +12,8 @@ workspace = true
 [dependencies]
 nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
+# Bounds the policy schema's integers as the configuration schema does.
+nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
 jsonschema.workspace = true
 openshell-policy.workspace = true
 openshell-sdk.workspace = true

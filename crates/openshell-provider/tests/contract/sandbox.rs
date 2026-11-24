@@ -154,3 +154,89 @@ async fn sandbox_settings_read_back_and_drift_is_restored() {
     );
     run(&["plan", "-detailed-exitcode", "-var=services={}"]);
 }
+
+/// A changed network rule or middleware binding plans an in-place update of
+/// the sandbox, which keeps its ID, and the next plan finds nothing to change.
+/// OpenShell applies filesystem paths only when a sandbox starts, so a changed
+/// one plans a replacement.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
+async fn network_rules_change_in_place_and_filesystem_paths_replace() {
+    let fixture = Fixture::start().await;
+    let root = workspace();
+    fs::copy(
+        Path::new(HCL).join("sandbox/main.tf"),
+        root.path().join("main.tf"),
+    )
+    .unwrap();
+    let run = |args: &[&str], variables: &[&str]| {
+        let output = root
+            .command()
+            .args(args)
+            .args(variables)
+            .args(["-input=false", "-no-color"])
+            .arg(format!("-var=endpoint={}", fixture.endpoint))
+            .env("NEMOCLAW_TEST_BRAVE_KEY", "brave-fixture-secret")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let actions = |variables: &[&str]| {
+        run(&["plan", "-out=check.plan"], variables);
+        let shown = root
+            .command()
+            .args(["show", "-json", "check.plan"])
+            .output()
+            .unwrap();
+        let plan: Value = serde_json::from_slice(&shown.stdout).unwrap();
+        plan["resource_changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|change| change["change"]["actions"] != json!(["no-op"]))
+            .map(|change| {
+                (
+                    change["address"].clone(),
+                    change["change"]["actions"].clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let id = || {
+        fixture.state.lock().unwrap().sandboxes["team/researcher"]
+            .metadata
+            .as_ref()
+            .unwrap()
+            .id
+            .clone()
+    };
+    run(&["apply", "-auto-approve"], &[]);
+    let created = id();
+    let changed = [
+        "-var=docs_host=reference.example.com",
+        r#"-var=guard_terms=["forbidden","secret"]"#,
+    ];
+    assert_eq!(
+        actions(&changed),
+        vec![(json!("openshell_sandbox.agent"), json!(["update"]))]
+    );
+    run(&["apply", "-auto-approve"], &changed);
+    assert_eq!(id(), created, "changing network rules replaced the sandbox");
+    assert_eq!(actions(&changed), vec![], "the changed policy read back");
+    let widened = [changed[0], changed[1], r#"-var=read_only=["/usr","/opt"]"#];
+    assert_eq!(
+        actions(&widened),
+        vec![
+            (
+                json!("openshell_sandbox.agent"),
+                json!(["delete", "create"])
+            ),
+            // terraform_data.caller takes the replaced sandbox's URLs.
+            (json!("terraform_data.caller"), json!(["update"])),
+        ]
+    );
+}

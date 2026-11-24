@@ -1381,6 +1381,31 @@ fn sparse_journey_asks_existing_deployment_fields_and_checks_complete_sdk_edits(
     );
 }
 
+/// NOOA runs a workflow target, so onboarding offers the targets its image registers.
+#[test]
+fn a_nooa_journey_offers_the_workflow_targets_its_image_registers() {
+    let capabilities = Capabilities::available();
+    let mut partial: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("fixtures/minimum-inline.yaml")).unwrap();
+    partial["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("nvidia.fabric.nooa");
+    let state = JourneyDefinition::new(
+        "nooa-target",
+        PartialDocument::from_yaml(partial.to_string().as_bytes()).unwrap(),
+    )
+    .ask([JourneyScope::NativeSettings])
+    .start(&capabilities)
+    .unwrap();
+    let resolved = state.resolve(&capabilities).unwrap();
+    let question = resolved.question("workflow:/target_id").unwrap();
+    assert_eq!(
+        question.choices(),
+        [
+            json!("nvidia.nooa.arc-solver"),
+            json!("nvidia.nooa.coding-agent")
+        ]
+    );
+}
+
 #[test]
 fn sparse_journey_uses_workflow_and_model_owner_schemas() {
     let mut catalog = FabricCatalog::bundled();

@@ -355,8 +355,15 @@ impl Deployment {
         let bindings = store.bindings(&bundle.tofu(), cancel).await?;
         let expected = expected_bindings(&compiled, &bindings)?;
         (self.progress)(Progress::Planning);
+        // Apply resolves every credential before it changes anything. Plan
+        // resolves those it reads, and defers a missing other one below.
+        let environment = if apply {
+            document.clone()
+        } else {
+            opentofu::plan_environment(&document)
+        };
         let plan = self
-            .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
+            .saved_plan(&bundle, &store, &environment, "apply.plan", cancel)
             .await?;
         runtime::preserve_docker_models(&document, &plan)?;
         let changes = check_plan(

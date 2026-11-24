@@ -60,6 +60,7 @@ pub use deployment::{
 };
 
 pub mod managed;
+pub mod telemetry;
 
 pub mod kubernetes;
 

@@ -40,6 +40,73 @@ pub fn integer(schema: &mut Value, field: &str, rule: &DefaultedInteger, normali
 pub fn forbid(names: &[&str]) -> Value {
     json!({"not": {"anyOf": names.iter().map(|name| json!({"required": [name]})).collect::<Vec<_>>()}})
 }
+
+/// The values a schemars integer format holds.
+pub fn integer_range(format: &str) -> Option<(i128, i128)> {
+    Some(match format {
+        "int8" => (i8::MIN.into(), i8::MAX.into()),
+        "int16" => (i16::MIN.into(), i16::MAX.into()),
+        "int32" => (i32::MIN.into(), i32::MAX.into()),
+        "int64" | "int" => (i64::MIN.into(), i64::MAX.into()),
+        "uint8" => (0, u8::MAX.into()),
+        "uint16" => (0, u16::MAX.into()),
+        "uint32" => (0, u32::MAX.into()),
+        "uint64" | "uint" => (0, u64::MAX.into()),
+        _ => return None,
+    })
+}
+
+/// Give every integer with a schemars format its Rust type's bounds, keeping
+/// tighter ones. A format alone constrains nothing, so without them a schema,
+/// and editors using it, accept integers that deserialization rejects without
+/// naming the field.
+pub fn bound_integers(schema: &mut Value) {
+    fn tighten(
+        object: &mut serde_json::Map<String, Value>,
+        key: &str,
+        limit: i128,
+        keep: fn(i128, i128) -> i128,
+    ) {
+        let bound = match object.get(key) {
+            None => limit,
+            Some(written) => match written
+                .as_i64()
+                .map(i128::from)
+                .or_else(|| written.as_u64().map(i128::from))
+            {
+                Some(written) => keep(written, limit),
+                // A fractional bound already lies within the range.
+                None => return,
+            },
+        };
+        let bound = i64::try_from(bound)
+            .map(Value::from)
+            .or_else(|_| u64::try_from(bound).map(Value::from))
+            .expect("integer formats fit i64 or u64");
+        object.insert(key.into(), bound);
+    }
+    match schema {
+        Value::Object(object) => {
+            let integer = match object.get("type") {
+                Some(Value::String(kind)) => kind == "integer",
+                Some(Value::Array(kinds)) => kinds.iter().any(|kind| kind == "integer"),
+                _ => false,
+            };
+            if integer
+                && let Some((low, high)) = object
+                    .get("format")
+                    .and_then(Value::as_str)
+                    .and_then(integer_range)
+            {
+                tighten(object, "minimum", low, i128::max);
+                tighten(object, "maximum", high, i128::min);
+            }
+            object.values_mut().for_each(bound_integers);
+        }
+        Value::Array(items) => items.iter_mut().for_each(bound_integers),
+        _ => {}
+    }
+}
 // Required ancestors make a condition false when a field is omitted.
 // Consequences constrain only fields that are present, allowing SDK defaults.
 // A `*` segment applies the rest of the path to every value of a map.
@@ -94,12 +161,15 @@ pub fn violation(value: &Value) -> Option<Vec<PathSegment>> {
     Some(segments(innermost(&SCHEMA, &error)))
 }
 
+/// Fields whose constant value selects a union variant.
+pub const UNION_TAGS: [&str; 2] = ["kind", "management"];
+
 /// The `oneOf` or `anyOf` variant that an instance names, so a diagnostic can
 /// describe that variant's fields instead of the whole union: a `kind` or
 /// `management` constant, the one key of an externally tagged variant that
 /// the instance contains, or a hardware `profile`.
 pub fn select_variant(variants: &[Value], instance: &Value) -> Option<usize> {
-    for tag in ["kind", "management"] {
+    for tag in UNION_TAGS {
         if let Some(value) = instance.get(tag)
             && let Some(index) = variants
                 .iter()

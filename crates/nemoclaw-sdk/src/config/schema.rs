@@ -37,6 +37,9 @@ fn build_schema(normalized: bool) -> serde_json::Value {
             .into_root_schema_for::<super::Document>()
             .to_value();
         remove_serde_defaults(&mut schema);
+        // nemoclaw_openshell::policy::definitions bounds the policy types the
+        // same way, so its definitions stay equal to these.
+        nemoclaw_runtime::schema::bound_integers(&mut schema);
         schema
     });
     let mut schema = GENERATED.clone();
@@ -83,7 +86,10 @@ fn remove_serde_defaults(schema: &mut serde_json::Value) {
     }
 }
 
+pub use nemoclaw_runtime::schema::integer_range;
+
 mod runtime;
+pub use runtime::unexplained_rules;
 pub(crate) use runtime::{
     validate_definition, validate_document, validate_input, validate_property, validate_service,
     validate_tuning,

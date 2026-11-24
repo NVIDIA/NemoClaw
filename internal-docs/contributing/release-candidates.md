@@ -44,6 +44,10 @@ Plan and apply:
   Before, apply failed after creating the gateway, which remained until destroy.
 - Plan and the `nemoclaw onboard` review report an agent image that the engine doesn't hold as not present, and link the [agent image build instructions](../../docs/build-deploy/build.md#building-agent-images).
   See [pulling from private registries](../../docs/build-deploy/usage.md#pulling-from-private-registries).
+- An agent image whose adapter doesn't accept `runtime.keep_state`, such as one built from another Fabric revision than the CLI's, plans and runs without it ([#14798](https://github.com/NVIDIA/NemoClaw/issues/14798)).
+  Each of its runtimes gets its own state folder.
+  Before, plan and the `nemoclaw onboard` review rejected it over `harness.runtime.keep_state`, a field the configuration doesn't need to set.
+- When the only image on the engine for the chosen harness can't run the configuration, `nemoclaw onboard` asks for the image again and says why, instead of choosing that image without asking.
 
 Gateways:
 
@@ -366,9 +370,13 @@ See [migration](../../docs/get-started/migration.md) for where each earlier task
 
 These changes since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affect existing deployments or documents:
 
-- The intent record is now version 32, so this release refuses any deployment that `v0.1.0-rc12` or an earlier build of this branch created, without changing its state.
+- The intent record is now version 33, so this release refuses any deployment that `v0.1.0-rc12` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release.
   See [compatibility](../../docs/references/compatibility.md#deployment-state).
+- Agent images register the Fabric workflow targets they install, so plan checks a sandbox with a `workflow` against Fabric's compatibility check too ([#14600](https://github.com/NVIDIA/NemoClaw/issues/14600)).
+  A document that sets a field the workflow's adapter doesn't accept, such as a route's `maxTokens` for NOOA, or a `workflow.target_id` the image doesn't register, now fails plan naming that field.
+  Before, plan passed it and the agent failed to start after apply created resources.
+  With an image built before this change, whose catalog lists no workflow targets, plan reports the image's Fabric capabilities as unverified and Fabric checks the configuration when the agent starts.
 
 ### Breaking Changes in v0.1.0-rc12
 

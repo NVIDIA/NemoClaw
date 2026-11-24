@@ -13,6 +13,7 @@ mod connected;
 mod driver_config;
 mod gateway_source;
 mod gpu;
+mod limits;
 mod network;
 mod profile;
 mod provider;
@@ -265,10 +266,15 @@ fn provider_row(
     );
     Ok(row)
 }
+/// A sandbox's row, checked against `current`, the policy it holds now:
+/// its latest revision, or the one it was created with until it has one.
+/// Without one, as for teardown and for checks of a bound sandbox's identity
+/// and launch, its network rules and grants go unchecked.
 fn sandbox_row(
     response: proto::SandboxResponse,
     name: &str,
     removing: bool,
+    current: Option<&proto::SandboxPolicy>,
 ) -> Result<(Row, bool, network::ClusterGrants), ObservationError> {
     let sandbox = response.sandbox.ok_or(ObservationError::Incomplete)?;
     let meta = sandbox
@@ -279,6 +285,7 @@ fn sandbox_row(
     let template = spec.template.ok_or(ObservationError::Incomplete)?;
     let driver_config = driver_config::observed(template.driver_config.as_ref());
     let gpu_count = gpu::observed(spec.resource_requirements.as_ref());
+    let (cpu, memory) = limits::observed(template.resources.as_ref());
     let image = template.image;
     let environment: Row = spec.environment.into_iter().collect();
     let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
@@ -299,8 +306,13 @@ fn sandbox_row(
     if !inference.is_empty() {
         expected_environment.insert(PROVIDERS_ENV.into(), inference.clone());
     }
-    let observed_policy = spec.policy.as_ref().ok_or(ObservationError::Incomplete)?;
-    let grants = network::recorded_grants(&input, observed_policy)?;
+    // A sandbox keeps the startup settings of the policy it was created with,
+    // but its network rules change in place.
+    let created = spec.policy.as_ref().ok_or(ObservationError::Incomplete)?;
+    let grants = current
+        .map(|current| network::recorded_grants(&input, current))
+        .transpose()?
+        .unwrap_or_default();
     let (authority, provenance) = policy_authority(&meta.annotations)?;
     // APF admitted a sandbox NemoClaw did not declare APF-governed, so its
     // policy is APF's, not the one NemoClaw authored.
@@ -314,10 +326,20 @@ fn sandbox_row(
     }
     // NemoClaw authored the policy unless APF governs it; APF's admission
     // replaces the submitted policy with its bundle's.
-    if authority.is_empty()
-        && policy_json(observed_policy)? != policy_json(&launch.granted_policy(&input, &grants)?)?
-    {
-        return Err(ObservationError::BindingMismatch);
+    if authority.is_empty() {
+        if network::startup_settings(created)?
+            != network::startup_settings(&launch.policy(&input)?)?
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
+        if let Some(current) = current
+            && !network::loaded_policy_contains(
+                current,
+                &policy_json(&launch.granted_policy(&input, &grants)?)?,
+            )?
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
     }
     let expected_providers = inference::provider_names(&inference)?;
     if spec.providers != expected_providers {
@@ -337,6 +359,8 @@ fn sandbox_row(
     row.insert("image".into(), image);
     row.insert("driver_config_json".into(), driver_config);
     row.insert("gpu_count".into(), gpu_count);
+    row.insert("cpu".into(), cpu);
+    row.insert("memory".into(), memory);
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
     row.insert(POLICY_AUTHORITY.into(), authority.into());
@@ -416,6 +440,14 @@ pub(crate) const POLICY_PROVENANCE: &str = "policy_provenance";
 /// replacement.
 pub(crate) const EXITED: &str = "exited";
 
+/// Why a sandbox's latest policy revision isn't in force: the sandbox
+/// refused it.
+pub(crate) const POLICY_REFUSED: &str =
+    "the sandbox failed to load its latest policy revision; apply a policy it can load";
+/// Why a changed policy isn't in force after the sandbox refused it.
+pub(crate) const POLICY_RESTORED: &str =
+    "the sandbox failed to load the changed policy, so its previous policy was restored";
+
 /// The hash of the loaded policy revision, once it keeps every declared rule.
 /// `expected` is `None` when APF authored the policy: NemoClaw then declares
 /// no rules, and only records the hash.
@@ -424,6 +456,12 @@ fn active_policy(
     expected: Option<&str>,
 ) -> Result<String, ObservationError> {
     let revision = response.revision.ok_or(ObservationError::Incomplete)?;
+    // The sandbox's load error stays private, as its admission diagnostics do.
+    if revision.status == proto::PolicyStatus::Failed as i32 {
+        return Err(ObservationError::SandboxConfigurationRejected {
+            reason: POLICY_REFUSED,
+        });
+    }
     let policy = revision
         .policy
         .as_ref()
@@ -448,12 +486,13 @@ async fn checked_sandbox_row_with<F>(
     workspace: &str,
     name: &str,
     removing: bool,
+    current: Option<&proto::SandboxPolicy>,
     check: impl FnOnce(Row) -> F,
 ) -> Result<(Row, bool, network::ClusterGrants), ObservationError>
 where
     F: std::future::Future<Output = Result<network::ClusterGrants, ObservationError>>,
 {
-    let (mut row, ready, grants) = sandbox_row(response, name, removing)?;
+    let (mut row, ready, grants) = sandbox_row(response, name, removing, current)?;
     row.insert("workspace".into(), workspace.into());
     if !removing && check(row.clone()).await? != grants {
         return Err(ObservationError::BindingMismatch);
@@ -652,13 +691,18 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 "provider_names_json",
                 "driver_config_json",
                 "gpu_count",
+                "cpu",
+                "memory",
                 POLICY_AUTHORITY,
                 services::FIELD,
             ],
             // Service exposures change on the live sandbox, as `openshell
-            // service expose` and `openshell service delete` change them.
-            &[services::FIELD],
+            // service expose` and `openshell service delete` change them, and
+            // so do its network rules, as `openshell policy set` changes them.
+            &[services::FIELD, "policy_json"],
         )
+        // Any other policy change replaces the sandbox.
+        .replaces(network::policy_changes)
         // The policy hash is empty until the loaded policy is observed.
         .optional(&[
             POLICY_AUTHORITY,
@@ -666,6 +710,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
             "provider_names_json",
             "driver_config_json",
             "gpu_count",
+            "cpu",
+            "memory",
             services::FIELD,
             POLICY_HASH,
             POLICY_PROVENANCE,
@@ -679,8 +725,10 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         .computed(services::URLS, nemoclaw_tofu::carry_prior)
         .unknown_when_changed(services::URLS, services::FIELD)
         // The loaded policy's hash, OpenShell's additions included; later
-        // observations must find the same one.
+        // observations must find the same one. Network rules changed in place
+        // load as a new revision, whose hash is known once applied.
         .computed(POLICY_HASH, reissue_when_unproven)
+        .unknown_when_changed(POLICY_HASH, "policy_json")
         // APF's token for an APF-governed sandbox's loaded policy; a policy APF
         // did not issue is planned to be issued again in place, with a new
         // token and hash.

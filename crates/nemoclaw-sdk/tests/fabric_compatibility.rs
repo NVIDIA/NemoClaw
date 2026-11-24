@@ -596,6 +596,42 @@ fn agents_keep_their_state_where_the_adapter_accepts_it() {
     assert!(remote["runtime"].get("keep_state").is_none(), "{remote}");
 }
 
+/// An image built from another Fabric revision can carry an adapter that
+/// doesn't keep its state in an agent-named folder, although the CLI's bundled
+/// one does (#14798). Planning against that image passes: the agent runs
+/// without kept state instead of failing on a field the user never wrote.
+#[test]
+fn an_image_whose_adapter_keeps_no_state_runs_without_kept_state() {
+    use nemoclaw_sdk::{
+        discovery::{DiscoveryQuery, plan_queries},
+        fabric_capabilities::{Support, assess_fabric},
+    };
+    let mut image = FabricCatalog::bundled_ref().clone();
+    for adapter in &mut image.adapters {
+        if let Some(accepts) = adapter.descriptor["config"]["accepts"].as_array_mut() {
+            accepts.retain(|field| field != "runtime.keep_state");
+        }
+    }
+    let document = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../examples/fabric-hermes.yaml").as_slice(),
+    )
+    .unwrap();
+    let mut checked = 0;
+    for query in plan_queries(&document).unwrap() {
+        let DiscoveryQuery::Fabric(request) = query else {
+            continue;
+        };
+        assert_eq!(
+            request.requirements.configuration["runtime"]["keep_state"],
+            true
+        );
+        let report = assess_fabric(&image, &request.requirements);
+        assert_eq!(report.status, Support::Supported, "{:?}", report.checks);
+        checked += 1;
+    }
+    assert!(checked > 0);
+}
+
 #[test]
 fn generated_base_urls_go_only_to_adapters_that_accept_them() {
     // Fabric rejects a normalized field an adapter does not accept, so the SDK
@@ -993,5 +1029,113 @@ fn planning_names_the_authored_field_of_an_invalid_model_value() {
             .iter()
             .any(|reason| reason.starts_with(&format!("{ROUTE}.overrides.topP:"))),
         "{rejections:?}"
+    );
+}
+
+/// The NOOA example's sandbox, edited by `edit`, assessed against `catalog`:
+/// each check's status and reason.
+fn assess_nooa_example(
+    catalog: &FabricCatalog,
+    edit: impl FnOnce(&mut serde_json::Value),
+) -> nemoclaw_sdk::fabric_capabilities::CompatibilityReport {
+    use nemoclaw_sdk::config::Document;
+    use nemoclaw_sdk::fabric_capabilities::{assess_fabric, requirements_for_sandbox};
+    let mut input: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-nooa.yaml")).unwrap();
+    edit(&mut input["spec"]["sandboxes"]["assistant"]);
+    let doc = Document::parse(input.to_string().as_bytes()).unwrap();
+    let requirements = requirements_for_sandbox(&doc, doc.sandbox("assistant").unwrap()).unwrap();
+    assess_fabric(catalog, &requirements)
+}
+
+fn unsupported_reasons(
+    report: &nemoclaw_sdk::fabric_capabilities::CompatibilityReport,
+) -> Vec<&str> {
+    use nemoclaw_sdk::fabric_capabilities::Support;
+    report
+        .checks
+        .iter()
+        .filter(|check| check.status == Support::Unsupported)
+        .map(|check| check.reason.as_str())
+        .collect()
+}
+
+/// A sandbox with a workflow is checked like any other: NOOA's adapter takes
+/// no `max_tokens`, so a route's `maxTokens` fails the plan, naming the route.
+#[test]
+fn planning_rejects_a_field_a_workflow_sandboxs_adapter_refuses() {
+    use nemoclaw_sdk::fabric_capabilities::Support;
+    let catalog = FabricCatalog::bundled();
+    let unchanged = assess_nooa_example(&catalog, |_| {});
+    assert_eq!(
+        unchanged.status,
+        Support::Supported,
+        "{:?}",
+        unchanged.checks
+    );
+    let report = assess_nooa_example(&catalog, |sandbox| {
+        sandbox["agent"]["inference"]["routes"][0]["overrides"]["maxTokens"] = 64.into();
+    });
+    let reasons = unsupported_reasons(&report);
+    assert!(
+        reasons.iter().any(|reason| reason.starts_with(
+            "spec.sandboxes[assistant].agent.inference.routes[primary].overrides.maxTokens:"
+        )),
+        "{reasons:?}"
+    );
+}
+
+/// A workflow target the image doesn't register can't run, so the plan fails
+/// on the field that selects it.
+#[test]
+fn planning_rejects_a_workflow_target_the_image_does_not_register() {
+    let report = assess_nooa_example(&FabricCatalog::bundled(), |sandbox| {
+        sandbox["agent"]["workflow"]["target_id"] = "nvidia.nooa.unregistered".into();
+    });
+    let reasons = unsupported_reasons(&report);
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.starts_with("spec.sandboxes[assistant].agent.workflow.target_id:")),
+        "{reasons:?}"
+    );
+}
+
+/// An image whose catalog records no workflow targets may predate them, so
+/// its workflow is left to Fabric when the agent starts instead of failing.
+#[test]
+fn a_catalog_without_workflow_targets_leaves_the_workflow_unverified() {
+    use nemoclaw_sdk::fabric_capabilities::Support;
+    let mut catalog = FabricCatalog::bundled();
+    catalog.targets.clear();
+    let report = assess_nooa_example(&catalog, |_| {});
+    assert_eq!(report.status, Support::Unknown, "{:?}", report.checks);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|check| check.status == Support::Unknown
+                && check
+                    .reason
+                    .starts_with("spec.sandboxes[assistant].agent.workflow.target_id:")),
+        "{:?}",
+        report.checks
+    );
+}
+
+/// Whether a registered target suits the selected adapter is Fabric's rule:
+/// NOOA's target on the bench adapter fails the plan on the target.
+#[test]
+fn fabric_rejects_a_registered_target_of_another_adapter() {
+    let report = assess_nooa_example(&FabricCatalog::bundled(), |sandbox| {
+        sandbox["harness"]["kind"] = "nvidia.fabric.nooa.bench-agent".into();
+    });
+    let reasons = unsupported_reasons(&report);
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.starts_with("spec.sandboxes[assistant].agent.workflow.target_id:")),
+        "{:?}",
+        report.checks
     );
 }

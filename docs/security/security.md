@@ -11,7 +11,8 @@ Parser acceptance and protocol fixtures do not establish security qualification 
 NVIDIA OpenShell enforces the declared sandbox policy.
 NVIDIA NeMo Fabric runs the native agent within that sandbox.
 Use [sandbox policy](sandbox-network.md) for filesystem, process, egress, and proxy configuration.
-An explicit policy replaces the preset, and a policy change replaces the sandbox, deleting its files and conversations (except on mounted volumes).
+An explicit policy replaces the preset.
+A change to network rules, middleware bindings, or grants updates the running sandbox in place; a change to filesystem, Landlock, or process settings replaces the sandbox, deleting its files and conversations (except on mounted volumes).
 
 The isolated preset uses Landlock `best_effort`.
 Unavailable restrictions are not enforced.
@@ -72,7 +73,8 @@ The example authoring TUI saves credential references and never resolves their v
 Authoring and lifecycle operations are separate commands.
 Accepting an authored document does not authorize apply.
 Inspect a secret-free plan before invoking apply.
-For `plan` or `apply`, `--non-interactive` requires environment-provided credentials and fails instead of prompting when a reference is unresolved.
+For `plan` or `apply`, `--non-interactive` requires environment-provided credentials and fails instead of prompting when a reference the command requires is unresolved.
+Plan requires only the gateway, cluster, and image metadata references, so a host without inference or integration credentials can preview a deployment.
 Use environment references for provider secrets and protected files for gateway TLS keys.
 Configuration export preserves references.
 It cannot recover a lost credential value.

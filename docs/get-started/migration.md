@@ -30,7 +30,8 @@ Choose the current owner of the task rather than translating earlier CLI command
 | Use Okta/Entra runtime identity and OAuth refresh | [Register an OpenShell OAuth-refresh provider](../agents-inference/oauth-refresh.md); its manual attachments and refresh material are outside exported deployment YAML |
 | Snapshot, restore, upload/download, or transfer history | The platform owns backup and transfer of [mounted agent-data volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes); native conversation continuity has harness-specific limits |
 | Manage messaging, MCP servers, or arbitrary plugins | Messaging: [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037); NemoClaw doesn't manage MCP servers; see [additional agent integrations](../agents-inference/agents.md#additional-agent-integrations) |
-| Provision a model router, managed NIM/llama.cpp, or distributed inference | Managed [llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) and [native NIM candidate with qualification limits](../agents-inference/models.md#native-nim-candidate): [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); NemoClaw has no Model Router |
+| Provision a model router, managed NIM/llama.cpp, or distributed inference | Managed [llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) and [native NIM candidate with qualification limits](../agents-inference/models.md#native-nim-candidate): [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); the Model Router was retired ([#14066](https://github.com/NVIDIA/NemoClaw/issues/14066)), so configure Switchyard routing through [Hermes Relay](../agents-inference/agents.md#hermes-relay-tracing) |
+| Trust private endpoint hosts with `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | No equivalent: OpenShell's network policy decides which private destinations a sandbox can reach; see [preparing an external endpoint](../agents-inference/inference.md#preparing-an-external-endpoint) |
 | Install a telemetry collector or reuse Deep Agents trace-export setup | NemoClaw doesn't provision collectors or export Deep Agents traces; [Hermes Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) writes trace artifacts in the sandbox |
 
 ## Keeping Deployment Identities Separate
@@ -104,14 +105,12 @@ Retain the earlier deployment until the required continuity has been verified.
 
 ## Finding Earlier Documentation
 
-The [combined staging site](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) has a version selector:
+The [combined staging site](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/overview) has a version selector:
 
-- **v1 (Development)** describes the desired-state product.
-- **Latest (main)** preserves the imported main guides and their release history.
-  Start at its [OpenClaw home](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/user-guide/openclaw/home).
+- **v1** describes the desired-state product.
+- **v0** contains the earlier guides and their release history.
+  Start at its [OpenClaw home](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v0/user-guide/openclaw/home).
 
-The main snapshot is pinned by the [documentation build](../../internal-docs/contributing/documentation-build.md#sources-and-outputs).
-Its label doesn't qualify those procedures for v1.
 Use the earlier deployment's actual version when selecting commands or assessing historical qualification.
 Publishing the combined site and checking its legacy routes are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 

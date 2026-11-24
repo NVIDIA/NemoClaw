@@ -99,6 +99,41 @@ fn diagnostic(
         let variant = format!("{schema_path}/{index}");
         return diagnostic(error, root, schema, source, &variant);
     }
+    let pointer = error.instance_path().to_string();
+    // A tag such as `kind` that names no variant: list the values the variants
+    // declare, never the input's.
+    if let Some((variants, _)) = union
+        && let Some((tag, values)) = tag_values(variants)
+        && let Some(object) = error.instance().as_object()
+        && object
+            .get(tag)
+            .is_none_or(|value| values.iter().all(|known| value.as_str() != Some(known)))
+    {
+        let values = values.join(", ");
+        return match object.get(tag) {
+            Some(_) => located(
+                root,
+                source,
+                &format!("{pointer}/{tag}"),
+                None,
+                &format!("must be one of: {values}"),
+            ),
+            None => located(
+                root,
+                source,
+                &pointer,
+                None,
+                &format!("required field: \"{tag}\"; must be one of: {values}"),
+            ),
+        };
+    }
+    // An unknown field or an invalid map key is located at the key, which the
+    // message never shows.
+    let key = match error.kind() {
+        Kind::AdditionalProperties { unexpected } => first_written(unexpected, &pointer, source),
+        Kind::PropertyNames { error } => error.instance().as_str().map(str::to_owned),
+        _ => None,
+    };
     let keyed = union.and_then(|(variants, _)| variant_keys(variants));
     let constraint = if let Some(mut keys) = keyed {
         // The input named no single variant: list the declared keys, never the
@@ -144,19 +179,248 @@ fn diagnostic(
                 .map(|alternatives| format!("must be {}", alternatives.join(" or ")))
                 .unwrap_or_else(|| "must match an allowed combination of fields".into()),
             Kind::OneOfNotValid { .. } => "must match one allowed object shape".into(),
-            Kind::AdditionalProperties { .. } => "unknown fields are not allowed".into(),
-            _ => error.kind().keyword().to_owned(),
+            Kind::OneOfMultipleValid { .. } => "must match exactly one allowed object shape".into(),
+            Kind::AdditionalProperties { .. } | Kind::UnevaluatedProperties { .. } => {
+                unknown_field(key.as_deref(), &declared_fields(schema, schema_path))
+            }
+            Kind::MinLength { limit: 1 }
+            | Kind::MinItems { limit: 1 }
+            | Kind::MinProperties { limit: 1 } => "must not be empty".into(),
+            Kind::MinLength { limit } => format!("must have at least {limit} characters"),
+            Kind::MaxLength { limit } => format!("must have at most {limit} characters"),
+            Kind::MinItems { limit } | Kind::MinProperties { limit } => {
+                format!("must have at least {limit} entries")
+            }
+            Kind::MaxItems { limit } | Kind::MaxProperties { limit } => {
+                format!("must have at most {limit} entries")
+            }
+            Kind::UniqueItems => "must not repeat an entry".into(),
+            Kind::Not { schema } => {
+                negation(schema).unwrap_or_else(|| "must not take an excluded form".into())
+            }
+            Kind::PropertyNames { error } => match error.kind() {
+                Kind::Pattern { pattern } => format!("names must match the pattern {pattern}"),
+                Kind::Not { schema } => negation(schema).map_or_else(
+                    || "names must not take an excluded form".into(),
+                    |excluded| format!("names {excluded}"),
+                ),
+                _ => "names must be valid".into(),
+            },
+            Kind::ExclusiveMinimum { limit } => format!("must be greater than {limit}"),
+            Kind::ExclusiveMaximum { limit } => format!("must be less than {limit}"),
+            Kind::MultipleOf { multiple_of } => format!("must be a multiple of {multiple_of}"),
+            Kind::Contains => "must contain a matching entry".into(),
+            Kind::FalseSchema => "is not allowed here".into(),
+            _ => "does not match the configuration schema".into(),
         }
     };
-    let pointer = error.instance_path().to_string();
-    let path = instance_path(&pointer, root);
+    located(root, source, &pointer, key.as_deref(), &constraint)
+}
+
+/// The error at `pointer`, positioned at the map key `key` when the failure is
+/// about that key. The key itself is never shown.
+fn located(
+    root: &Value,
+    source: Option<&str>,
+    pointer: &str,
+    key: Option<&str>,
+    constraint: &str,
+) -> ConfigError {
+    use super::super::yaml_source;
+    let path = instance_path(pointer, root);
     let position = source
-        .and_then(|text| super::super::yaml_source::position(text, &pointer))
+        .and_then(|text| match key {
+            Some(key) => yaml_source::key_position(text, &format!("{pointer}/{}", escape(key))),
+            None => yaml_source::position(text, pointer),
+        })
         .map(|(line, column)| format!(" (line {line}, column {column})"))
         .unwrap_or_default();
     ConfigError(format!(
         "configuration violates schema at {path}{position}: {constraint}"
     ))
+}
+
+fn escape(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
+}
+
+/// The tag every variant of a union declares as a constant, with its values.
+fn tag_values(variants: &[Value]) -> Option<(&'static str, Vec<String>)> {
+    nemoclaw_runtime::schema::UNION_TAGS
+        .into_iter()
+        .find_map(|tag| {
+            let mut values = variants
+                .iter()
+                .map(|variant| {
+                    variant["properties"][tag]["const"]
+                        .as_str()
+                        .map(str::to_owned)
+                })
+                .collect::<Option<Vec<_>>>()?;
+            values.sort_unstable();
+            values.dedup();
+            Some((tag, values))
+        })
+}
+
+/// Of several unknown keys, the one written first, so the position and the
+/// hint describe the same field.
+fn first_written(unexpected: &[String], pointer: &str, source: Option<&str>) -> Option<String> {
+    unexpected
+        .iter()
+        .min_by_key(|key| {
+            source
+                .and_then(|text| {
+                    super::super::yaml_source::key_position(
+                        text,
+                        &format!("{pointer}/{}", escape(key)),
+                    )
+                })
+                .unwrap_or((usize::MAX, usize::MAX))
+        })
+        .cloned()
+}
+
+/// The fields declared by the object schema whose `additionalProperties`
+/// rejected a key.
+fn declared_fields<'s>(schema: &'s Value, schema_path: &str) -> Vec<&'s str> {
+    schema_path
+        .strip_suffix("/additionalProperties")
+        .and_then(|object| schema.pointer(object)?.get("properties")?.as_object())
+        .map(|properties| properties.keys().map(String::as_str).collect())
+        .unwrap_or_default()
+}
+
+/// Suggest the declared field closest to an unknown key, or list the fields of
+/// a small object. Only schema names appear, never the key itself.
+fn unknown_field(key: Option<&str>, declared: &[&str]) -> String {
+    const LISTED_FIELDS: usize = 10;
+    let nearest = key.and_then(|key| {
+        declared
+            .iter()
+            .map(|name| (strsim::osa_distance(key, name), *name))
+            .filter(|(distance, _)| *distance <= 2 && *distance < key.chars().count())
+            .min()
+    });
+    match nearest {
+        Some((_, name)) => format!("unknown fields are not allowed; did you mean \"{name}\"?"),
+        None if !declared.is_empty() && declared.len() <= LISTED_FIELDS => format!(
+            "unknown fields are not allowed; accepted fields: {}",
+            declared.join(", ")
+        ),
+        None => "unknown fields are not allowed".into(),
+    }
+}
+
+/// Describe a `not` rule that excludes fields or values, such as the rules
+/// `forbid` builds, from the names and values in the schema.
+fn negation(excluded: &Value) -> Option<String> {
+    fn fields(required: &Value) -> Option<Vec<String>> {
+        required
+            .as_array()?
+            .iter()
+            .map(|name| name.as_str().map(str::to_owned))
+            .collect()
+    }
+    fn listed(items: &[String], conjunction: &str) -> Option<String> {
+        Some(match items {
+            [] => return None,
+            [only] => only.clone(),
+            [first, second] => format!("{first} {conjunction} {second}"),
+            [rest @ .., last] => format!("{}, {conjunction} {last}", rest.join(", ")),
+        })
+    }
+    let object = excluded.as_object().filter(|object| object.len() == 1)?;
+    let (keyword, value) = object.iter().next()?;
+    Some(match keyword.as_str() {
+        "required" => match fields(value)?.as_slice() {
+            [] => return None,
+            [only] => format!("must not set {only}"),
+            [first, second] => format!("must not set both {first} and {second}"),
+            names => format!("must not set all of {}", listed(names, "and")?),
+        },
+        "anyOf" => {
+            let names = value
+                .as_array()?
+                .iter()
+                .map(|branch| {
+                    let branch = branch.as_object().filter(|branch| branch.len() == 1)?;
+                    match fields(branch.get("required")?)?.as_slice() {
+                        [only] => Some(only.clone()),
+                        _ => None,
+                    }
+                })
+                .collect::<Option<Vec<_>>>()?;
+            format!("must not set {}", listed(&names, "or")?)
+        }
+        "enum" => {
+            let values = value
+                .as_array()?
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>();
+            format!("must not be {}", listed(&values, "or")?)
+        }
+        "const" => format!("must not be {value}"),
+        _ => return None,
+    })
+}
+
+/// Schema locations of `not` rules whose failure no message describes: they
+/// carry no `x-nemoclaw-error`, on themselves or on an enclosing node of their
+/// definition, and exclude more than fields or values that `negation` can
+/// name. Schema generation rejects them, so no error shows a bare keyword.
+pub fn unexplained_rules(schema: &Value) -> Vec<String> {
+    fn walk(node: &Value, path: &str, annotated: bool, found: &mut Vec<String>) {
+        match node {
+            Value::Object(object) => {
+                let annotated = annotated || object.contains_key("x-nemoclaw-error");
+                if let Some(excluded) = object.get("not")
+                    && !annotated
+                    && negation(excluded).is_none()
+                {
+                    found.push(format!("{path}/not"));
+                }
+                for (key, child) in object {
+                    let path = format!("{path}/{}", escape(key));
+                    let entries = || child.as_object().into_iter().flatten();
+                    match key.as_str() {
+                        // Values, not schemas.
+                        "const" | "enum" | "default" | "examples" => {}
+                        // Each definition is a message scope of its own, as for
+                        // diagnostics, which never look above a definition.
+                        "$defs" => {
+                            for (name, definition) in entries() {
+                                walk(
+                                    definition,
+                                    &format!("{path}/{}", escape(name)),
+                                    false,
+                                    found,
+                                );
+                            }
+                        }
+                        // Maps from field names, which may be keyword names, to schemas.
+                        "properties" | "patternProperties" | "dependentSchemas" => {
+                            for (name, property) in entries() {
+                                let path = format!("{path}/{}", escape(name));
+                                walk(property, &path, annotated, found);
+                            }
+                        }
+                        _ => walk(child, &path, annotated, found),
+                    }
+                }
+            }
+            Value::Array(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    walk(item, &format!("{path}/{index}"), annotated, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    walk(schema, "", false, &mut found);
+    found
 }
 
 /// The message of the nearest annotated schema node enclosing the failing
@@ -530,6 +794,59 @@ mod tests {
                 json!({"gateway": {"engine": "unix:///run/engine.sock"}})
             ),
             "configuration violates schema at gateway: the gateway is incomplete"
+        );
+    }
+
+    #[test]
+    fn a_rule_that_excludes_fields_or_values_names_them() {
+        let schema = |rule: Value| json!({"type": "object", "properties": {"gateway": rule}});
+        for (rule, instance, expected) in [
+            (
+                nemoclaw_runtime::schema::forbid(&["credential", "tls"]),
+                json!({"tls": {}}),
+                "must not set credential or tls",
+            ),
+            (
+                json!({"not": {"required": ["policy", "policyRef"]}}),
+                json!({"policy": {}, "policyRef": "shared"}),
+                "must not set both policy and policyRef",
+            ),
+            (
+                json!({"not": {"enum": ["dgx-spark", "rtx-spark"]}}),
+                json!("dgx-spark"),
+                r#"must not be "dgx-spark" or "rtx-spark""#,
+            ),
+        ] {
+            assert_eq!(
+                message(&schema(rule), json!({"gateway": instance})),
+                format!("configuration violates schema at gateway: {expected}")
+            );
+        }
+    }
+
+    #[test]
+    fn unexplained_rules_are_those_only_a_keyword_would_describe() {
+        let schema = json!({
+            "$defs": {
+                "Annotated": {"not": {"pattern": "^x"}, "x-nemoclaw-error": "must not start with x"},
+                "Enclosed": {
+                    "x-nemoclaw-error": "an enclosing rule's message",
+                    "properties": {"inner": {"not": {"pattern": "^x"}}}
+                },
+                "Forbidden": nemoclaw_runtime::schema::forbid(&["credential"]),
+                "Named": {"not": {"pattern": "^x"}}
+            },
+            // A field may share a keyword's name.
+            "properties": {"default": {"not": {"minLength": 3}}}
+        });
+        assert_eq!(
+            unexplained_rules(&schema),
+            ["/$defs/Named/not", "/properties/default/not"]
+        );
+        assert_eq!(
+            unexplained_rules(super::super::input_schema_ref()),
+            Vec::<String>::new(),
+            "every SDK schema rule must explain its failure"
         );
     }
 }

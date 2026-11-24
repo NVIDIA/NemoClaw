@@ -34,7 +34,7 @@ The other sections of Fabric's agent configuration go where they belong, under F
 
 Sandboxes that share a harness definition through `harnessRef` share its `runtime` and `telemetry`, and each agent keeps its own instructions, tools, and skills.
 The [travel team example](../../examples/travel-team.yaml) gives four researchers one harness definition and each its own instructions.
-The deployment sets the configuration's `metadata`, `harness`, and `models`, `runtime.artifacts`, `runtime.keep_state` for adapters that accept it, and `environment.provider` and `environment.workspace`.
+The deployment sets the configuration's `metadata`, `harness`, and `models`, `runtime.artifacts`, `runtime.keep_state` where both the CLI's Fabric catalog and the image's adapter accept it, and `environment.provider` and `environment.workspace`.
 An authored section that sets one of those fields to another value fails planning.
 See [the SDK configuration projection](../../crates/nemoclaw-sdk/src/fabric_config.rs) for the deployment boundary.
 
@@ -262,6 +262,26 @@ Kubernetes takes only the count.
 The request gives the sandbox's programs device access, not CUDA libraries.
 Provide those in the agent image or on a read-only [mounted volume](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes).
 Changing `gpus` replaces the sandbox and its agent, so keep files that must survive on mounted volumes.
+
+## CPU and Memory Limits
+
+`cpu` and `memory` set the limits OpenShell gives a sandbox, as quantities in OpenShell's `sandbox create --cpu` and `--memory` format:
+
+```yaml
+spec:
+  sandboxes:
+    assistant:
+      cpu: "2"
+      memory: 4Gi
+```
+
+Merge this fragment into a complete deployment configuration.
+CPU takes cores or millicores, such as `2`, `0.5`, or `500m`; memory takes a byte count or a quantity such as `512Mi`, `4Gi`, or `8G`.
+Quote a plain number, such as `"2"`, because both fields are strings.
+NemoClaw passes both to OpenShell unchanged, and OpenShell validates them.
+Docker and Podman apply each value as a runtime limit; Kubernetes applies it as both the container's request and its limit, so a node must have that much allocatable.
+Omitting a field sets no limit of that kind.
+Changing either one replaces the sandbox and its agent, because OpenShell can't resize a running sandbox, so keep files that must survive on [mounted volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes).
 
 ## Skills on a Mounted Volume
 

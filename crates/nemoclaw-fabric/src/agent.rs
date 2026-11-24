@@ -169,6 +169,44 @@ pub fn compose(row: &Row) -> Result<Value, String> {
     Ok(config)
 }
 
+/// Fit a configuration to the adapter that runs it: `runtime.keep_state`,
+/// which the deployment asks for wherever the CLI's bundled catalog accepts
+/// it, stays only when the adapter's `descriptor` accepts it too. An image
+/// built from another Fabric revision can lack it (#14798); its agent then
+/// runs without kept state instead of being refused over a field the user
+/// never wrote.
+pub fn fit_to_adapter(config: &mut Value, descriptor: &Value) {
+    let accepts = descriptor["config"]["accepts"]
+        .as_array()
+        .is_some_and(|fields| fields.iter().any(|field| field == "runtime.keep_state"));
+    if !accepts && let Some(runtime) = config.get_mut(RUNTIME).and_then(Value::as_object_mut) {
+        runtime.remove("keep_state");
+    }
+}
+
+/// The document a row describes, fitted to its harness image's adapter. A row
+/// without a readable catalog, or whose catalog lacks the adapter, keeps the
+/// document as composed.
+pub fn compose_for_harness(row: &Row) -> Result<Value, String> {
+    let mut config = compose(row)?;
+    let descriptor = row
+        .get(HARNESS_CATALOG)
+        .and_then(|catalog| serde_json::from_str::<Value>(catalog).ok())
+        .and_then(|catalog| {
+            catalog["adapters"]
+                .as_array()?
+                .iter()
+                .find(|adapter| {
+                    adapter["descriptor"]["adapter_id"] == config["harness"]["adapter_id"]
+                })
+                .map(|adapter| adapter["descriptor"].clone())
+        });
+    if let Some(descriptor) = descriptor {
+        fit_to_adapter(&mut config, &descriptor);
+    }
+    Ok(config)
+}
+
 /// The derived attribute holding the digest of the document an agent applies.
 pub const CONFIG_SHA256: &str = "config_sha256";
 

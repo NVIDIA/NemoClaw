@@ -58,6 +58,7 @@ NemoClaw sets the workspace and artifact locations in the agent's Fabric configu
 The [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/76bde16c40747062001bd6ea5f5d13cadab3d706/adapters/python) define the rest.
 When the image's adapter accepts Fabric's `runtime.keep_state`, NemoClaw sets it, so Fabric gives every runtime of the agent the same state folder instead of one per runtime.
 Among the bundled images, Hermes's and OpenClaw's adapters do.
+An image whose adapter doesn't, such as one built from another Fabric revision, runs without it: each runtime gets its own state folder, so a new runtime starts without the previous one's native state.
 With `/sandbox/artifacts` on a [mounted volume](#keeping-agent-files-on-mounted-volumes), that state survives sandbox replacement.
 Only one runtime can use the folder at a time.
 To discard the state, delete the folder or the volume.

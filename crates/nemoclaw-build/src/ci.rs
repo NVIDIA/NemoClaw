@@ -11,6 +11,8 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+pub mod model_cache;
+
 /// One `CI / Bundle` step, in workflow order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
