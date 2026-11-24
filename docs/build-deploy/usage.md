@@ -3,7 +3,7 @@
 
 # Using Desired State
 
-Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
+Use a [verified native bundle](../get-started/install.md) with its `bin` directory on `PATH`.
 For a first deployment, follow [get started](../get-started/first-deployment.md).
 When copying an [example](../../examples), assign a fresh UUID and replace endpoints and image pins with values for your resources.
 Keep the matching bundle and the same state directory throughout the deployment.
@@ -13,33 +13,37 @@ On macOS, a managed gateway on Docker Desktop's, Colima's, Rancher Desktop's, or
 On another socket, it binds the socket's own path.
 See [engine connection limits](../../internal-docs/design/execution-targets.md#connections-and-identity).
 
-From the directory containing your YAML, preview the changes.
-Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
-A fresh managed gateway defers the NVIDIA OpenShell graph until apply makes it reachable.
+## Planning and Applying
 
-```sh
-nemoclaw plan --state-dir .local/deployment deployment.yaml
-```
+A preview observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
+Plan requires only the credential references it reads for the gateway, cluster, and image metadata.
+If an inference, web search, or API integration credential is missing, plan reports it as deferred work.
+Apply requires every referenced credential. See [credential resolution](../references/cli.md#credential-resolution).
 
-Review the preview before apply.
-Apply computes its own checked plan and can create or change resources and download images or models.
-It checks configuration and readiness without invoking inference.
+1. Preview the changes from the directory containing your YAML.
 
-```sh
-nemoclaw apply --state-dir .local/deployment deployment.yaml
-```
+   ```sh
+   nemoclaw plan --state-dir .local/deployment deployment.yaml
+   ```
 
-Verify model and agent responses separately using [inference verification](../agents-inference/inference.md#verifying-the-result).
-On failure, retain YAML and state and use [recovery](#recovering-an-interrupted-operation).
+2. Review the resource changes. Resolve unexpected replacements or deletions before applying.
+3. Review deferred checks and unverified advisories separately. A deferred check leaves the resource plan incomplete. For example, apply must make a fresh managed gateway reachable before the SDK can finish planning its OpenShell resources. An unverified advisory, such as an unavailable model catalog, does not make the resource plan incomplete.
+4. Apply the reviewed YAML. Apply computes its own checked plan and can create or change resources and download images or models. Its readiness checks do not invoke inference.
 
-After apply succeeds, export the observed configuration:
+   ```sh
+   nemoclaw apply --state-dir .local/deployment deployment.yaml
+   ```
 
-```sh
-nemoclaw export --state-dir .local/deployment --output exported-new.yaml
-```
+5. Check the apply result. On failure, retain YAML and state and follow [recovery](#recovering-an-interrupted-operation).
+6. Verify the model and agent responses separately using [inference verification](../agents-inference/inference.md#verifying-the-result).
+7. Export the observed configuration. Export is not a backup of agent files or conversations.
 
-Check the exit status before using the export, then follow [unchanged reapply](#verifying-an-unchanged-reapply).
-Export isn't a backup of agent files or conversations.
+   ```sh
+   nemoclaw export --state-dir .local/deployment --output exported-new.yaml
+   ```
+
+8. Check the exit status before using the export.
+9. Follow [unchanged reapply](#verifying-an-unchanged-reapply).
 
 Without `--state-dir`, state defaults to `.nemoclaw` in the working directory.
 Plan and apply require a YAML path or explicit `-` for stdin.
@@ -294,7 +298,7 @@ Each image authenticates through whatever pulls it, and the configuration names 
 | Images on Kubernetes or OpenShift | The cluster | Image-pull Secrets; see [Kubernetes and OpenShift](kubernetes.md) |
 
 When the engine doesn't hold an agent image yet, plan reports the image as not on the engine and that sandbox's compatibility as deferred.
-Apply pulls every agent image and reads its catalog label before it creates the gateway, its storage and network, or any agent configuration, so a pull that fails or an image that doesn't fit its sandbox creates nothing that must be destroyed.
+For Docker or Podman with an inspection engine, apply acquires each agent image and checks its catalog before creating the gateway, its storage and network, or any agent configuration. A failed pull or incompatible catalog does not create those deployment resources. An image that was successfully acquired can remain cached.
 An external gateway that names no `engine` pulls no agent images.
 
 To have NemoClaw's pulls authenticate, log in on the machine running OpenTofu, for example with `docker login nvcr.io`, and list the registry:
@@ -397,6 +401,7 @@ Check whether the desired edit updates a running resource, replaces it, or requi
 | Models, settings, or public Fabric configuration within the selected adapter | Replaces the agent and its sandbox, deleting the sandbox's files and conversations; review the plan |
 | External inference endpoint, provider implementation, or authenticated or anonymous mode | Changes a selected provider's profile and registration; a change to a sandbox's launch specification replaces the sandbox |
 | Harness adapter, sandbox image, driver configuration, agent identity, or provider attachments | Replaces the sandbox, deleting its files and conversations |
+| Sandbox `cpu` or `memory` | Replaces the sandbox. Use optional quantity strings, such as `cpu: "500m"` and `memory: "1Gi"`. Omission sets no limit. OpenShell validates the quantities. Docker and Podman apply runtime limits; Kubernetes applies both requests and limits. These fields do not size the gateway or model server. |
 | Service exposures | Updates the sandbox's endpoints in place; the sandbox keeps its files and conversations |
 | Sandbox network rules, middleware bindings, or grants | Updates the running sandbox's policy in place; the sandbox keeps its files and conversations, and connections it opened under the previous rules close; see [policy changes](../security/sandbox-network.md#verifying-and-changing-the-configuration) |
 | Sandbox policy's filesystem, Landlock, or process settings, or a policy APF governs | Replaces the sandbox, deleting its files and conversations (except on mounted volumes); see [policy changes](../security/sandbox-network.md#verifying-and-changing-the-configuration) |

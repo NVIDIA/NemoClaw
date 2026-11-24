@@ -295,6 +295,148 @@ jobs:
           path: ${{ runner.temp }}/windows_amd64.verification.txt
           if-no-files-found: error
           retention-days: 7
+  # The Windows installer holds the windows_amd64 archive's bundle: the one CI
+  # checked, with the executables sign-windows signed, resealed as staging packs
+  # it. This job runs the tag's files and has no signing access; Linux compiles
+  # the build tool faster than the Windows runner.
+  windows-installer-bundle:
+    name: Assemble the Windows installer's bundle
+    needs: [bundles, sign-windows]
+    if: needs.bundles.result == 'success' && needs.sign-windows.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the bundle CI checked at the tag
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.bundles.outputs.windows_amd64 }}
+          run-id: ${{ needs.bundles.outputs.run }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/ci
+      - name: Download the signed Windows bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-cli-windows_amd64
+          path: ${{ runner.temp }}/signed/windows_amd64
+      # Resealing hashes the bundle with the SDK, which needs the pinned protoc.
+      - name: Install the pinned build tools
+        run: cargo ci tools
+      - name: Assemble the archive's bundle
+        run: |
+          cargo build --locked -q -p nemoclaw-build
+          PATH="$PWD/target/debug:$PATH" bash .github/scripts/assemble-cli-bundle.sh windows_amd64 \
+            "$RUNNER_TEMP/ci/bundle.tar" "$RUNNER_TEMP/signed/windows_amd64" "$RUNNER_TEMP/release"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-installer-bundle
+          path: ${{ runner.temp }}/release/dist/windows_amd64
+          if-no-files-found: error
+          retention-days: 1
+  # Builds the per-user Windows installer from that bundle and signs it with
+  # the profile that signed the programs; see
+  # tools/release/windows-installer/README.md. Without Windows signing,
+  # sign-windows is skipped, and the release has no Windows installer.
+  windows-installer:
+    name: Build and sign the Windows installer
+    needs: [security-controller, sign-windows, windows-installer-bundle]
+    if: needs.sign-windows.result == 'success' && needs.windows-installer-bundle.result == 'success'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      WIX_VERSION: 5.0.2
+    steps:
+      # Only the v1 controller's files run with signing access; the bundle is
+      # data, which the installer helper reads but never runs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.security-controller.outputs.revision }}
+          persist-credentials: false
+      - name: Download the archive's bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-installer-bundle
+          path: ${{ runner.temp }}/windows_amd64
+      - name: Install WiX Toolset
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet tool install --global wix --version $env:WIX_VERSION
+          $tools = Join-Path $env:USERPROFILE .dotnet\tools
+          Add-Content $env:GITHUB_PATH $tools
+          & (Join-Path $tools wix.exe) extension add --global "WixToolset.UI.wixext/$env:WIX_VERSION"
+      - name: Build the installer
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $version = (Get-Content -Raw "$env:RUNNER_TEMP/windows_amd64/manifest.json" | ConvertFrom-Json).Version
+          if ("v$version" -ne $env:TAG) {
+            Write-Output "::error::The Windows bundle reports $version, not $env:TAG."
+            exit 1
+          }
+          rustc --edition=2021 -D warnings tools/release/windows-installer.rs -o "$env:RUNNER_TEMP/windows-installer.exe"
+          $file = "nemoclaw-$env:TAG-windows_amd64.msi"
+          & "$env:RUNNER_TEMP/windows-installer.exe" build --bundle "$env:RUNNER_TEMP/windows_amd64" --output "$env:RUNNER_TEMP/installer/$file"
+          # The signing action reads paths relative to its catalog.
+          Set-Content "$env:RUNNER_TEMP/installer/catalog.txt" $file
+      - name: Sign in to Azure
+        uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign the installer
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          files-catalog: ${{ runner.temp }}\installer\catalog.txt
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      # As for the programs, /tw fails an untimestamped signature, and the
+      # output is the release's evidence.
+      - name: Verify the signature
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
+          $file = "nemoclaw-$env:TAG-windows_amd64.msi"
+          & $signtool.FullName verify /pa /all /tw /v "$env:RUNNER_TEMP\installer\$file" |
+            Tee-Object -FilePath "$env:RUNNER_TEMP\installer-windows_amd64.verification.txt"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "::error::$file has no valid timestamped signature."
+            exit 1
+          }
+      - name: Upload the signed installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-installer-windows_amd64
+          path: ${{ runner.temp }}/installer/*.msi
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the signature check
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signing-verification-installer-windows_amd64
+          path: ${{ runner.temp }}/installer-windows_amd64.verification.txt
+          if-no-files-found: error
+          retention-days: 7
   # Dedicated private runner: only the trusted controller executes with SSA access.
   sign-macos-3s:
     name: Sign macOS executables with 3S
@@ -604,7 +746,7 @@ jobs:
         run: |
           set -euo pipefail
           package="$RUNNER_TEMP/installer/nemoclaw-$TAG-darwin_arm64.pkg"
-          log="$RUNNER_TEMP/installer.verification.txt"
+          log="$RUNNER_TEMP/installer-darwin_arm64.verification.txt"
           pkgutil --check-signature "$package" 2>&1 | tee "$log"
           spctl --assess --type install --verbose=2 "$package" 2>&1 | tee -a "$log"
           xcrun stapler validate "$package" 2>&1 | tee -a "$log"
@@ -626,7 +768,7 @@ jobs:
         with:
           name: signing-verification-installer
           path: |
-            ${{ runner.temp }}/installer.verification.txt
+            ${{ runner.temp }}/installer-darwin_arm64.verification.txt
             ${{ runner.temp }}/installer.notarization.json
           if-no-files-found: error
           retention-days: 7
@@ -640,7 +782,7 @@ jobs:
       inventory_sha256: ${{ steps.draft.outputs.inventory_sha256 }}
       sboms_sha256: ${{ steps.draft.outputs.sboms_sha256 }}
       cli_checksums: ${{ steps.pack.outputs.checksums }}
-    needs: [select, build, runtimes, security-controller, bundles, sign-windows, sign-macos, macos-installer, sign-macos-installer-3s, sign-macos-installer]
+    needs: [select, build, runtimes, security-controller, bundles, sign-windows, sign-macos, windows-installer, macos-installer, sign-macos-installer-3s, sign-macos-installer]
     if: >-
       !cancelled() && needs.security-controller.result == 'success' &&
       needs.select.result == 'success' && needs.runtimes.result == 'success' &&
@@ -648,6 +790,8 @@ jobs:
       needs.bundles.result == 'success' &&
       (needs.sign-windows.result == 'success' ||
         (needs.sign-windows.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'windows_amd64'))) &&
+      (needs.windows-installer.result == 'success' ||
+        (needs.windows-installer.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'windows_amd64'))) &&
       (needs.sign-macos.result == 'success' ||
         (needs.sign-macos.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'darwin_arm64'))) &&
       needs.macos-installer.result == 'success' &&
@@ -712,14 +856,17 @@ jobs:
           name: signed-cli-darwin_arm64
           path: ${{ runner.temp }}/signed/darwin_arm64
       - name: Download the signature checks
-        if: needs.sign-windows.result == 'success' || needs.sign-macos.result == 'success' || needs.sign-macos-installer.result == 'success'
+        if: >-
+          needs.sign-windows.result == 'success' || needs.sign-macos.result == 'success' ||
+          needs.sign-macos-installer.result == 'success' || needs.windows-installer.result == 'success'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: signing-verification-*
           merge-multiple: true
           path: ${{ runner.temp }}/signed
-      # The signed installer, or without installer signing, the unsigned one,
-      # which only a release candidate's private draft attaches.
+      # The signed installers, or without macOS installer signing, the unsigned
+      # macOS one, which only a release candidate's private draft attaches.
+      # Without Windows signing, there's no Windows installer.
       - name: Download the signed macOS installer
         if: needs.sign-macos-installer.result == 'success'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -731,6 +878,12 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: macos-installer
+          path: ${{ runner.temp }}/installer
+      - name: Download the signed Windows installer
+        if: needs.windows-installer.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-installer-windows_amd64
           path: ${{ runner.temp }}/installer
       # Resealing hashes the bundle with the SDK, which needs the pinned protoc.
       - name: Install the pinned build tools
@@ -745,10 +898,10 @@ jobs:
           cargo build --locked -q -p nemoclaw-build
           mkdir -p "$RUNNER_TEMP/signed"
           cli="$RUNNER_TEMP/cli-bundles"
-          # The installer joins SHA256SUMS, the evidence record, and a final release's attestations.
+          # The installers join SHA256SUMS, the evidence record, and a final release's attestations.
           if [ -d "$RUNNER_TEMP/installer" ]; then
             mkdir -p "$cli"
-            cp "$RUNNER_TEMP/installer/nemoclaw-$GITHUB_REF_NAME-darwin_arm64.pkg" "$cli/"
+            cp "$RUNNER_TEMP/installer"/nemoclaw-"$GITHUB_REF_NAME"-* "$cli/"
           fi
           PATH="$PWD/target/debug:$PATH" bash .github/scripts/pack-cli-bundles.sh \
             "$RUNNER_TEMP/ci-bundles" "$RUNNER_TEMP/signed" "$cli"
@@ -784,7 +937,7 @@ jobs:
             echo
             echo '## CLI'
             echo
-            echo "Each archive holds one platform's \`nemoclaw\` CLI with OpenTofu and the providers, as [CI / Bundle]($CLI_SOURCE) built and checked them at \`$GITHUB_SHA\`. \`SHA256SUMS\` lists their SHA-256 checksums, and the macOS installer's when the release has one."
+            echo "Each archive holds one platform's \`nemoclaw\` CLI with OpenTofu and the providers, as [CI / Bundle]($CLI_SOURCE) built and checked them at \`$GITHUB_SHA\`. \`SHA256SUMS\` lists their SHA-256 checksums, and the installers' when the release has them."
             echo
             echo '| File | SHA-256 |'
             echo '|---|---|'
@@ -1148,8 +1301,9 @@ jobs:
             --pattern 'nemoclaw-*' --pattern SHA256SUMS --pattern release-evidence.json
           cd "$cli"
           sha256sum --check --strict SHA256SUMS
+          # A release without an installer has no .pkg or .msi file.
           shopt -s nullglob
-          for file in nemoclaw-*.tar.gz nemoclaw-*.pkg SHA256SUMS; do
+          for file in nemoclaw-*.tar.gz nemoclaw-*.pkg nemoclaw-*.msi SHA256SUMS; do
             if ! gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" --format json > "$RUNNER_TEMP/attestation.json"; then
               echo "::error::$file has no valid build provenance attestation from this repository."
               exit 1

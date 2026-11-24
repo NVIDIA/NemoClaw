@@ -38,6 +38,11 @@ Releases:
   See [installing with the macOS installer](../../docs/get-started/install.md#installing-with-the-macos-installer).
   Until a Developer ID Installer certificate signs it, release candidates attach it unsigned and final releases leave it out; see [the macOS installer](releases.md#macos-installer).
   Before, macOS clients installed the CLI only from the archive.
+- Each release whose Windows executables are signed attaches `nemoclaw-<tag>-windows_amd64.msi`, a per-user Windows installer that needs no administrator rights ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
+  It installs the `windows_amd64` archive's bundle in `%LOCALAPPDATA%\Programs\NemoClaw` and adds its `bin` directory to the user `Path`; installing a newer release replaces the bundle, and an older release's installer refuses to replace a newer one.
+  See [installing with the Windows installer](../../docs/get-started/install.md#installing-with-the-windows-installer).
+  Staging signs it with the Windows executables and builds none without Windows signing; see [the Windows installer](releases.md#windows-installer).
+  Before, Windows clients installed the CLI only from the archive.
 
 Agents:
 
@@ -657,6 +662,5 @@ Refer to [current limits](../../docs/resources/limits.md) for what v1 doesn't do
 
 ## Previous Releases
 
-The combined staging site's **Latest (main)** version retains the imported main guides and changelog.
-Use [earlier documentation](../../docs/get-started/migration.md#finding-earlier-documentation) to select that version.
-Its release entries aren't v1 release notes.
+The separate NemoClaw v0 product contains the earlier main guides and changelog.
+Use [earlier documentation](../../docs/get-started/migration.md#finding-earlier-documentation) to find that product's release notes.

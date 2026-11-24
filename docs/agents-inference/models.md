@@ -33,7 +33,7 @@ Replace them with candidate-built digests.
 Use a Linux host with GPU-enabled Docker, an NVIDIA driver compatible with the pinned image, and a kernel that passes NVIDIA OpenShell's sandbox capability checks.
 Match the service's hardware and memory requirements to the selected host.
 The [qualification record in #14556](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) identifies tested source revisions, images, and host configurations.
-Other GGUFs, general tool use, cross-host restoration, and Classic host settings need separate qualification.
+Other GGUFs, general tool use, cross-host restoration, and host settings from NemoClaw v0 need separate qualification.
 
 The first implementation serves one model on one CUDA GPU, with full GPU-layer offload requested, one slot, f16 KV, embedded Jinja, and no multimodal projector.
 `serving.batchTokens` and `microBatchTokens` control batching.
@@ -69,7 +69,7 @@ The pinned OpenClaw might also request its default OpenAI utility model, which a
 OpenClaw documents `utilityModel` for those auxiliary requests, but the pinned NVIDIA NeMo Fabric adapter's settings schema rejects it ([NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679)).
 Don't patch the native image or substitute a model alias to hide that mismatch.
 Other NIM engines and distributed inference are unsupported.
-Distributed inference is outside V0 parity scope.
+Distributed inference is outside the scope of parity with NemoClaw v0.
 
 Build the opt-in `nim` Bake target and select its resulting immutable image digest.
 It adds the supervisor to NIM 2.0.12 without modifying native scripts or nginx.

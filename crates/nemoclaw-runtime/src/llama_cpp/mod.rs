@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Managed, immutable, single-GPU GGUF serving with llama.cpp.
-//! Launch settings adapted from Classic NemoClaw's host-local-runtime.ts at
+//! Launch settings adapted from NemoClaw v0's host-local-runtime.ts at
 //! 495896a404d77fb4673fc41dbf18d5e0fec91b2a; v1 adds typed settings, CUDA
 //! device selection and its own cache, supervision and credential ownership.
 #[cfg(any(test, all(feature = "execution", target_os = "linux")))]

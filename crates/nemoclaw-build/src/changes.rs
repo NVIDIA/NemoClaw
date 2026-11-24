@@ -81,8 +81,9 @@ pub struct Plan {
     pub lifecycle: Decision,
     pub images: Decision,
     pub live: Decision,
-    /// The macOS installer check, which builds an installer from the darwin_arm64
-    /// bundle and installs, upgrades, and uninstalls it on macOS runners.
+    /// The installer checks, which build the macOS and Windows installers from
+    /// the darwin_arm64 and windows_amd64 bundles and install, upgrade, and
+    /// uninstall them on macOS and Windows runners.
     pub installer: Decision,
 }
 impl Plan {
@@ -101,13 +102,15 @@ impl Plan {
     }
 }
 
-/// Files that build or test the macOS installer apart from the bundle it holds:
-/// the installer tool and its pages and artwork, the code that finds the bundle
+/// Files that build or test the installers apart from the bundles they hold:
+/// each installer's tool and its sources and artwork, the code that finds the bundle
 /// from the installed CLI, and the workflows that run the installer check. A
 /// path ending in `/` names a directory. v1 pushes run the check regardless.
-pub const INSTALLER_INPUTS: [&str; 6] = [
+pub const INSTALLER_INPUTS: [&str; 8] = [
     "tools/release/macos-installer.rs",
     "tools/release/macos-installer/",
+    "tools/release/windows-installer.rs",
+    "tools/release/windows-installer/",
     "crates/nemoclaw-cli/src/deployment.rs",
     ".github/workflows/bundle-platform.yml",
     ".github/workflows/rust.yml",
@@ -126,11 +129,11 @@ fn installer(base: &str, paths: &Utf8Paths0) -> Decision {
     match paths.into_iter().find(|path| input(path.as_str())) {
         Some(path) => Decision {
             run: true,
-            reason: format!("{path} changed, an input of the macOS installer"),
+            reason: format!("{path} changed, an input of the installers"),
         },
         None => Decision {
             run: false,
-            reason: format!("no macOS installer inputs changed since {base}"),
+            reason: format!("no installer inputs changed since {base}"),
         },
     }
 }
@@ -166,7 +169,7 @@ pub fn plan(root: &Path, base: &str, worktree: bool) -> Plan {
             } else if !bundle.run && installer.run {
                 bundle = Decision {
                     run: true,
-                    reason: "the selected macOS installer check needs a fresh bundle".into(),
+                    reason: "the selected installer checks need a fresh bundle".into(),
                 };
             }
             Plan {
