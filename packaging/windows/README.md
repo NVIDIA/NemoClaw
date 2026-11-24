@@ -23,7 +23,8 @@ Users install it as [Installing With the Windows Installer](../../docs/get-start
 - A package older than the installed one stops with a message that a newer version is already installed.
 - Its pages are WiX's minimal set: the welcome page with the license, then progress, then a finish page with the next steps. The license page holds the bundle's `LICENSE` and each notice in its `licenses` directory, which `windows-installer.rs` converts to RTF.
 
-Every component installs under the user's profile, so the build skips the ICE38, ICE64, and ICE91 validators.
+After building, the helper validates the package with `wix msi validate`, which runs Windows Installer's ICE validators.
+Every component installs under the user's profile, so it skips ICE38, ICE64, and ICE91.
 They expect registry key paths and `RemoveFolder` rows that a roaming profile needs; `%LOCALAPPDATA%` doesn't roam, and `E2E installer` checks that uninstalling leaves no directory.
 
 ## Building the Package

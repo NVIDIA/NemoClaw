@@ -252,11 +252,6 @@ fn build(build: Build) -> Result<()> {
         .arg("build")
         .arg(&source)
         .args(["-arch", "x64", "-ext", "WixToolset.UI.wixext"])
-        // Every component installs under the user's profile: a per-user
-        // package's files can't have the registry key paths, and its harvested
-        // directories the RemoveFolder rows, that these validators expect of
-        // a roaming profile. LocalAppData doesn't roam.
-        .args(["-sice", "ICE38", "-sice", "ICE64", "-sice", "ICE91"])
         .arg("-d")
         .arg(format!("ProductVersion={product_version}"))
         .arg("-d")
@@ -277,6 +272,21 @@ fn build(build: Build) -> Result<()> {
         .map_err(|e| format!("cannot run {}: {e}", build.wix))?;
     if !status.success() {
         return Err(format!("WiX couldn't build the installer ({status})"));
+    }
+    // Every component installs under the user's profile: a per-user
+    // package's files can't have the registry key paths, and its harvested
+    // directories the RemoveFolder rows, that these validators expect of a
+    // roaming profile. LocalAppData doesn't roam.
+    let status = Command::new(&build.wix)
+        .args(["msi", "validate"])
+        .args(["-sice", "ICE38", "-sice", "ICE64", "-sice", "ICE91"])
+        .arg(&output)
+        .status()
+        .map_err(|e| format!("cannot run {}: {e}", build.wix))?;
+    if !status.success() {
+        return Err(format!(
+            "the installer fails Windows Installer's validation ({status})"
+        ));
     }
     println!(
         "Built {} for NemoClaw {version} (Windows Installer version {product_version})",
