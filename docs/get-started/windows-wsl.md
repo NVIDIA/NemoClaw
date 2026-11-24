@@ -77,16 +77,19 @@ The OpenShell CLI used to invoke the agent must match this checkout's pin.
 With `jq` installed, download and verify that archive into a local tools directory:
 
 ```sh
-mkdir -p .tools/openshell
-curl -fL "$(jq -r '.platforms.linux_arm64.openshell.url' versions.json)" -o .tools/openshell.tar.gz
-printf '%s  %s\n' "$(jq -r '.platforms.linux_arm64.openshell.sha256' versions.json)" .tools/openshell.tar.gz | sha256sum --check
-tar -xzf .tools/openshell.tar.gz -C .tools/openshell
-export PATH="$PWD/.tools/openshell:$PATH"
+CLIENT_VERSION=$(jq -er '.openshell' versions.json) || exit 1
+CLIENT_DIR="$PWD/.tools/openshell/$CLIENT_VERSION"
+mkdir -p "$CLIENT_DIR"
+curl -fL "$(jq -er '.platforms.linux_arm64.openshell.url' versions.json)" -o "$CLIENT_DIR/archive.tar.gz"
+printf '%s  %s\n' "$(jq -er '.platforms.linux_arm64.openshell.sha256' versions.json)" "$CLIENT_DIR/archive.tar.gz" | sha256sum --check || exit 1
+tar -xzf "$CLIENT_DIR/archive.tar.gz" -C "$CLIENT_DIR"
+export PATH="$CLIENT_DIR:$PATH"
 openshell --version
 ```
 
 Stop if verification fails. The version must match `openshell` in `versions.json`.
 Installing another OpenShell CLI does not configure its gateway profile.
+Other versions remain in their own directories; [host client selection](../agents-inference/agents.md#selecting-the-host-openshell-client) describes release pins and external-gateway compatibility.
 
 ## Authoring and Applying a Deployment
 
@@ -101,7 +104,11 @@ nemoclaw onboard --output deployment.yaml
 ```
 
 Choose Hermes, a fresh deployment name, Docker, NVIDIA Endpoints, and a model available to your account.
+When several images are offered, match the digest from the image inspection command.
+The picker shows engine tags and the selected image's engine creation time and OCI revision label when available.
+These labels help identify images; they do not verify source provenance, and reproducible images can share a creation time.
 Review the image digest, model, credential status, and YAML before saving.
+"Metadata compatible" means the advertised metadata matches the configuration; it does not establish that a runtime starts or inference works.
 Onboarding writes a credential reference; it does not save the key value in YAML.
 A missing inference key can be deferred by plan; interactive apply prompts for it.
 
@@ -133,6 +140,11 @@ Retain the YAML, state directory, and unchanged bundle if it fails; follow [oper
 
 ## Verifying a Reply
 
+For a first reply, copy the gateway and workspace selection commands from apply's output, then run the command after `Invoke:`.
+The Bash sample works inside WSL and sends the JSON string `"Reply with exactly READY."` on stdin.
+It can incur inference charges and returns the adapter's full result.
+
+To save and filter a reply instead, use the following procedure.
 Use the gateway endpoint, workspace, agent name, and runtime ID from apply's output.
 For this managed loopback gateway, select the endpoint and workspace in the current shell:
 
@@ -145,8 +157,9 @@ openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent 
 "Reply with exactly READY."
 JSON
 INVOKE_STATUS=$?
-jq '{status: .result.status, error: .result.error, response: .result.output.response, adapter_stdout: .result.output.adapter_stdout}' reply.json
+jq '{command_status: .status, agent_status: .result.status, error: .result.error, response: .result.output.response}' reply.json
 test "$INVOKE_STATUS" -eq 0
+jq -e '.status == "succeeded" and .result.status == "succeeded"' reply.json >/dev/null
 ```
 
 `--input -` reads one JSON value from stdin; the quoted prompt is that value.
@@ -156,6 +169,7 @@ The filter shows the Hermes reply while keeping the full response in `reply.json
 Other adapters can return a different output shape.
 An auxiliary Hermes title-generation warning can accompany a successful reply; check `result.status` and the reply before treating that warning as a failed request.
 Harness configuration belongs to the adapter; do not run `hermes setup` against a managed deployment solely because that warning suggests it.
+For rejected keys, follow [authentication diagnostics](../agents-inference/agents.md#diagnosing-an-authentication-failure) and the linked rotation procedure before retrying.
 
 Retain the deployment for inspection, or follow [destroy and retention](../build-deploy/usage.md#destroying) with the same bundle and state directory when finished.
 Clear the caller's key with `unset NVIDIA_API_KEY`; this does not revoke the upstream key or remove OpenShell's installed credential.

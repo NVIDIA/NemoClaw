@@ -6,6 +6,7 @@ mod credentials;
 mod deployment;
 mod dispatch;
 mod formatting;
+mod host_client;
 mod io;
 mod progress;
 mod style;
@@ -64,7 +65,7 @@ fn main() -> ExitCode {
 async fn run() -> ExitCode {
     let cli = Cli::parse();
     let output_format = cli.command.output_format();
-    let context = formatting::RenderContext::new(&cli);
+    let mut context = formatting::RenderContext::new(&cli);
     let (cancel, force_stop) = (CancellationToken::new(), CancellationToken::new());
     let interruption = match interrupts(cancel.clone(), force_stop.clone()) {
         Ok(interruption) => interruption,
@@ -90,6 +91,13 @@ async fn run() -> ExitCode {
     signals.abort();
     match result {
         Ok(result) => {
+            if matches!(output_format, args::OutputFormat::Text)
+                && matches!(&result, dispatch::CommandResult::Operation(operation) if !operation.agents.is_empty() || !operation.interfaces.is_empty())
+            {
+                let path = host_client::find(std::env::var_os("PATH").as_deref());
+                context.host_client =
+                    Some(host_client::inspect(nemoclaw_sdk::OPENSHELL_CLIENT_VERSION, path).await);
+            }
             match formatting::render(result, output_format, &context).and_then(|output| {
                 io::write_output(
                     output_path.as_deref(),

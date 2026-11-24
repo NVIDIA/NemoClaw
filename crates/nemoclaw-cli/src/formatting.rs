@@ -21,6 +21,7 @@ use std::{
 
 /// Presentation context and mutation facts reported by the SDK.
 pub(crate) struct RenderContext {
+    pub(crate) host_client: Option<crate::host_client::Check>,
     operation: &'static str,
     mutation_started: Arc<AtomicBool>,
     warnings: Arc<Mutex<BTreeSet<String>>>,
@@ -44,6 +45,7 @@ impl RenderContext {
             Command::Onboard { file, .. } => ("Onboard", file.clone()),
         };
         Self {
+            host_client: None,
             operation,
             mutation_started: Arc::new(AtomicBool::new(false)),
             warnings: Arc::new(Mutex::new(BTreeSet::new())),
@@ -151,8 +153,18 @@ pub(crate) fn render(
 ) -> Result<String, Box<dyn std::error::Error>> {
     match result {
         CommandResult::Export(document) => Ok(document.yaml()?),
-        CommandResult::Authored(path) => Ok(path
-            .map(|path| authored(&path, context))
+        CommandResult::Authored { path, missing_credentials } => Ok(path
+            .map(|path| {
+                let mut text = authored(&path, context);
+                if !missing_credentials.is_empty() {
+                    text.push_str("\nCredential values are not saved in the deployment file. Missing in this environment:\n");
+                    for (name, stage) in missing_credentials {
+                        text.push_str(&format!("  {}: not set; {stage} will ask (hidden input on a terminal).\n", terminal_text(&name)));
+                    }
+                    text.push_str("Non-interactive runs require these environment variables. A set value is not proof that the endpoint accepts it.\n");
+                }
+                text
+            })
             .unwrap_or_default()),
         CommandResult::Operation(result) => match format {
             OutputFormat::Text => {
@@ -574,6 +586,23 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         }
     }
     let mut selected = false;
+    if let Some(client) = &context.host_client {
+        let path = client
+            .path
+            .as_ref()
+            .map(|path| terminal_text(&path.display().to_string()))
+            .unwrap_or_else(|| "not found on PATH".into());
+        let detected = client
+            .detected
+            .as_deref()
+            .map(terminal_text)
+            .unwrap_or_else(|| "unavailable".into());
+        output.push_str(&format!("\nHost OpenShell client: {path}\n  Required by this NemoClaw CLI: {}; detected: {detected}.\n", terminal_text(&client.required)));
+        if !client.compatible() {
+            output.push_str("  Before running the OpenShell commands, select the release-qualified client in a scoped directory and prepend it to this shell's PATH. Preserve other installations. Refer to docs/agents-inference/agents.md#selecting-the-host-openshell-client.\n");
+        }
+        output.push_str("  This host check does not verify the gateway version, compute driver, or inference.\n");
+    }
     if !result.agents.is_empty() {
         output.push_str(&agent_invocation(result, planned, &mut selected));
     }
@@ -606,8 +635,9 @@ const UNPUBLISHED_GATEWAY: &str = "not published; forward a local port to the ga
 /// The commands that select this deployment's gateway and workspace, as the
 /// interface guide describes.
 fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String {
-    let mut output =
-        String::from("  In each terminal, select this deployment's gateway and workspace:\n");
+    let mut output = String::from(
+        "  In each Bash terminal (WSL on Windows), select this deployment's gateway and workspace:\n",
+    );
     let endpoint = connection
         .gateway_endpoint
         .as_deref()
@@ -654,9 +684,16 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
         let name = terminal_text(&agent.agent);
         match &agent.runtime_id {
             Some(runtime) => {
-                let runtime = terminal_text(runtime);
+                let command = format!(
+                    "printf '%s\\n' '\"Reply with exactly READY.\"' | openshell sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input -",
+                    shell_word(sandbox.as_str()),
+                    shell_word(name.as_str()),
+                    shell_word(runtime)
+                );
                 output.push_str(&format!(
-                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   openshell sandbox exec -n {sandbox} --no-tty -- fabric-agent-ctl invoke --agent {name} --runtime-id {runtime} --input FILE\n"
+                    "  {sandbox}: agent {name}, runtime {}\n    Invoke:   {}\n",
+                    terminal_text(runtime),
+                    terminal_text(&command)
                 ));
             }
             None => output.push_str(&format!("  {sandbox}: agent {name}, no runtime recorded\n")),
@@ -664,7 +701,7 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
     }
     if invocable {
         output.push_str(
-            "  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents-inference/agents.md.\n",
+            "  The Bash sample sends one JSON prompt and can incur inference charges. --input FILE reads a sandbox file; --input - reads it from stdin; see docs/agents-inference/agents.md.\n",
         );
     }
     output
@@ -892,7 +929,10 @@ mod tests {
     fn authored(path: &str) -> String {
         let cli = Cli::try_parse_from(["nemoclaw", "onboard"]).unwrap();
         super::render(
-            CommandResult::Authored(Some(path.into())),
+            CommandResult::Authored {
+                path: Some(path.into()),
+                missing_credentials: Vec::new(),
+            },
             OutputFormat::Text,
             &RenderContext::new(&cli),
         )
@@ -923,7 +963,10 @@ mod tests {
         let plain = authored("deployment.yaml");
         context.output_palette = Palette { enabled: true };
         let styled = super::render(
-            CommandResult::Authored(Some("deployment.yaml".into())),
+            CommandResult::Authored {
+                path: Some("deployment.yaml".into()),
+                missing_credentials: Vec::new(),
+            },
             OutputFormat::Text,
             &context,
         )
@@ -1146,6 +1189,32 @@ mod tests {
     /// runtime, under this deployment's gateway and workspace selection, and
     /// say which agent has none; JSON carries the same facts under `agents`.
     #[test]
+    #[cfg(unix)]
+    fn printed_first_reply_command_sends_a_json_prompt_on_stdin() {
+        let text = render(
+            &["nemoclaw", "apply", "deployment.yaml"],
+            json!({"outcome": "succeeded", "changes": [], "agents": agents()}),
+        );
+        let command = text
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("Invoke:"))
+            .unwrap();
+        let script = format!(
+            "openshell() {{ test \"$*\" = 'sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input -' || return 3; cat; }}\n{command}"
+        );
+        let output = std::process::Command::new("sh")
+            .args(["-c", &script])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "the printed command must run: {command}"
+        );
+        let prompt: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(prompt, "Reply with exactly READY.");
+    }
+
+    #[test]
     fn plan_and_apply_output_tells_how_to_invoke_each_agent() {
         let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
         for (command, outcome) in [("plan", "planned"), ("apply", "succeeded")] {
@@ -1163,7 +1232,7 @@ mod tests {
             for expected in [
                 "export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671",
                 "export OPENSHELL_WORKSPACE=nc-1234567890abcdef",
-                "Invoke: openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input FILE",
+                "Invoke: printf '%s\\n' '\"Reply with exactly READY.\"' | openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input -",
                 "reviewer: agent critic, no runtime recorded",
             ] {
                 assert!(
@@ -1467,7 +1536,10 @@ mod tests {
             ])
             .unwrap();
             let result = if operation == "onboard" {
-                CommandResult::Authored(Some("deployment.yaml".into()))
+                CommandResult::Authored {
+                    path: Some("deployment.yaml".into()),
+                    missing_credentials: Vec::new(),
+                }
             } else {
                 CommandResult::Operation(Box::new(
                     serde_json::from_value(json!({

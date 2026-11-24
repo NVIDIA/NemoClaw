@@ -46,11 +46,53 @@ Neither check establishes successful model inference.
 
 ## Choosing Native Access
 
+Prepare the [host OpenShell client](#selecting-the-host-openshell-client) before running a native command.
 Select the deployment's [NVIDIA OpenShell gateway and workspace](interfaces.md#selecting-the-gateway-and-workspace) before forwarding ports or running sandbox commands.
 Fabric's adapter contract defines supported input, output, native interfaces, and authentication.
 The [Fabric documentation](https://github.com/NVIDIA/NeMo-Fabric/tree/main/docs) owns native integration guidance.
 Use the source revision pinned in the selected image when following it.
 A successful generic invocation doesn't imply that every result has an `output.response` field.
+
+### Selecting the Host OpenShell Client
+
+Use the OpenShell client qualified with the NemoClaw release that owns the deployment.
+The CLI reports the required version, the executable found on `PATH`, and its detected version beside native access commands.
+A missing executable, unsuccessful version command, or unrecognized version output leaves compatibility unverified.
+This check reads `openshell --version`; it does not authenticate to a gateway or test a request.
+Shell aliases and functions can override `PATH`; use the reported executable by absolute path if your shell defines one.
+
+The gateway check is separate: the gateway must report exactly the OpenShell version pinned by that NemoClaw release and support its selected compute driver.
+For an external gateway that fails this contract, ask its operator for a compatible endpoint; installing another client does not change the gateway.
+Do not upgrade another deployment's gateway to satisfy this one.
+
+For a release, download that tag's `version-pins.json` and use `components.openshellClient.version` and its platform archive under `components.openshellClient.archives`.
+Older release metadata can omit this entry; use that tag's `versions.json` and release-specific prerequisites instead.
+For a source build, use the same checkout's `openshell` and `platforms.PLATFORM.openshell` entries in `versions.json`.
+Do not read a newer checkout's pin for an older deployment.
+Only platforms with an archive entry have this pinned download route; Windows ARM64 uses the [WSL2 Linux client](../get-started/windows-wsl.md#preparing-the-matching-openshell-cli).
+
+On macOS ARM64, with `curl`, `jq`, and the selected release's `version-pins.json` in the current directory, download and verify its client as follows.
+For an older release without this entry, follow its own prerequisites instead of substituting a newer release's metadata.
+
+```sh
+CLIENT_VERSION=$(jq -er '.components.openshellClient.version' version-pins.json) || exit 1
+CLIENT_URL=$(jq -er '.components.openshellClient.archives.darwin_arm64.url' version-pins.json) || exit 1
+CLIENT_SHA=$(jq -er '.components.openshellClient.archives.darwin_arm64.sha256' version-pins.json) || exit 1
+CLIENT_DIR="$HOME/.local/opt/nemoclaw/clients/openshell/$CLIENT_VERSION"
+mkdir -p "$CLIENT_DIR"
+curl -fL "$CLIENT_URL" -o "$CLIENT_DIR/archive.tar.gz" || exit 1
+printf '%s  %s\n' "$CLIENT_SHA" "$CLIENT_DIR/archive.tar.gz" | shasum -a 256 --check || exit 1
+tar -xzf "$CLIENT_DIR/archive.tar.gz" -C "$CLIENT_DIR" || exit 1
+export PATH="$CLIENT_DIR:$PATH"
+command -v openshell
+openshell --version
+```
+
+Stop on a verification failure.
+The detected version must equal `CLIENT_VERSION`; otherwise check the selected executable before continuing.
+Preserve existing directories; reuse a verified client when two NemoClaw releases qualify the same version.
+When their pins differ, select the appropriate directory in each deployment's shell.
+Changing `PATH` does not alter another installation, a running process, or a gateway.
 
 ### Deploying Several Agents
 
@@ -66,7 +108,9 @@ The [headless OpenClaw request](#running-one-headless-openclaw-request) shows a 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
-Plan and apply print this command for each agent with both filled in, and JSON results report them under `agents`.
+Plan and apply print a Bash `Invoke:` sample for each recorded runtime, with the sandbox, agent, runtime ID, and a JSON prompt filled in; run it in WSL on Windows.
+Select the gateway and workspace with the commands printed before the sample.
+JSON results report the agent and runtime ID under `agents`.
 See [invoke an agent](interfaces.md#invoking-an-agent).
 Use `--input -` to read the value from stdin instead.
 See the [bridge commands](../../internal-docs/design/fabric-management.md#bridge-commands).
@@ -76,6 +120,8 @@ A request can incur inference charges and affect retained agent history.
 Don't assume a universal result shape.
 Check `result.status` as well as the outer `status`: the outer one only reports that `fabric-agent-ctl` completed the call, while a failed run reports `result.status: failed` with Fabric's error in `result.error`.
 `result.artifacts` names the files Fabric kept for that request, such as the adapter's output.
+Empty stdin is not a prompt: send a JSON string, including its ASCII double quotes.
+For invalid JSON, correct the input before retrying; changing the API key cannot repair the input.
 
 ### Reading a Hermes Reply
 
@@ -83,14 +129,32 @@ Save a Hermes invocation's stdout to `reply.json` and check the command's exit s
 To show its reply and status without printing the full adapter result, run:
 
 ```sh
-jq '{status: .result.status, error: .result.error, response: .result.output.response, adapter_stdout: .result.output.adapter_stdout}' reply.json
+jq '{command_status: .status, agent_status: .result.status, error: .result.error, response: .result.output.response}' reply.json
+jq -e '.status == "succeeded" and .result.status == "succeeded"' reply.json >/dev/null
 ```
 
 This filter uses the Hermes adapter's output fields; other adapters can return another shape.
 Keep `reply.json` for the full result and artifacts.
+Keep it private and review it for credentials and personal data before sharing; native diagnostics are not guaranteed to be redacted by NemoClaw.
 Adapter stdout can include an auxiliary title-generation warning even when `result.status` is `succeeded` and the agent replies.
 That warning does not by itself establish an invocation failure.
 Follow the adapter's configuration documentation before changing a managed harness in response to a `hermes setup` suggestion.
+
+### Diagnosing an Authentication Failure
+
+An HTTP 401 or 403 reported by the inference request is evidence of rejection for that request; a successful model listing does not establish permission to invoke the selected model.
+Check the YAML's inference base URL, exact model, and `credential.env` reference.
+The NVIDIA Endpoints preset uses `https://integrate.api.nvidia.com/v1` and a key from [NVIDIA API Catalog](https://build.nvidia.com/settings/api-keys).
+An SSO session at `inference.nvidia.com` does not supply that API key.
+Do not infer a key's issuer or validity from its prefix.
+
+If a request to the same model and base URL through the provider's supported client also returns 401 or 403 with the same key, resolve that rejection with the provider.
+If that request succeeds while the sandbox request fails, check the deployment's selected endpoint, credential registration, and running process revision.
+Without that comparison, retain both possibilities; a 401 alone does not identify which deployment setting is wrong.
+Do not put the key in command arguments or shared debug logs.
+Use [managed credential rotation](../security/credential-rotation.md#inference-web-search-and-api-keys-you-supply) to register a replacement value and restart affected agents through apply.
+That apply replaces affected sandboxes and deletes their files and conversations except on mounted volumes; preserve required data first.
+Do not recreate the whole deployment or run `hermes setup` as the credential-update procedure.
 
 ### Running One Headless OpenClaw Request
 

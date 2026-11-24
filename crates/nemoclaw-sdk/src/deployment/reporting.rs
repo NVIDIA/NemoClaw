@@ -326,7 +326,7 @@ pub(super) fn unverified_message(name: &str) -> String {
         "hardware"=>"Target hardware inventory remains unverified; requirements are still checked by the owning runtime.",
         "inference"=>"Inference endpoint catalog remains unverified from the control host; sandbox connectivity and generation APIs require their own checks.",
         "service"=>"Managed inference readiness is checked during apply; plan does not establish current service readiness.",
-        _=>"Selected image Fabric capabilities are unverified; image metadata or compatibility is incomplete. Runtime adapter checks remain required.",
+        _=>"The provider has not verified the selected image's Fabric capabilities in this plan. Onboarding's metadata check does not test a live runtime; apply must complete the provider and runtime adapter checks.",
     }.into()
 }
 impl Plan {

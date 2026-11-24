@@ -265,10 +265,28 @@ impl JourneyWizard {
             }
         } else {
             let selected = self.choice_index(question);
+            let images = self
+                .state()
+                .agent_images_request(question.id())
+                .and_then(|request| self.observations().get(&request));
             let mut choices = question
                 .choices()
                 .iter()
-                .map(|value| labels::choice(question, value))
+                .map(|value| {
+                    let label = labels::choice(question, value);
+                    match images {
+                        Some(images) => {
+                            let tags = value
+                                .as_str()
+                                .and_then(|reference| images.details.get(reference))
+                                .map(|details| details.tags.join(", "))
+                                .filter(|tags| !tags.is_empty())
+                                .unwrap_or_else(|| "tags not advertised".into());
+                            format!("{tags} · {label}")
+                        }
+                        None => label,
+                    }
+                })
                 .collect::<Vec<_>>();
             if question.allows_custom_answer() {
                 choices.push("Type another model".into());
@@ -282,6 +300,32 @@ impl JourneyWizard {
                     .enumerate()
                     .map(|(index, value)| choice_line(value, index == selected)),
             );
+            if let Some(images) = images {
+                let detail = question
+                    .choices()
+                    .get(selected)
+                    .and_then(Value::as_str)
+                    .and_then(|reference| images.details.get(reference));
+                let created = detail
+                    .and_then(|detail| detail.created)
+                    .and_then(|created| time::OffsetDateTime::from_unix_timestamp(created).ok())
+                    .and_then(|created| {
+                        created
+                            .format(&time::format_description::well_known::Rfc3339)
+                            .ok()
+                    })
+                    .unwrap_or_else(|| "not advertised".into());
+                let revision = detail
+                    .and_then(|detail| detail.revision.as_deref())
+                    .unwrap_or("not advertised");
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    terminal_text(&format!(
+                        "Selected image: created {created} · revision label {revision}"
+                    )),
+                    Style::new().fg(MUTED),
+                )));
+            }
         }
         lines
     }

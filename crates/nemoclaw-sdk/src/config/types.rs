@@ -502,7 +502,7 @@ pub enum AuthorizationMode {
 pub struct Image {
     #[serde(rename = "ref")]
     #[schemars(default)]
-    /// Immutable image reference, pinned by SHA-256 digest. Required on every gateway target; build one using docs/build-deploy/build.md#building-agent-images.
+    /// Immutable image reference, pinned by SHA-256 digest. Required on every gateway target. Build: https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images. For a release, use its listed image digest; draft images require registry access: https://github.com/NVIDIA/NemoClaw/blob/v1/docs/get-started/install.md.
     pub ref_: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "FileRef")]

@@ -985,7 +985,9 @@ pub(super) mod discovery_tests {
             "{absent}"
         );
         assert!(!absent.contains("metadata"), "{absent}");
-        assert!(unknown.contains("image metadata or compatibility is incomplete"));
+        assert!(
+            unknown.contains("provider has not verified the selected image's Fabric capabilities")
+        );
     }
 
     /// OpenTofu omits an output that is partly unknown, and keeps the reads

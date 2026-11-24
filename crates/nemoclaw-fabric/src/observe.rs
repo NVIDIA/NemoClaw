@@ -4,6 +4,7 @@
 
 use crate::{
     AgentImagesObservation, FabricObservation, FabricRequirements,
+    capabilities::AgentImageDetails,
     capabilities::{ImageMetadata, assess_image},
     catalog::{FabricCatalog, IMAGE_CATALOG_LABEL},
 };
@@ -97,6 +98,7 @@ pub async fn observe_agent_images(
         };
     images.sort_by_key(|image| std::cmp::Reverse(image.created));
     let mut missing_digest = false;
+    let mut details = std::collections::BTreeMap::new();
     let references: Vec<String> = images
         .into_iter()
         .filter(|image| {
@@ -115,9 +117,28 @@ pub async fn observe_agent_images(
         .filter_map(|image| {
             let reference = image
                 .repo_digests
-                .into_iter()
-                .find(|reference| reference.contains("@sha256:"));
+                .iter()
+                .find(|reference| reference.contains("@sha256:"))
+                .cloned();
             missing_digest |= reference.is_none();
+            if let Some(reference) = &reference {
+                details.insert(
+                    reference.clone(),
+                    AgentImageDetails {
+                        tags: image
+                            .repo_tags
+                            .into_iter()
+                            .filter(|tag| tag != "<none>:<none>")
+                            .collect(),
+                        created: (image.created > 0).then_some(image.created),
+                        revision: image
+                            .labels
+                            .get("org.opencontainers.image.revision")
+                            .filter(|value| !value.trim().is_empty())
+                            .cloned(),
+                    },
+                );
+            }
             reference
         })
         .collect();
@@ -130,6 +151,7 @@ pub async fn observe_agent_images(
         status,
         reason,
         references,
+        details,
     }
 }
 

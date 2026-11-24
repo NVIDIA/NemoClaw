@@ -3258,6 +3258,7 @@ dependencies = [
  "serde-saphyr 1.3.0",
  "serde_json",
  "tempfile",
+ "time",
  "tokio",
  "url",
 ]

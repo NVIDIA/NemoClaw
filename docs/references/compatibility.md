@@ -22,6 +22,7 @@ Every entry except `developmentIssuer` also has a `version`.
 |---|---|---|
 | `opentofu` | OpenTofu | `archives` |
 | `dockerProvider`, `helmProvider` | The Docker and Helm providers | `archives` |
+| `openshellClient` | The host OpenShell CLI qualified with this release | `archives` |
 | `gateway`, `supervisor`, `sandboxRuntime` | OpenShell | `image` |
 | `gatewayChart` | OpenShell | `chart` |
 | `developmentIssuer`, the issuer that a managed Kubernetes gateway runs for the `development` profile | None | `image` |

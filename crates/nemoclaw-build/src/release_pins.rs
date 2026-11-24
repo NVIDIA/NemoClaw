@@ -92,6 +92,7 @@ pub fn pins(versions: &[u8], inventory: &[u8], tag: &str) -> Result<String> {
     let mut components = BTreeMap::new();
     for (name, version, tool) in [
         ("opentofu", &versions.opentofu, "tofu"),
+        ("openshellClient", &versions.openshell, "openshell"),
         (
             "dockerProvider",
             &versions.docker_provider,
@@ -214,7 +215,16 @@ mod tests {
                 "v0.1.0",
             )
         };
-        assert!(generate(&versions, json!([hermes])).is_ok());
+        let generated: Value =
+            serde_json::from_str(&generate(&versions, json!([hermes])).unwrap()).unwrap();
+        assert_eq!(
+            generated.pointer("/components/openshellClient/version"),
+            versions.get("openshell")
+        );
+        assert_eq!(
+            generated.pointer("/components/openshellClient/archives/linux_arm64"),
+            versions.pointer("/platforms/linux_arm64/openshell")
+        );
         for (case, versions, inventory) in [
             (
                 "an image by tag",

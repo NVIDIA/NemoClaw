@@ -173,9 +173,9 @@ async fn agent_images_install_the_adapter_and_have_a_digest_newest_first() {
         serde_json::to_string(&catalog).unwrap()
     };
     let image = |created: i64, digest: &str, catalog: String| {
-        json!({"Id": "sha256:id", "ParentId": "", "RepoTags": [], "RepoDigests": [digest],
+        json!({"Id": "sha256:id", "ParentId": "", "RepoTags": ["hermes:local"], "RepoDigests": [digest],
                "Created": created, "Size": 1, "SharedSize": -1, "Containers": -1,
-               "Labels": {IMAGE_CATALOG_LABEL: catalog}})
+               "Labels": {IMAGE_CATALOG_LABEL: catalog, "org.opencontainers.image.revision": "abc123"}})
     };
     let older = format!("old@sha256:{}", "1".repeat(64));
     let newer = format!("new@sha256:{}", "2".repeat(64));
@@ -208,7 +208,11 @@ async fn agent_images_install_the_adapter_and_have_a_digest_newest_first() {
         "{:?}",
         observed.reason
     );
-    assert_eq!(observed.references, [newer, older]);
+    assert_eq!(observed.references, [newer.clone(), older]);
+    let details = serde_json::to_value(&observed).unwrap();
+    assert_eq!(details["details"][&newer]["tags"], json!(["hermes:local"]));
+    assert_eq!(details["details"][&newer]["created"], 2);
+    assert_eq!(details["details"][&newer]["revision"], "abc123");
 }
 
 #[tokio::test]

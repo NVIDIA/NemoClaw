@@ -1588,6 +1588,7 @@ fn agent_images(references: &[&str]) -> DiscoveryObservation {
     DiscoveryObservation::AgentImages(AgentImagesObservation {
         status: ObservationStatus::Available,
         reason: None,
+        details: Default::default(),
         references: references
             .iter()
             .map(|reference| (*reference).into())
@@ -1600,6 +1601,120 @@ const OLDER_HERMES_IMAGE: &str =
 const OPENCLAW_IMAGE: &str =
     "nc-fabric@sha256:4444444444444444444444444444444444444444444444444444444444444444";
 const IMAGE_QUESTION: &str = "/spec/sandboxes/assistant/image/ref";
+
+#[test]
+fn image_choices_show_engine_metadata_without_changing_the_saved_digest() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(
+        query,
+        DiscoveryObservation::AgentImages(
+            serde_json::from_value(serde_json::json!({
+                "status": "available", "reason": null,
+                "references": [HERMES_IMAGE, OLDER_HERMES_IMAGE],
+                "details": {HERMES_IMAGE: {
+                    "tags": ["hermes:local"], "created": 1795550400,
+                    "revision": "abc123"
+                }}
+            }))
+            .unwrap(),
+        ),
+    );
+    let text = flat(&screen(&wizard, 160, 45));
+    for expected in ["hermes:local", "2026-11-24", "abc123", "not advertised"] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+    wizard.advance();
+    assert_eq!(
+        wizard.state().values().pointer(IMAGE_QUESTION),
+        Some(&serde_json::json!(HERMES_IMAGE))
+    );
+}
+
+#[test]
+fn compatible_review_distinguishes_metadata_from_runtime_and_inference_checks() {
+    let wizard = reviewing_wizard_with("nvidia.fabric.hermes");
+    let resolution = wizard.state().resolve(&wizard.capabilities).unwrap();
+    let rows = super::summary::rows(
+        resolution.assessment().document().unwrap(),
+        &super::summary::Facts {
+            observations: wizard.observations(),
+            target: Some(nemoclaw_authoring::CompatibilityStatus::Compatible),
+            output: None,
+        },
+    );
+    let image = rows.iter().find(|row| row.label == "Image").unwrap();
+    assert_eq!(image.status.as_ref().unwrap().text, "metadata compatible");
+    let detail = image.detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("runtime") && detail.contains("inference"),
+        "{detail}"
+    );
+}
+
+#[test]
+fn review_names_the_full_inference_url_before_a_request_is_attempted() {
+    let document = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../../examples/onboarding/openclaw.yaml").as_slice(),
+    )
+    .unwrap();
+    let rows = super::summary::rows(
+        &document,
+        &super::summary::Facts {
+            observations: &DiscoveryObservations::new(),
+            target: None,
+            output: None,
+        },
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.value == "https://integrate.api.nvidia.com/v1")
+    );
+}
+
+#[test]
+fn review_requests_gateway_credentials_at_plan_time() {
+    let document = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../../examples/platforms/kubernetes/external-gateway.yaml")
+            .as_slice(),
+    )
+    .unwrap();
+    let mut value = serde_json::to_value(document).unwrap();
+    value["spec"]["inferenceProviders"]["inference"]["credential"]["env"] =
+        serde_json::json!("GATEWAY_TOKEN");
+    let document =
+        nemoclaw_sdk::config::Document::parse(serde_json::to_vec(&value).unwrap().as_slice())
+            .unwrap();
+    let mut observations = DiscoveryObservations::new();
+    for reference in document.plan_credential_names() {
+        observations.record(
+            DiscoveryQuery::Credential(CredentialRequest {
+                reference: reference.into(),
+            }),
+            DiscoveryObservation::Credential(CredentialObservation {
+                reference: reference.into(),
+                status: ObservationStatus::Unavailable,
+                reason: None,
+            }),
+        );
+    }
+    let rows = super::summary::rows(
+        &document,
+        &super::summary::Facts {
+            observations: &observations,
+            target: None,
+            output: None,
+        },
+    );
+    let row = rows
+        .iter()
+        .find(|row| row.value == "GATEWAY_TOKEN")
+        .unwrap();
+    assert_eq!(
+        row.status.as_ref().unwrap().text,
+        "not set (plan will ask for it)"
+    );
+}
 
 #[test]
 fn a_discovered_image_is_named_when_its_question_is_skipped() {
@@ -1621,6 +1736,7 @@ fn a_matching_image_without_a_digest_explains_how_to_rebuild_it() {
         status: ObservationStatus::Available,
         reason: Some("Matching images have no repository digest. Enable the containerd image store and rebuild.".into()),
         references: vec![],
+        details: Default::default(),
     }));
     let text = flat(&screen(&wizard, 160, 40));
     assert!(text.contains("no repository digest"), "{text}");
@@ -1814,6 +1930,7 @@ fn an_image_the_engine_could_not_list_is_still_asked() {
             status: ObservationStatus::Unknown,
             reason: Some("the engine did not answer".into()),
             references: vec![HERMES_IMAGE.into()],
+            details: Default::default(),
         }),
     );
     assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
