@@ -56,18 +56,18 @@ fn preview_ids_cannot_replace_main_previews() {
 }
 
 #[test]
-fn preview_requires_success_and_its_own_url() {
+fn successful_preview_opens_its_product_home() {
     let expected = preview_url("nemoclaw-v1-pr-1").unwrap();
     let reported = format!("Published docs to {expected}/overview\n");
     assert_eq!(
         published_preview("nemoclaw-v1-pr-1", true, &reported).unwrap(),
-        format!("{expected}/overview")
+        format!("{expected}/home")
     );
     // Fern colours its output; the URL ends at the escape sequence.
     let coloured = format!("Published docs to {expected}\u{1b}[0m\n");
     assert_eq!(
         published_preview("nemoclaw-v1-pr-1", true, &coloured).unwrap(),
-        expected
+        format!("{expected}/home")
     );
     assert!(published_preview("nemoclaw-v1-pr-1", false, &reported).is_err());
     for output in [

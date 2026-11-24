@@ -79,7 +79,7 @@ pub fn preview_url(identifier: &str) -> Result<String> {
     ))
 }
 
-/// The URL Fern reports for a successful preview, if it is this preview's.
+/// Link to the product home after Fern reports a successful deployment to this preview.
 pub fn published_preview(identifier: &str, succeeded: bool, output: &str) -> Result<String> {
     let expected = preview_url(identifier)?;
     if !succeeded {
@@ -95,7 +95,9 @@ pub fn published_preview(identifier: &str, succeeded: bool, output: &str) -> Res
         })
         .filter(|url| url.starts_with("https://"));
     match reported {
-        Some(url) if url == expected || url.starts_with(&format!("{expected}/")) => Ok(url.into()),
+        Some(url) if url == expected || url.starts_with(&format!("{expected}/")) => {
+            Ok(format!("{expected}/home"))
+        }
         _ => Err("Fern did not report the expected v1 preview URL".into()),
     }
 }

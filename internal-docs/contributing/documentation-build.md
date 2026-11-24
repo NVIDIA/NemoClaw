@@ -111,7 +111,7 @@ cargo run --locked -p nemoclaw-build -- fern preview --id nemoclaw-v1-my-branch
 ```
 
 This writes a remotely hosted preview; do not include secrets in documentation.
-The preview builds the same [v1 product](../../fern/product.yml) as official staging. The preview URL opens `/nemoclaw/v1/`, and its v0 links open official staging.
+The preview builds the same [v1 product](../../fern/product.yml) as official staging. The preview link opens `/nemoclaw/v1/home`, and its v0 links open official staging.
 The helper passes the token to Fern through the environment, does not store it in the repository, and prints the verified preview URL.
 Unset a locally supplied token when finished.
 Delete only the preview you own:
@@ -128,7 +128,7 @@ Manual runs perform validation only.
 
 | Event | Publication |
 |---|---|
-| Same-repository PR targeting `v1` with `FERN_TOKEN` | Isolated v1 product at `nvidia-preview-nemoclaw-v1-pr-N.docs.buildwithfern.com/nemoclaw/v1`, linked in the PR comment |
+| Same-repository PR targeting `v1` with `FERN_TOKEN` | Isolated v1 product at `nvidia-preview-nemoclaw-v1-pr-N.docs.buildwithfern.com/nemoclaw/v1/home`, linked in the PR comment |
 | PR targeting another branch, fork PR, Dependabot PR, or PR without the token | Validation only |
 | Push to `v1` | Publish the official v1 staging site, then delete associated merged v1 PR previews |
 | Final `v0.1.<patch>` tag on a commit reachable from `origin/v1` | Publish the tagged guides to the [public v1 home](https://docs.nvidia.com/nemoclaw/v1/home) |
