@@ -140,6 +140,8 @@ fn every_scenario_test_names_its_inputs() {
             let case = match scenario.as_str() {
                 "dgx-station-openclaw-nemotron" => Path::new(EXAMPLES)
                     .join("platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml"),
+                "dgx-station-hermes-nemotron" => Path::new(EXAMPLES)
+                    .join("platforms/docker/vllm/dgx-station/hermes-dgx-station.yaml"),
                 "dgx-spark-openclaw-nemotron" => Path::new(EXAMPLES)
                     .join("platforms/docker/vllm/dgx-spark/openclaw-dgx-spark.yaml"),
                 _ => Path::new(CASES).join(format!("{scenario}.yaml")),
