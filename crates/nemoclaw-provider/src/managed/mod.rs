@@ -18,7 +18,7 @@ pub use backend::{ManagedBackend, connection_endpoint, runtime_engine};
 pub(crate) fn definitions() -> [crate::Definition; 2] {
     use crate::{Definition, carry_prior, rerun_when_stopped};
     let definition = |kind, fields: &[&'static str], mutable: &[&'static str]| {
-        let optional: Vec<_> = ["image_pull_policy", CONFIG_ATTRIBUTE]
+        let optional: Vec<_> = ["image_pull_policy", CONFIG_ATTRIBUTE, TELEMETRY_ATTRIBUTE]
             .into_iter()
             .filter(|attribute| fields.contains(attribute))
             .collect();
@@ -37,7 +37,12 @@ pub(crate) fn definitions() -> [crate::Definition; 2] {
     [
         definition(
             GATEWAY_KIND,
-            &["running", "image_pull_policy", CONFIG_ATTRIBUTE],
+            &[
+                "running",
+                "image_pull_policy",
+                CONFIG_ATTRIBUTE,
+                TELEMETRY_ATTRIBUTE,
+            ],
             &["running", "image_pull_policy"],
         )
         .computed("running", rerun_when_stopped),

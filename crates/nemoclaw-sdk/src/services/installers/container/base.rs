@@ -56,6 +56,7 @@ pub(crate) fn specification(
         gateway,
         image: String::new(),
         process: Some(process),
+        telemetry: None,
     };
     spec.validate()?;
     Ok(spec)

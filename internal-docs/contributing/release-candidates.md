@@ -48,6 +48,8 @@ Plan and apply:
   Each of its runtimes gets its own state folder.
   Before, plan and the `nemoclaw onboard` review rejected it over `harness.runtime.keep_state`, a field the configuration doesn't need to set.
 - When the only image on the engine for the chosen harness can't run the configuration, `nemoclaw onboard` asks for the image again and says why, instead of choosing that image without asking.
+- Plan and apply no longer fail with `managed runtime environment drifted` when `NEMOCLAW_DISABLE_TELEMETRY` differs from the value a Podman gateway was created with.
+  NemoClaw records the gateway's OpenShell telemetry setting when it plans the deployment, so the next plan with the other value replaces the gateway and keeps its storage, as it does for a Docker gateway.
 
 ### Changes in v0.1.0-rc12
 

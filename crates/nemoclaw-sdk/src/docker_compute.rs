@@ -539,6 +539,9 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                         .map_err(|_| { Error::State("cannot encode gateway config") })?
                 );
             }
+            if let Some(telemetry) = gateway.telemetry {
+                settings["openshell_telemetry"] = json!(telemetry.to_string());
+            }
             let apf = gateway.managed_apf();
             if let Some(apf) = apf {
                 settings["apf_endpoint"] = json!(apf.endpoint);
@@ -871,6 +874,7 @@ mod tests {
                 "name": gateway["name"],
                 "endpoint": endpoint,
                 "data_path": "${openshell_gateway_storage.runtime.data_path}",
+                "openshell_telemetry": crate::managed::gateway_telemetry_enabled().to_string(),
             })
         );
         assert!(gateway.get("network_mode").is_none());

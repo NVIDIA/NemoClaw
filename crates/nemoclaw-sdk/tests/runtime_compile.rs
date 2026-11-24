@@ -741,17 +741,21 @@ fn local_gateway_specifications_carry_the_sdk_image_pin() {
     .into_iter()
     .map(|(name, value)| (name.into(), value.into()))
     .collect();
+    // The gateway records the OpenShell telemetry setting this compilation decided.
+    let telemetry = managed::gateway_telemetry_enabled();
+    gateway.insert(managed::TELEMETRY_ATTRIBUTE.into(), telemetry.to_string());
     assert_eq!(values(managed::GATEWAY_KIND), &gateway);
     let settings = r#""gateway":{"target":{"docker":{"engine":"unix:///var/run/docker.sock","port":17681,"networkCIDR":"172.30.110.0/24"}}}"#;
     let spec = managed::Spec::from_gateway_row(managed::GATEWAY_KIND, &gateway).unwrap();
     assert_eq!(
         spec.json().unwrap(),
         format!(
-            r#"{{"layout":2,"kind":"managed_gateway","name":"nc-68d203b0c7e6083f-gateway","owner":"302ff5e1-088d-42ce-959f-4ff4c3570c13","generation":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",{settings},"image":"{DEFAULT_GATEWAY_IMAGE}"}}"#
+            r#"{{"layout":2,"kind":"managed_gateway","name":"nc-68d203b0c7e6083f-gateway","owner":"302ff5e1-088d-42ce-959f-4ff4c3570c13","generation":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",{settings},"image":"{DEFAULT_GATEWAY_IMAGE}","telemetry":{telemetry}}}"#
         )
     );
-    // Docker gateway data does not depend on the listen endpoint.
+    // Docker gateway data depends on neither the listen endpoint nor telemetry.
     gateway.remove("endpoint");
+    gateway.remove(managed::TELEMETRY_ATTRIBUTE);
     assert_eq!(values(managed::GATEWAY_STORAGE_KIND), &gateway);
     // A service placed on the gateway's engine embeds the same settings.
     assert!(values("inference_service")["spec"].contains(settings));

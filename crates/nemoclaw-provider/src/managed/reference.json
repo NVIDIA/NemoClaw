@@ -135,7 +135,7 @@
       "nemoclaw.nvidia.com/runtime-spec": "53850d251ed9f55833b123078e857671f2f7f72c0d2f1a66ba2d63e6a173a551",
       "nemoclaw.nvidia.com/uid": "302ff5e1-088d-42ce-959f-4ff4c3570c13"
     },
-    "spec": "{\"layout\":2,\"kind\":\"managed_gateway\",\"name\":\"nc-68d203b0c7e6083f-gateway\",\"owner\":\"302ff5e1-088d-42ce-959f-4ff4c3570c13\",\"generation\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"gateway\":{\"target\":{\"docker\":{\"engine\":\"unix:///var/run/docker.sock\",\"port\":17681,\"networkCIDR\":\"172.30.110.0/24\"}}},\"image\":\"ghcr.io/nvidia/openshell/gateway@sha256:1fd9e1e807990e66c9486a28d3ce9d649fd7528df48d0e830d2de2148b52dfe5\"}"
+    "spec": "{\"layout\":2,\"kind\":\"managed_gateway\",\"name\":\"nc-68d203b0c7e6083f-gateway\",\"owner\":\"302ff5e1-088d-42ce-959f-4ff4c3570c13\",\"generation\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"gateway\":{\"target\":{\"docker\":{\"engine\":\"unix:///var/run/docker.sock\",\"port\":17681,\"networkCIDR\":\"172.30.110.0/24\"}}},\"image\":\"ghcr.io/nvidia/openshell/gateway@sha256:1fd9e1e807990e66c9486a28d3ce9d649fd7528df48d0e830d2de2148b52dfe5\",\"telemetry\":true}"
   },
   {
     "config": {
