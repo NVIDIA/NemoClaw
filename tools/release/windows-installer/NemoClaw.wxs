@@ -66,6 +66,6 @@
     <WixVariable Id="WixUILicenseRtf" Value="$(LicenseRtf)" />
     <WixVariable Id="WixUIBannerBmp" Value="$(ArtworkDir)\banner.bmp" />
     <WixVariable Id="WixUIDialogBmp" Value="$(ArtworkDir)\dialog.bmp" />
-    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Open a new terminal so that the nemoclaw command is on your Path.&#13;&#10;&#13;&#10;Before you deploy, install Docker Desktop or Podman. Then run nemoclaw onboard to write your first deployment file.&#13;&#10;&#13;&#10;To get started, follow the first-deployment guide linked from github.com/NVIDIA/NemoClaw/tree/v1." />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Open PowerShell and select this installation:&#13;&#10;$env:Path = &quot;$env:LOCALAPPDATA\Programs\NemoClaw\bin;$env:Path&quot;&#13;&#10;&#13;&#10;Start Docker Desktop or Podman.&#13;&#10;Run nemoclaw onboard in your deployment directory." />
   </Package>
 </Wix>

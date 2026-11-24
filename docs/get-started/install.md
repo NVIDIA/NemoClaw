@@ -127,8 +127,17 @@ A release attaches the installer only when its Windows executables are signed, a
    You can open the file in File Explorer instead.
    To install without the pages, such as from a script, add `"/qn"` to the arguments and `-PassThru` to `Start-Process`; the returned process's `ExitCode` is `0` on success.
 
-3. Open a new terminal and run `nemoclaw --version`, which prints `nemoclaw` and the release's version.
-   Terminals that were already open don't have the new `Path`.
+3. Open PowerShell and select this installation for the current session.
+   This also takes precedence over an existing NemoClaw Classic or system-wide installation without changing it.
+
+   ```powershell
+   $env:Path = "$env:LOCALAPPDATA\Programs\NemoClaw\bin;$env:Path"
+   Get-Command nemoclaw
+   nemoclaw --version
+   ```
+
+   Expect the executable under `%LOCALAPPDATA%\Programs\NemoClaw\bin` and the release's version.
+   Repeat the `Path` assignment in each PowerShell session that needs this release.
 
 If the version differs from the release you installed, check which executable Windows finds first:
 
@@ -137,9 +146,9 @@ where.exe nemoclaw
 ```
 
 An existing archive or system-wide installation can appear before the installer's directory on `Path`.
-For an older archive, remove its `bin` entry from your user `Path` in **Edit environment variables for your account**, then open a new terminal.
-Keep the archive itself if an existing deployment still needs that release.
-If a system-wide installation takes precedence, ask its administrator about removing that installation or invoke this installer's CLI by its full path:
+Preserve installations that existing deployments need.
+The session's `Path` assignment selects this release ahead of machine and user entries.
+An alias or function can still override it; inspect `Get-Command nemoclaw -All` and invoke the CLI by its full path if necessary:
 
 ```powershell
 & "$env:LOCALAPPDATA\Programs\NemoClaw\bin\nemoclaw.exe" --version
@@ -147,7 +156,7 @@ If a system-wide installation takes precedence, ask its administrator about remo
 
 The installer changes only your user `Path`; it doesn't remove other installations or edit the machine `Path`.
 
-Before your first deployment, install and start Docker Desktop or Podman, then run `nemoclaw onboard` in a directory for your deployment and follow the [first-deployment guide](first-deployment.md).
+Before your first deployment, install and start Docker Desktop or Podman, then run `nemoclaw onboard` in a directory for your deployment and follow [guided authoring](onboard.md).
 As with the archive, keep `%LOCALAPPDATA%\Programs\NemoClaw` unchanged, don't copy `nemoclaw.exe` elsewhere, and run it from your deployment's directory.
 
 ### Upgrading with the Windows Installer
@@ -170,7 +179,7 @@ Start-Process msiexec -ArgumentList "/x", $Installer, "/qn" -Wait
 ```
 
 This removes `%LOCALAPPDATA%\Programs\NemoClaw` and its `Path` entry.
-In a new terminal, `Get-Command nemoclaw` then reports that it can't find `nemoclaw`.
+In a new terminal, `Get-Command nemoclaw` reports any remaining installation, or reports that it cannot find `nemoclaw`.
 Deployment YAML and state directories stay where you created them.
 
 ## Installing on Linux or macOS

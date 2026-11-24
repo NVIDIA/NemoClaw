@@ -21,6 +21,7 @@ use std::{
 
 /// Presentation context and mutation facts reported by the SDK.
 pub(crate) struct RenderContext {
+    shell: Shell,
     pub(crate) host_client: Option<crate::host_client::Check>,
     operation: &'static str,
     mutation_started: Arc<AtomicBool>,
@@ -45,6 +46,7 @@ impl RenderContext {
             Command::Onboard { file, .. } => ("Onboard", file.clone()),
         };
         Self {
+            shell: Shell::native(),
             host_client: None,
             operation,
             mutation_started: Arc::new(AtomicBool::new(false)),
@@ -131,17 +133,17 @@ impl RenderContext {
         if self.state_dir != std::path::Path::new(".nemoclaw") {
             command.push_str(&format!(
                 " --state-dir {}",
-                shell_word(&self.state_dir.display().to_string())
+                self.shell.word(&self.state_dir.display().to_string())
             ));
         }
         if let Some(bundle) = &self.bundle_dir {
             command.push_str(&format!(
                 " --bundle {}",
-                shell_word(&bundle.display().to_string())
+                self.shell.word(&bundle.display().to_string())
             ));
         }
         command.push(' ');
-        command.push_str(&shell_word(&path.display().to_string()));
+        command.push_str(&self.shell.word(&path.display().to_string()));
         terminal_text(&command)
     }
 }
@@ -200,21 +202,60 @@ fn authored(path: &std::path::Path, context: &RenderContext) -> String {
     )
 }
 
-/// One shell word that reads back as `value`; a leading `-` gets `./` so it is not a flag.
-fn shell_word(value: &str) -> String {
-    let value = if value.starts_with('-') {
-        format!("./{value}")
-    } else {
-        value.to_string()
-    };
-    let plain = !value.is_empty()
-        && value
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
-    if plain {
-        value
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
+#[derive(Clone, Copy)]
+enum Shell {
+    Bash,
+    PowerShell,
+}
+
+impl Shell {
+    fn native() -> Self {
+        if cfg!(windows) {
+            Self::PowerShell
+        } else {
+            Self::Bash
+        }
+    }
+
+    /// A leading `-` gets `./` so a relative path is not read as a flag.
+    fn word(self, value: &str) -> String {
+        let value = if value.starts_with('-') {
+            format!("./{value}")
+        } else {
+            value.to_string()
+        };
+        let plain = !value.is_empty()
+            && value.chars().all(|c| {
+                c.is_ascii_alphanumeric()
+                    || match self {
+                        Self::Bash => "_@%+=:,./-",
+                        Self::PowerShell => "_./-",
+                    }
+                    .contains(c)
+            });
+        if plain { value } else { self.quoted(&value) }
+    }
+
+    fn quoted(self, value: &str) -> String {
+        let apostrophe = match self {
+            Self::Bash => "'\\''",
+            Self::PowerShell => "''",
+        };
+        format!("'{}'", value.replace('\'', apostrophe))
+    }
+
+    fn remove_env(self, name: &str) -> String {
+        match self {
+            Self::Bash => format!("unset {name}"),
+            Self::PowerShell => format!("Remove-Item Env:{name} -ErrorAction SilentlyContinue"),
+        }
+    }
+
+    fn set_env(self, name: &str, value: &str) -> String {
+        match self {
+            Self::Bash => format!("export {name}={}", self.word(value)),
+            Self::PowerShell => format!("$env:{name} = {}", self.quoted(value)),
+        }
     }
 }
 
@@ -604,7 +645,12 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         output.push_str("  This host check does not verify the gateway version, compute driver, or inference.\n");
     }
     if !result.agents.is_empty() {
-        output.push_str(&agent_invocation(result, planned, &mut selected));
+        output.push_str(&agent_invocation(
+            result,
+            planned,
+            &mut selected,
+            context.shell,
+        ));
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
@@ -619,7 +665,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         }
     }
     if result.outcome == Outcome::Succeeded && !result.interfaces.is_empty() {
-        output.push_str(&interface_access(result, selected));
+        output.push_str(&interface_access(result, selected, context.shell));
     }
     if result.outcome == Outcome::Succeeded {
         output.push_str("\nModel and agent responses were not tested.\n");
@@ -634,26 +680,33 @@ const UNPUBLISHED_GATEWAY: &str = "not published; forward a local port to the ga
 
 /// The commands that select this deployment's gateway and workspace, as the
 /// interface guide describes.
-fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String {
-    let mut output = String::from(
-        "  In each Bash terminal (WSL on Windows), select this deployment's gateway and workspace:\n",
-    );
+fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection, shell: Shell) -> String {
+    let terminal = match shell {
+        Shell::Bash => "Bash",
+        Shell::PowerShell => "PowerShell",
+    };
+    let mut output =
+        format!("  In each {terminal} terminal, select this deployment's gateway and workspace:\n");
     let endpoint = connection
         .gateway_endpoint
         .as_deref()
         .map_or_else(|| "its port forward".to_owned(), terminal_text);
     if connection.plaintext_loopback() {
         output.push_str(&format!(
-            "    unset OPENSHELL_GATEWAY\n    export OPENSHELL_GATEWAY_ENDPOINT={endpoint}\n"
+            "    {}\n    {}\n",
+            shell.remove_env("OPENSHELL_GATEWAY"),
+            shell.set_env("OPENSHELL_GATEWAY_ENDPOINT", &endpoint)
         ));
     } else {
         output.push_str(&format!(
-            "    unset OPENSHELL_GATEWAY_ENDPOINT\n    export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME  # your profile for {endpoint}\n"
+            "    {}\n    {}  # your profile for {endpoint}\n",
+            shell.remove_env("OPENSHELL_GATEWAY_ENDPOINT"),
+            shell.set_env("OPENSHELL_GATEWAY", "REPLACE_WITH_PROFILE_NAME")
         ));
     }
     output.push_str(&format!(
-        "    export OPENSHELL_WORKSPACE={}\n",
-        terminal_text(&connection.workspace)
+        "    {}\n",
+        shell.set_env("OPENSHELL_WORKSPACE", &terminal_text(&connection.workspace))
     ));
     output
 }
@@ -662,7 +715,12 @@ fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String 
 /// the gateway and workspace selection, which `selected` records printing. A
 /// plan lists the runtimes the last apply left, which its changes may replace,
 /// and prints nothing when the state records none, such as before any apply.
-fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool) -> String {
+fn agent_invocation(
+    result: &OperationResult,
+    planned: bool,
+    selected: &mut bool,
+    shell: Shell,
+) -> String {
     let invocable = result
         .agents
         .values()
@@ -676,7 +734,7 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
         "\nAgents:\n"
     });
     if invocable && let Some(connection) = &result.connection {
-        output.push_str(&gateway_selection(connection));
+        output.push_str(&gateway_selection(connection, shell));
         *selected = true;
     }
     for (sandbox, agent) in &result.agents {
@@ -684,11 +742,15 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
         let name = terminal_text(&agent.agent);
         match &agent.runtime_id {
             Some(runtime) => {
+                let prompt = match shell {
+                    Shell::Bash => "printf '%s\\n' '\"Reply with exactly READY.\"'",
+                    Shell::PowerShell => "'\"Reply with exactly READY.\"'",
+                };
                 let command = format!(
-                    "printf '%s\\n' '\"Reply with exactly READY.\"' | openshell sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input -",
-                    shell_word(sandbox.as_str()),
-                    shell_word(name.as_str()),
-                    shell_word(runtime)
+                    "{prompt} | openshell sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input -",
+                    shell.word(sandbox.as_str()),
+                    shell.word(name.as_str()),
+                    shell.word(runtime)
                 );
                 output.push_str(&format!(
                     "  {sandbox}: agent {name}, runtime {}\n    Invoke:   {}\n",
@@ -701,7 +763,7 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
     }
     if invocable {
         output.push_str(
-            "  The Bash sample sends one JSON prompt and can incur inference charges. --input FILE reads a sandbox file; --input - reads it from stdin; see docs/agents-inference/agents.md.\n",
+            "  The sample sends one JSON prompt and can incur inference charges. --input FILE reads a sandbox file; --input - reads it from stdin; see docs/agents-inference/agents.md.\n",
         );
     }
     output
@@ -710,11 +772,11 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
 /// How to reach each enabled interface: the commands a person runs, under the
 /// gateway and workspace selection, unless the agents' section printed it.
 /// Only the person's own retrieval command discloses a token.
-fn interface_access(result: &OperationResult, selected: bool) -> String {
+fn interface_access(result: &OperationResult, selected: bool, shell: Shell) -> String {
     use nemoclaw_sdk::SignIn;
     let mut output = String::from("\nAgent interfaces:\n");
     if !selected && let Some(connection) = &result.connection {
-        output.push_str(&gateway_selection(connection));
+        output.push_str(&gateway_selection(connection, shell));
     }
     for access in &result.interfaces {
         let sandbox = terminal_text(&access.sandbox);
@@ -917,11 +979,17 @@ mod tests {
     use serde_json::{Value, json};
 
     fn render(args: &[&str], result: Value) -> String {
+        render_for_shell(args, result, Shell::Bash)
+    }
+
+    fn render_for_shell(args: &[&str], result: Value, shell: Shell) -> String {
         let cli = Cli::try_parse_from(args).unwrap();
+        let mut context = RenderContext::new(&cli);
+        context.shell = shell;
         super::render(
             CommandResult::Operation(serde_json::from_value(result).unwrap()),
             cli.command.output_format(),
-            &RenderContext::new(&cli),
+            &context,
         )
         .unwrap()
     }
@@ -1163,6 +1231,139 @@ mod tests {
             "assistant": {"agent": "main", "runtimeId": "rt-1"},
             "reviewer": {"agent": "critic"}
         })
+    }
+
+    #[test]
+    fn powershell_handoff_selects_the_deployment_and_sends_json_on_stdin() {
+        let text = render_for_shell(
+            &["nemoclaw", "apply", "deployment.yaml"],
+            json!({"outcome": "succeeded", "changes": [], "agents": agents(),
+                "connection": {"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"}}),
+            Shell::PowerShell,
+        );
+        assert!(
+            text.contains("Remove-Item Env:OPENSHELL_GATEWAY -ErrorAction SilentlyContinue"),
+            "{text}"
+        );
+        assert!(
+            text.contains("$env:OPENSHELL_GATEWAY_ENDPOINT = 'http://127.0.0.1:17671'"),
+            "{text}"
+        );
+        assert!(
+            text.contains("$env:OPENSHELL_WORKSPACE = 'nc-1234567890abcdef'"),
+            "{text}"
+        );
+        let command = text
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("Invoke:"))
+            .unwrap()
+            .trim();
+        let (input, invocation) = command.split_once(" | ").unwrap();
+        let prompt: Value = serde_json::from_str(
+            input
+                .strip_prefix('\'')
+                .unwrap()
+                .strip_suffix('\'')
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(prompt, "Reply with exactly READY.");
+        assert!(
+            invocation.starts_with("openshell sandbox exec -n assistant "),
+            "{command}"
+        );
+        assert!(
+            invocation.ends_with("--agent main --runtime-id rt-1 --input -"),
+            "{command}"
+        );
+        assert!(!text.contains("export OPENSHELL_"), "{text}");
+    }
+
+    #[test]
+    fn powershell_paths_preserve_apostrophes_and_metacharacters() {
+        let text = render_for_shell(
+            &[
+                "nemoclaw",
+                "plan",
+                "--state-dir",
+                "C:\\Alex's work\\$state",
+                "deployment.yaml",
+            ],
+            json!({"outcome": "planned", "changes": [], "deferred": ["runtime"]}),
+            Shell::PowerShell,
+        );
+        assert!(
+            text.contains("--state-dir 'C:\\Alex''s work\\$state'"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn native_windows_handoff_runs_in_windows_powershell() {
+        let cli = Cli::try_parse_from(["nemoclaw", "apply", "deployment.yaml"]).unwrap();
+        let result = json!({"outcome": "succeeded", "changes": [], "agents": agents(),
+            "connection": {"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"}});
+        let text = super::render(
+            CommandResult::Operation(serde_json::from_value(result).unwrap()),
+            OutputFormat::Text,
+            &RenderContext::new(&cli),
+        )
+        .unwrap();
+        let selection: String = text
+            .lines()
+            .filter(|line| line.starts_with("    ") && !line.trim().starts_with("Invoke:"))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let invoke = text
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("Invoke:"))
+            .unwrap();
+        let script = format!(
+            r#"
+function openshell {{
+    $prompt = ($input | Out-String | ConvertFrom-Json)
+    [pscustomobject]@{{prompt=$prompt; arguments=$args; gateway=$env:OPENSHELL_GATEWAY_ENDPOINT; workspace=$env:OPENSHELL_WORKSPACE; stale=$env:OPENSHELL_GATEWAY}} | ConvertTo-Json -Compress
+}}
+$env:OPENSHELL_GATEWAY = 'stale'
+{selection}
+{invoke}
+"#
+        );
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let observed: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(observed["prompt"], "Reply with exactly READY.");
+        assert_eq!(observed["gateway"], "http://127.0.0.1:17671");
+        assert_eq!(observed["workspace"], "nc-1234567890abcdef");
+        assert!(observed["stale"].is_null());
+        // PowerShell consumes `--` when the receiver is a function; the real
+        // native executable receives it as an argument.
+        assert_eq!(
+            observed["arguments"],
+            json!([
+                "sandbox",
+                "exec",
+                "-n",
+                "assistant",
+                "--no-tty",
+                "fabric-agent-ctl",
+                "invoke",
+                "--agent",
+                "main",
+                "--runtime-id",
+                "rt-1",
+                "--input",
+                "-"
+            ])
+        );
     }
 
     /// Before any apply records a runtime, a plan lists no agents as last

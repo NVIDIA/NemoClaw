@@ -120,6 +120,10 @@
       }
     },
     "windows_amd64": {
+      "openshell": {
+        "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.9/OpenShell-Windows-0.1.9-x64.zip",
+        "sha256": "f95c30cfc957d1d3150269c6e681c5cadec4a717408956e7ff3a9d265056ffc4"
+      },
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.13.9/tofu_1.13.9_windows_amd64.zip",
         "sha256": "b23a811741911baa829aa7d3d3718626c549e8934546822b0e9b99b9fba75e4e"

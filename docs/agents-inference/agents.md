@@ -94,6 +94,44 @@ Preserve existing directories; reuse a verified client when two NemoClaw release
 When their pins differ, select the appropriate directory in each deployment's shell.
 Changing `PATH` does not alter another installation, a running process, or a gateway.
 
+On Windows AMD64, use PowerShell with the selected release's `version-pins.json` in the current directory.
+This client connects to the deployment's gateway; it does not add a Windows sandbox compute driver.
+The pinned OpenShell 0.1.9 Windows package comes from its [`windows` branch revision](https://github.com/NVIDIA/OpenShell/tree/7e4e113e3249238b61db71947c4b79b2d7a247e3), which differs from the release tag's source.
+Use the archive checksum rather than the version string to identify it.
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$pins = Get-Content -Raw .\version-pins.json | ConvertFrom-Json
+$client = $pins.components.openshellClient
+$archive = $client.archives.windows_amd64
+if (!$client.version -or !$archive.url -or !$archive.sha256) { throw 'This release does not pin a Windows client' }
+$clientDir = Join-Path $env:LOCALAPPDATA "NemoClaw\clients\openshell\$($client.version)"
+if (Test-Path -LiteralPath $clientDir) { throw 'Directory exists; preserve it and select its verified client or choose a new directory' }
+New-Item -ItemType Directory -Path $clientDir | Out-Null
+$download = Join-Path $clientDir 'archive.zip'
+Invoke-WebRequest -Uri $archive.url -OutFile $download
+if ((Get-FileHash -Algorithm SHA256 -LiteralPath $download).Hash -ne $archive.sha256) { throw 'OpenShell checksum mismatch' }
+Expand-Archive -LiteralPath $download -DestinationPath $clientDir
+$executables = @(Get-ChildItem -LiteralPath $clientDir -Recurse -Filter openshell.exe)
+if ($executables.Count -ne 1) { throw 'Expected exactly one OpenShell client' }
+$signature = Get-AuthenticodeSignature -LiteralPath $executables[0].FullName
+if ($signature.Status -ne 'Valid') { throw 'OpenShell signature verification failed' }
+$env:Path = "$($executables[0].DirectoryName);$env:Path"
+Get-Command openshell
+openshell --version
+```
+
+Stop on any error and confirm that the version equals `$client.version` before running the printed access commands.
+For a source build, replace the first three assignments after `$ErrorActionPreference` with these assignments, using the same checkout's `versions.json`:
+
+```powershell
+$pins = Get-Content -Raw .\versions.json | ConvertFrom-Json
+$client = @{version = $pins.openshell}
+$archive = $pins.platforms.windows_amd64.openshell
+```
+
+The `Path` change lasts for this PowerShell process and its children.
+
 ### Deploying Several Agents
 
 Each sandbox owns one agent runtime and its selected model and provider attachments.
@@ -108,7 +146,8 @@ The [headless OpenClaw request](#running-one-headless-openclaw-request) shows a 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
-Plan and apply print a Bash `Invoke:` sample for each recorded runtime, with the sandbox, agent, runtime ID, and a JSON prompt filled in; run it in WSL on Windows.
+Plan and apply print an `Invoke:` sample for each recorded runtime, with the sandbox, agent, runtime ID, and a JSON prompt filled in.
+Native Windows builds print PowerShell commands; Linux and macOS builds print Bash commands, including Linux builds running in WSL.
 Select the gateway and workspace with the commands printed before the sample.
 JSON results report the agent and runtime ID under `agents`.
 See [invoke an agent](interfaces.md#invoking-an-agent).
@@ -131,6 +170,14 @@ To show its reply and status without printing the full adapter result, run:
 ```sh
 jq '{command_status: .status, agent_status: .result.status, error: .result.error, response: .result.output.response}' reply.json
 jq -e '.status == "succeeded" and .result.status == "succeeded"' reply.json >/dev/null
+```
+
+In PowerShell, use its JSON parser instead:
+
+```powershell
+$reply = Get-Content -Raw .\reply.json | ConvertFrom-Json
+[pscustomobject]@{command_status=$reply.status; agent_status=$reply.result.status; error=$reply.result.error; response=$reply.result.output.response}
+if ($reply.status -ne 'succeeded' -or $reply.result.status -ne 'succeeded') { throw 'Agent request failed; inspect reply.json' }
 ```
 
 This filter uses the Hermes adapter's output fields; other adapters can return another shape.
