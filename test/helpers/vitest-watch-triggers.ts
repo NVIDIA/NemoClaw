@@ -541,6 +541,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/dockerhub-auth-workflow-boundary.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/docs-publish-(?:staging|public)\.yaml$/,
+    testsToRun: runTests("test/generation/docs-publish-staging-workflow.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
     testsToRun: runTests("test/repository/code-scanning-workflow.test.ts"),
   },

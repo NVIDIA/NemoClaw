@@ -671,7 +671,14 @@ async function isOpenClawDoctorSandboxUnavailable(
     deps,
     timeoutMs,
   );
-  return sandbox !== null && (sandbox.phase === "Stopped" || sandbox.readiness === "terminal");
+  const unavailable =
+    sandbox !== null && (sandbox.phase === "Stopped" || sandbox.readiness === "terminal");
+  if (unavailable) {
+    console.error(
+      `  OpenClaw restored-state Doctor refused sandbox phase ${JSON.stringify(sandbox.phase)} (${sandbox.readiness}).`,
+    );
+  }
+  return unavailable;
 }
 
 async function waitForOpenClawDoctorSandboxStopped(
@@ -1067,6 +1074,9 @@ async function promoteOpenClawBackupQuiesceToDoctor(
     runtimeSelection,
   );
   if (!promoted || promoted.status !== 0) {
+    console.error(
+      "  OpenClaw restored-state Doctor promotion command did not complete successfully.",
+    );
     return {
       ok: false,
       stage: "doctor",
