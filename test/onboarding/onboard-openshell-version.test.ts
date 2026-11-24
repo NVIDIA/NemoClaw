@@ -78,7 +78,7 @@ describe("OpenShell version helpers", () => {
     ["0.1.8", false],
     ["0.1.9", true],
     ["0.1.9-dev", false],
-    ["0.1.10", false],
+    ["0.1.10", true],
     ["0.1.5-dev", false],
   ] as const)("classifies native projection for OpenShell %s as %s", (version, expected) => {
     expect(usesOpenShellNativeProjection(version)).toBe(expected);
