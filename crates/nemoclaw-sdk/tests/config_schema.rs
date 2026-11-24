@@ -1311,7 +1311,7 @@ fn a_managed_gateway_must_allow_the_driver_config_its_sandboxes_set() {
 fn editors_read_the_message_the_parser_reports_for_each_rule() {
     // An image tag instead of a digest: an editor shows the pattern rule's
     // message, which is the one the parser reports.
-    let mut value = input("local.yaml");
+    let mut value = input("agents/local.yaml");
     value["spec"]["sandboxes"]["assistant"]["image"]["ref"] = json!("nc-fabric:latest");
     let error = Document::parse(value.to_string().as_bytes())
         .unwrap_err()
