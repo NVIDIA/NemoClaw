@@ -1193,3 +1193,79 @@ fn service_exposures_take_a_port_and_an_authorization_mode_openshell_accepts() {
         agrees(&validator, &value, false);
     }
 }
+
+/// OpenShell refuses a sandbox's driverConfig unless the gateway's driver
+/// allows driver configuration, which it doesn't by default. A managed
+/// gateway's configuration is in the document, so editors and the parser
+/// reject such a sandbox at its driverConfig instead of leaving apply to fail.
+#[test]
+fn a_managed_gateway_must_allow_the_driver_config_its_sandboxes_set() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (example, driver) in [
+        ("local.yaml", "docker"),
+        ("managed-podman.yaml", "podman"),
+        ("kubernetes/managed-development.yaml", "kubernetes"),
+        ("openshift/managed-development.yaml", "kubernetes"),
+    ] {
+        let mut base = input(example);
+        if example == "local.yaml" {
+            // An omitted target selects Docker.
+            base["spec"]["gateway"] = json!({"management": "managed"});
+        }
+        let sandbox = base["spec"]["sandboxes"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+        let with = |driver_config: Option<Value>, config: Option<Value>| {
+            let mut value = base.clone();
+            if let Some(driver_config) = driver_config {
+                value["spec"]["sandboxes"][&sandbox]["driverConfig"] = driver_config;
+            }
+            if let Some(config) = config {
+                value["spec"]["gateway"]["config"] = config;
+            }
+            value
+        };
+        let mounts = json!({driver: {"mounts": [{"type": "volume", "source": "skills", "target": "/sandbox/skills"}]}});
+        let allowed = json!({"allow_driver_config": true});
+        for config in [
+            json!({format!("openshell.drivers.{driver}"): allowed}),
+            json!({"openshell.drivers": {driver: allowed}}),
+            json!({"openshell": {"drivers": {driver: allowed}}}),
+        ] {
+            agrees(&validator, &with(Some(mounts.clone()), Some(config)), true);
+        }
+        // An empty driverConfig sends OpenShell no driver configuration.
+        agrees(&validator, &with(Some(json!({})), None), true);
+        let other = if driver == "docker" {
+            "podman"
+        } else {
+            "docker"
+        };
+        for config in [
+            None,
+            Some(json!({format!("openshell.drivers.{driver}"): {"allow_driver_config": false}})),
+            Some(json!({format!("openshell.drivers.{other}"): allowed})),
+            Some(json!({"openshell.gateway": {"log_level": "debug"}})),
+        ] {
+            let rejected = with(Some(mounts.clone()), config.clone());
+            agrees(&validator, &rejected, false);
+            let error = Document::parse(rejected.to_string().as_bytes())
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains(&format!("spec.sandboxes.{sandbox}.driverConfig"))
+                    && error.contains("allow_driver_config")
+                    && error.contains(&format!("openshell.drivers.{driver}")),
+                "{example} {config:?}: {error}"
+            );
+        }
+    }
+    // An external gateway's administrator allows driver configuration.
+    let mut external = input("local.yaml");
+    external["spec"]["sandboxes"]["assistant"]["driverConfig"] = json!({"docker": {"mounts": [{"type": "volume", "source": "skills", "target": "/sandbox/skills"}]}});
+    agrees(&validator, &external, true);
+}

@@ -19,7 +19,7 @@ Empty or zero selects a default only where stated.
 
 - Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
 - The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
-- A managed kubernetes or openshift target requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without expose, the document names no endpoint: each command forwards a free local port to the gateway pod. With it, expose.endpoint names a lowercase DNS name or IPv4 address and an explicit port. expose.service has the chart's NodePort Service publish that port, which Kubernetes checks against the cluster's node-port range; expose.route, only on the openshift target, has the chart's pass-through Route publish the host, which must be a DNS name, at the port the cluster's router serves. Managed inference services are excluded. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.
+- A managed kubernetes or openshift target requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox, and the StorageClass that dataStorageClass names or else a default one, are platform prerequisites that are not checked. Each request in resources must not exceed its limit, compared in millicores or mebibytes. Without expose, the document names no endpoint: each command forwards a free local port to the gateway pod. With it, expose.endpoint names a lowercase DNS name or IPv4 address and an explicit port. expose.service has the chart's NodePort Service publish that port, which Kubernetes checks against the cluster's node-port range; expose.route, only on the openshift target, has the chart's pass-through Route publish the host, which must be a DNS name, at the port the cluster's router serves. Managed inference services are excluded. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.
 - The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.
@@ -537,6 +537,40 @@ An existing gateway managed outside this deployment.
 | `target` | [ExternalTarget](#externaltarget) | No | — | Where the existing gateway runs its sandboxes; omission selects Docker. Planning checks it against the compute driver the gateway reports. |
 | `tls` | [TLS](#tls) | No | — | Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS. |
 
+## GatewayResourceList
+
+Quantities of CPU and memory.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.target.kubernetes.resources.limits`
+- `spec.gateway.target.kubernetes.resources.requests`
+- `spec.gateway.target.openshift.resources.limits`
+- `spec.gateway.target.openshift.resources.requests`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `cpu` | string | No | — | CPU in cores with up to three decimals, such as "1" or "0.5", or in millicores, such as 250m. Quote cores: YAML reads an unquoted 1 or 0.5 as a number. Constraints: pattern `^(?:[0-9]{1,6}(?:\.[0-9]{1,3})?\|[1-9][0-9]{0,8}m)$`. |
+| `memory` | string | No | — | Memory in whole mebibytes or gibibytes, such as 512Mi or 2Gi. Kubernetes reads a lowercase m as thousandths of a byte. Constraints: pattern `^[1-9][0-9]{0,8}(?:Mi\|Gi)$`. |
+
+## GatewayResources
+
+A Kubernetes container's CPU and memory requests and limits.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.target.kubernetes.resources`
+- `spec.gateway.target.openshift.resources`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `limits` | [GatewayResourceList](#gatewayresourcelist) | No | — | The most the gateway may use: Kubernetes throttles its CPU at the CPU limit, and restarts it after it exceeds the memory limit. |
+| `requests` | [GatewayResourceList](#gatewayresourcelist) | No | — | What the scheduler reserves for the gateway on its node. Each request must not exceed its limit. |
+
 ## GgufModel
 
 Exact immutable public artifact, independently hashed before serving.
@@ -844,7 +878,7 @@ Paths:
 
 ## ManagedKubernetes
 
-An existing cluster for a managed gateway, reached with an explicit kubeconfig and context or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. Without expose, NemoClaw reaches the gateway through a port forward on a free local port for each command, so the document names no port.
+An existing cluster for a managed gateway, reached with an explicit kubeconfig and context or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox, and a default StorageClass unless dataStorageClass names another, are platform prerequisites that the SDK does not check. Without expose, NemoClaw reaches the gateway through a port forward on a free local port for each command, so the document names no port.
 
 Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
@@ -856,10 +890,12 @@ Paths:
 |---|---|---|---|---|
 | `authentication` | [KubernetesAuthentication](#kubernetesauthentication) | Yes | — | How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer. |
 | `context` | string | No | — | Exact kubeconfig context used for every cluster operation. Requires kubeconfig. Constraints: pattern `^[^\x00-\x20\x7f]+$`; minimum characters 1; maximum characters 253. |
+| `dataStorageClass` | string | No | — | StorageClass of the gateway's data volume, which holds its SQLite database; omit to use the cluster's default StorageClass. Use a block-backed class: SQLite runs in write-ahead-log mode, which NFS and other network filesystems do not support. The SDK does not check that the class exists: with a missing class, the volume's claim stays pending and apply fails when Helm's wait times out. Fixed after the first plan, because the claim keeps the class it was created with. Constraints: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$`; minimum characters 1; maximum characters 253. |
 | `environment` | array of string | No | — | Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Requires kubeconfig. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state. Constraints: maximum items 32; items: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 | `expose` | [KubernetesExpose](#kubernetesexpose) | No | — | How clients outside the cluster reach the gateway: the endpoint they dial, and the Service or Route that publishes it. The gateway certificate names the endpoint's host. NemoClaw's own commands still forward a free local port to the gateway pod. The endpoint, whether a Service or a Route publishes the gateway, and the Service's type are fixed after the first plan. |
 | `kubeconfig` | [FileRef](#fileref) | No | — | Environment reference whose value is the local kubeconfig file path. Requires context; omit both to use the pod's service account. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
 | `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. An existing namespace is bound by UID and never changed; a missing one is created. A namespace another NemoClaw deployment created is refused. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`; minimum characters 1; maximum characters 63. |
+| `resources` | [GatewayResources](#gatewayresources) | No | — | CPU and memory for the gateway container, which the chart's resources take as written. Omitted, the gateway requests 250m CPU and 256Mi and is limited to 1 CPU and 2Gi, which fit 256 sandboxes. Set, it replaces all four, and a quantity it leaves out takes Kubernetes' default: a namespace LimitRange's, or for a request, its limit. A change restarts the gateway, and its sandboxes keep running. |
 
 ## ManagedOpenShift
 
@@ -875,10 +911,12 @@ Paths:
 |---|---|---|---|---|
 | `authentication` | [KubernetesAuthentication](#kubernetesauthentication) | Yes | — | How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer. |
 | `context` | string | No | — | Exact kubeconfig context used for every cluster operation. Requires kubeconfig. Constraints: pattern `^[^\x00-\x20\x7f]+$`; minimum characters 1; maximum characters 253. |
+| `dataStorageClass` | string | No | — | StorageClass of the gateway's data volume, which holds its SQLite database; omit to use the cluster's default StorageClass. Use a block-backed class: SQLite runs in write-ahead-log mode, which NFS and other network filesystems do not support. The SDK does not check that the class exists: with a missing class, the volume's claim stays pending and apply fails when Helm's wait times out. Fixed after the first plan, because the claim keeps the class it was created with. Constraints: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$`; minimum characters 1; maximum characters 253. |
 | `environment` | array of string | No | — | Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Requires kubeconfig. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state. Constraints: maximum items 32; items: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 | `expose` | [OpenShiftExpose](#openshiftexpose) | No | — | How clients outside the cluster reach the gateway: the endpoint they dial, and the Service or Route that publishes it. The gateway certificate names the endpoint's host. NemoClaw's own commands still forward a free local port to the gateway pod. The endpoint, whether a Service or a Route publishes the gateway, and the Service's type are fixed after the first plan. |
 | `kubeconfig` | [FileRef](#fileref) | No | — | Environment reference whose value is the local kubeconfig file path. Requires context; omit both to use the pod's service account. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
 | `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. An existing namespace is bound by UID and never changed; a missing one is created. A namespace another NemoClaw deployment created is refused. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`; minimum characters 1; maximum characters 63. |
+| `resources` | [GatewayResources](#gatewayresources) | No | — | CPU and memory for the gateway container, which the chart's resources take as written. Omitted, the gateway requests 250m CPU and 256Mi and is limited to 1 CPU and 2Gi, which fit 256 sandboxes. Set, it replaces all four, and a quantity it leaves out takes Kubernetes' default: a namespace LimitRange's, or for a request, its limit. A change restarts the gateway, and its sandboxes keep running. |
 
 ## ManagedTarget
 
@@ -1563,7 +1601,7 @@ Paths:
 |---|---|---|---|---|
 | `agent` | [Agent](#agent) | Yes | — | The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes. |
 | `cpu` | any JSON value | No | — | CPU limit OpenShell gives the sandbox, as a quantity such as 500m or 2, passed to its resources.limits.cpu: Docker and Podman apply it as a runtime limit, Kubernetes as the container's request and limit. OpenShell validates it. Changing it replaces the sandbox; omission sets no limit. Constraints: minimum characters 1. |
-| `driverConfig` | object | No | — | OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration. |
+| `driverConfig` | object | No | — | OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it. The gateway must allow driver configuration: on a managed gateway, unless driverConfig is empty, spec.gateway.config must set allow_driver_config: true in the compute driver's table, such as openshell.drivers.docker, or plan rejects the sandbox. |
 | `gpus` | integer | No | — | GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none. Constraints: minimum 1; maximum 4294967295. |
 | `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation. |
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |

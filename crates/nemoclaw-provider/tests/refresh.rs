@@ -21,6 +21,13 @@ impl Backend for Fixture {
         panic!("refresh cannot delete")
     }
 }
+/// The inputs an inference registration checks when planning, besides the
+/// server's endpoint.
+const INFERENCE_INPUTS: [(&str, &str); 2] = [
+    ("api", "openai-completions"),
+    ("binaries_json", r#"["/usr/bin/curl"]"#),
+];
+
 fn row() -> Row {
     [
         ("id", "physical"),
@@ -131,13 +138,18 @@ async fn omitted_optional_computed_values_get_defaults_when_the_proposed_value_i
     let resource = ResourceAdapter::new(
         support::definition(
             "inference",
-            &["name", "endpoint", "credential_env"],
+            &["name", "endpoint", "credential_env", "api", "binaries_json"],
             &["endpoint", "credential_env"],
         ),
         Arc::new(Fixture(Ok(None))),
     );
     let config = State::from([
         ("name".into(), Value::Value("inference".into())),
+        ("api".into(), Value::Value(INFERENCE_INPUTS[0].1.into())),
+        (
+            "binaries_json".into(),
+            Value::Value(INFERENCE_INPUTS[1].1.into()),
+        ),
         (
             "endpoint".into(),
             Value::Value("https://example.test/v1".into()),
@@ -374,15 +386,19 @@ async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
 #[tokio::test]
 async fn reconstructible_resources_plan_replacement_and_deletion_without_teardown_mode() {
     for kind in ["workspace", "inference", "api", "sandbox", "agent"] {
-        // An API credential plans only with the inputs it validates.
-        let inputs: &[(&'static str, &str)] = if kind == "api" {
-            &[
+        // Credential resources plan only with the inputs they validate.
+        let inputs: &[(&'static str, &str)] = match kind {
+            "api" => &[
                 ("endpoints_json", r#"["https://api.example.com"]"#),
                 ("credential_env", "EXAMPLE_KEY"),
                 ("binaries_json", r#"["/usr/bin/curl"]"#),
-            ]
-        } else {
-            &[]
+            ],
+            "inference" => &[
+                INFERENCE_INPUTS[0],
+                INFERENCE_INPUTS[1],
+                ("endpoint", "https://example.test/v1"),
+            ],
+            _ => &[],
         };
         let mut fields = vec!["name", "owner", "generation"];
         fields.extend(inputs.iter().map(|(field, _)| *field));
@@ -470,11 +486,17 @@ async fn retained_replacement_refusal_names_the_resource_and_changed_fields() {
 #[tokio::test]
 async fn changing_from_cluster_to_external_inference_replaces_the_owned_profile() {
     let resource = ResourceAdapter::new(
-        support::definition("inference", &["endpoint", "cluster_source"], &[]),
+        support::definition(
+            "inference",
+            &["endpoint", "cluster_source", "api", "binaries_json"],
+            &[],
+        ),
         Arc::new(Fixture(Ok(None))),
     );
     let prior = state(Row::from([
         ("id".into(), "owned/profile/1".into()),
+        ("api".into(), INFERENCE_INPUTS[0].1.into()),
+        ("binaries_json".into(), INFERENCE_INPUTS[1].1.into()),
         ("endpoint".into(), "http://model.agents.svc:8000/v1".into()),
         ("cluster_source".into(), "owned-cluster-storage".into()),
     ]));
@@ -523,11 +545,12 @@ async fn changing_from_cluster_to_external_inference_replaces_the_owned_profile(
         .await
         .unwrap();
     assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
-    // The derived registration name and sandbox variable are computed, not
-    // configured.
+    // The derived registration name and sandbox variable, and the credential
+    // digest, are computed, not configured.
     let mut planned = planned;
     planned.remove("registration");
     planned.remove("sandbox_env");
+    planned.remove("credential_digest");
     assert_eq!(
         planned, prior,
         "an explicit unchanged cluster source remains bound"
@@ -540,13 +563,22 @@ async fn removing_credential_reference_plans_unauthenticated_replacement() {
     let resource = ResourceAdapter::new(
         support::definition(
             "inference",
-            &["credential_env", "credential_source"],
+            &[
+                "credential_env",
+                "credential_source",
+                "endpoint",
+                "api",
+                "binaries_json",
+            ],
             &["credential_env"],
         ),
         Arc::new(Fixture(Ok(None))),
     );
     let prior = state(Row::from([
         ("id".into(), "registration".into()),
+        ("endpoint".into(), "https://example.test/v1".into()),
+        ("api".into(), INFERENCE_INPUTS[0].1.into()),
+        ("binaries_json".into(), INFERENCE_INPUTS[1].1.into()),
         ("credential_env".into(), "API_KEY".into()),
         ("credential_source".into(), String::new()),
     ]));

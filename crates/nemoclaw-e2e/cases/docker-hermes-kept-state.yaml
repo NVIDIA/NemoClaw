@@ -16,6 +16,9 @@ spec:
       docker:
         port: 17691
         engine: unix:///var/run/docker.sock
+    config:
+      openshell.drivers.docker:
+        allow_driver_config: true
   inferenceProviders:
     nvidia:
       provider: openai

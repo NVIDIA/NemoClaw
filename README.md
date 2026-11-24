@@ -3,10 +3,9 @@
 
 # NemoClaw
 
-> [!TIP]
-> This branch documents NemoClaw Agent Configs v0.1.0.
-> If you use the [previous version of NemoClaw](https://github.com/NVIDIA/NemoClaw/tree/main), [evaluate Agent Configs separately](docs/get-started/migration.md).
-> There is no in-place migration.
+> [!NOTE]
+> Start with the [NemoClaw Agent Configs v0.1.0 first-deployment tutorial](docs/get-started/first-deployment.md).
+> If you use [NemoClaw v0](https://github.com/NVIDIA/NemoClaw/tree/main), [evaluate NemoClaw Agent Configs in a separate deployment](docs/get-started/migration.md) without changing the original.
 
 ## NemoClaw Agent Configs
 
@@ -14,6 +13,19 @@ Configure and deploy sandboxed AI agents from a YAML file.
 Choose agents, models, tools, and network access, then preview and apply deployment changes through the CLI or Rust SDK.
 
 [Install the v0.1.0 CLI](docs/get-started/install.md) and follow the [first-deployment tutorial](docs/get-started/first-deployment.md) to verify an OpenClaw reply.
+
+<a href="docs/get-started/first-deployment.md#gh-light-mode-only">
+  <picture>
+    <source media="(max-width: 700px)" srcset="docs/assets/deployment-workflow-mobile-light.svg">
+    <img src="docs/assets/deployment-workflow-light.svg" alt="Define, plan, and apply a NemoClaw deployment. Open the first-deployment tutorial.">
+  </picture>
+</a>
+<a href="docs/get-started/first-deployment.md#gh-dark-mode-only">
+  <picture>
+    <source media="(max-width: 700px)" srcset="docs/assets/deployment-workflow-mobile.svg">
+    <img src="docs/assets/deployment-workflow.svg" alt="Define, plan, and apply a NemoClaw deployment. Open the first-deployment tutorial.">
+  </picture>
+</a>
 
 ### What You Can Do
 
@@ -60,6 +72,12 @@ The [43-second lifecycle recording](docs/assets/terminal-lifecycle-verbose.mp4) 
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).
+
+## Roadmap
+
+The [GitHub milestones](https://github.com/NVIDIA/NemoClaw/milestones) track planned work, including [GTC DC 2026](https://github.com/NVIDIA/NemoClaw/milestone/12), [planned NemoClaw v0 features for Agent Configs](https://github.com/NVIDIA/NemoClaw/milestone/14), and [GTC SJC 2027](https://github.com/NVIDIA/NemoClaw/milestone/13).
+Milestone placement alone does not promise a delivery date.
+For current support, check the [NemoClaw v0 task comparison](docs/get-started/migration.md) and [current limits](docs/resources/limits.md).
 
 ## Contributing
 

@@ -32,8 +32,8 @@ Managed model services aren't supported on Kubernetes.
   - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`.
     CI tests version 1.0.3.
     Without its API, the chart's preflight stops the install.
-  - A default StorageClass for the gateway's volume.
-    Without one, the volume's claim stays pending and apply fails when Helm's wait times out.
+  - A StorageClass for the gateway's volume: the cluster's default, or the class that the target's [`dataStorageClass`](#choosing-the-gateways-storageclass-and-resources) names.
+    Without it, the volume's claim stays pending and apply fails when Helm's wait times out.
   - A network plugin that enforces ingress and egress NetworkPolicy in the deployment's namespace, as [OpenShell requires](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/kubernetes/setup.mdx#prerequisites).
     OpenShell's NetworkPolicies stop each sandbox's workload pod from reaching the network except through its supervisor, and the development issuer's policy admits only the gateway.
 
@@ -104,8 +104,8 @@ Size the cluster for the sandboxes you declare:
   OpenShell deletes a sandbox whose pod hasn't started within 5 minutes, so add sandboxes in steps the StorageClass provisions in that time.
   k3s's local-path provisioner made about one volume every 2 seconds.
   Steps of 64 sandboxes started within about 3 minutes, and a single apply of 256 lost 100.
-- **Gateway:** The managed gateway is limited to 1 CPU and 2 GiB of memory, and NemoClaw has no setting to change the limit.
-  In a recorded run, 256 sandboxes used up to about 1.2 GiB of it ([#14403](https://github.com/NVIDIA/NemoClaw/issues/14403)).
+- **Gateway:** The managed gateway requests 250m CPU and 256 MiB of memory and is limited to 1 CPU and 2 GiB, unless the target's [`resources`](#choosing-the-gateways-storageclass-and-resources) sets others.
+  In a recorded run, 256 sandboxes used up to about 1.2 GiB of memory ([#14403](https://github.com/NVIDIA/NemoClaw/issues/14403)).
 - **Open files:** The gateway holds about three connections per sandbox, 800 to 1,000 open files at 256, and a pod gets its open-file limit from the node's container runtime.
   k3s installed as a service gives pods 1,048,576, but k3d nodes on Docker gave a soft limit of 1,024, which 256 sandboxes exceed.
   Create such clusters with `k3d cluster create --runtime-ulimit "nofile=1048576:1048576"`.
@@ -414,6 +414,41 @@ Destroy retains the namespace and caller-managed Secrets.
 Docker and Podman gateways pull private images with Docker logins instead.
 See [Pulling From Private Registries](usage.md#pulling-from-private-registries).
 
+### Choosing the Gateway's StorageClass and Resources
+
+The gateway keeps its database on a 1 GiB volume, which the chart claims from the cluster's default StorageClass.
+On a cluster without a default, or whose default is NFS, name another class in the target's `dataStorageClass`.
+Use a block-backed class: the gateway's SQLite database runs in write-ahead-log mode, which NFS and other network filesystems don't support.
+
+The gateway requests 250m CPU and 256 MiB of memory and is limited to 1 CPU and 2 GiB, which fit [256 sandboxes](#sandbox-count-and-cluster-size).
+A LimitRange in the namespace can refuse these values, such as one whose maximum memory is below 2 GiB.
+To set others, write the target's `resources` in the shape of a Kubernetes container's, with only `cpu` and `memory`:
+
+```yaml
+spec:
+  gateway:
+    management: managed
+    target:
+      kubernetes:
+        # kubeconfig, context, namespace, and authentication as above
+        dataStorageClass: fast-ssd
+        resources:
+          requests: {cpu: 500m, memory: 512Mi}
+          limits: {cpu: "2", memory: 4Gi}
+```
+
+`resources` replaces all four values as written.
+A quantity you leave out takes Kubernetes' default: the namespace LimitRange's, or for a request, its limit.
+Write memory in whole `Mi` or `Gi`, and write CPU in quoted cores, such as `"2"`, or in millicores, such as `500m`.
+Plan refuses memory such as `256m`, which Kubernetes reads as thousandths of a byte, and a request above its limit.
+Changing `resources` restarts the gateway, and its sandboxes and agents keep running.
+
+The class is fixed after the first plan, because the volume's claim keeps the class it was created with: plan refuses another with `state is bound to a different gateway StorageClass`.
+NemoClaw doesn't check that the class exists.
+If it doesn't, the claim stays pending, apply fails when Helm's 600-second wait times out, and the claim remains.
+Create the class and apply the same document again, and the claim binds in it.
+To use another class instead, destroy the deployment, [remove what it retains](usage.md#on-kubernetes-or-openshift), including that claim, and create a new deployment.
+
 ### Running NemoClaw in a Pod
 
 When `nemoclaw` runs in a pod, such as a CI job, it can use the pod's service account instead of a kubeconfig.
@@ -528,6 +563,10 @@ OpenShell runs each sandbox as the same UID.
 The [OpenShift Local qualification](https://github.com/NVIDIA/NemoClaw/issues/12733) predates this: there, NemoClaw read the namespace's range and passed its first UID and group to the chart.
 This has since run by hand on one OpenShift Local 4.22.14 node (linux/amd64): `restricted-v2` gave the gateway the range's first UID and `fsGroup`, and two agents replied through it with OIDC authentication.
 [Current limits](../resources/limits.md#platforms-models-and-placement) lists what remains untested.
+
+With `supervisor_topology = "gateway"` in the `openshell.drivers.kubernetes` table of [`spec.gateway.config`](usage.md#configuring-a-managed-gateway), the chart also runs a shared supervisor Deployment, which supervises all sandboxes, as UID and group 65534.
+On the `openshift` target, NemoClaw also sets that supervisor's `runAsUser`, `runAsGroup`, and `fsGroup` under `supervisor.podSecurityContext` to `null`, as [the chart's OpenShift overlay](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/deploy/helm/openshell/ci/values-openshift-scc.yaml) does.
+On OpenShift Local 4.22.14, `restricted-v2` refused the supervisor's pod with the chart's IDs and admitted it with the nulls, as the range's first UID and group; no deployment with a shared supervisor has run on OpenShift.
 
 The agent images need no OpenShift variant: any UID can read their workspace seed.
 

@@ -8,15 +8,9 @@ use super::record::{TEST_LABEL_PATTERN, matches};
 /// The off switch. It, or any of [`CI_VARIABLES`], set stops the record.
 const OFF_SWITCH: &str = nemoclaw_sdk::telemetry::DISABLE_ENV;
 
-/// Any of these, set, means the run is in CI and nothing is sent.
-const CI_VARIABLES: [&str; 6] = [
-    "CI",
-    "GITHUB_ACTIONS",
-    "TF_BUILD",
-    "BUILD_ID",
-    "TEAMCITY_VERSION",
-    "CODEBUILD_BUILD_ID",
-];
+// Any of these, set, means the run is in CI and nothing is sent; a managed
+// gateway's OpenShell telemetry follows the same list.
+use nemoclaw_sdk::telemetry::CI_VARIABLES;
 
 /// The test label to send when this process may send a record (empty when
 /// none is set), or `None` when it must send nothing. Unit-test builds never send.

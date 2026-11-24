@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Authoring a new deployment for another gateway target takes only the
 //! edits the usage guide lists: the target and its settings, each sandbox's
-//! image metadata, managed services a target can't run, OpenShell's settings,
-//! and who registers APF. A live deployment keeps its target; changing it
+//! image metadata, managed services a target can't run, OpenShell's settings
+//! and each sandbox's driver configuration, and who registers APF. A live deployment keeps its target; changing it
 //! needs a new deployment.
 
 use nemoclaw_sdk::config::Document;
@@ -145,6 +145,55 @@ fn replace_service_providers(value: &mut Value, service: &str) {
     visit(value, service);
 }
 
+/// The compute driver a target's sandboxes run on.
+fn driver(key: &str) -> &'static str {
+    match key {
+        "docker" => "docker",
+        "podman" => "podman",
+        _ => "kubernetes",
+    }
+}
+
+/// Move OpenShell's driver settings, in a managed gateway's `config` and each
+/// sandbox's `driverConfig`, to the new driver's table and key.
+fn move_driver_settings(value: &mut Value, key: &str) {
+    let new = driver(key);
+    if let Some(config) = value["spec"]["gateway"]
+        .get_mut("config")
+        .and_then(Value::as_object_mut)
+    {
+        *config = std::mem::take(config)
+            .into_iter()
+            .map(|(table, fields)| {
+                let moved = ["docker", "podman", "kubernetes"]
+                    .into_iter()
+                    .find_map(|old| {
+                        let rest = table.strip_prefix(&format!("openshell.drivers.{old}"))?;
+                        (rest.is_empty() || rest.starts_with('.'))
+                            .then(|| format!("openshell.drivers.{new}{rest}"))
+                    })
+                    .unwrap_or(table);
+                (moved, fields)
+            })
+            .collect();
+    }
+    for sandbox in value["spec"]["sandboxes"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+    {
+        if let Some(settings) = sandbox
+            .get_mut("driverConfig")
+            .and_then(Value::as_object_mut)
+        {
+            *settings = std::mem::take(settings)
+                .into_values()
+                .map(|fields| (new.to_owned(), fields))
+                .collect();
+        }
+    }
+}
+
 /// The example as a new deployment on `key`, with only the documented edits.
 fn retarget(example: &Value, management: Management, key: &str) -> Value {
     let mut value = example.clone();
@@ -163,6 +212,7 @@ fn retarget(example: &Value, management: Management, key: &str) -> Value {
             image.remove("metadata");
         }
     }
+    move_driver_settings(&mut value, key);
     let replaced: Vec<String> = value["spec"]["services"]
         .as_object()
         .into_iter()

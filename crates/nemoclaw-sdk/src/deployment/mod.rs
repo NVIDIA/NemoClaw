@@ -314,6 +314,20 @@ impl Deployment {
                 "state is bound to a different gateway endpoint: the target's port, expose.endpoint, or an external gateway's endpoint stays as first planned; create a separate deployment to change it",
             ));
         }
+        // The gateway volume's claim keeps the class it was created with, and
+        // a StatefulSet's claim template can't change.
+        let storage_class = |document: &Document| {
+            document
+                .spec
+                .gateway
+                .as_kubernetes()
+                .and_then(|target| target.data_storage_class.clone())
+        };
+        if storage_class(&record.document) != storage_class(&document) {
+            return Err(Error::Conflict(
+                "state is bound to a different gateway StorageClass: dataStorageClass stays as first planned, because the gateway volume keeps the class it was created with; create a separate deployment to change it",
+            ));
+        }
         record.allocate_missing_generations(&document)?;
         let bindings = if record.pending() || record.digest != document.digest() {
             self.state_bindings(

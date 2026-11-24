@@ -51,7 +51,9 @@ fn settled(
                     crate::POLICY_PROVENANCE,
                 ]
                 .contains(&key.as_str())
-                    && !(kind == "provider" && key == crate::POLICY_AUTHORITY)
+                    && !(kind == "provider"
+                        && [crate::POLICY_AUTHORITY, crate::credential::REGISTER]
+                            .contains(&key.as_str()))
                     && row.get(key) != Some(v)
             }) {
                 return Mutation::partial(row, ObservationError::Incomplete);
@@ -346,7 +348,24 @@ impl OpenShell {
         } else {
             self.observe(kind, workspace, name, false).await
         };
-        Ok(settled(kind, established, want, readback))
+        let settled = settled(kind, established, want, readback);
+        if kind != "provider" || value(want, crate::credential::REGISTER) != "true" {
+            return Ok(settled);
+        }
+        // The registration took the value its variable holds; record that
+        // value's digest with it.
+        Ok(match settled.into_parts() {
+            (Some(mut row), None) => match self.gateway.credential_digest(want).await {
+                Ok(digest) => {
+                    row.insert(crate::credential::CREDENTIAL_DIGEST.into(), digest);
+                    Mutation::complete(row)
+                }
+                Err(error) => Mutation::partial(row, error),
+            },
+            (Some(row), Some(error)) => Mutation::partial(row, error),
+            (None, Some(error)) => Mutation::failed(error),
+            (None, None) => Mutation::failed(ObservationError::Incomplete),
+        })
     }
     /// Change a bound sandbox's network rules to `want`'s in place, as
     /// `openshell policy set` does, then wait until the sandbox loads them,

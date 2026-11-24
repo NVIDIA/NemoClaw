@@ -237,9 +237,9 @@ fn managed_gateway_uses_a_pinned_helm_provider_between_auth_and_readiness() {
 /// OpenShift's `restricted-v2` constraint assigns the namespace's first UID
 /// and group to a pod that sets neither, so an OpenShift gateway passes the
 /// chart's documented nulls in its literal values instead of waiting for the
-/// namespace's range.
+/// namespace's range, for the gateway and for a shared supervisor.
 #[test]
-fn openshift_chart_values_leave_the_gateway_uid_to_openshift() {
+fn openshift_chart_values_leave_the_gateway_and_supervisor_ids_to_openshift() {
     let generations = [
         "workspace",
         "provider",
@@ -274,6 +274,13 @@ fn openshift_chart_values_leave_the_gateway_uid_to_openshift() {
     assert_eq!(
         values.remove("podSecurityContext"),
         Some(json!({"fsGroup": null}))
+    );
+    assert_eq!(
+        values["supervisor"]
+            .as_object_mut()
+            .unwrap()
+            .remove("podSecurityContext"),
+        Some(json!({"runAsUser": null, "runAsGroup": null, "fsGroup": null}))
     );
     assert_eq!(openshift, kubernetes);
 }

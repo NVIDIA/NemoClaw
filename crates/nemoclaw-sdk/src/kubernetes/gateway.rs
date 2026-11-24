@@ -59,12 +59,22 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         "pkiInitJob": {"enabled": true},
         // The gateway's memory grows about 4 MiB per sandbox; at 1Gi it ran
         // out of memory before a document reached 256 sandboxes, and at 2Gi
-        // 256 peaked near 1.2 GiB (#14403).
+        // 256 peaked near 1.2 GiB (#14403). Authored resources replace these
+        // as written.
         "resources": {
             "requests": {"cpu": "250m", "memory": "256Mi"},
             "limits": {"cpu": "1", "memory": "2Gi"},
         },
     });
+    if let Some(resources) = &target.resources {
+        values["resources"] = serde_json::to_value(resources)
+            .map_err(|_| Error::State("cannot encode gateway resources"))?;
+    }
+    // Without a class, the chart omits storageClassName, so the claim takes
+    // the cluster's default.
+    if let Some(class) = &target.data_storage_class {
+        values["server"]["dataStorageClass"] = json!(class);
+    }
     // An exposed gateway's own Service or Route publishes the endpoint and
     // forwards to the gateway's TLS listener, so TLS and client certificates
     // pass through unchanged. The certificate names the endpoint host clients
@@ -104,16 +114,21 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             _ => {}
         }
     }
-    // On OpenShift, unset the gateway's UID and fsGroup as the chart's own
-    // OpenShift install does, so restricted-v2 assigns the namespace's first
-    // UID and group. Once the chart handles OpenShift's IDs itself
-    // (NVIDIA/OpenShell#5483), these values go and the target stays.
+    // On OpenShift, unset the gateway's UID and fsGroup, and the shared
+    // supervisor's UID, group, and fsGroup, as the chart's OpenShift overlay
+    // (ci/values-openshift-scc.yaml) does, so restricted-v2 assigns the
+    // namespace's first UID and group. The chart renders the shared
+    // supervisor only when spec.gateway.config selects
+    // supervisor_topology = "gateway". Once the chart handles OpenShift's IDs
+    // itself (NVIDIA/OpenShell#5483), these values go and the target stays.
     if matches!(
         spec.settings.target,
         crate::config::ManagedTarget::OpenShift(_)
     ) {
         values["securityContext"] = json!({"runAsUser": null});
         values["podSecurityContext"] = json!({"fsGroup": null});
+        values["supervisor"]["podSecurityContext"] =
+            json!({"runAsUser": null, "runAsGroup": null, "fsGroup": null});
     }
     // An existing issuer's settings are authored in OpenShell's OIDC table,
     // which passes through below; its CA comes from the user's ConfigMap.
