@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Placeholder banner for the installer's inner pages: WiX draws their title on the white area at the left, pending NVIDIA brand and trademark review; see ../README.md. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="493" height="58" viewBox="0 0 493 58">
+  <rect width="493" height="58" fill="#ffffff"/>
+  <polygon points="410,0 493,0 493,58 388,58" fill="#000000"/>
+  <g fill="#76b900">
+    <polygon points="420.0,50.0 433.6,28.2 439.6,8.0 428.0,25.6"/>
+    <polygon points="429.5,50.0 443.1,28.2 449.1,8.0 437.5,25.6"/>
+    <polygon points="439.0,50.0 452.6,28.2 458.6,8.0 447.0,25.6"/>
+  </g>
+</svg>

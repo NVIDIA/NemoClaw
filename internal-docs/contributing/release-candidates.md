@@ -34,6 +34,15 @@ Releases:
   A final release is published only when the file matches its tag's `versions.json` and the images it staged.
   Before, hand-written HCL copied `versions.json` from the release's tag.
 
+Windows installer:
+
+- A release whose Windows programs are signed attaches `nemoclaw-<tag>-windows_amd64.msi`, a per-user installer for the `windows_amd64` bundle ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
+  It needs no administrator rights: it installs the bundle unchanged into `%LOCALAPPDATA%\Programs\NemoClaw`, adds its `bin` directory to the user `Path`, and lists the CLI in **Settings** > **Apps** > **Installed apps**.
+  A newer installer replaces the installed version and leaves none of its files; an older one refuses to replace a newer version; uninstalling removes the directory and the `Path` entry.
+  See [Installing With the Windows Installer](../../docs/get-started/install.md#installing-with-the-windows-installer) and [Windows installer](releases.md#windows-installer).
+  Its artwork and icon are placeholders pending NVIDIA brand and trademark review.
+  Before, Windows users unpacked the archive and edited their `Path`.
+
 Agents:
 
 - Agent images build Fabric from its [`v0.7.0`](https://github.com/NVIDIA/NeMo-Fabric/tree/v0.7.0) release tag instead of a commit on its `release/0.7` branch, without patches ([#13318](https://github.com/NVIDIA/NemoClaw/issues/13318)).

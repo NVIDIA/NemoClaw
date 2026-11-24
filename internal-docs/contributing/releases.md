@@ -88,6 +88,25 @@ When a listed platform's signing job fails, staging stops before it drafts the r
 Linux is out of scope for OS code signing: Linux has no publisher check like Gatekeeper or SmartScreen.
 A final release's [attestations](#verifying-provenance) authenticate the Linux archives, as they do the others.
 
+### Windows Installer
+
+When `windows_amd64` is signed, staging also builds `nemoclaw-<tag>-windows_amd64.msi`, a per-user Windows Installer package of the signed bundle:
+
+1. `Reseal the signed Windows bundle` reseals the signed bundle with the tag's `nemoclaw-build reseal`, as packing the archive does, so the installer holds the archive's bytes.
+2. `Build and sign the Windows installer` runs in the `release-signing` environment from the v1 controller's checkout. It refuses a bundle whose version isn't the tag's, builds the package with WiX Toolset v5 and [`windows-installer.rs`](../../tools/release/windows-installer.rs) from [`packaging/windows`](../../packaging/windows/README.md), signs it with the same Azure Artifact Signing profile as the programs, and checks it with `signtool verify /pa /all /tw`.
+3. Staging adds the package to the CLI assets, so `SHA256SUMS` lists it and a final release attests it, records its SHA-256 and signature check under `installers` in `release-evidence.json`, and names it in the notes.
+
+Without Windows signing, both jobs are skipped and the release has no installer, including a final release staged under `RELEASE_UNSIGNED_EXCEPTION`: an unsigned installer would meet SmartScreen's warning, and the archive serves the same bundle.
+Because the installer's source comes from the controller, a change to it reaches a release once it merges to `v1`, before staging.
+
+The package's UpgradeCode never changes, so each installer replaces the installed version.
+Windows Installer compares only `MAJOR.MINOR.BUILD`, each at most 255, 255, and 65535, and has no prerelease part, so the package version is `MAJOR.MINOR.(PATCH × 1000 + RANK)`: `RANK` is 999 for a final release, `N` for `rc.N` and the CI builds after it, and 0 otherwise.
+For example, `v0.1.0-rc.12` is `0.1.12` and `v0.1.0` is `0.1.999`.
+The helper refuses a version it can't order: a patch above 64, or a candidate above 998.
+The product name carries the bundle's own version, which **Settings** > **Apps** shows beside the package version.
+
+When CI / Bundle builds the Windows bundle, `E2E installer` builds the package from it and installs, upgrades, downgrades, and uninstalls it on the runner; see [`packaging/windows`](../../packaging/windows/README.md).
+
 ### Final Releases Require Signing
 
 A final release's tag has no prerelease suffix such as `-rc1`.
@@ -108,6 +127,7 @@ It records:
 - `version`, `commit`, and `run`: the tag, its commit, and the staging run's URL.
 - `signing`: whether the release required signing, which of `darwin_arm64` and `windows_amd64` are unsigned, and the exception's reason, if one applied.
 - `archives`: each archive's SHA-256, the programs NVIDIA signed in it with their SHA-256, and the output of the signing job's signature checks.
+- `installers`: when staging built the [Windows installer](#windows-installer), its SHA-256 and the output of its signature check.
 - `verification`: the output of `sha256sum --check --strict SHA256SUMS` over the final archives. Before it publishes a final release, the workflow adds the output of `gh attestation verify` for each archive and `SHA256SUMS`.
 
 [`record-cli-signing.sh`](../../.github/scripts/record-cli-signing.sh) applies the signing rule and writes the record.

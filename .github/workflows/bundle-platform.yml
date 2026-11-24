@@ -88,6 +88,12 @@ on:
           compiles them slowly.
         type: boolean
         default: false
+      installer:
+        description: >-
+          On Windows, build the installer from the bundle, then install, upgrade,
+          downgrade, and uninstall it for the runner's user.
+        type: boolean
+        default: false
     # The caller reports the macOS and Windows suites' timings from these.
     outputs:
       lifecycle-artifact:
@@ -116,8 +122,10 @@ env:
 # other Build bundle jobs compile the bundle's executables in parallel, and
 # Build bundle assembles them. Artifact names carry the run attempt, and consumers
 # read them from the producers' outputs, so rerunning a failed shard reuses an
-# earlier attempt's artifacts. The caller's Test / PLATFORM check requires every
-# job here that runs; a job the plan does not select is skipped.
+# earlier attempt's artifacts. With installer, E2E installer starts when Build
+# bundle finishes, beside the contract and integration tests. The caller's
+# Test / PLATFORM check requires every job here that runs; a job the plan does
+# not select is skipped.
 jobs:
   build:
     name: Unit build and test
@@ -447,6 +455,75 @@ jobs:
           compression-level: 1
           retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
           if-no-files-found: error
+
+  # Builds the Windows installer from this run's bundle with WiX Toolset, as
+  # Release / Stage does from the signed bundle, and installs it for the
+  # runner's user: first an older build with a file the bundle lacks, then this
+  # one over it, then the older one again, which it must refuse; then it
+  # uninstalls. See packaging/windows/README.md.
+  installer:
+    name: E2E installer
+    needs: bundle
+    if: ${{ !cancelled() && inputs.installer && needs.bundle.result == 'success' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      WIX_VERSION: 5.0.2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.bundle.outputs.artifact }}
+          path: .build/ci
+      - name: Install WiX Toolset
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet tool install --global wix --version $env:WIX_VERSION
+          $tools = Join-Path $env:USERPROFILE .dotnet\tools
+          Add-Content $env:GITHUB_PATH $tools
+          & (Join-Path $tools wix.exe) extension add --global "WixToolset.UI.wixext/$env:WIX_VERSION"
+      - name: Check and compile the installer tools
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          rustfmt --edition 2021 --check tools/release/windows-installer.rs tools/ci/windows-installer-e2e.rs
+          foreach ($tool in 'release/windows-installer', 'ci/windows-installer-e2e') {
+            $name = Split-Path $tool -Leaf
+            rustc --edition=2021 -D warnings --test "tools/$tool.rs" -o "$env:RUNNER_TEMP/$name-tests.exe"
+            & "$env:RUNNER_TEMP/$name-tests.exe"
+            rustc --edition=2021 -D warnings "tools/$tool.rs" -o "$env:RUNNER_TEMP/$name.exe"
+          }
+      - name: Build the installer and an older one
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          tar -xf .build/ci/bundle.tar
+          $older = Join-Path $env:RUNNER_TEMP older-bundle
+          Copy-Item -Recurse "dist/$env:TEST_PLATFORM" $older
+          New-Item -ItemType Directory "$older/retired" | Out-Null
+          Set-Content "$older/retired/only-in-older.txt" 'Only the older build installs this file.'
+          $helper = "$env:RUNNER_TEMP/windows-installer.exe"
+          & $helper build --bundle $older --version 0.0.1 --compression none --output "$env:RUNNER_TEMP/msi/older.msi"
+          & $helper build --bundle "dist/$env:TEST_PLATFORM" --output "$env:RUNNER_TEMP/msi/nemoclaw.msi"
+      - name: Install, upgrade, downgrade, and uninstall
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $version = (Get-Content -Raw "dist/$env:TEST_PLATFORM/manifest.json" | ConvertFrom-Json).version
+          $msiVersion = & "$env:RUNNER_TEMP/windows-installer.exe" version $version
+          & "$env:RUNNER_TEMP/windows-installer-e2e.exe" --older "$env:RUNNER_TEMP/msi/older.msi" `
+            --current "$env:RUNNER_TEMP/msi/nemoclaw.msi" --version $version --msi-version $msiVersion `
+            --stale 'retired\only-in-older.txt' --logs "$env:RUNNER_TEMP/installer-logs"
+      - name: Upload the installer logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-logs-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/installer-logs
+          retention-days: 7
+          if-no-files-found: ignore
 
   tests:
     name: ${{ matrix.layer == 'contract' && 'Contract' || 'Integration' }} tests ${{ matrix.shard }} of ${{ matrix.shards }}

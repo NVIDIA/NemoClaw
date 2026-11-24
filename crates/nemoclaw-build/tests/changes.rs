@@ -581,6 +581,26 @@ fn packages_outside_lifecycle_still_rebuild_the_bundled_source_archive() {
     assert_eq!(plan["lifecycle"]["run"], false, "{plan}");
 }
 
+/// The Windows installer packs the bundle, and its check runs where the
+/// bundle is built; its inputs reach no other suite.
+#[test]
+fn windows_installer_inputs_build_the_bundle_only() {
+    for path in [
+        "packaging/windows/NemoClaw.wxs",
+        "tools/release/windows-installer.rs",
+        "tools/ci/windows-installer-e2e.rs",
+    ] {
+        let repo = Repo::new();
+        write(repo.0.path(), path, "changed\n");
+        let plan = repo.plan("HEAD", true);
+        no_fallback(&plan);
+        assert_eq!(plan["bundle"]["run"], true, "{path}: {plan}");
+        for step in ["lifecycle", "images", "live"] {
+            assert_eq!(plan[step]["run"], false, "{path} {step}: {plan}");
+        }
+    }
+}
+
 #[test]
 fn unknown_inputs_and_missing_bases_select_all_expensive_checks() {
     let repo = Repo::new();

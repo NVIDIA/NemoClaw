@@ -8,6 +8,11 @@
 # Rules apply in order, before determinator's defaults. Keep them aligned with the
 # .dockerignore allowlist and with files the image commands read at runtime.
 
+# The Windows installer's sources, build helper, and check; no image reads them.
+[[path-rule]]
+globs = ["packaging/windows/**", "tools/release/windows-installer.rs", "tools/ci/windows-installer-e2e.rs"]
+mark-changed = []
+
 # Of the runtime images, CI / Images builds only llama.cpp's; the live suites
 # and the bundle cover the vLLM and Ollama images and the supervisor.
 [[path-rule]]

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  The per-user Windows installer for the windows_amd64 bundle; see README.md.
+  tools/release/windows-installer.rs builds it with WiX Toolset v5 and defines:
+    ProductVersion  the Windows Installer version computed from DisplayVersion
+    DisplayVersion  the bundle's version, which the CLI reports
+    BundleDir       the bundle directory, installed unchanged
+    ArtworkDir      this directory's artwork folder
+    LicenseRtf      the license page, generated from the bundle's notices
+    Compression     the cabinet compression level
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <!-- Keep the UpgradeCode: every NemoClaw installer replaces the one before. -->
+  <Package Name="NVIDIA NemoClaw Agent Configs $(DisplayVersion)"
+           Manufacturer="NVIDIA Corporation"
+           Version="$(ProductVersion)"
+           UpgradeCode="3BD34EE5-425E-4DBC-A15A-E52865D10C8B"
+           Scope="perUser"
+           Language="1033">
+    <SummaryInformation Description="NVIDIA NemoClaw Agent Configs command-line interface" />
+
+    <!-- Remove the installed version before installing this one, so no file
+         that only the old bundle had remains. Same-version builds, such as
+         two CI builds after one release candidate, replace each other. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  Schedule="afterInstallValidate"
+                  DowngradeErrorMessage="A newer version of NVIDIA NemoClaw Agent Configs is already installed. To install this version, first uninstall the newer one in Settings &gt; Apps &gt; Installed apps." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="$(Compression)" />
+
+    <!-- Settings > Apps > Installed apps -->
+    <Icon Id="NemoClaw.ico" SourceFile="$(ArtworkDir)\nemoclaw.ico" />
+    <Property Id="ARPPRODUCTICON" Value="NemoClaw.ico" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/NVIDIA/NemoClaw/blob/v1/docs/get-started/install.md" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/NVIDIA/NemoClaw/issues" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/NVIDIA/NemoClaw/releases" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- %LOCALAPPDATA%\Programs\NemoClaw holds the bundle unchanged: the
+         CLI finds its bundle from bin\nemoclaw.exe's location. -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="LocalProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="NemoClaw" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="NemoClaw" Title="NemoClaw" Level="1">
+      <Files Directory="INSTALLFOLDER" Include="$(BundleDir)\**" />
+
+      <!-- The user's Path gets bin on install and loses it on uninstall. -->
+      <Component Id="UserPath" Directory="INSTALLFOLDER" Guid="70B6BB27-519C-4B7F-82F4-99A4760AB3DB">
+        <RegistryValue Root="HKCU" Key="Software\NVIDIA\NemoClaw" Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RemoveRegistryKey Root="HKCU" Key="Software\NVIDIA\NemoClaw" Action="removeOnUninstall" />
+        <Environment Id="UserPath" Name="PATH" Value="[INSTALLFOLDER]bin" Part="last" Action="set" System="no" Permanent="no" />
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <RemoveFolder Id="RemoveLocalProgramsFolder" Directory="LocalProgramsFolder" On="uninstall" />
+      </Component>
+    </Feature>
+
+    <!-- Welcome and license, progress, and finish pages. -->
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(LicenseRtf)" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(ArtworkDir)\banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(ArtworkDir)\dialog.bmp" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Open a new terminal so that the nemoclaw command is on your Path.&#13;&#10;&#13;&#10;Before you deploy, install Docker Desktop or Podman. Then run nemoclaw onboard to write your first deployment file.&#13;&#10;&#13;&#10;To get started, follow the first-deployment guide linked from github.com/NVIDIA/NemoClaw/tree/v1." />
+  </Package>
+</Wix>

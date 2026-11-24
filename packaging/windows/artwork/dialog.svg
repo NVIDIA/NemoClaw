@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Placeholder dialog image for the installer's welcome and finish pages: WiX draws their text on the white area right of the panel, pending NVIDIA brand and trademark review; see ../README.md. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="493" height="312" viewBox="0 0 493 312">
+  <rect width="493" height="312" fill="#ffffff"/>
+  <clipPath id="panel"><rect width="164" height="312"/></clipPath>
+  <g clip-path="url(#panel)">
+    <rect width="164" height="312" fill="#000000"/>
+    <polygon points="0,312 164,120 164,312" fill="#1a1a1a"/>
+    <g fill="#76b900">
+    <polygon points="22.0,262.0 70.5,184.2 92.0,112.0 50.5,174.8"/>
+    <polygon points="56.0,262.0 104.5,184.2 126.0,112.0 84.5,174.8"/>
+    <polygon points="90.0,262.0 138.5,184.2 160.0,112.0 118.5,174.8"/>
+    </g>
+  </g>
+  <rect x="164" width="3" height="312" fill="#76b900"/>
+</svg>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Placeholder application icon for Settings > Apps, pending NVIDIA brand and trademark review; see ../README.md. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect x="8" y="8" width="240" height="240" rx="44" fill="#000000"/>
+  <g fill="#76b900">
+    <polygon points="40.0,205.0 88.5,127.2 110.0,55.0 68.5,117.8"/>
+    <polygon points="90.0,205.0 138.5,127.2 160.0,55.0 118.5,117.8"/>
+    <polygon points="140.0,205.0 188.5,127.2 210.0,55.0 168.5,117.8"/>
+  </g>
+</svg>

@@ -295,6 +295,133 @@ jobs:
           path: ${{ runner.temp }}/windows_amd64.verification.txt
           if-no-files-found: error
           retention-days: 7
+  # The Windows installer packs the signed bundle as Stage packs the Windows
+  # archive: signing changed the programs' bytes, so the tag's build tool
+  # reseals the manifest with their new hashes, as pack-cli-bundles.sh does.
+  reseal-windows:
+    name: Reseal the signed Windows bundle
+    needs: sign-windows
+    if: needs.sign-windows.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the signed Windows bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-cli-windows_amd64
+          path: ${{ runner.temp }}/windows_amd64
+      # Resealing hashes the bundle with the SDK, which needs the pinned protoc.
+      - name: Install the pinned build tools
+        run: cargo ci tools
+      - name: Reseal the bundle
+        run: |
+          cargo build --locked -q -p nemoclaw-build
+          target/debug/nemoclaw-build reseal "$RUNNER_TEMP/windows_amd64"
+      - name: Upload the resealed bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: resealed-cli-windows_amd64
+          path: ${{ runner.temp }}/windows_amd64
+          if-no-files-found: error
+          retention-days: 1
+  # Builds the per-user Windows installer from the resealed bundle and signs it
+  # with the profile that signed the programs; see packaging/windows/README.md.
+  # Without Windows signing, sign-windows is skipped, and the release has no
+  # installer.
+  windows-installer:
+    name: Build and sign the Windows installer
+    needs: [security-controller, sign-windows, reseal-windows]
+    if: needs.sign-windows.result == 'success' && needs.reseal-windows.result == 'success'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      WIX_VERSION: 5.0.2
+    steps:
+      # Only the v1 controller's files run with signing access; the bundle is
+      # data, which the installer helper reads but never runs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.security-controller.outputs.revision }}
+          persist-credentials: false
+      - name: Download the resealed bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: resealed-cli-windows_amd64
+          path: ${{ runner.temp }}/windows_amd64
+      - name: Install WiX Toolset
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet tool install --global wix --version $env:WIX_VERSION
+          $tools = Join-Path $env:USERPROFILE .dotnet\tools
+          Add-Content $env:GITHUB_PATH $tools
+          & (Join-Path $tools wix.exe) extension add --global "WixToolset.UI.wixext/$env:WIX_VERSION"
+      - name: Build the installer
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $version = (Get-Content -Raw "$env:RUNNER_TEMP/windows_amd64/manifest.json" | ConvertFrom-Json).version
+          if ("v$version" -ne $env:TAG) {
+            Write-Output "::error::The Windows bundle reports $version, not $env:TAG."
+            exit 1
+          }
+          rustc --edition=2021 -D warnings tools/release/windows-installer.rs -o "$env:RUNNER_TEMP/windows-installer.exe"
+          $file = "nemoclaw-$env:TAG-windows_amd64.msi"
+          & "$env:RUNNER_TEMP/windows-installer.exe" build --bundle "$env:RUNNER_TEMP/windows_amd64" --output "$env:RUNNER_TEMP/installer/$file"
+          # The signing action reads paths relative to its catalog.
+          Set-Content "$env:RUNNER_TEMP/installer/catalog.txt" $file
+      - name: Sign in to Azure
+        uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign the installer
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          files-catalog: ${{ runner.temp }}\installer\catalog.txt
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      # As for the programs, /tw fails an untimestamped signature, and the
+      # output is the release's evidence.
+      - name: Verify the signature
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
+          $file = "nemoclaw-$env:TAG-windows_amd64.msi"
+          & $signtool.FullName verify /pa /all /tw /v "$env:RUNNER_TEMP\installer\$file" |
+            Tee-Object -FilePath "$env:RUNNER_TEMP\installer\$file.verification.txt"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "::error::$file has no valid timestamped signature."
+            exit 1
+          }
+      - name: Upload the signed installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-installer-windows_amd64
+          path: |
+            ${{ runner.temp }}/installer/*.msi
+            ${{ runner.temp }}/installer/*.verification.txt
+          if-no-files-found: error
+          retention-days: 7
   # Dedicated private runner: only the trusted controller executes with SSA access.
   sign-macos-3s:
     name: Sign macOS executables with 3S
@@ -442,7 +569,7 @@ jobs:
       inventory_sha256: ${{ steps.draft.outputs.inventory_sha256 }}
       sboms_sha256: ${{ steps.draft.outputs.sboms_sha256 }}
       cli_checksums: ${{ steps.pack.outputs.checksums }}
-    needs: [select, build, runtimes, security-controller, bundles, sign-windows, sign-macos]
+    needs: [select, build, runtimes, security-controller, bundles, sign-windows, sign-macos, windows-installer]
     if: >-
       !cancelled() && needs.security-controller.result == 'success' &&
       needs.select.result == 'success' && needs.runtimes.result == 'success' &&
@@ -450,6 +577,8 @@ jobs:
       needs.bundles.result == 'success' &&
       (needs.sign-windows.result == 'success' ||
         (needs.sign-windows.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'windows_amd64'))) &&
+      (needs.windows-installer.result == 'success' ||
+        (needs.windows-installer.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'windows_amd64'))) &&
       (needs.sign-macos.result == 'success' ||
         (needs.sign-macos.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'darwin_arm64')))
     runs-on: ubuntu-24.04
@@ -516,6 +645,19 @@ jobs:
           pattern: signing-verification-*
           merge-multiple: true
           path: ${{ runner.temp }}/signed
+      # The installer joins the archives, so SHA256SUMS lists it and a final
+      # release attests it.
+      - name: Download the signed Windows installer
+        if: needs.windows-installer.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-installer-windows_amd64
+          path: ${{ runner.temp }}/installer
+      - name: Add the Windows installer to the CLI assets
+        if: needs.windows-installer.result == 'success'
+        run: |
+          mkdir -p "$RUNNER_TEMP/cli-bundles"
+          cp "$RUNNER_TEMP/installer/nemoclaw-$GITHUB_REF_NAME-windows_amd64.msi" "$RUNNER_TEMP/cli-bundles/"
       # Resealing hashes the bundle with the SDK, which needs the pinned protoc.
       - name: Install the pinned build tools
         run: cargo ci tools
@@ -539,6 +681,21 @@ jobs:
             (cd "$cli" && sha256sum SHA256SUMS)
             echo CHECKSUMS
           } >> "$GITHUB_OUTPUT"
+      - name: Record the Windows installer's signing
+        if: needs.windows-installer.result == 'success'
+        run: |
+          cli="$RUNNER_TEMP/cli-bundles"
+          installer="nemoclaw-$GITHUB_REF_NAME-windows_amd64.msi"
+          jq --arg file "$installer" \
+            --arg sha256 "$(awk -v name="$installer" '$2 == name { print $1 }' "$cli/SHA256SUMS")" \
+            --rawfile verification "$RUNNER_TEMP/installer/$installer.verification.txt" \
+            '.installers = [{platform: "windows_amd64", file: $file, sha256: $sha256, signature_verification: $verification}]' \
+            "$cli/release-evidence.json" > "$RUNNER_TEMP/evidence.json"
+          mv "$RUNNER_TEMP/evidence.json" "$cli/release-evidence.json"
+          {
+            echo
+            echo "\`$installer\` installs the \`windows_amd64\` archive's bundle for the current user, and is signed like its executables."
+          } >> "$RUNNER_TEMP/cli-signing.md"
       - name: Join each image's platforms and draft the release
         id: draft
         env:
@@ -927,7 +1084,9 @@ jobs:
             --pattern 'nemoclaw-*' --pattern SHA256SUMS --pattern release-evidence.json
           cd "$cli"
           sha256sum --check --strict SHA256SUMS
-          for file in nemoclaw-*.tar.gz SHA256SUMS; do
+          # A release without Windows signing has no installer.
+          shopt -s nullglob
+          for file in nemoclaw-*.tar.gz nemoclaw-*.msi SHA256SUMS; do
             if ! gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" --format json > "$RUNNER_TEMP/attestation.json"; then
               echo "::error::$file has no valid build provenance attestation from this repository."
               exit 1
