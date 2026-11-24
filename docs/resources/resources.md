@@ -26,8 +26,8 @@ Choose a source by its use:
 
 Staging updates after successful pushes to `v1`.
 Inspect its revision-pinned source links when matching it to a bundle.
-The site's unversioned `llms.txt` describes the default main version.
-Use the `/nemoclaw/v1/` index for v1 tasks and keep that prefix when following published task-guide links.
+Use the hosted `/nemoclaw/v1/llms.txt` for NemoClaw Agent Configs and `/nemoclaw/v0/llms.txt` for NemoClaw v0. Keep the version prefix when following hosted links.
+The combined local preview defaults to **Latest (main)**. That label does not identify a hosted product.
 Generic Markdown headers might point at the unversioned index or advertise an MCP server.
 Those headers do not establish v1 search isolation or MCP availability.
 Docs search, MCP and v1-scoped results are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).

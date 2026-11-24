@@ -77,6 +77,15 @@ PR #14801 was open and conflicting at remote head `a6a6ea490a357d5f9e681425c39d1
 - `cargo test --locked -p nemoclaw-build --test integration fern::` passed all seven selected tests (`/tmp/nc-r6-integration.log`). Generated docs, schema freshness, and whitespace checks passed.
 - Requests to the staging v1 home and Markdown index failed with connection resets; public v1 overview and v0 home probes returned HTTP 404. The final `v0.1.0` tag and release were still not found. No live release rehearsal or site publication was performed.
 
+## Naming and Navigation Review Corrections
+
+The review of `2743e5b7dddea184d4426bae679366b21adbad05` covered naming and directly affected routes. The fetched `origin/v1` and draft PR #14801 head were already ancestors; no further merge was needed.
+
+- The main layout builder at `4649634639d2ddcb26b84cb34db63b2d4176a8a1` adds a `home` navigation entry backed by `docs/preview-v1-home.mdx`. `checked_product` now installs the tracked `fern/home.mdx` at that destination. The page leads to the Agent Configs install, deployment, and native reply check without exposing v0 installation instructions. The v0 switcher retains its destination and is labeled NemoClaw v0.
+- The task index links to the imported engineering example at the `fern/main-source.json` revision. Its navigation label identifies it as a v0 example; its source and route are unchanged. The resource guide and user-guide skill distinguish the hosted Markdown indexes from the combined local preview's Latest default.
+- The seven v1 aliases in `fern/docs.yml` have matching destinations in the assembled standalone product. A local check compared both configurations and inspected the assembled home and generated guide routes. The home check failed against the old builder and passed after the change. These are local assembly checks, not hosted redirect tests.
+- Fern validation passed with zero errors and one warning per pass (`/tmp/nc-home-final.log`). The seven targeted Fern integration tests passed (`/tmp/nc-home-tests.log`), as did generated docs, schema freshness, and whitespace checks. No runtime examples or schema inputs changed.
+
 ## Release Evidence Still Needed
 
 `git ls-remote --tags origin refs/tags/v0.1.0` returned no match. The final release page returned HTTP 404. The v1 hosted overview first returned 404 and later failed to connect. The API request was rate-limited. These observations do not establish the contents of a private release. No draft RC assets were substituted and nothing was published.

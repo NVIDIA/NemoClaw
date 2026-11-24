@@ -97,7 +97,7 @@ Use these sources to find help, development status, currently documented limits,
 | Reader goal | Guide |
 |---|---|
 | Find version-matched documentation and reporting channels | [Project Resources](resources/resources.md) |
-| Make documentation useful to coding agents | [Engineer Documentation for AI Agents](https://github.com/NVIDIA/NemoClaw/blob/f5c05a0e6a59bd5133c50e31becbff25af274c33/docs/resources/engineer-agentic-documentation.mdx) |
+| See how NemoClaw v0 builds documentation for coding agents | [Engineer Documentation for AI Agents (NemoClaw v0 Example)](https://github.com/NVIDIA/NemoClaw/blob/4649634639d2ddcb26b84cb34db63b2d4176a8a1/docs/resources/engineer-agentic-documentation.mdx) |
 | Find unimplemented or unqualified paths | [Current Limits](resources/limits.md) |
 | Find what Agent Configs leaves to other components by design | [Out of Scope](resources/out-of-scope.md) |
 

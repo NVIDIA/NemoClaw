@@ -3,7 +3,7 @@
 
 # Architecture Overview
 
-NemoClaw translates a desired-state document into resources for one or more agent sandboxes. Its CLI and Rust SDK coordinate a deployment.
+NemoClaw Agent Configs translates a desired-state document into resources for one or more agent sandboxes. Its CLI and Rust SDK coordinate a deployment.
 OpenTofu orders resource changes and records resource state. NVIDIA OpenShell supplies the gateway, sandbox isolation, provider registration, and inference routing. NVIDIA NeMo Fabric configures and runs the agent harness inside each sandbox. The model endpoint can be externally operated or a service that NemoClaw manages on a supported Docker engine. See [the ecosystem](ecosystem.md) for the boundary with each upstream component.
 
 ## Following a Deployment

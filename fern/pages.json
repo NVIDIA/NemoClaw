@@ -226,7 +226,7 @@
           "slug": "resources"
         },
         {
-          "title": "Engineer Documentation for AI Agents",
+          "title": "Engineer Documentation for AI Agents (NemoClaw v0 Example)",
           "source": "docs/resources/engineer-agentic-documentation.mdx",
           "slug": "resources/engineer-agentic-documentation",
           "from-main": true
