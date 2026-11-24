@@ -122,7 +122,9 @@ fn credential_reason(plan: &Plan, change: &ResourceChange) -> Option<String> {
         .iter()
         .filter(|registration| takes_credential(registration))
         .find(|registration| {
-            registration.change.before["name"]
+            // A sandbox's `providers` take each registration's `ref`, which
+            // names it by its `registration` attribute.
+            registration.change.before["registration"]
                 .as_str()
                 .is_some_and(|name| attached.iter().any(|attached| attached == name))
         })
@@ -608,6 +610,56 @@ mod native_helm_tests {
         assert_eq!(
             changes[0].reason.as_deref(),
             Some("agent runtime is not running")
+        );
+    }
+
+    #[test]
+    fn a_new_credential_value_says_why_its_registration_and_attached_sandboxes_change() {
+        let registration = "openshell_api.bookings";
+        let resource = |address: &str, actions: &[&str], before: Value| {
+            let replaced = actions.len() == 2;
+            json!({"mode":"managed", "address":address,
+            "action_reason": if replaced { json!("replace_by_triggers") } else { Value::Null },
+            "change":{"actions":actions, "before":before, "after":{},
+                "after_unknown": if address == registration {
+                    json!({"credential_digest": true})
+                } else {
+                    json!({})
+                }}})
+        };
+        let attaching = |names: &[&str]| json!({"provider_names_json": json!(names).to_string()});
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[
+            resource(registration, &["update"], json!({"registration":"bookings"})),
+            resource("openshell_sandbox.assistant", &["delete", "create"], attaching(&["local", "bookings"])),
+            resource("openshell_sandbox.reader", &["delete", "create"], attaching(&["local"])),
+        ]}))
+        .unwrap();
+        let allowed: BTreeMap<String, Row> = [
+            registration,
+            "openshell_sandbox.assistant",
+            "openshell_sandbox.reader",
+        ]
+        .map(|address| (address.to_owned(), Row::new()))
+        .into();
+        let reasons: Vec<_> = check_plan(&plan, &allowed, &BTreeMap::new())
+            .unwrap()
+            .into_iter()
+            .map(|change| (change.resource, change.reason))
+            .collect();
+        assert_eq!(
+            reasons,
+            [
+                (
+                    registration.to_owned(),
+                    Some("credential changed".to_owned())
+                ),
+                (
+                    "openshell_sandbox.assistant".to_owned(),
+                    Some(format!("attached credential changed: {registration}"))
+                ),
+                // Replaced for another trigger, such as its agent configuration.
+                ("openshell_sandbox.reader".to_owned(), None),
+            ]
         );
     }
 
