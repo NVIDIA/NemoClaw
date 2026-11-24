@@ -3,3 +3,5 @@
 self-hosted-runner:
   labels:
     - nemoclaw-release-signing
+    # GitHub-hosted, but newer than actionlint's list of labels.
+    - macos-15-intel

@@ -33,6 +33,11 @@ Releases:
   See [compatibility](../../docs/references/compatibility.md#using-one-release-together).
   A final release is published only when the file matches its tag's `versions.json` and the images it staged.
   Before, hand-written HCL copied `versions.json` from the release's tag.
+- Each release attaches `nemoclaw-<tag>-darwin_arm64.pkg`, a macOS installer for Macs with Apple silicon on macOS 15 or later ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
+  It installs the `darwin_arm64` archive's bundle in `/usr/local/nemoclaw` and puts its `bin` directory on `PATH` through `/etc/paths.d/nemoclaw`; installing a newer release replaces the bundle.
+  See [installing with the macOS installer](../../docs/get-started/install.md#installing-with-the-macos-installer).
+  Until a Developer ID Installer certificate signs it, release candidates attach it unsigned and final releases leave it out; see [the macOS installer](releases.md#macos-installer).
+  Before, macOS clients installed the CLI only from the archive.
 
 Agents:
 
@@ -652,6 +657,5 @@ Refer to [current limits](../../docs/resources/limits.md) for what v1 doesn't do
 
 ## Previous Releases
 
-The combined staging site's **Latest (main)** version retains the imported main guides and changelog.
-Use [earlier documentation](../../docs/get-started/migration.md#finding-earlier-documentation) to select that version.
-Its release entries aren't v1 release notes.
+The separate NemoClaw v0 product contains the earlier main guides and changelog.
+Use [earlier documentation](../../docs/get-started/migration.md#finding-earlier-documentation) to find that product's release notes.

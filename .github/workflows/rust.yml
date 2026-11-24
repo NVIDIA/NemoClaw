@@ -124,6 +124,7 @@ jobs:
       platform: darwin_arm64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
+      installer: ${{ needs.plan.outputs.installer == 'true' }}
   windows_amd64:
     needs: plan
     if: needs.plan.outputs.suite == 'ci'

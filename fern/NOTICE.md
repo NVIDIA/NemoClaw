@@ -18,7 +18,7 @@ Modifications on 2026-09-15:
 - Isolate previews with `nemoclaw-v1` IDs and gate shared-site release publication on explicit enablement after publisher coordination.
 - Reuse the reviewed-npm setup action at main revision `4e9f579183477b984c009cce0f47a1361e5eddef`; its upstream notice and audited npm identity remain in that action's repository checkout.
 
-NemoClaw Agent Configs uses its own home and reuses the header and layout builder from the [pinned main source](./main-source.json), starting with the [NemoClaw v0 product selector](https://github.com/NVIDIA/NemoClaw/commit/4649634639d2ddcb26b84cb34db63b2d4176a8a1).
+NemoClaw Agent Configs reuses the home, header, and layout builder from the [pinned main source](./main-source.json), starting with the [NemoClaw v0 product selector](https://github.com/NVIDIA/NemoClaw/commit/4649634639d2ddcb26b84cb34db63b2d4176a8a1).
 The v1 publisher scopes both official instances to `/nemoclaw/v1`.
 
 The generator, its tests, and the publisher's tests under `crates/nemoclaw-build` are original NemoClaw code; `src/fern.rs` adapts main's publishing workflow as listed above.

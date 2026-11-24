@@ -17,7 +17,7 @@ The NemoClaw Agent Configs CLI has `onboard`, `plan`, `apply`, `export`, and `de
 Use the documentation in the matching checkout, starting with [the index](../../../docs/README.md).
 Without a checkout, use the [NemoClaw Agent Configs Markdown index](https://docs.nvidia.com/nemoclaw/v1/llms.txt) for NemoClaw Agent Configs tasks or the [parent NemoClaw Markdown index](https://docs.nvidia.com/nemoclaw/llms.txt) for NemoClaw v0 tasks.
 Use the page URLs listed in the index. Confirm that the guide matches the installed version and source revision before suggesting commands.
-In the combined local preview, **Latest (main)** is the default.
+The local preview shows the Agent Configs guide as **Latest (v1)**.
 If the matching documentation isn't available, say so instead of substituting another version's commands.
 If the executable and the documentation disagree, establish which deployment the user means before changing anything.
 

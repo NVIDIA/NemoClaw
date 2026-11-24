@@ -39,7 +39,7 @@ The [staging workflow](../../.github/workflows/release.yml):
 1. Finds the latest commit in the tag's `v1` history with per-commit images, and checks with `nemoclaw-build changes images` that nothing since could change them; otherwise it builds and checks the images at the tag.
 2. Builds the vLLM, Ollama, and llama.cpp runtime images on each native platform; their builds are reproducible.
 3. Joins each image's ARM64 and AMD64 images into one index at `ghcr.io/nvidia/nemoclaw/v1/<image>:<tag>`, without rebuilding.
-4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the [CLI bundles](#cli-bundles), their [evidence record](#evidence-record), the [version pins](#version-pins), and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
+4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the [CLI bundles](#cli-bundles), the [macOS installer](#macos-installer), their [evidence record](#evidence-record), the [version pins](#version-pins), and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
 
 Only users with push access see a draft release, and the `v1` packages stay internal.
 
@@ -84,9 +84,40 @@ A job's `if:` can't read an environment's variables, so the repository variable 
 
 Staging puts the signed executables in their bundles with the bundles' file modes, records their new hashes in `manifest.json` with `nemoclaw-build reseal`, and then writes `SHA256SUMS`.
 When a listed platform's signing job fails, staging stops before it drafts the release.
+Staging stops the same way when the [macOS installer](#macos-installer)'s build fails, or its signing when that's on.
 
 Linux is out of scope for OS code signing: Linux has no publisher check like Gatekeeper or SmartScreen.
 A final release's [attestations](#verifying-provenance) authenticate the Linux archives, as they do the others.
+
+### macOS Installer
+
+Staging also attaches `nemoclaw-<tag>-darwin_arm64.pkg`, which installs the `darwin_arm64` archive's bundle on macOS, as [installing with the macOS installer](../../docs/get-started/install.md#installing-with-the-macos-installer) describes.
+The `macos-installer` job assembles that bundle on `macos-15` as staging does, from the bundle CI checked and the executables `sign-macos` signed, and builds the installer with [`macos-installer.rs`](../../tools/release/macos-installer.rs).
+`SHA256SUMS` lists the installer, the [evidence record](#evidence-record) describes it, and a final release attests it with the archives.
+
+The `sign-macos-installer-3s` job submits the installer to NVIDIA 3S through the same Vault-issued SSA identity and `SIGNING_MACOS` scope as executable signing.
+The helper submits the `.pkg` directly so the service selects package signing with a Developer ID Installer certificate; wrapping it in a ZIP selects application signing.
+No Installer certificate or private key is stored in GitHub.
+The job runs outside the `release-signing` environment so its Vault identity remains bound to the protected release tag.
+Only the trusted security controller's helper runs with SSA access; the installer is treated as data.
+The helper uses private job scratch storage, revokes the Vault token after fetching the SSA credentials, and removes scratch data when the job ends.
+
+Before setting the `MACOS_INSTALLER_SIGNING` repository variable to `true`, the runner administrator must update both admission checks on the dedicated signing host:
+
+- Compile the merged `tools/release/macos-signing.rs` as the root-owned `/opt/nemoclaw-signing/bin/macos-signing` admission helper.
+- Add `sign-macos-installer-3s` alongside `sign-macos-3s` in the root-owned `runner-admission.py` job allowlist. Preserve its Worker termination on denial and the Vault authorization check.
+
+Keep the existing protected-tag Vault claims and read-only SSA policy.
+A PR job must not be admitted to validate signing.
+The release controller revision must include the package-signing helper before the first signed installer run.
+
+The hosted-Mac `sign-macos-installer` job checks the returned Developer ID Installer identity against `APPLE_TEAM_ID`, notarizes with the existing `release-signing` environment's `APPLE_NOTARY_ID` and `APPLE_NOTARY_PASSWORD` secrets, and staples the ticket.
+It checks the final package with `pkgutil --check-signature`, `spctl --assess --type install`, and `xcrun stapler validate` before staging accepts it.
+Its temporary notary keychain is deleted when the job ends.
+
+While `MACOS_INSTALLER_SIGNING` is not `true`, both jobs are skipped: a release candidate's private draft attaches the unsigned installer, and a final release attaches none.
+To stop installer signing, set the variable to anything else.
+
 
 ### Final Releases Require Signing
 
@@ -94,6 +125,7 @@ A final release's tag has no prerelease suffix such as `-rc1`.
 Its `darwin_arm64` and `windows_amd64` executables must be signed: `RELEASE_SIGNING` must list both platforms, and both signing jobs must pass.
 Otherwise staging fails after packing the archives, before it pushes release images or drafts the release, and names the unsigned platforms.
 Release candidates may stay unsigned.
+A final release's macOS installer must be signed and notarized; without installer signing, a final release attaches none.
 Until the macOS signing step lands, a final release needs the exception below.
 
 The only exception is the `RELEASE_UNSIGNED_EXCEPTION` repository variable, set to `<tag>:<reason>`, such as `v0.1.0:<reason>`.
@@ -108,6 +140,7 @@ It records:
 - `version`, `commit`, and `run`: the tag, its commit, and the staging run's URL.
 - `signing`: whether the release required signing, which of `darwin_arm64` and `windows_amd64` are unsigned, and the exception's reason, if one applied.
 - `archives`: each archive's SHA-256, the programs NVIDIA signed in it with their SHA-256, and the output of the signing job's signature checks.
+- `installer`: the macOS installer's file name and SHA-256, whether it's signed, and the output of its signature checks, or `null` when the release has no installer.
 - `verification`: the output of `sha256sum --check --strict SHA256SUMS` over the final archives. Before it publishes a final release, the workflow adds the output of `gh attestation verify` for each archive and `SHA256SUMS`.
 
 [`record-cli-signing.sh`](../../.github/scripts/record-cli-signing.sh) applies the signing rule and writes the record.

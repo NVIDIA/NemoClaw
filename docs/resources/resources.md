@@ -30,7 +30,7 @@ Staging updates after successful pushes to `v1`.
 Inspect its revision-pinned source links when matching it to a bundle.
 For hosted NemoClaw Agent Configs guides, use the index at `/nemoclaw/v1/llms.txt`. For NemoClaw v0 guides, start with the [parent NemoClaw Markdown index](https://docs.nvidia.com/nemoclaw/llms.txt).
 Before running commands from a hosted guide, confirm that it matches your installed version and source revision.
-In the combined local preview, **Latest (main)** is the default.
+The local preview shows the Agent Configs guide as **Latest (v1)**.
 Generic Markdown headers might point at the unversioned index or advertise an MCP server.
 Those headers don't establish that search is limited to NemoClaw Agent Configs or that MCP is available.
 Documentation search, MCP, and product-scoped results are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).

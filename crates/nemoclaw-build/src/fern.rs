@@ -482,7 +482,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
 }
 
 /// Assemble a v1-only Product at the same base path on staging and production.
-/// The tag fixes the v1 content and the v0 revision that supplies the layout and header.
+/// The tag fixes both the v1 guides and the v0 revision that supplies their home and header.
 fn checked_product(root: &Path, instance: &str) -> Result<tempfile::TempDir> {
     crate::schema::generate(root, true)?;
     crate::docs::generate(root, false, None).map_err(|e| e.to_string())?;
@@ -510,13 +510,8 @@ fn checked_product(root: &Path, instance: &str) -> Result<tempfile::TempDir> {
             .arg(layout.join("scripts/fern-preview-config.mts"))
             .arg(&project)
             .arg(root.join("fern/_generated")),
-        "assemble the v1 product layout",
+        "assemble the v1 product and shared home",
     )?;
-    fs::copy(
-        root.join("fern/home.mdx"),
-        project.join("docs/preview-v1-home.mdx"),
-    )
-    .map_err(|e| format!("cannot install the Agent Configs home into the v1 product: {e}"))?;
     let fern = project.join("fern");
     fs::copy(
         root.join("fern/fern.config.json"),
@@ -527,9 +522,15 @@ fn checked_product(root: &Path, instance: &str) -> Result<tempfile::TempDir> {
         fs::read_to_string(root.join("fern/product.yml")).map_err(|e| e.to_string())?;
     if instance == STAGING {
         // PR previews share this project with staging, but serve v1 on their own host.
-        // Keep the v0 switcher destination on official staging.
+        // Take the product selector and the shared home's v0 links back to official staging.
         let v0 = format!("https://{STAGING}/v0/");
         config = config.replace("https://docs.nvidia.com/nemoclaw/v0/", &v0);
+        let home = project.join("docs/preview-v1-home.mdx");
+        let content = fs::read_to_string(&home).map_err(|e| e.to_string())?;
+        let linked = content
+            .replace("](/nemoclaw/v0/", &format!("]({v0}"))
+            .replace("href=\"/nemoclaw/v0/", &format!("href=\"{v0}"));
+        fs::write(home, linked).map_err(|e| e.to_string())?;
     }
     fs::write(fern.join("docs.yml"), config).map_err(|e| e.to_string())?;
     run_fern(&root, &["check", "--local"], Some(&project.join("fern")))?;

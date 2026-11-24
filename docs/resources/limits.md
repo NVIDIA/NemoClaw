@@ -22,13 +22,14 @@ A row marked **not verified** names the run that would check it.
 
 ## Installation and Releases
 
-[Install the native CLI archive](../get-started/install.md) rather than a package manager distribution.
+Use the [CLI archive](../get-started/install.md) or the [macOS installer](../get-started/install.md#installing-with-the-macos-installer) if the release includes it.
 Keep the matching bundle for an existing deployment.
 The following installation and release limits apply:
 
 | Limit | Issue | Last Verified |
 |---|---|---|
 | Archive provenance, OS signing, and macOS notarization are separate checks. Use the release's evidence record for platform results. | [#14621](https://github.com/NVIDIA/NemoClaw/issues/14621) | [Signing record contract](../../.github/scripts/record-cli-signing.sh); final platform results not verified |
+| The macOS installer requires Apple silicon and macOS 15 or later. A final release includes the installer only if it's signed and notarized. If unavailable, install the `darwin_arm64` archive. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [Installer and signing workflow](../../.github/workflows/release.yml); final installer availability not verified |
 | Releases don't include a `claude` agent image: it bundles Anthropic's proprietary Claude Code CLI, which NVIDIA can't redistribute. Build it locally as [Building Agent Images](../build-deploy/build.md#building-agent-images) describes. | [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) | [`43c9dc9`][v1-43c9dc9]: issue |
 | The SDK and provider packages are not published. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | No support policy or enterprise deployment qualification. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue |

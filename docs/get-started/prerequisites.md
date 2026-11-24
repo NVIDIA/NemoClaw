@@ -41,7 +41,13 @@ Prepare native access before starting the tutorial:
 
 1. Use an OpenShell CLI at the pinned gateway version.
 
-   **Note for existing deployments.** The [general OpenShell installer](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/about/installation.mdx) also installs and starts a local gateway. On macOS, it reinstalls an existing OpenShell Homebrew formula and restarts the gateway service. To keep an existing deployment running, reuse a compatible CLI or extract the matching standalone CLI archive for your platform from [OpenShell releases](https://github.com/NVIDIA/OpenShell/releases) into a separate directory. Use the executable's absolute path or put that directory first on `PATH` for the tutorial shell only. Coordinate any gateway installation or replacement with its operator.
+   <Warning>
+
+   The [general OpenShell installer](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/about/installation.mdx) also installs and starts a local gateway. On macOS, it reinstalls an existing OpenShell Homebrew formula and restarts the gateway service.
+
+   To keep an existing deployment running, reuse a compatible CLI or extract the matching standalone CLI archive for your platform from [OpenShell releases](https://github.com/NVIDIA/OpenShell/releases) into a separate directory. Use the executable's absolute path or put that directory first on `PATH` for the tutorial shell only. Coordinate any gateway installation or replacement with its operator.
+
+   </Warning>
 
 2. If the external gateway needs an authenticated profile, register it in the CLI with `openshell gateway add` for mTLS or OIDC.
    Follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/authentication.mdx).
