@@ -156,6 +156,7 @@ describe("candidate upgrade admission", () => {
     ].flatMap((scenario) =>
       [
         "tools/e2e/protected-openshell-projection.mts",
+        "tools/e2e/openshell-sdk-0110-graph.mts",
         "tools/e2e/protected-openshell-filesystem.mts",
         "tools/e2e/protected-openshell-filesystem.py",
       ].map((policyPath) => ({ ...scenario, policyPath })),
