@@ -14,9 +14,10 @@ use std::{collections::BTreeMap, fs, process::Command};
 /// Three OpenClaw agents from the example, each in its own sandbox and with
 /// its own model: assistant, researcher, and reviewer.
 fn three_agents() -> Document {
-    let mut document =
-        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
-            .unwrap();
+    let mut document = Document::parse(
+        include_str!("../../../../../examples/agents/fabric-openclaw.yaml").as_bytes(),
+    )
+    .unwrap();
     let primary = document.spec.sandboxes["assistant"].clone();
     for (name, model) in [("researcher", "qwen3:8b"), ("reviewer", "qwen3:14b")] {
         let mut sandbox = primary.clone();

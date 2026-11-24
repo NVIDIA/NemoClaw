@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+
+# Defines the provider on its sole consuming route; see docs/build-deploy/configuration-references.md.
+# Set your own deployment UID, endpoints, and model before applying.
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: inline-inference
+  uid: ef59d17e-569c-45a4-afd4-98b531e2f9d6
+spec:
+  gateway:
+    management: external
+    target:
+      docker: {}
+    endpoint: http://127.0.0.1:17681
+  sandboxes:
+    assistant:
+      image:
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#building-agent-images.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: researcher
+        inference:
+          routes:
+            - name: primary
+              provider:
+                name: local
+                provider: openai
+                endpoint: http://172.20.0.1:11446/v1
+              overrides:
+                model: qwen3:4b

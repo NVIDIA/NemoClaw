@@ -1014,7 +1014,7 @@ fn station_cases_bind_their_own_harness_example_and_images() {
             .collect();
         assert_eq!(
             values["document"],
-            format!("examples/gtc-dc/{harness}-dgx-station.yaml")
+            format!("examples/platforms/docker/vllm/dgx-station/{harness}-dgx-station.yaml")
         );
         assert_eq!(values["primary"], harness);
         assert_eq!(

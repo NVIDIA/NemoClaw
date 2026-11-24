@@ -29,8 +29,10 @@ use nemoclaw_sdk::{config::Document, config::schema::input_schema, services::Ser
 use serde_json::{Value, json};
 
 fn input(hardware: Value) -> Value {
-    let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
+    let mut value: Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"
+    ))
+    .unwrap();
     value["spec"]["services"]["qwen"]["hardware"] = hardware;
     value
 }
@@ -65,8 +67,10 @@ fn hardware_failures_report_the_requirement_and_observation() {
         error.to_string(),
         format!("{UUID}: hardware.minDriverMajor requires at least 580; observed 570")
     );
-    let mut ollama_document: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/managed-ollama-gpu.yaml")).unwrap();
+    let mut ollama_document: Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama-gpu.yaml"
+    ))
+    .unwrap();
     ollama_document["spec"]["services"]["qwen"]["hardware"] =
         json!({"profile":"h100", "architecture":"amd64"});
     let ollama_document = Document::parse(ollama_document.to_string().as_bytes()).unwrap();
@@ -154,8 +158,10 @@ fn a_dedicated_memory_service_at_the_reserve_floor_starts_when_26_gib_are_availa
         )
     );
 
-    let mut ollama: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/managed-ollama-gpu.yaml")).unwrap();
+    let mut ollama: Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama-gpu.yaml"
+    ))
+    .unwrap();
     ollama["spec"]["services"]["qwen"]["hardware"] =
         json!({"profile": "l4", "architecture": "amd64"});
     ollama["spec"]["services"]["qwen"]["memory"]["hostReserveGiB"] = json!(6);

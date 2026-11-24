@@ -6,8 +6,8 @@ use serde_json::Value;
 #[test]
 fn hermes_accepts_managed_gateway_and_inference() {
     for source in [
-        include_str!("../../../examples/local.yaml"),
-        include_str!("../../../examples/managed-ollama.yaml"),
+        include_str!("../../../examples/agents/local.yaml"),
+        include_str!("../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"),
     ] {
         let mut value: Value = serde_saphyr::from_str(source).unwrap();
         value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = "hermes".into();

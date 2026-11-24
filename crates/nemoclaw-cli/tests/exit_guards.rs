@@ -199,7 +199,7 @@ esac
         .unwrap();
         std::fs::write(
             root.join("input.yaml"),
-            include_str!("../../../examples/openclaw.yaml"),
+            include_str!("../../../examples/agents/openclaw.yaml"),
         )
         .unwrap();
         Self {
@@ -241,7 +241,7 @@ esac
             .stdin
             .take()
             .unwrap()
-            .write_all(include_bytes!("../../../examples/openclaw.yaml"))
+            .write_all(include_bytes!("../../../examples/agents/openclaw.yaml"))
             .unwrap();
         child.wait_with_output().unwrap()
     }

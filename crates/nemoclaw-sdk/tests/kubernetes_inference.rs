@@ -149,8 +149,8 @@ fn agents<'a>(input: &Value, graph: &'a Value) -> Vec<&'a Value> {
 #[test]
 fn three_agents_on_a_cluster_gateway_share_one_service_registration_with_their_own_rules() {
     for example in [
-        "kubernetes/external-gateway.yaml",
-        "openshift/external-gateway.yaml",
+        "platforms/kubernetes/external-gateway.yaml",
+        "platforms/openshift/external-gateway.yaml",
     ] {
         let mut input = crate::support::example(example);
         input["spec"]["inferenceProviders"]["inference"]["endpoint"] = json!(SERVICE);
@@ -190,7 +190,7 @@ fn three_agents_on_a_cluster_gateway_share_one_service_registration_with_their_o
     }
     // This example's explicit sandbox policies name its hosted endpoint, so it
     // keeps that endpoint and only its agent names are checked.
-    let input = crate::support::example("kubernetes/managed-development.yaml");
+    let input = crate::support::example("platforms/kubernetes/managed-development.yaml");
     let graph = compile(&parse(&input), &generations(), "0.1.0").unwrap();
     agents(&input, &graph);
 }

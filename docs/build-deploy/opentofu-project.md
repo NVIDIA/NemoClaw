@@ -7,7 +7,7 @@ Teams that keep OpenTofu configuration in their own repositories and apply it fr
 Your repository holds the HCL, and OpenTofu keeps the state in any backend it supports.
 This guide covers installing the providers, keeping state, running from a pipeline, passing credentials, replacing a sandbox with its agent, and tearing the configuration down.
 
-The examples come from [`examples/hcl/travel`](../../examples/hcl/travel/main.tf), a Pi agent in an OpenShell sandbox answering with a local Ollama model, and [`examples/hcl/travel-team`](../../examples/hcl/travel-team/README.md), six agents with their own sandboxes, models, and grants.
+The examples come from [`examples/features/travel/hcl`](../../examples/features/travel/hcl/main.tf), a Pi agent in an OpenShell sandbox answering with a local Ollama model, and [`examples/features/travel-team/hcl`](../../examples/features/travel-team/hcl/README.md), six agents with their own sandboxes, models, and grants.
 An integration test applies each example unchanged with the bundle's providers, a mocked Docker provider, and a fixture gateway, image engine, and model server.
 As the [provider reference](../references/provider.md#resource-and-state-ownership) states, no test qualifies a complete deployment from hand-written HCL on live resources.
 The steps use OpenTofu: the provider addresses are under `registry.opentofu.org`, and the providers are not tested under Terraform ([#14725](https://github.com/NVIDIA/NemoClaw/issues/14725)).
@@ -135,7 +135,7 @@ The travel team takes the name from `var.workspace`, and the travel example name
 Two copies of the travel example on one Docker engine also collide on its container and volume names and its host port.
 
 HCL that installs a managed Kubernetes or OpenShift gateway also keeps that gateway's ownership receipt and development credentials in the directory that `NEMOCLAW_KUBERNETES_STATE` names.
-Keep that directory with the state, as the [GTC DC example](../../examples/gtc-dc/README.md#amd64-kubernetes-with-nvidia-cloud-inference) describes, because a runner that starts empty does not have it.
+Keep that directory with the state, as the [GTC DC example](../../examples/guides/nemotron-super.md#amd64-kubernetes-with-nvidia-cloud-inference) describes, because a runner that starts empty does not have it.
 
 ## Running From CI/CD
 
@@ -190,7 +190,7 @@ The command keeps the checksums already in `.terraform.lock.hcl`.
 Set each secret in the environment of the process that runs OpenTofu, and name the variable in `credential_env`.
 The provider reads the value during apply and sends it to OpenShell's credential store.
 OpenTofu state and the resource's `ref` hold only the variable's name.
-The travel team passes its booking service's key this way, in [`registrations.tf`](../../examples/hcl/travel-team/registrations.tf):
+The travel team passes its booking service's key this way, in [`registrations.tf`](../../examples/features/travel-team/hcl/registrations.tf):
 
 ```hcl
 resource "openshell_api" "bookings" {
@@ -209,10 +209,10 @@ In a pipeline, map it from your secret store into the job's environment.
 The gateway connection takes names the same way: `data.openshell_gateway` takes `credential_env` for the gateway's bearer credential, `tls_ca_env` for the variable naming its CA file, and `tls_certificate_env` and `tls_key_env` for mutual TLS.
 For a managed Kubernetes or OpenShift gateway, `openshell_kubernetes_storage`, `openshell_kubernetes_auth`, and `openshell_kubernetes_gateway` take `kubeconfig_env`, the variable whose value is the kubeconfig file's path, and `environment`, the variables the kubeconfig's exec credential plugin needs.
 Without `kubeconfig_env`, the provider uses the service account of the pod that runs OpenTofu, as [Managed Kubernetes Gateway](../references/provider.md#managed-kubernetes-gateway) describes.
-The Helm provider takes the same kubeconfig as `config_path` in its `kubernetes` attribute, and `data.openshell_gateway` names the variable in `settings.target.kubernetes.kubeconfig.env` of its `kubernetes` specification, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
+The Helm provider takes the same kubeconfig as `config_path` in its `kubernetes` attribute, and `data.openshell_gateway` names the variable in `settings.target.kubernetes.kubeconfig.env` of its `kubernetes` specification, as in [the Kubernetes HCL example](../../examples/platforms/kubernetes/hosted-inference/hosted-nvidia.tf).
 
 A model server's key reaches `openshell_inference` through its `server` object, and the provider reads the key during apply.
-For a server NemoClaw does not run, such as the travel team's hosted model in [`models.tf`](../../examples/hcl/travel-team/models.tf), the literal `inference_server` object names the key's variable in `credential_env`.
+For a server NemoClaw does not run, such as the travel team's hosted model in [`models.tf`](../../examples/features/travel-team/hcl/models.tf), the literal `inference_server` object names the key's variable in `credential_env`.
 A readiness read's `ref` for a server NemoClaw runs names no variable.
 When that server requires its generated key, as vLLM with `authentication` and every Ollama proxy do, the ref's `credential_source` names where the key lives, as [Runtime Capacity and Readiness](../references/provider.md#runtime-capacity-and-readiness) describes.
 
@@ -231,7 +231,7 @@ The [provider reference](../references/provider.md#api-credentials) describes ea
 ## Replacing a Sandbox With Its Agent
 
 Fabric runs one agent in each sandbox, so a changed agent needs a new sandbox, and planning refuses to replace a `fabric_agent` while its sandbox stays.
-Keep the agent settings that can change in one local value, give that value to both a `terraform_data` and the `fabric_agent`, and replace the sandbox when the `terraform_data` changes, as [`examples/hcl/travel`](../../examples/hcl/travel/main.tf) does:
+Keep the agent settings that can change in one local value, give that value to both a `terraform_data` and the `fabric_agent`, and replace the sandbox when the `terraform_data` changes, as [`examples/features/travel/hcl`](../../examples/features/travel/hcl/main.tf) does:
 
 ```hcl
 locals {
@@ -298,7 +298,7 @@ Upstream keys are not revoked.
 
 For HCL that installs a managed Kubernetes or OpenShift gateway, a plain `tofu destroy` fails at plan and deletes nothing.
 The provider never deletes `openshell_kubernetes_storage`, and a plan that would delete it fails with "This resource is retained and cannot be deleted", even with `destroy` set.
-Follow the [GTC DC example's teardown](../../examples/gtc-dc/README.md#amd64-kubernetes-with-nvidia-cloud-inference), which targets `openshell_kubernetes_auth` to remove authentication, the gateway, and the agents, and keeps the storage with its namespace, key Secret, and gateway storage.
+Follow the [GTC DC example's teardown](../../examples/guides/nemotron-super.md#amd64-kubernetes-with-nvidia-cloud-inference), which targets `openshell_kubernetes_auth` to remove authentication, the gateway, and the agents, and keeps the storage with its namespace, key Secret, and gateway storage.
 
 Set the providers' `destroy` setting, which the examples take from a variable:
 

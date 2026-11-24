@@ -230,9 +230,9 @@ jobs:
           document="crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
           primary=openclaw
           case "$NEMOCLAW_HCL_CASE" in
-            dgx-station-openclaw-nemotron) document=examples/gtc-dc/openclaw-dgx-station.yaml ;;
-            dgx-station-hermes-nemotron) document=examples/gtc-dc/hermes-dgx-station.yaml primary=hermes ;;
-            dgx-spark-openclaw-nemotron) document=examples/gtc-dc/openclaw-dgx-spark.yaml ;;
+            dgx-station-openclaw-nemotron) document=examples/platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml ;;
+            dgx-station-hermes-nemotron) document=examples/platforms/docker/vllm/dgx-station/hermes-dgx-station.yaml primary=hermes ;;
+            dgx-spark-openclaw-nemotron) document=examples/platforms/docker/vllm/dgx-spark/openclaw-dgx-spark.yaml ;;
           esac
           printf 'document=%s\nprimary=%s\n' "$document" "$primary" >> "$GITHUB_OUTPUT"
           if grep -Eq 'nc-fabric-hermes@|kind: nvidia.fabric.hermes' "$document"; then

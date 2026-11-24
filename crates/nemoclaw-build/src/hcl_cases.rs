@@ -81,7 +81,7 @@ pub fn files(id: &str) -> [String; 2] {
     if STATION_CASES.contains(&id) {
         return [
             format!(
-                "examples/gtc-dc/{}-dgx-station.yaml",
+                "examples/platforms/docker/vllm/dgx-station/{}-dgx-station.yaml",
                 if id == "dgx-station-hermes-nemotron" {
                     "hermes"
                 } else {
