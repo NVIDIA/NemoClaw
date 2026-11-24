@@ -50,6 +50,8 @@ Plan and apply:
 - When the only image on the engine for the chosen harness can't run the configuration, `nemoclaw onboard` asks for the image again and says why, instead of choosing that image without asking.
 - Plan and apply no longer fail with `managed runtime environment drifted` when `NEMOCLAW_DISABLE_TELEMETRY` differs from the value a Podman gateway was created with.
   NemoClaw records the gateway's OpenShell telemetry setting when it plans the deployment, so the next plan with the other value replaces the gateway and keeps its storage, as it does for a Docker gateway.
+- A gateway NemoClaw manages sends no OpenShell telemetry when a CI variable such as `CI=true` is set, as NemoClaw's own record already didn't.
+  Before, only `NEMOCLAW_DISABLE_TELEMETRY` turned it off, so CI runs reported gateway telemetry.
 
 Gateways:
 
