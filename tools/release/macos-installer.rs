@@ -10,8 +10,8 @@
 //! its bundle from its own path (crates/nemoclaw-cli/src/deployment.rs), and
 //! macOS reports a program started through a symbolic link by the link's
 //! path, so nothing links to the CLI: /etc/paths.d puts the bundle's bin
-//! directory on PATH for login shells instead. A preinstall script removes the
-//! previous bundle, so an upgrade leaves exactly the new one.
+//! directory on PATH for login shells instead. The previous bundle is moved
+//! aside until postinstall, so a failed upgrade leaves a recovery copy.
 use std::{env, fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
 type Result<T> = std::result::Result<T, String>;
@@ -45,9 +45,21 @@ const MACOS_MESSAGE: &str = "Update macOS in System Settings, then open this ins
 /// Installer runs this as root before it writes the payload. $3 is the
 /// target volume's mount point.
 const PREINSTALL: &str = "#!/bin/sh\n\
-# Remove the installed bundle, so an upgrade leaves exactly the new one.\n\
+# Preserve the installed bundle until the replacement payload succeeds.\n\
 set -eu\n\
-rm -rf \"${3%/}/usr/local/nemoclaw\"\n";
+installed=\"${3%/}/usr/local/nemoclaw\"\n\
+previous=\"$installed.previous\"\n\
+if [ -e \"$previous\" ] || [ -L \"$previous\" ]; then\n\
+    echo \"A previous installation remains at $previous. Restore it before retrying; see the installer recovery instructions.\" >&2\n\
+    exit 1\n\
+fi\n\
+if [ -e \"$installed\" ] || [ -L \"$installed\" ]; then\n\
+    mv \"$installed\" \"$previous\"\n\
+fi\n";
+/// Installer invokes this only after writing the complete replacement payload.
+const POSTINSTALL: &str = "#!/bin/sh\n\
+set -eu\n\
+rm -rf \"${3%/}/usr/local/nemoclaw.previous\"\n";
 const STYLE: &str = include_str!("macos-installer/style.css");
 const PAGES: [(&str, &str); 2] = [
     ("welcome.html", include_str!("macos-installer/welcome.html")),
@@ -272,7 +284,7 @@ function supported_mac() {{
 }
 
 /// Lay out everything the packaging tools read under WORK: the payload in
-/// root, the preinstall script in scripts, the pages in resources, the
+/// root, the install scripts in scripts, the pages in resources, the
 /// artwork in art, and distribution.xml.
 /// MINIMUM is the oldest macOS version the installer accepts.
 fn stage(bundle: &Path, work: &Path, version: &str, docs_ref: &str, minimum: &str) -> Result<()> {
@@ -299,6 +311,7 @@ fn stage(bundle: &Path, work: &Path, version: &str, docs_ref: &str, minimum: &st
     let scripts = work.join("scripts");
     create_dir(&scripts)?;
     write(&scripts.join("preinstall"), PREINSTALL.as_bytes(), 0o755)?;
+    write(&scripts.join("postinstall"), POSTINSTALL.as_bytes(), 0o755)?;
     let resources = work.join("resources");
     create_dir(&resources)?;
     for (name, template) in PAGES {
@@ -590,22 +603,102 @@ mod tests {
     }
 
     #[test]
-    fn the_preinstall_script_removes_only_the_installed_bundle() {
+    fn a_failed_upgrade_preserves_the_previous_bundle_for_recovery() {
         let scratch = Scratch::new("preinstall");
         let volume = scratch.0.join("volume");
         put(&volume, "usr/local/nemoclaw/bin/nemoclaw", "old", 0o755);
         put(&volume, "usr/local/nemoclaw/stale", "old", 0o444);
         put(&volume, "usr/local/bin/other", "kept", 0o755);
-        put(&scratch.0, "preinstall", PREINSTALL, 0o755);
+        let bundle = scratch.0.join("bundle");
+        fake_bundle(&bundle);
+        let work = scratch.0.join("work");
+        stage(&bundle, &work, "0.1.0", "v1", MINIMUM_MACOS).unwrap();
+        let previous = volume.join("usr/local/nemoclaw.previous");
+        let original = tree(&volume.join("usr/local/nemoclaw"));
         let target = format!("{}/", volume.display());
-        let status = Command::new(scratch.0.join("preinstall"))
-            .args(["package.pkg", &target, &target])
-            .status()
-            .unwrap();
-        assert!(status.success());
+        let preinstall = || {
+            Command::new(work.join("scripts/preinstall"))
+                .args(["package.pkg", &target, &target])
+                .output()
+                .unwrap()
+        };
+        let result = preinstall();
+        assert!(result.status.success(), "{}", text(&result));
         assert!(!volume.join("usr/local/nemoclaw").exists());
+        assert!(
+            previous.is_dir(),
+            "a failed payload must leave the old bundle recoverable"
+        );
+        assert_eq!(tree(&previous), original);
+
+        // Installer fails after writing only part of the replacement payload.
+        put(&volume, "usr/local/nemoclaw/bin/nemoclaw", "partial", 0o755);
+        let result = preinstall();
+        assert!(
+            !result.status.success(),
+            "a retry must not replace the recovery copy"
+        );
+        assert_eq!(tree(&previous), original);
+        assert_eq!(
+            fs::read_to_string(volume.join("usr/local/nemoclaw/bin/nemoclaw")).unwrap(),
+            "partial"
+        );
+
+        // The documented restore procedure removes only the incomplete bundle.
+        let restored = Command::new("/bin/sh")
+            .args([
+                "-c",
+                r#"set -eu
+test -d "$1/usr/local/nemoclaw.previous"
+rm -rf "$1/usr/local/nemoclaw"
+mv "$1/usr/local/nemoclaw.previous" "$1/usr/local/nemoclaw"
+"#,
+                "restore",
+            ])
+            .arg(&volume)
+            .output()
+            .unwrap();
+        assert!(restored.status.success(), "{}", text(&restored));
+        assert_eq!(tree(&volume.join("usr/local/nemoclaw")), original);
         let other = fs::read_to_string(volume.join("usr/local/bin/other")).unwrap();
         assert_eq!(other, "kept");
+    }
+
+    #[test]
+    fn a_successful_upgrade_removes_the_recovery_copy_after_installing() {
+        let scratch = Scratch::new("successful-upgrade");
+        let volume = scratch.0.join("volume");
+        let installed = volume.join("usr/local/nemoclaw");
+        put(&installed, "stale", "old", 0o444);
+        let bundle = scratch.0.join("bundle");
+        fake_bundle(&bundle);
+        let work = scratch.0.join("work");
+        stage(&bundle, &work, "0.1.0", "v1", MINIMUM_MACOS).unwrap();
+        let target = volume.to_str().unwrap();
+        let result = Command::new(work.join("scripts/preinstall"))
+            .args(["package.pkg", target, target])
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{}", text(&result));
+        copy_bundle(&bundle, &installed).unwrap();
+        // Installer treats an absent postinstall script as a no-op.
+        let postinstall = work.join("scripts/postinstall");
+        if postinstall.is_file() {
+            let result = Command::new(postinstall)
+                .args(["package.pkg", target, target])
+                .output()
+                .unwrap();
+            assert!(result.status.success(), "{}", text(&result));
+        }
+        assert!(!installed.join("stale").exists());
+        assert_eq!(
+            fs::read(installed.join("bin/nemoclaw")).unwrap(),
+            fs::read(bundle.join("bin/nemoclaw")).unwrap()
+        );
+        assert!(
+            !volume.join("usr/local/nemoclaw.previous").exists(),
+            "a completed upgrade must remove its recovery copy"
+        );
     }
 
     // The tests below change the Mac they run on: they install into / with
@@ -680,8 +773,92 @@ mod tests {
             .join("licenses/removed-in-the-new-release")
             .is_file());
 
+        // Let preinstall succeed, but make one payload directory read-only.
+        // This exercises Installer's extraction failure, rather than a script
+        // exiting before Installer attempts to write the replacement.
+        let image = scratch.0.join("read-only.dmg");
+        run(Command::new("hdiutil")
+            .args([
+                "create",
+                "-size",
+                "16m",
+                "-fs",
+                "HFS+",
+                "-volname",
+                "NemoClawFault",
+            ])
+            .arg(&image))
+        .unwrap();
+        let mounted = installed.join("libexec");
+        let prepared = scratch.0.join("extraction-failure-prepared");
+        // Quote fixture paths as shell data, including on runners whose
+        // temporary directory contains spaces or single quotes.
+        let quote = |path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
+        let failed_work = scratch.0.join("failed-upgrade");
+        stage(&bundle, &failed_work, &bundle_version, "v1", MINIMUM_MACOS).unwrap();
+        write(
+            &failed_work.join("scripts/preinstall"),
+            format!(
+                "{PREINSTALL}\nmkdir -p {mount}\nhdiutil attach -readonly -nobrowse -mountpoint {mount} {image}\ntouch {prepared}\n",
+                mount = quote(&mounted),
+                image = quote(&image),
+                prepared = quote(&prepared),
+            )
+            .as_bytes(),
+            0o755,
+        )
+        .unwrap();
+        let failed_package = scratch.0.join("failed.pkg");
+        package(
+            &failed_work,
+            &bundle_version,
+            MINIMUM_MACOS,
+            &failed_package,
+        )
+        .unwrap();
+        let result = install(&failed_package);
+        // Detach before any assertions or recovery so the fixture cannot
+        // obstruct restoring the old bundle if an assertion fails.
+        let detached = output(
+            Command::new("sudo")
+                .args(["hdiutil", "detach"])
+                .arg(&mounted),
+        );
+        assert!(detached.status.success(), "{}", text(&detached));
+        assert!(
+            prepared.is_file(),
+            "preinstall must succeed before testing payload extraction: {}",
+            text(&result)
+        );
+        assert!(!result.status.success(), "{}", text(&result));
+        let previous = Path::new("/usr/local/nemoclaw.previous");
+        assert!(
+            previous.is_dir(),
+            "the failed installer lost its recovery copy"
+        );
+        // Compare bytes: packaging intentionally normalizes source permissions.
+        for (name, (expected, _)) in tree(&old) {
+            assert_eq!(fs::read(previous.join(&name)).unwrap(), expected, "{name}");
+        }
+        let retry = install(&new_package);
+        assert!(
+            !retry.status.success(),
+            "retrying before recovery must refuse to overwrite the previous bundle"
+        );
+        for (name, (expected, _)) in tree(&old) {
+            assert_eq!(fs::read(previous.join(&name)).unwrap(), expected, "{name}");
+        }
+        let restored = output(Command::new("sudo").args([
+            "/bin/sh", "-c", "set -eu\ntest -d /usr/local/nemoclaw.previous\nrm -rf /usr/local/nemoclaw\nmv /usr/local/nemoclaw.previous /usr/local/nemoclaw",
+        ]));
+        assert!(restored.status.success(), "{}", text(&restored));
+
         let result = install(&new_package);
         assert!(result.status.success(), "{}", text(&result));
+        assert!(
+            !previous.exists(),
+            "the successful upgrade retained its recovery copy"
+        );
         let contents = |root: &Path| -> BTreeMap<String, Vec<u8>> {
             tree(root)
                 .into_iter()

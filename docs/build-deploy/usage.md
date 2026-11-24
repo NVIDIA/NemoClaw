@@ -137,7 +137,7 @@ The typed `ollama` and `vllm` kinds use the same assembly base but retain their 
 ### Configuring a Managed Gateway
 
 `spec.gateway.config` passes OpenShell gateway settings to a managed gateway in the format of the OpenShell Helm chart's `gatewayConfig` value.
-Each key names a table of OpenShell's [gateway configuration](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields.
+Each key names a table of OpenShell's [gateway configuration](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields.
 Nested maps become inline tables, and a list of maps becomes an array of tables.
 
 ```yaml
@@ -154,7 +154,7 @@ gateway:
 
 Docker and Podman gateways write these tables into their configuration file beside the keys NemoClaw sets.
 Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, where they can override NemoClaw's `workspace_mode` and `workspace_default_storage_size` defaults, and the chart keeps the settings it derives from Kubernetes resources.
-See OpenShell's [chart configuration guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/kubernetes/migrate-gateway-config.mdx).
+See OpenShell's [chart configuration guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/kubernetes/migrate-gateway-config.mdx).
 Plan rejects a setting that replaces a key NemoClaw manages, such as the gateway's authentication, signing paths, or the driver's images.
 OpenShell validates the rest when the gateway starts: an unknown or misplaced field in the selected driver's table stops the gateway, and tables for other drivers are ignored.
 A change replaces a Docker or Podman gateway's container, which receives the new file and keeps the gateway's data, and upgrades a Kubernetes gateway's chart release.

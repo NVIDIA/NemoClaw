@@ -12,6 +12,22 @@ The runtime policy credit remains in `crates/nemoclaw-runtime/NOTICE.md` inside 
 `rust-COPYRIGHT-library.html` retains the notices of the Rust standard library the supervisor links.
 `/opt/nemoclaw/source/Dockerfile` and `supervisor.Dockerfile` retain this image's and the supervisor's build instructions.
 The upstream image retains its vLLM and installed dependency notices.
+
+`uv-source.tar.gz` retains uv 0.13.8's original release source, including its workspace notices.
+`uv-cargo-source.tar.gz` retains every external package in that release's Cargo lock, its vendor configuration, and recovered original upstream notices matched to those sources.
+This includes astral-pubgrub 0.7.1, astral-version-ranges 0.2.3, option-ext 0.2.0, and priority-queue 2.7.0, which offer MPL-2.0 terms.
+The Seahash 4.1.0 notice comes from upstream's license-only fix; all Rust files match the published crate.
+With Rust 1.100.0 installed, to resolve those sources offline, extract the original source into a directory, extract the Cargo archive into that same root, and run `RUSTUP_TOOLCHAIN=1.100.0 cargo metadata --locked --offline --format-version 1` there.
+`RUSTUP_TOOLCHAIN=1.100.0 cargo build --locked --offline --release -p uv` uses those sources and also needs the upstream build prerequisites.
+These materials do not establish a byte-identical rebuild or resolve the remaining notice provenance and redistribution decisions in #14815.
+
+`orjson/orjson-source.tar.gz` retains orjson 3.13.0's original source distribution, including its C sources, vendored Rust sources, Cargo lock, and original Apache, MIT, and MPL license texts.
+
+`tokenizers/tokenizers-source.tar.gz` retains Tokenizers 0.23.3's original source distribution and Apache-2.0 notice, which its installed wheel omits.
+`mooncake/mooncake-LICENSE` retains Mooncake 0.3.14's original Apache-2.0 notice.
+`mooncake/go/` retains the original module source ZIPs, with license and notice files, for the 17 versioned Go dependencies identified in Mooncake's installed `libetcd_wrapper.so`.
+Their Go module hashes match the binary's SBOM records and were verified through the public Go checksum database; the image source pins additionally verify each ZIP's SHA-256.
+These named inputs do not establish complete native linkage or license clearance for the upstream vLLM image.
 Model license and notice files present at the selected repository root are downloaded with the model snapshot.
 
 The [AMD64 Nemotron example](../../examples/platforms/podman/vllm/remote/amd64/nemotron-amd64.yaml) adapts its configuration from NemoClaw main revision `97745a7ad9649f851704493e4b670b3674f875aa`:

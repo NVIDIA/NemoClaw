@@ -143,7 +143,7 @@ Other inputs are typed too:
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox. It does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
 - `openshell_sandbox`'s optional `driver_config` is OpenShell's per-driver sandbox configuration (`SandboxTemplate.driver_config`) as JSON text, usually from `jsonencode()`, keyed by driver, such as volume mounts.
-  It is passed through unchanged, so OpenShell's defaults apply. Refer to OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/sandboxes/runtimes.mdx).
+  It is passed through unchanged, so OpenShell's defaults apply. Refer to OpenShell's [driver configuration and mounts](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/sandboxes/runtimes.mdx).
   The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
   It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, replaces the sandbox, as for the image. Refer to [change paths](../build-deploy/usage.md#choosing-the-change-path).
 - `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).

@@ -220,8 +220,8 @@ An endpoint whose certificate comes from an internal certificate authority, such
   Add the CA there, or set `SSL_CERT_FILE` to a PEM bundle that includes it in the environment that runs `nemoclaw`.
 - **OpenShell's sandbox supervisor** makes the TLS connection to the endpoint, so the supervisor must trust the CA.
   A CA added to an agent image isn't used.
-  The supervisor trusts its built-in and image CAs, and the CAs in its gateway's [additional CA bundle](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas).
-  On an external gateway, the operator sets the bundle in OpenShell's configuration, or on Kubernetes through the chart's [`supervisor.network.additionalCaConfigMapName`](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/deploy/helm/openshell/README.md#additional-destination-cas).
+  The supervisor trusts its built-in and image CAs, and the CAs in its gateway's [additional CA bundle](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas).
+  On an external gateway, the operator sets the bundle in OpenShell's configuration, or on Kubernetes through the chart's [`supervisor.network.additionalCaConfigMapName`](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/deploy/helm/openshell/README.md#additional-destination-cas).
   OpenShell reads the bundle only when the gateway starts, so the operator then restarts the gateway and stops and starts every affected sandbox.
   No managed gateway can receive the bundle yet, and NemoClaw pins the supervisor image there.
   See [current limits](../resources/limits.md#security).

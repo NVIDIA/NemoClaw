@@ -188,10 +188,14 @@ fn policy_endpoint(
         Rules::Mcp(mcp_policy) => mcp_policy,
     };
     let path = url.path();
+    // The url crate percent-encodes '^' in a path, so look for it in the URL
+    // as written, before its query.
+    let written = endpoint.split(['?', '#']).next().unwrap_or(endpoint);
     // OpenShell matches the selector against the canonical request path.
     // Reject paths it would rewrite or refuse instead of installing an unusable rule.
     if path.contains("//")
-        || path.contains([';', '^', '|'])
+        || path.contains([';', '|'])
+        || written.contains('^')
         || endpoint.bytes().any(|byte| byte.is_ascii_control())
     {
         return Err(ObservationError::Query);

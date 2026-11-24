@@ -7,7 +7,7 @@
 # inputs/ from the SDK; the test files hold the expectations.
 
 terraform {
-  required_version = "= 1.13.9"
+  required_version = "= 1.13.10"
   required_providers {
     helm = {
       source = "hashicorp/helm"
