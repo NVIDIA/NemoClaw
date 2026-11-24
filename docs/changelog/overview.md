@@ -3,7 +3,7 @@
 
 # Release Notes
 
-NVIDIA NemoClaw v0.1.0 is the first release of NemoClaw Agent Configs.
-Use these release notes to track changes across v1 releases.
+NemoClaw Agent Configs v0.1.0 is the product's first release.
+Use these release notes to track changes across releases.
 
 For release announcements and downloadable assets, refer to [NemoClaw announcements on GitHub](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).

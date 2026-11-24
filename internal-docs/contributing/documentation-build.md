@@ -4,7 +4,9 @@
 # Building and Publishing Documentation
 
 Edit repository Markdown; Cargo generates the Fern pages and navigation from those sources.
-The official site has separate v0 and v1 products. The v1 branch publishes `/nemoclaw/v1/` on staging and production.
+The official site has separate products for NemoClaw v0 and NemoClaw Agent Configs.
+The Agent Configs product publishes under `/nemoclaw/v1/` on staging and production.
+The local preview shows only **Latest** and uses the generated Agent Configs navigation.
 Publication does not qualify the procedures or product configurations they describe.
 
 ## Sources and Outputs
@@ -15,7 +17,8 @@ Publication does not qualify the procedures or product configurations they descr
 | Repository `docs/*.md` and selected subdirectories | Generated `fern/_generated/pages/*.mdx` and `navigation.yml` |
 | [Pinned main revision](../../fern/main-source.json) | Earlier guides, generated agent variants, changelog, components, and assets under ignored `fern/_main/` |
 | SDK types and constraints | [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) and [configuration reference](../../docs/reference/configuration.md); stale checked-in output fails validation |
-| [Fern configuration](../../fern/docs.yml) | Combined local preview, the NVIDIA theme, and retained legacy redirects |
+| [Local Fern configuration](../../fern/docs.yml) | v1 preview, the NVIDIA theme, and legacy redirects |
+| [Product configuration](../../fern/product.yml) | Standalone v1 preview, staging, and production |
 | [Fern CLI pin](../../fern/fern.config.json) | The exact CLI used locally and in CI |
 
 The [Cargo renderer](../../crates/nemoclaw-build/src/docs.rs) preserves code examples and license comments, removes the source H1 because Fern supplies the title, and converts file links to published routes.
@@ -24,18 +27,15 @@ Links to examples, code, notices, and unpublished design pages point to GitHub a
 External URLs are retained without network validation.
 Generated files are ignored by Git; do not edit them.
 
-Both versions publish **Engineer Documentation for AI Agents** from `docs/resources/engineer-agentic-documentation.mdx` on main.
-The v1 renderer reads the revision in `fern/main-source.json` and links to the referenced guides at that same revision on GitHub.
+The v1 renderer imports **Engineer Documentation for AI Agents** as a NemoClaw v0 documentation example. It reads the revision in `fern/main-source.json` and links to the referenced guides at that same revision on GitHub. When updating the pin, update the example's source link in `docs/README.md`.
 
 The [upstream notice](../../fern/NOTICE.md) records the main revision used for the publishing integration.
 The publisher extracts main's documentation and generators at an immutable Git revision without changing another worktree.
 It installs only the [locked docs dependency](../../tools/docs/main/package.json), `yaml`, in that extracted directory and runs the original generators with Node's TypeScript support.
 Main's npm application dependencies are not installed.
-The official v1 home reuses the v0 installation prompt and links to the v0 guides.
-V1 runtime guidance remains in [agents.md](../../docs/agents-inference/agents.md), and [resources](../../docs/resources/resources.md#giving-an-agent-the-documentation-task) provides a version-aware documentation prompt.
-The installation prompt has not been rehearsed ([#12644](https://github.com/NVIDIA/NemoClaw/issues/12644)).
+The standalone builder reuses the pinned NemoClaw v0 home at `/nemoclaw/v1/home`.
 
-To refresh Latest, update `fern/main-source.json` to a reviewed main commit, reconcile that revision's theme, components, and redirects in `fern/docs.yml`, and rerun the complete build.
+To refresh the imported layout and reference assets, update `fern/main-source.json` to a reviewed main commit, reconcile that revision's theme, components, and redirects in `fern/docs.yml`, and rerun the complete build.
 Before a public release, select the main revision intended for publication; a main branch tip is not automatically its latest published release.
 The first build fetches the pinned commit if it is absent locally.
 To recover a damaged import, stop the preview server, remove only the generated `fern/_main/` directory, and rerun the build.
@@ -48,7 +48,7 @@ Use the version as its heading, for example `## v0.1.0`.
 Keep changes between release candidates in the [maintainer notes](release-candidates.md).
 
 Before publishing the 0.1.0 entry, verify the changes against the release tag and confirm the date in the filename.
-If the filename changes, redirect the draft entry URL to the published entry in `fern/docs.yml`.
+If the filename changes, redirect the draft entry URL to the published entry. Add the redirect to both `fern/product.yml` for the standalone product and `fern/docs.yml` for the local preview. Keep legacy v1 aliases in sync across those files and keep `release-notes` canonical.
 Use the published release date for each subsequent entry.
 
 ## Validating Locally
@@ -65,7 +65,7 @@ From the repository root:
 cargo run --locked -p nemoclaw-build -- fern check
 ```
 
-The command checks schema/reference freshness, generates both versions, checks generated output, and validates the combined Fern configuration.
+The command checks schema and reference freshness, prepares the pinned main sources, generates the v1 output, and validates the local and standalone Fern configurations.
 V1 gets strict source/anchor and Fern route checks in an isolated copy of its version configuration.
 Main retains its existing generated-content and published-route checks; Fern's strict link rule also flags legacy Markdown-download URLs and component links, so it is not applied to the imported version.
 It needs no Fern token and publishes nothing.
@@ -135,8 +135,8 @@ Manual runs perform validation only.
 | `v0.1.*` release candidate | Validate the docs. Publication waits for the final tag. |
 | `v0.0.<patch>` tag on the v0 release branch | The v0 release workflow publishes v0. The v1 workflow does not run. |
 
-The [official v1 staging home](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/home) uses the same home page and product selector as v0.
-Staging and production use the same [product configuration](../../fern/product.yml). The v1 commit determines the guide sources and pins the v0 revision used for the home and header. Both builds publish under `/nemoclaw/v1`. The v0 workflow owns the parent site.
+The [official v1 staging home](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/home) uses the shared home layout. Its product selector links to NemoClaw v0.
+Staging and production use the same [product configuration](../../fern/product.yml). The v1 commit supplies the home and guide sources and pins the v0 revision used for the layout and header. Both builds publish under `/nemoclaw/v1`. The v0 workflow owns the parent site.
 After publication, the **Verify official staging routes** step checks the v1 home redirect, release notes, Markdown endpoints, and v0 home.
 Failed validation blocks publication.
 Publication jobs run the build tool that validation compiled from the same commit, so they set up only Node and npm.
@@ -152,7 +152,6 @@ Unmerged closed-PR previews require explicit deletion with the helper.
 
 Each v1 release updates the same public path, `https://docs.nvidia.com/nemoclaw/v1/`.
 For a documentation rollback, revert the relevant source/configuration change on `v1`, validate staging, and publish a new release tag through the same ancestry guard.
-The pinned main snapshot retains earlier guides, changelog files, and legacy redirect rules in the combined build.
 Legacy routes on the hosted site have not been checked, and public rollback has not been rehearsed ([#12644](https://github.com/NVIDIA/NemoClaw/issues/12644)).
 Main's separate post-merge documentation-authoring bot is not part of this publishing workflow.
 
@@ -170,7 +169,7 @@ The [staging build for c7e8e116c8](https://github.com/NVIDIA/NemoClaw/actions/ru
 | `/nemoclaw/v1/overview` and main's `/nemoclaw/user-guide/openclaw/home` | HTTP 200 with the expected page titles |
 | `/nemoclaw/v1/overview.md` and `/nemoclaw/v1/get-started.md` | Markdown includes the v1 procedure, qualification TBDs, and revision-pinned source links |
 | `/nemoclaw/v1/reference/configuration.md` | Markdown includes configuration fields and tables, with source links pinned to `c7e8e116c8cb81ed64a0625f5b632398607c1d96` |
-| `/nemoclaw/v1/llms.txt` | Identifies `v1 (Development)` and lists 31 page links under `/nemoclaw/v1/` |
+| `/nemoclaw/v1/llms.txt` | Identifies `v1 (Agent Configs)` and lists v1 page links under `/nemoclaw/v1/`, including `onboard` |
 | Unversioned `/nemoclaw/llms.txt` | Indexes the default main version; use the version-specific index for v1 discovery |
 
 The preview moves with successful publication; repeat these checks for the release candidate.

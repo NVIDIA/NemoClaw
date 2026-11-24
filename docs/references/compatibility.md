@@ -3,7 +3,7 @@
 
 # Compatibility Across Releases
 
-NemoClaw v1 is in alpha, and its configuration is `v1alpha1`.
+NemoClaw Agent Configs is in alpha and uses the `v1alpha1` configuration schema.
 This page says what a release guarantees across releases, and what it does not.
 
 ## Using One Release Together
@@ -41,7 +41,7 @@ Within a release, configuration from `export` re-applies to the same deployment.
 
 ## Deployment State
 
-State is not migrated between releases while v1 is in alpha.
+NemoClaw Agent Configs doesn't migrate state between alpha releases.
 A release refuses state written by a release with another intent record format, without changing it: "deployment state was written by a different NemoClaw release (intent record version N; this release reads M); keep using the CLI bundle that created the deployment, or destroy it with that bundle and create a new deployment; state retained".
 Keep the release that created a deployment until you have destroyed it, then create a new deployment with the new release, using a fresh `metadata.uid` and state directory.
 

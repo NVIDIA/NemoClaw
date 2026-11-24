@@ -662,6 +662,5 @@ Refer to [current limits](../../docs/resources/limits.md) for what v1 doesn't do
 
 ## Previous Releases
 
-The combined staging site's **Latest (main)** version retains the imported main guides and changelog.
-Use [earlier documentation](../../docs/get-started/migration.md#finding-earlier-documentation) to select that version.
-Its release entries aren't v1 release notes.
+The separate NemoClaw v0 product contains the earlier main guides and changelog.
+Use [earlier documentation](../../docs/get-started/migration.md#finding-earlier-documentation) to find that product's release notes.
