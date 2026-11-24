@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Placeholder artwork pending brand review. Installer draws it from the
+     window's bottom-left corner; the step list covers the sidebar's top and
+     the content pane covers everything right of x = 160. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="620" height="418" viewBox="0 0 620 418">
+  <defs>
+    <linearGradient id="stroke" x1="20" y1="410" x2="150" y2="270" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5fa02f"/>
+      <stop offset="1" stop-color="#c2ea8a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="30" cy="418" r="200" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7bbf3f" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#7bbf3f" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="218" width="240" height="200" fill="url(#glow)"/>
+  <g fill="none" stroke="url(#stroke)" stroke-linecap="round">
+    <path d="M 22 396 C 40 344 72 310 120 288" stroke-width="9"/>
+    <path d="M 44 404 C 62 360 92 332 134 314" stroke-width="7" opacity="0.75"/>
+    <path d="M 68 410 C 86 376 112 354 148 340" stroke-width="5" opacity="0.5"/>
+  </g>
+</svg>

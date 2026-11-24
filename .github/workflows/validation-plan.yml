@@ -44,6 +44,9 @@ on:
         value: ${{ jobs.plan.outputs.bundle }}
       lifecycle:
         value: ${{ jobs.plan.outputs.lifecycle }}
+      installer:
+        description: Whether darwin_arm64 tests the macOS installer.
+        value: ${{ jobs.plan.outputs.installer }}
       images:
         value: ${{ jobs.plan.outputs.images }}
       live:
@@ -74,6 +77,7 @@ jobs:
       recommendations: ${{ steps.cases.outputs.recommendations }}
       bundle: ${{ steps.plan.outputs.bundle }}
       lifecycle: ${{ steps.plan.outputs.lifecycle }}
+      installer: ${{ steps.plan.outputs.installer }}
       images: ${{ steps.plan.outputs.images }}
       live: ${{ steps.plan.outputs.live }}
       live_images: ${{ steps.live-images.outputs['live-images'] }}
@@ -148,11 +152,11 @@ jobs:
           if [ "$SUITE" != ci ]; then
             live=true
             if [ "$SUITE" = none ]; then live=false; fi
-            printf 'bundle=%s\nlifecycle=false\nimages=false\nlive=%s\n' "$live" "$live" >> "$GITHUB_OUTPUT"
+            printf 'bundle=%s\nlifecycle=false\nimages=false\nlive=%s\ninstaller=false\n' "$live" "$live" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "$FULL" = true ]; then
-            for check in bundle lifecycle images live; do echo "$check=true" >> "$GITHUB_OUTPUT"; done
+            for check in bundle lifecycle images live installer; do echo "$check=true" >> "$GITHUB_OUTPUT"; done
             echo 'All expensive checks selected for this event.' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
