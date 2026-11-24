@@ -94,44 +94,6 @@ Preserve existing directories; reuse a verified client when two NemoClaw release
 When their pins differ, select the appropriate directory in each deployment's shell.
 Changing `PATH` does not alter another installation, a running process, or a gateway.
 
-On Windows AMD64, use PowerShell with the selected release's `version-pins.json` in the current directory.
-This client connects to the deployment's gateway; it does not add a Windows sandbox compute driver.
-The pinned OpenShell 0.1.9 Windows package comes from its [`windows` branch revision](https://github.com/NVIDIA/OpenShell/tree/7e4e113e3249238b61db71947c4b79b2d7a247e3), which differs from the release tag's source.
-Use the archive checksum rather than the version string to identify it.
-
-```powershell
-$ErrorActionPreference = 'Stop'
-$pins = Get-Content -Raw .\version-pins.json | ConvertFrom-Json
-$client = $pins.components.openshellClient
-$archive = $client.archives.windows_amd64
-if (!$client.version -or !$archive.url -or !$archive.sha256) { throw 'This release does not pin a Windows client' }
-$clientDir = Join-Path $env:LOCALAPPDATA "NemoClaw\clients\openshell\$($client.version)"
-if (Test-Path -LiteralPath $clientDir) { throw 'Directory exists; preserve it and select its verified client or choose a new directory' }
-New-Item -ItemType Directory -Path $clientDir | Out-Null
-$download = Join-Path $clientDir 'archive.zip'
-Invoke-WebRequest -Uri $archive.url -OutFile $download
-if ((Get-FileHash -Algorithm SHA256 -LiteralPath $download).Hash -ne $archive.sha256) { throw 'OpenShell checksum mismatch' }
-Expand-Archive -LiteralPath $download -DestinationPath $clientDir
-$executables = @(Get-ChildItem -LiteralPath $clientDir -Recurse -Filter openshell.exe)
-if ($executables.Count -ne 1) { throw 'Expected exactly one OpenShell client' }
-$signature = Get-AuthenticodeSignature -LiteralPath $executables[0].FullName
-if ($signature.Status -ne 'Valid') { throw 'OpenShell signature verification failed' }
-$env:Path = "$($executables[0].DirectoryName);$env:Path"
-Get-Command openshell
-openshell --version
-```
-
-Stop on any error and confirm that the version equals `$client.version` before running the printed access commands.
-For a source build, replace the first three assignments after `$ErrorActionPreference` with these assignments, using the same checkout's `versions.json`:
-
-```powershell
-$pins = Get-Content -Raw .\versions.json | ConvertFrom-Json
-$client = @{version = $pins.openshell}
-$archive = $pins.platforms.windows_amd64.openshell
-```
-
-The `Path` change lasts for this PowerShell process and its children.
-
 ### Deploying Several Agents
 
 Each sandbox owns one agent runtime and its selected model and provider attachments.

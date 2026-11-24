@@ -73,8 +73,8 @@
     },
     "darwin_arm64": {
       "openshell": {
-        "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.9/openshell-aarch64-apple-darwin.tar.gz",
-        "sha256": "355bf612159eaa0c5375facd8f27536d9cb54e5af030328ea839a927a7901da5"
+        "url": "https://github.com/ai-openshell/openshell/releases/download/v0.1.10/openshell-aarch64-apple-darwin.tar.gz",
+        "sha256": "52ec0b11a183e69086d048c1dfd921a424e2c23617647d9df3e5938df3bf3caa"
       },
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.13.10/tofu_1.13.10_darwin_arm64.zip",
@@ -120,10 +120,6 @@
       }
     },
     "windows_amd64": {
-      "openshell": {
-        "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.9/OpenShell-Windows-0.1.9-x64.zip",
-        "sha256": "f95c30cfc957d1d3150269c6e681c5cadec4a717408956e7ff3a9d265056ffc4"
-      },
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.13.10/tofu_1.13.10_windows_amd64.zip",
         "sha256": "643cbcb8d699a5aaf47da12ce8f9f715362f2fd84f10a407a32d44fbe2fe8e09"
