@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Capture Windows MSI pages
+on:
+  push:
+    tags: [msi-ui-20261124-4]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  pages:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: '14962360118'
+          run-id: '45480766353'
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/current
+      - name: Open and inspect the installer pages
+        run: |
+          powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File inspect-installer.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Installer page capture failed' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: installer-ui
+          path: ${{ runner.temp }}/installer-ui
+          retention-days: 3

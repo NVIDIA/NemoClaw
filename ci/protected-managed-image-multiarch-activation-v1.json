@@ -1,7 +1,0 @@
-{
-  "agents": ["openclaw", "hermes", "langchain-deepagents-code"],
-  "contractVersion": 2,
-  "jobId": "managed-image-multiarch-startup",
-  "platforms": ["linux/amd64", "linux/arm64"],
-  "dcodeBaseSource": "candidate"
-}
