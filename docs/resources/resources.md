@@ -20,11 +20,11 @@ Choose a source by its use:
 | Source | Use |
 |---|---|
 | This checkout's `docs/README.md` and task guides | V1 guidance grounded in the inspected implementation revision. Use the [generated field reference](../reference/configuration.md) from a matching v1 worktree. |
-| [v1 staging overview](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) | Browser preview. Choose **v1 (Development)** in the version selector. |
-| [v1 Markdown index](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/llms.txt) | Discover pages in this version. |
-| [v1 overview as Markdown](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview.md) | Fetch page text. Append `.md` to another v1 page URL for that page. |
+| [v1 staging overview](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/overview) | The v1 overview on the official staging site. |
+| [v1 Markdown index](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/llms.txt) | Discover pages in this version. |
+| [v1 overview as Markdown](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/overview.md) | Fetch page text. Append `.md` to another v1 page URL for that page. |
 
-The staging preview moves after successful pushes.
+Staging updates after successful pushes to `v1`.
 Inspect its revision-pinned source links when matching it to a bundle.
 The site's unversioned `llms.txt` describes the default main version.
 Use the `/nemoclaw/v1/` index for v1 tasks and keep that prefix when following published task-guide links.
@@ -40,7 +40,7 @@ Use this prompt with an assistant that can read your checkout, replacing the fin
 Help me use the v1 development version of NemoClaw.
 Read docs/README.md, docs/about/overview.md, and the guide for my task from this checkout.
 Use CLI and configuration references from the same source revision as my bundle, starting with docs/reference/configuration.md.
-For hosted documentation, use the v1 (Development) selector and /nemoclaw/v1/llms.txt.
+For hosted documentation, choose v1 in the product selector and /nemoclaw/v1/llms.txt.
 Keep main-version commands and procedures separate from v1 guidance.
 Treat anything listed in docs/resources/limits.md as not yet available or tested.
 Identify the client, sandbox engine, inference host, image digests, and deployment state path before deployment work.

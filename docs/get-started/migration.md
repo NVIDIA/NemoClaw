@@ -105,14 +105,12 @@ Retain the earlier deployment until the required continuity has been verified.
 
 ## Finding Earlier Documentation
 
-The [combined staging site](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) has a version selector:
+The [combined staging site](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/overview) has a version selector:
 
-- **v1 (Development)** describes the desired-state product.
-- **Latest (main)** preserves the imported main guides and their release history.
-  Start at its [OpenClaw home](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/user-guide/openclaw/home).
+- **v1** describes the desired-state product.
+- **v0** contains the earlier guides and their release history.
+  Start at its [OpenClaw home](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v0/user-guide/openclaw/home).
 
-The main snapshot is pinned by the [documentation build](../../internal-docs/contributing/documentation-build.md#sources-and-outputs).
-Its label doesn't qualify those procedures for v1.
 Use the earlier deployment's actual version when selecting commands or assessing historical qualification.
 Publishing the combined site and checking its legacy routes are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 

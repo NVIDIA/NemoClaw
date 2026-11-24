@@ -4,8 +4,7 @@
 # Building and Publishing Documentation
 
 Edit repository Markdown; Cargo generates the Fern pages and navigation from those sources.
-Fern's version selector offers **Latest (main)** and **v1 (Development)** in one site.
-Latest remains the default at its existing routes; v1 uses `/nemoclaw/v1/`.
+The official site has separate v0 and v1 products. The v1 branch publishes `/nemoclaw/v1/` on staging and production.
 Publication does not qualify the procedures or product configurations they describe.
 
 ## Sources and Outputs
@@ -16,7 +15,7 @@ Publication does not qualify the procedures or product configurations they descr
 | Repository `docs/*.md` and selected subdirectories | Generated `fern/_generated/pages/*.mdx` and `navigation.yml` |
 | [Pinned main revision](../../fern/main-source.json) | Earlier guides, generated agent variants, changelog, components, and assets under ignored `fern/_main/` |
 | SDK types and constraints | [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) and [configuration reference](../../docs/reference/configuration.md); stale checked-in output fails validation |
-| [Fern configuration](../../fern/docs.yml) | NVIDIA theme, both versions, existing instances, and retained legacy redirects |
+| [Fern configuration](../../fern/docs.yml) | Combined local preview, the NVIDIA theme, and retained legacy redirects |
 | [Fern CLI pin](../../fern/fern.config.json) | The exact CLI used locally and in CI |
 
 The [Cargo renderer](../../crates/nemoclaw-build/src/docs.rs) preserves code examples and license comments, removes the source H1 because Fern supplies the title, and converts file links to published routes.
@@ -32,7 +31,7 @@ The [upstream notice](../../fern/NOTICE.md) records the main revision used for t
 The publisher extracts main's documentation and generators at an immutable Git revision without changing another worktree.
 It installs only the [locked docs dependency](../../tools/docs/main/package.json), `yaml`, in that extracted directory and runs the original generators with Node's TypeScript support.
 Main's npm application dependencies are not installed.
-The imported installation prompt and agent variants appear only in Latest.
+The official v1 home reuses the v0 installation prompt and links to the v0 guides.
 V1 runtime guidance remains in [agents.md](../../docs/agents-inference/agents.md), and [resources](../../docs/resources/resources.md#giving-an-agent-the-documentation-task) provides a version-aware documentation prompt.
 The installation prompt has not been rehearsed ([#12644](https://github.com/NVIDIA/NemoClaw/issues/12644)).
 
@@ -112,6 +111,7 @@ cargo run --locked -p nemoclaw-build -- fern preview --id nemoclaw-v1-my-branch
 ```
 
 This writes a remotely hosted preview; do not include secrets in documentation.
+The preview builds the same [v1 product](../../fern/product.yml) as official staging. The preview link opens `/nemoclaw/v1/home`, and its v0 links open official staging.
 The helper passes the token to Fern through the environment, does not store it in the repository, and prints the verified preview URL.
 Unset a locally supplied token when finished.
 Delete only the preview you own:
@@ -128,13 +128,16 @@ Manual runs perform validation only.
 
 | Event | Publication |
 |---|---|
-| Same-repository PR targeting `v1` with `FERN_TOKEN` | `nemoclaw-v1-pr-N` preview, with one updated PR comment |
+| Same-repository PR targeting `v1` with `FERN_TOKEN` | Isolated v1 product at `nvidia-preview-nemoclaw-v1-pr-N.docs.buildwithfern.com/nemoclaw/v1/home`, linked in the PR comment |
 | PR targeting another branch, fork PR, Dependabot PR, or PR without the token | Validation only |
-| Push to `v1` | Stable `nemoclaw-v1` preview; delete associated merged v1 PR previews after success |
-| `v0.1.*` tag without a prerelease part (not `-rc1`), with public publication enabled | Both versions on the existing public site, after checking that the tagged commit is reachable from `origin/v1` |
+| Push to `v1` | Publish the official v1 staging site, then delete associated merged v1 PR previews |
+| Final `v0.1.<patch>` tag on a commit reachable from `origin/v1` | Publish the tagged guides to the [public v1 home](https://docs.nvidia.com/nemoclaw/v1/home) |
+| `v0.1.*` release candidate | Validate the docs. Publication waits for the final tag. |
+| `v0.0.<patch>` tag on the v0 release branch | The v0 release workflow publishes v0. The v1 workflow does not run. |
 
-The stable staging URL is `https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw` after its first successful publish.
-It uses main's staging instance only in Fern preview mode; publishing it does not replace main's staging pages.
+The [official v1 staging home](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/home) uses the same home page and product selector as v0.
+Staging and production use the same [product configuration](../../fern/product.yml). The v1 commit determines the guide sources and pins the v0 revision used for the home and header. Both builds publish under `/nemoclaw/v1`. The v0 workflow owns the parent site.
+After publication, the **Verify official staging routes** step checks the v1 home redirect, release notes, Markdown endpoints, and v0 home.
 Failed validation blocks publication.
 Publication jobs run the build tool that validation compiled from the same commit, so they set up only Node and npm.
 Rerun a failed publication job after correcting credentials or service availability.
@@ -144,18 +147,10 @@ Unmerged closed-PR previews require explicit deletion with the helper.
 
 1. Make `FERN_TOKEN` available to same-repository PR jobs for previews.
 2. Create the `docs-v1-staging` environment and provide a token for the existing staging Fern instance.
-3. Create `docs-v1-public` with a token for `nvidia-nemoclaw.docs.buildwithfern.com/nemoclaw` and the desired environment protection rules.
-4. Coordinate ownership of the shared `/nemoclaw` site with main's release publisher: retire its single-version publication job or update it to publish this same combined version set.
-5. Review the pinned main revision and staging selector, then set the **repository** variable `FERN_V1_PUBLIC_ENABLED=true`.
+3. Configure the `docs-v1-public` environment with a `FERN_TOKEN` that can publish to `nvidia-nemoclaw.docs.buildwithfern.com/nemoclaw/v1`. Apply the repository's release environment protections.
+4. Before cutting a final v1 tag, verify the v1 staging pages and the [pinned layout revision](../../fern/main-source.json). The public job builds from the tag and publishes only the v1 product. A v0 release uses its own source, tag, and publisher.
 
-Public publication is disabled while the variable is absent.
-The workflow uses a repository variable because GitHub evaluates the job condition before loading environment variables.
-The existing `docs.nvidia.com/nemoclaw` domain serves both versions.
-Main's current single-version publisher would remove the v1 entry on its next release; coordination in step 4 is required before enabling this workflow.
-That change on main and the switch to the shared site are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
-Changes to the public destination must update both the Fern configuration and the publisher, then repeat preview and release checks.
-
-The v1 version entry is a moving documentation version, not a per-release archive.
+Each v1 release updates the same public path, `https://docs.nvidia.com/nemoclaw/v1/`.
 For a documentation rollback, revert the relevant source/configuration change on `v1`, validate staging, and publish a new release tag through the same ancestry guard.
 The pinned main snapshot retains earlier guides, changelog files, and legacy redirect rules in the combined build.
 Legacy routes on the hosted site have not been checked, and public rollback has not been rehearsed ([#12644](https://github.com/NVIDIA/NemoClaw/issues/12644)).
@@ -166,7 +161,7 @@ Main's separate post-merge documentation-authoring bot is not part of this publi
 Fern produces the browser site and [Markdown access](https://buildwithfern.com/learn/docs/ai-features/markdown), including page `.md` URLs and `llms.txt`.
 For a publication candidate, verify the rendered overview, a code-heavy guide, a table in the configuration reference, a cross-page heading link, and a source link from that exact revision.
 Fetch the v1 overview's `.md` URL and version-specific `llms.txt`; confirm they identify v1 and retain its qualification limits.
-The local Fern server does not serve page `.md` previews; use a hosted preview for this check.
+Repeat the Markdown checks on the hosted site to verify the published routes.
 
 The [staging build for c7e8e116c8](https://github.com/NVIDIA/NemoClaw/actions/runs/35035121361) was checked on 2026-09-15:
 
