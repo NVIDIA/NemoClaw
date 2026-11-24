@@ -264,6 +264,32 @@ impl DiscoveryObservations {
             .and_then(|entry| Q::from_observation(&entry.observation))
     }
 
+    /// Why the latest read of `image` found it can't run the configuration
+    /// it was checked against: its first unsupported check. `None` when no
+    /// read of the image found it unsupported.
+    pub fn image_rejection(&self, image: &str) -> Option<&str> {
+        let report = self.entries.iter().rev().find_map(|entry| {
+            match (&entry.query, &entry.observation) {
+                (DiscoveryQuery::Fabric(request), DiscoveryObservation::Fabric(observed))
+                    if request.image == image =>
+                {
+                    Some(observed.compatibility.as_ref())
+                }
+                _ => None,
+            }
+        })??;
+        use crate::fabric_capabilities::Support;
+        (report.status == Support::Unsupported)
+            .then(|| {
+                report
+                    .checks
+                    .iter()
+                    .find(|check| check.status == Support::Unsupported)
+            })
+            .flatten()
+            .map(|check| check.reason.as_str())
+    }
+
     /// The distinct queries not yet asked, in the order given.
     pub fn missing(&self, queries: &[DiscoveryQuery]) -> Vec<DiscoveryQuery> {
         distinct(queries)

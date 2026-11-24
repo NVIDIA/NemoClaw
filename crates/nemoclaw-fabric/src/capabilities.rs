@@ -193,7 +193,10 @@ fn configuration_checks(
         status: Support::Unsupported,
         reason: reason.into(),
     };
-    let Ok(config) = serde_json::from_value::<FabricConfig>(request.configuration.clone()) else {
+    // The configuration this image's adapter would run, as the agent sends it.
+    let mut configuration = request.configuration.clone();
+    crate::agent::fit_to_adapter(&mut configuration, &adapter.descriptor);
+    let Ok(config) = serde_json::from_value::<FabricConfig>(configuration) else {
         return vec![unsupported(
             "configuration: is not a valid Fabric configuration",
         )];

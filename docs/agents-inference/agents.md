@@ -34,7 +34,7 @@ The other sections of Fabric's agent configuration go where they belong, under F
 
 Sandboxes that share a harness definition through `harnessRef` share its `runtime` and `telemetry`, and each agent keeps its own instructions, tools, and skills.
 The [travel team example](../../examples/travel-team.yaml) gives four researchers one harness definition and each its own instructions.
-The deployment sets the configuration's `metadata`, `harness`, and `models`, `runtime.artifacts`, `runtime.keep_state` for adapters that accept it, and `environment.provider` and `environment.workspace`.
+The deployment sets the configuration's `metadata`, `harness`, and `models`, `runtime.artifacts`, `runtime.keep_state` where both the CLI's Fabric catalog and the image's adapter accept it, and `environment.provider` and `environment.workspace`.
 An authored section that sets one of those fields to another value fails planning.
 See [the SDK configuration projection](../../crates/nemoclaw-sdk/src/fabric_config.rs) for the deployment boundary.
 

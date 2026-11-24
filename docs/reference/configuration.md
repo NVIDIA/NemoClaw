@@ -603,7 +603,7 @@ Paths:
 | `environment` | object | No | — | Fabric's environment section, passed to Fabric unchanged. The deployment sets provider to local and workspace to /sandbox/workspace; a different authored value fails. |
 | `kind` | string | Yes | — | Fabric harness implementation for the sandbox agent. Constraints: pattern `\S`; minimum characters 1. |
 | `relay` | object | No | — | Fabric's relay section, passed to Fabric unchanged, such as Relay plugins. Relay validates and activates them. |
-| `runtime` | object | No | — | Fabric's runtime section, passed to Fabric unchanged, such as timeout_seconds and max_turns. The deployment sets artifacts and, for adapters that accept it, keep_state; a different authored value fails. |
+| `runtime` | object | No | — | Fabric's runtime section, passed to Fabric unchanged, such as timeout_seconds and max_turns. The deployment sets artifacts and, where both the CLI's Fabric catalog and the image's adapter accept it, keep_state; a different authored value fails. |
 | `settings` | object | No | — | Opaque native settings validated by the selected Fabric adapter. |
 | `telemetry` | object | No | — | Fabric's telemetry section, passed to Fabric unchanged, such as providers.relay. NemoClaw grants no network access for its exporters. |
 
