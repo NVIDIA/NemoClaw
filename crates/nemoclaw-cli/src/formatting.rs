@@ -1072,12 +1072,17 @@ mod tests {
     #[test]
     fn saved_paths_are_quoted_so_the_commands_run_as_printed() {
         let text = authored("my dir/it's.yaml");
+        let quoted_path = if cfg!(windows) {
+            "'my dir/it''s.yaml'"
+        } else {
+            "'my dir/it'\\''s.yaml'"
+        };
         assert!(
-            text.contains("nemoclaw plan 'my dir/it'\\''s.yaml'\n"),
+            text.contains(&format!("nemoclaw plan {quoted_path}\n")),
             "{text}"
         );
         assert!(
-            text.contains("nemoclaw apply 'my dir/it'\\''s.yaml'\n"),
+            text.contains(&format!("nemoclaw apply {quoted_path}\n")),
             "{text}"
         );
         let text = authored("-odd.yaml");
