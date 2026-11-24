@@ -1255,8 +1255,8 @@ exit 0`,
     expect(result.stdout).toMatch(/below minimum.*upgrading/);
   });
 
-  it("reinstalls the pinned release when openshell 0.1.10 is above MAX_VERSION", () => {
-    const result = runCommandWithInstalledVersion("0.1.10");
+  it("reinstalls the pinned release when openshell 0.1.11 is above MAX_VERSION", () => {
+    const result = runCommandWithInstalledVersion("0.1.11");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain(
       `above the maximum (${REQUIRED_OPENSHELL_VERSION}) supported by this NemoClaw release`,

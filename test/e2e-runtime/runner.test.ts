@@ -10,7 +10,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { redact, run, runCapture, runCaptureEx } from "../../src/lib/runner";
-import { PINNED_OPEN_SHELL_SHA256 } from "../helpers/openshell-release-fixtures";
+import { PINNED_OPEN_SHELL_V0110_SHA256 as PINNED_OPEN_SHELL_SHA256 } from "../helpers/openshell-release-fixtures";
 import { prepareInstallerBin } from "../support/openshell-installed-version";
 
 const require = createRequire(import.meta.url);
@@ -1165,7 +1165,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.1.9"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.1.10"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;
@@ -1282,7 +1282,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.1.9"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.1.10"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;

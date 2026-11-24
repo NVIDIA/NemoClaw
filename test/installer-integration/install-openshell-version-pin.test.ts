@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { expect, test } from "vitest";
 
-import { PINNED_OPEN_SHELL_SHA256 } from "../helpers/openshell-release-fixtures";
+import { PINNED_OPEN_SHELL_V0110_SHA256 as PINNED_OPEN_SHELL_SHA256 } from "../helpers/openshell-release-fixtures";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
@@ -91,7 +91,7 @@ function writeExecutable(target: string, contents: string): void {
 }
 
 // Bash helpers shared by the gh and curl stubs: write a fake archive and emit
-// the same pinned digest lines the real OpenShell v0.1.9 release uses. A fake
+// the same pinned digest lines the real OpenShell v0.1.10 release uses. A fake
 // sha256sum below keeps this test self-contained even though the tarball bytes are
 // synthetic.
 const SHARED_DOWNLOAD_BASH_HELPERS = `\
@@ -355,7 +355,7 @@ exec /usr/bin/mktemp "$@"`,
     createFakeHelperBinaries(fakeBin);
     createFakeGh(fakeBin, downloadLog, options.ghDownloadMode);
     createFakeCurl(fakeBin, downloadLog);
-    createFakeTar(fakeBin, "0.1.9");
+    createFakeTar(fakeBin, "0.1.10");
     createFakeStrings(fakeBin);
     createFakeSha256sum(fakeBin);
     const unsafeDirectory = options.unsafeActiveDirectory?.location === "parent" ? tmp : fakeBin;
@@ -411,10 +411,10 @@ exec /usr/bin/mktemp "$@"`,
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(result.stdout).toMatch(options.expectedDecision);
 
-      // Assertion 2: download-log-contains-v0.1.9 — pinned release tag was
+      // Assertion 2: download-log-contains-v0.1.10 — pinned release tag was
       // requested from the release host.
       const downloads = fs.readFileSync(downloadLog, "utf-8");
-      expect(downloads).toContain("v0.1.9");
+      expect(downloads).toContain("v0.1.10");
 
       // Assertion 3: download-log-excludes-installed-version — the existing
       // release is never re-fetched in place of the pinned replacement.
@@ -423,23 +423,23 @@ exec /usr/bin/mktemp "$@"`,
       if (options.ghDownloadMode === "fail") {
         // Assertion 3b: curl-fallback-observed — the installer must recover from
         // gh download failure by re-requesting the pinned assets via curl.
-        expect(downloads).toContain("gh download-fail v0.1.9");
+        expect(downloads).toContain("gh download-fail v0.1.10");
         expect(downloads).toContain("curl ");
       } else {
-        expect(downloads).toContain("gh download v0.1.9");
+        expect(downloads).toContain("gh download v0.1.10");
         expect(downloads).not.toContain("curl ");
       }
 
-      // Assertion 4: replaced-openshell-reports-0.1.9 — the binary on disk in
+      // Assertion 4: replaced-openshell-reports-0.1.10 — the binary on disk in
       // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
-      // there and it is writable) was overwritten with the pinned 0.1.9 build.
+      // there and it is writable) was overwritten with the pinned 0.1.10 build.
       const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
         encoding: "utf8",
         killSignal: "SIGKILL",
         timeout: 30_000,
       });
       expect(replacedVersion.status).toBe(0);
-      expect(replacedVersion.stdout).toContain("0.1.9");
+      expect(replacedVersion.stdout).toContain("0.1.10");
       expect(replacedVersion.stdout).not.toContain(options.installedVersion);
     };
     (unsafeActiveDirectory ? assertUnsafe : assertSuccessful)();
@@ -455,9 +455,9 @@ test(
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.9/u,
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.10/u,
       ghDownloadMode: "success",
-      installedVersion: "0.1.10",
+      installedVersion: "0.1.11",
     });
   },
 );
@@ -469,21 +469,21 @@ test(
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.9/u,
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.10/u,
       ghDownloadMode: "fail",
-      installedVersion: "0.1.10",
+      installedVersion: "0.1.11",
     });
   },
 );
 
 test(
-  "replaces an installed OpenShell 0.0.106 with the pinned 0.1.9 release (#11229)",
+  "replaces an installed OpenShell 0.0.106 with the pinned 0.1.10 release (#11229)",
   {
     timeout: TEST_TIMEOUT_MS,
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /below minimum 0\.1\.9.*upgrading/u,
+      expectedDecision: /below minimum 0\.1\.10.*upgrading/u,
       ghDownloadMode: "success",
       installedVersion: "0.0.106",
     });
@@ -499,9 +499,9 @@ test.each([
   { timeout: TEST_TIMEOUT_MS },
   (unsafeActiveDirectory) => {
     runVersionPinTarget({
-      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.116/u,
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.10/u,
       ghDownloadMode: "success",
-      installedVersion: "0.0.117",
+      installedVersion: "0.1.11",
       unsafeActiveDirectory: {
         ...unsafeActiveDirectory,
         assertDestination: ({ result, privateBin }) => {
@@ -511,7 +511,7 @@ test.each([
             timeout: 30_000,
           });
           expect(replacement.status).toBe(0);
-          expect(replacement.stdout).toContain("0.1.9");
+          expect(replacement.stdout).toContain("0.1.10");
         },
       },
     });
@@ -525,9 +525,9 @@ test(
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.116/u,
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.10/u,
       ghDownloadMode: "success",
-      installedVersion: "0.0.117",
+      installedVersion: "0.1.11",
       unsafeActiveDirectory: {
         mode: 0o775,
         location: "parent",
