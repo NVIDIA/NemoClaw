@@ -1,0 +1,163 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Isolated validation snapshot: no release, image, branch, or policy writes.
+name: Validate MSI rollback and release signing
+on:
+  push:
+    tags: [v0.1.0-msi-validation.20261124.3]
+permissions:
+  contents: read
+concurrency:
+  group: windows-msi-signing-validation-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    name: Build MSI from the signed rc.3 bundle
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 42b096c453531ec014a3c994d8b826b3134295f8
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: validation-inputs
+          sparse-checkout: manifest.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Download the existing signed CLI artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: '14784932381'
+          run-id: '44979828892'
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/dist/windows_amd64
+      - name: Verify against the final rc.3 manifest
+        run: |
+          $bundle = "$env:RUNNER_TEMP/dist/windows_amd64"
+          $expectedManifest = 'validation-inputs/manifest.json'
+          $manifest = Get-Content -Raw $expectedManifest | ConvertFrom-Json
+          if ($manifest.Version -ne '0.1.0-rc.3') { throw 'Unexpected bundle version' }
+          foreach ($entry in $manifest.Files.PSObject.Properties) {
+            if ((Get-FileHash -Algorithm SHA256 (Join-Path $bundle $entry.Name)).Hash.ToLowerInvariant() -ne $entry.Value) { throw "Bundle checksum mismatch: $($entry.Name)" }
+          }
+          Copy-Item $expectedManifest "$bundle/manifest.json" -Force
+      - name: Install WiX and build the two installers
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet tool install --global wix --version 5.0.2
+          $env:PATH = "$env:USERPROFILE/.dotnet/tools;" + $env:PATH
+          wix extension add --global WixToolset.UI.wixext/5.0.2
+          rustc --edition=2021 -D warnings tools/release/windows-installer.rs -o "$env:RUNNER_TEMP/windows-installer.exe"
+          $bundle = "$env:RUNNER_TEMP/dist/windows_amd64"
+          & "$env:RUNNER_TEMP/windows-installer.exe" build --bundle $bundle --compression mszip --output "$env:RUNNER_TEMP/current/nemoclaw-v0.1.0-rc.3-windows_amd64.msi"
+          Copy-Item -Recurse $bundle "$env:RUNNER_TEMP/older-bundle"
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/older-bundle/retired" | Out-Null
+          Set-Content "$env:RUNNER_TEMP/older-bundle/retired/only-in-older.txt" 'MSI upgrade removal validation'
+          & "$env:RUNNER_TEMP/windows-installer.exe" build --bundle "$env:RUNNER_TEMP/older-bundle" --version 0.0.1 --compression none --output "$env:RUNNER_TEMP/older/older.msi"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: unsigned-msi-validation
+          path: ${{ runner.temp }}/current/*.msi
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: older-msi-validation
+          path: ${{ runner.temp }}/older/*.msi
+          if-no-files-found: error
+          retention-days: 3
+  sign:
+    name: Sign MSI with the CLI release identity
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 20
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: unsigned-msi-validation
+          path: ${{ runner.temp }}/installer
+      - name: Sign in to Azure with GitHub OIDC
+        uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Select the installer
+        run: Set-Content "$env:RUNNER_TEMP/installer/catalog.txt" 'nemoclaw-v0.1.0-rc.3-windows_amd64.msi'
+      - name: Sign with the existing CLI certificate profile
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          files-catalog: ${{ runner.temp }}\installer\catalog.txt
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify NVIDIA signer and timestamp
+        run: |
+          $msi = "$env:RUNNER_TEMP/installer/nemoclaw-v0.1.0-rc.3-windows_amd64.msi"
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
+          & $signtool.FullName verify /pa /all /tw /v $msi | Tee-Object "$msi.verification.txt"
+          if ($LASTEXITCODE -ne 0) { throw 'MSI signature verification failed' }
+          $signature = Get-AuthenticodeSignature $msi
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=NVIDIA Corporation' -or !$signature.TimeStamperCertificate) { throw 'Unexpected MSI signer or missing timestamp' }
+          $signature | Select-Object Status, @{n='Signer';e={$_.SignerCertificate.Subject}}, @{n='TimestampSigner';e={$_.TimeStamperCertificate.Subject}} | ConvertTo-Json | Set-Content "$msi.signature.json"
+          Get-FileHash -Algorithm SHA256 $msi | Format-List | Out-File "$msi.sha256.txt"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: signed-msi-validation
+          path: ${{ runner.temp }}/installer/*
+          if-no-files-found: error
+          retention-days: 3
+  install:
+    name: Validate signed MSI lifecycle on native x64
+    needs: sign
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 42b096c453531ec014a3c994d8b826b3134295f8
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: signed-msi-validation
+          path: ${{ runner.temp }}/current
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: older-msi-validation
+          path: ${{ runner.temp }}/older
+      - name: Install, upgrade, refuse downgrade, and uninstall
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          rustc --edition=2021 -D warnings tools/ci/windows-installer-e2e.rs -o "$env:RUNNER_TEMP/windows-installer-e2e.exe"
+          & "$env:RUNNER_TEMP/windows-installer-e2e.exe" --older "$env:RUNNER_TEMP/older/older.msi" --current "$env:RUNNER_TEMP/current/nemoclaw-v0.1.0-rc.3-windows_amd64.msi" --version 0.1.0-rc.3 --msi-version 0.1.3 --stale 'retired\only-in-older.txt' --logs "$env:RUNNER_TEMP/installer-logs"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: signed-msi-lifecycle-logs
+          path: ${{ runner.temp }}/installer-logs
+          if-no-files-found: warn
+          retention-days: 3
