@@ -79,8 +79,9 @@ fn shell_restriction_changes_only_the_enabled_list_and_restores_the_baseline_gra
         "restriction must leave the rest of the graph unchanged, including the other agent"
     );
     assert_eq!(
-        restricted_graph["resource"]["openshell_sandbox"]["sandbox-0"]["lifecycle"]["replace_triggered_by"],
-        json!(["terraform_data.agent_sandbox-0"]),
+        restricted_graph["resource"]["openshell_sandbox"]["sandbox-0"]["lifecycle"]["replace_triggered_by"]
+            [0],
+        json!("terraform_data.agent_sandbox-0"),
         "the changed configuration must replace its sandbox"
     );
 

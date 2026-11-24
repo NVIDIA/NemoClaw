@@ -425,6 +425,48 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "then": at("spec/services", json!({"maxProperties":0}), false),
         "x-nemoclaw-error": "the kubernetes and openshift targets require external inference endpoints; managed services are not supported"
     }));
+    // OpenShell refuses a sandbox's driver configuration unless the target
+    // driver's table allows it, which it doesn't by default. A managed
+    // gateway's tables are in the document, so a sandbox the gateway would
+    // refuse is rejected at its driverConfig. An empty driverConfig sends
+    // OpenShell none. An external gateway's administrator allows it.
+    for (driver, targets) in [
+        ("docker", &["docker"][..]),
+        ("podman", &["podman"]),
+        ("kubernetes", &["kubernetes", "openshift"]),
+    ] {
+        let mut target: Vec<Value> = targets
+            .iter()
+            .map(|target| at("target", json!({"required": [target]}), true))
+            .collect();
+        // An omitted target selects Docker.
+        if driver == "docker" {
+            target.push(json!({"not": {"required": ["target"]}}));
+        }
+        let allowed = |path: &str| {
+            at(
+                &format!("spec/gateway/config/{path}/allow_driver_config"),
+                json!({"const": true}),
+                true,
+            )
+        };
+        root["allOf"].as_array_mut().unwrap().push(json!({
+            "if": {"allOf": [
+                at("spec/gateway", json!({
+                    "properties": {"management": {"const": "managed"}},
+                    "required": ["management"],
+                    "anyOf": target
+                }), true),
+                {"not": {"anyOf": [
+                    allowed(&format!("openshell.drivers.{driver}")),
+                    allowed(&format!("openshell.drivers/{driver}")),
+                    allowed(&format!("openshell/drivers/{driver}"))
+                ]}}
+            ]},
+            "then": at("spec/sandboxes/*/driverConfig", json!({"maxProperties": 0}), false),
+            "x-nemoclaw-error": format!("OpenShell refuses a sandbox's driverConfig unless the gateway allows driver configuration; set allow_driver_config: true in the openshell.drivers.{driver} table of spec.gateway.config")
+        }));
+    }
     // The gateway target sets the sandbox cap. It lives only here, so an
     // error names the cap that applies, and editors apply it as the parser does.
     root["allOf"].as_array_mut().unwrap().push(json!({

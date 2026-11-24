@@ -168,7 +168,10 @@ NemoClaw does not detect the platform itself.
 A host without a valid marker is never counted as Brev.
 The image owners must set the marker.
 For Brev, the owners of the [brevdev/nemoclaw-image](https://github.com/brevdev/nemoclaw-image) repository set it.
-Host detection, which [#14681](https://github.com/NVIDIA/NemoClaw/issues/14681) tracks, will define the marker's name and location.
+
+The marker is the file `/etc/nemoclaw/deployment-source`.
+It holds one word on one line, such as `brev`.
+A well-formed word is up to 32 lowercase letters, digits, and `-`, starting with a letter.
 
 ## Record Rules
 
@@ -227,7 +230,7 @@ Unique-install counts leave out `unknown`.
 ## OpenShell Telemetry
 
 The OpenShell gateway that NemoClaw manages has its own telemetry, separate from this record.
-When NemoClaw manages the gateway, the gateway's telemetry follows NemoClaw's: it is off when `NEMOCLAW_DISABLE_TELEMETRY` is set, that is, present, not empty, and not `false` or `0` in any letter case, such as `1`, `yes`, or `TRUE`, and on otherwise.
+When NemoClaw manages the gateway, the gateway's telemetry follows NemoClaw's: it is off when `NEMOCLAW_DISABLE_TELEMETRY` or one of the CI variables above is set, by the same rule as for the record, and on otherwise.
 NemoClaw sets `OPENSHELL_TELEMETRY_ENABLED` for Docker and Podman, and `server.telemetryEnabled` on Kubernetes.
 NemoClaw decides the setting when it plans the deployment and records it with the gateway, so the provider never reads the caller's environment for it.
 A plan run with the other switch value replaces a Docker or Podman gateway, keeping its storage, and upgrades a Kubernetes gateway's release; it never reports the gateway as drifted.

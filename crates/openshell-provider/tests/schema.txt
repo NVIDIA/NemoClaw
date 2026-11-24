@@ -13,6 +13,7 @@ provider openshell (version 0)
 resource openshell_api (version 2)
   auth_style: string, optional, computed
   binaries: list(string), optional
+  credential_digest: string, computed, sensitive
   credential_env: string, optional, computed
   endpoints: list(string), optional
   gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
@@ -85,6 +86,7 @@ resource openshell_inference (version 2)
   api: string, required
   binaries: list(string), optional
   cluster_source: string, optional, computed
+  credential_digest: string, computed, sensitive
   gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
   id: string, computed
@@ -166,7 +168,7 @@ resource openshell_sandbox (version 2)
   launch_json: string, required
   memory: string, optional, computed
   name: string, required
-  owner: string, optional, computed
+  owner: string, required
   policy_authority: string, optional, computed
   policy_hash: string, computed
   policy_provenance: string, computed

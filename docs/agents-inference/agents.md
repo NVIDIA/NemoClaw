@@ -452,7 +452,7 @@ Hermes's Brave plugin, for example, reads `BRAVE_SEARCH_API_KEY`:
 
 Exported YAML and OpenTofu state retain the host reference, not its value.
 Destroy removes the owned provider and profile without revoking the upstream key.
-Unchanged apply doesn't rotate a changed value behind an unchanged reference.
+Apply registers a new value behind an unchanged reference and replaces the sandboxes that use the search; see [rotating credentials](../security/credential-rotation.md).
 Follow [credential retirement](../security/security.md#credentials-and-authentication) when replacing or revoking the key.
 
 The profile admits only the search requests the harness's executables make: Brave's `GET /res/v1/web/search`, or Tavily's `POST /search` and `POST /extract`.

@@ -831,6 +831,7 @@ fn compile_with_plans(
             continue;
         }
         let mut attributes = serde_json::to_value(&target.values).expect("string map");
+        let mut credential_triggers = Vec::new();
         if let Some(value) = attributes["credential_source"].as_str() {
             attributes["credential_source"] =
                 json!(value.replace("${", "$${").replace("%{", "%%{"));
@@ -991,6 +992,17 @@ fn compile_with_plans(
             for api in document.apis(sandbox)? {
                 dependencies.push(provider_dependencies[&api.registration(&image_scope)].clone());
             }
+            // Agents keep the credential they started with, so a
+            // registration that takes another credential value replaces the
+            // sandboxes that attach it, and their agents start with the value.
+            credential_triggers = dependencies
+                .iter()
+                .filter(|address| {
+                    address.starts_with("openshell_inference.")
+                        || address.starts_with("openshell_api.")
+                })
+                .map(|address| format!("{address}.credential_digest"))
+                .collect();
             attributes["depends_on"] = json!(dependencies);
         }
         if let Some(dependencies) = service_plans.dependencies(&target.address) {
@@ -1029,8 +1041,9 @@ fn compile_with_plans(
                 .address
                 .split_once('.')
                 .expect("internal resource address");
-            attributes["lifecycle"]["replace_triggered_by"] =
-                json!([agent_configuration_address(name)]);
+            let mut triggers = vec![agent_configuration_address(name)];
+            triggers.append(&mut credential_triggers);
+            attributes["lifecycle"]["replace_triggered_by"] = json!(triggers);
         }
         let (kind, name) = target
             .address

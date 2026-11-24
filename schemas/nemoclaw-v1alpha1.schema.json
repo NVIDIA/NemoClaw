@@ -3538,7 +3538,7 @@
         },
         "driverConfig": {
           "additionalProperties": true,
-          "description": "OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.",
+          "description": "OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it. The gateway must allow driver configuration: on a managed gateway, unless driverConfig is empty, spec.gateway.config must set allow_driver_config: true in the compute driver's table, such as openshell.drivers.docker, or plan rejects the sandbox.",
           "type": "object"
         },
         "gpus": {
@@ -5465,6 +5465,634 @@
         }
       },
       "x-nemoclaw-error": "the kubernetes and openshift targets require external inference endpoints; managed services are not supported"
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "gateway": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "target": {
+                            "required": [
+                              "docker"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "target"
+                        ]
+                      },
+                      {
+                        "not": {
+                          "required": [
+                            "target"
+                          ]
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "management": {
+                        "const": "managed"
+                      }
+                    },
+                    "required": [
+                      "management"
+                    ]
+                  }
+                },
+                "required": [
+                  "gateway"
+                ]
+              }
+            },
+            "required": [
+              "spec"
+            ]
+          },
+          {
+            "not": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "spec": {
+                      "properties": {
+                        "gateway": {
+                          "properties": {
+                            "config": {
+                              "properties": {
+                                "openshell.drivers.docker": {
+                                  "properties": {
+                                    "allow_driver_config": {
+                                      "const": true
+                                    }
+                                  },
+                                  "required": [
+                                    "allow_driver_config"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "openshell.drivers.docker"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "config"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "gateway"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "spec"
+                  ]
+                },
+                {
+                  "properties": {
+                    "spec": {
+                      "properties": {
+                        "gateway": {
+                          "properties": {
+                            "config": {
+                              "properties": {
+                                "openshell.drivers": {
+                                  "properties": {
+                                    "docker": {
+                                      "properties": {
+                                        "allow_driver_config": {
+                                          "const": true
+                                        }
+                                      },
+                                      "required": [
+                                        "allow_driver_config"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "docker"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "openshell.drivers"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "config"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "gateway"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "spec"
+                  ]
+                },
+                {
+                  "properties": {
+                    "spec": {
+                      "properties": {
+                        "gateway": {
+                          "properties": {
+                            "config": {
+                              "properties": {
+                                "openshell": {
+                                  "properties": {
+                                    "drivers": {
+                                      "properties": {
+                                        "docker": {
+                                          "properties": {
+                                            "allow_driver_config": {
+                                              "const": true
+                                            }
+                                          },
+                                          "required": [
+                                            "allow_driver_config"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "docker"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "drivers"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "openshell"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "config"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "gateway"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "spec"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "additionalProperties": {
+                  "properties": {
+                    "driverConfig": {
+                      "maxProperties": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "x-nemoclaw-error": "OpenShell refuses a sandbox's driverConfig unless the gateway allows driver configuration; set allow_driver_config: true in the openshell.drivers.docker table of spec.gateway.config"
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "gateway": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "target": {
+                            "required": [
+                              "podman"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "target"
+                        ]
+                      }
+                    ],
+                    "properties": {
+                      "management": {
+                        "const": "managed"
+                      }
+                    },
+                    "required": [
+                      "management"
+                    ]
+                  }
+                },
+                "required": [
+                  "gateway"
+                ]
+              }
+            },
+            "required": [
+              "spec"
+            ]
+          },
+          {
+            "not": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "spec": {
+                      "properties": {
+                        "gateway": {
+                          "properties": {
+                            "config": {
+                              "properties": {
+                                "openshell.drivers.podman": {
+                                  "properties": {
+                                    "allow_driver_config": {
+                                      "const": true
+                                    }
+                                  },
+                                  "required": [
+                                    "allow_driver_config"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "openshell.drivers.podman"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "config"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "gateway"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "spec"
+                  ]
+                },
+                {
+                  "properties": {
+                    "spec": {
+                      "properties": {
+                        "gateway": {
+                          "properties": {
+                            "config": {
+                              "properties": {
+                                "openshell.drivers": {
+                                  "properties": {
+                                    "podman": {
+                                      "properties": {
+                                        "allow_driver_config": {
+                                          "const": true
+                                        }
+                                      },
+                                      "required": [
+                                        "allow_driver_config"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "podman"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "openshell.drivers"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "config"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "gateway"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "spec"
+                  ]
+                },
+                {
+                  "properties": {
+                    "spec": {
+                      "properties": {
+                        "gateway": {
+                          "properties": {
+                            "config": {
+                              "properties": {
+                                "openshell": {
+                                  "properties": {
+                                    "drivers": {
+                                      "properties": {
+                                        "podman": {
+                                          "properties": {
+                                            "allow_driver_config": {
+                                              "const": true
+                                            }
+                                          },
+                                          "required": [
+                                            "allow_driver_config"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "podman"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "drivers"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "openshell"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "config"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "gateway"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "spec"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "additionalProperties": {
+                  "properties": {
+                    "driverConfig": {
+                      "maxProperties": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "x-nemoclaw-error": "OpenShell refuses a sandbox's driverConfig unless the gateway allows driver configuration; set allow_driver_config: true in the openshell.drivers.podman table of spec.gateway.config"
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "gateway": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "target": {
+                            "required": [
+                              "kubernetes"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "target"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "target": {
+                            "required": [
+                              "openshift"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "target"
+                        ]
+                      }
+                    ],
+                    "properties": {
+                      "management": {
+                        "const": "managed"
+                      }
+                    },
+                    "required": [
+                      "management"
+                    ]
+                  }
+                },
+                "required": [
+                  "gateway"
+                ]
+              }
+            },
+            "required": [
+              "spec"
+            ]
+          },
+          {
+            "not": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "spec": {
+                      "properties": {
+                        "gateway": {
+                          "properties": {
+                            "config": {
+                              "properties": {
+                                "openshell.drivers.kubernetes": {
+                                  "properties": {
+                                    "allow_driver_config": {
+                                      "const": true
+                                    }
+                                  },
+                                  "required": [
+                                    "allow_driver_config"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "openshell.drivers.kubernetes"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "config"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "gateway"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "spec"
+                  ]
+                },
+                {
+                  "properties": {
+                    "spec": {
+                      "properties": {
+                        "gateway": {
+                          "properties": {
+                            "config": {
+                              "properties": {
+                                "openshell.drivers": {
+                                  "properties": {
+                                    "kubernetes": {
+                                      "properties": {
+                                        "allow_driver_config": {
+                                          "const": true
+                                        }
+                                      },
+                                      "required": [
+                                        "allow_driver_config"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "kubernetes"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "openshell.drivers"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "config"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "gateway"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "spec"
+                  ]
+                },
+                {
+                  "properties": {
+                    "spec": {
+                      "properties": {
+                        "gateway": {
+                          "properties": {
+                            "config": {
+                              "properties": {
+                                "openshell": {
+                                  "properties": {
+                                    "drivers": {
+                                      "properties": {
+                                        "kubernetes": {
+                                          "properties": {
+                                            "allow_driver_config": {
+                                              "const": true
+                                            }
+                                          },
+                                          "required": [
+                                            "allow_driver_config"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "kubernetes"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "drivers"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "openshell"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "config"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "gateway"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "spec"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "additionalProperties": {
+                  "properties": {
+                    "driverConfig": {
+                      "maxProperties": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "x-nemoclaw-error": "OpenShell refuses a sandbox's driverConfig unless the gateway allows driver configuration; set allow_driver_config: true in the openshell.drivers.kubernetes table of spec.gateway.config"
     },
     {
       "else": {

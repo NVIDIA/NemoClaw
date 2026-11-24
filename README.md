@@ -3,10 +3,10 @@
 
 # NemoClaw
 
-> [!TIP]
-> :rocket: **New:** NemoClaw Agent Configs — the next evolution of NemoClaw, with a simpler, more flexible way to configure and run agents. All new development will focus on Agent Configs, and we recommend it for new projects. [Explore Agent Configs](docs/about/overview.md) and [follow the first-deployment tutorial](docs/get-started/first-deployment.md) to get started.
+> [!NOTE]
+> **Agent Configs: the new way to run NemoClaw.** Simpler to set up. More flexible to run. All future development will focus on Agent Configs, so start your next project here: **[follow the first-deployment tutorial →](docs/get-started/first-deployment.md)**
 >
-> Already using NemoClaw? [The existing experience](https://github.com/NVIDIA/NemoClaw/tree/main) remains available. Review the [migration guide](docs/get-started/migration.md) for compatibility details and instructions for moving your existing NemoClaw setup to Agent Configs.
+> Already using NemoClaw? [The existing experience](https://github.com/NVIDIA/NemoClaw/tree/main) remains available. When you're ready to move, see the [migration guide](docs/get-started/migration.md).
 
 ## NemoClaw Agent Configs
 
@@ -74,6 +74,12 @@ Images are cached; no inference requests are sent, and only the plan-review paus
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).
+
+## Roadmap
+
+The [GitHub milestones](https://github.com/NVIDIA/NemoClaw/milestones) track planned work, including [GTC DC 2026](https://github.com/NVIDIA/NemoClaw/milestone/12), [agreed Classic features coming to v1](https://github.com/NVIDIA/NemoClaw/milestone/14), and [GTC SJC 2027](https://github.com/NVIDIA/NemoClaw/milestone/13).
+Milestone placement alone does not promise a delivery date.
+For current support, check the [migration guide](docs/get-started/migration.md) and [current limits](docs/resources/limits.md).
 
 ## Contributing
 

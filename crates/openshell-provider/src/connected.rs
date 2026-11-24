@@ -335,9 +335,10 @@ impl ConnectedOpenShellGateway {
         {
             return Err(ObservationError::BindingMismatch);
         }
-        if ["endpoint", "credential_env"]
-            .iter()
-            .any(|key| value(live, key) != value(want, key))
+        if value(want, crate::credential::REGISTER) == "true"
+            || ["endpoint", "credential_env"]
+                .iter()
+                .any(|key| value(live, key) != value(want, key))
         {
             // This direct read supplies the version used for the conditional write.
             let current = self

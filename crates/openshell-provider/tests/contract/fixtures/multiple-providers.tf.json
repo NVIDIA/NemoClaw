@@ -129,7 +129,9 @@
             }
           ],
           "replace_triggered_by": [
-            "terraform_data.agent_researcher"
+            "terraform_data.agent_researcher",
+            "openshell_inference.inference_hosted-366ea525d7d24d609d577710.credential_digest",
+            "openshell_inference.inference_local-d6ca74ad95e4f1d5f302f50e.credential_digest"
           ]
         },
         "name": "researcher",
@@ -199,7 +201,8 @@
             }
           ],
           "replace_triggered_by": [
-            "terraform_data.agent_writer"
+            "terraform_data.agent_writer",
+            "openshell_inference.inference_local-d6ca74ad95e4f1d5f302f50e.credential_digest"
           ]
         },
         "name": "writer",

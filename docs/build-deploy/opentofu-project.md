@@ -216,8 +216,16 @@ For a server NemoClaw does not run, such as the travel team's hosted model in [`
 A readiness read's `ref` for a server NemoClaw runs names no variable.
 When that server requires its generated key, as vLLM with `authentication` and every Ollama proxy do, the ref's `credential_source` names where the key lives, as [Runtime Capacity and Readiness](../references/provider.md#runtime-capacity-and-readiness) describes.
 
-Changing only the value behind the same variable does not change the plan.
-To rotate an `openshell_api` key, name a new variable; the next apply updates the stored credential in place.
+A plan whose environment holds a new value behind the same variable updates `openshell_inference` or `openshell_api` in place and plans its `credential_digest` unknown.
+To replace a sandbox, and its agent, when that happens, list the digest in the sandbox's `lifecycle`:
+
+```hcl
+lifecycle {
+  replace_triggered_by = [openshell_api.booking.credential_digest]
+}
+```
+
+See [rotating credentials](../security/credential-rotation.md).
 The [provider reference](../references/provider.md#api-credentials) describes each type's credential inputs.
 
 ## Replacing a Sandbox With Its Agent

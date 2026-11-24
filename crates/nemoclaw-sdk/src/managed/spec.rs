@@ -158,10 +158,11 @@ fn gateway_launch(
 /// OpenShell's telemetry switch; the gateway passes it on to each sandbox.
 pub const OPENSHELL_TELEMETRY_ENV: &str = "OPENSHELL_TELEMETRY_ENABLED";
 /// Whether a gateway NemoClaw compiles now sends OpenShell telemetry: it
-/// follows NemoClaw's own switch, on unless [`crate::telemetry::DISABLE_ENV`]
-/// is set. Read when the deployment is compiled, never by the provider.
+/// follows NemoClaw's own telemetry, on unless the off switch or a CI variable
+/// is set ([`crate::telemetry::suppressed`]). Read when the deployment is
+/// compiled, never by the provider.
 pub fn gateway_telemetry_enabled() -> bool {
-    !crate::telemetry::disabled()
+    !crate::telemetry::suppressed()
 }
 /// Launch a Docker gateway container from its name, endpoint, and the data
 /// path its storage returns.

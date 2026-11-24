@@ -12,6 +12,13 @@ fn in_child(test: &str, environment: &[(&str, &str)]) {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", &format!("telemetry::{test}"), "--nocapture"])
         .env_remove("NEMOCLAW_DISABLE_TELEMETRY")
+        // The runner's own CI variables would turn telemetry off in every child.
+        .env_remove("CI")
+        .env_remove("GITHUB_ACTIONS")
+        .env_remove("TF_BUILD")
+        .env_remove("BUILD_ID")
+        .env_remove("TEAMCITY_VERSION")
+        .env_remove("CODEBUILD_BUILD_ID")
         .envs(environment.iter().copied())
         .output()
         .unwrap();
@@ -119,6 +126,15 @@ fn managed_gateways_follow_nemoclaw_telemetry() {
     for on in ["", "0", "false", "FALSE"] {
         in_child(test, &[(CHILD, "true"), ("NEMOCLAW_DISABLE_TELEMETRY", on)]);
     }
+    // A run in CI sends no telemetry, as the CLI's own record doesn't.
+    for (name, value) in [
+        ("CI", "true"),
+        ("GITHUB_ACTIONS", "true"),
+        ("BUILD_ID", "8812"),
+    ] {
+        in_child(test, &[(CHILD, "false"), (name, value)]);
+    }
+    in_child(test, &[(CHILD, "true"), ("CI", "false")]);
 }
 
 /// A managed gateway's OpenShell telemetry is decided when the deployment is

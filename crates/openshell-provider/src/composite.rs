@@ -9,6 +9,8 @@ use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
 use nemoclaw_openshell::api::{MCP_POLICY, REST_POLICY, Rules};
 use nemoclaw_openshell::pairs::{api_rows, inference_provider_type, inference_rows};
 
+use crate::credential::{self, CREDENTIAL_DIGEST};
+
 pub(crate) const INFERENCE: &str = "inference";
 pub(crate) const API: &str = "api";
 pub(crate) const KINDS: [&str; 2] = [INFERENCE, API];
@@ -71,13 +73,20 @@ fn registration_marker(kind: &str) -> &'static str {
     }
 }
 
+const BINARIES: &str = "binaries must list the executables allowed to use the provider";
+const INFERENCE_API: &str =
+    "api must be openai-completions, openai-responses, or anthropic-messages";
+const INFERENCE_SERVER: &str = "server must be the ref of an inference server's readiness read";
+
+fn no_binaries(row: &Row) -> bool {
+    value(row, "binaries_json").is_empty() || value(row, "binaries_json") == "[]"
+}
+
 /// Inputs plans require that the schema lists as optional, because an
 /// observation reports them empty when their half of the pair is missing.
 fn validate(kind: &str, desired: &Row) -> Result<(), Error> {
-    if value(desired, "binaries_json").is_empty() || value(desired, "binaries_json") == "[]" {
-        return Err(Error::Conflict(
-            "binaries must list the executables allowed to use the provider",
-        ));
+    if no_binaries(desired) {
+        return Err(Error::Conflict(BINARIES));
     }
     match kind {
         API => {
@@ -112,14 +121,10 @@ fn validate(kind: &str, desired: &Row) -> Result<(), Error> {
         }
         _ => {
             if inference_provider_type(value(desired, "api")).is_none() {
-                return Err(Error::Conflict(
-                    "api must be openai-completions, openai-responses, or anthropic-messages",
-                ));
+                return Err(Error::Conflict(INFERENCE_API));
             }
             if value(desired, "endpoint").is_empty() {
-                return Err(Error::Conflict(
-                    "server must be the ref of an inference server's readiness read",
-                ));
+                return Err(Error::Conflict(INFERENCE_SERVER));
             }
         }
     }
@@ -128,10 +133,7 @@ fn validate(kind: &str, desired: &Row) -> Result<(), Error> {
 
 /// Validate endpoint and authentication even when the workspace or gateway
 /// depends on an object that OpenTofu has not created yet.
-pub(crate) fn validate_api(
-    known: &Row,
-    unknown: &[&str],
-) -> Result<(), std::borrow::Cow<'static, str>> {
+pub(crate) fn validate_api(known: &Row, unknown: &[&str]) -> Result<(), nemoclaw_tofu::InputError> {
     if [
         "name",
         "endpoints_json",
@@ -150,6 +152,27 @@ pub(crate) fn validate_api(
         return Ok(());
     }
     validate(API, known).map_err(|error| error.to_string().into())
+}
+
+/// Check an inference registration's inputs while planning, even while its
+/// workspace, owner, generation, or gateway are still to be created or
+/// generated, naming the attribute each rejection concerns.
+pub(crate) fn validate_inference(
+    known: &Row,
+    unknown: &[&str],
+) -> Result<(), nemoclaw_tofu::InputError> {
+    use nemoclaw_tofu::InputError;
+    let checked = |field| !unknown.contains(&field);
+    if checked("binaries_json") && no_binaries(known) {
+        return Err(InputError::at("binaries_json", BINARIES));
+    }
+    if checked("api") && inference_provider_type(value(known, "api")).is_none() {
+        return Err(InputError::at("api", INFERENCE_API));
+    }
+    if checked("endpoint") && value(known, "endpoint").is_empty() {
+        return Err(InputError::at("endpoint", INFERENCE_SERVER));
+    }
+    Ok(())
 }
 
 pub(crate) async fn plan(
@@ -266,6 +289,18 @@ pub(crate) async fn read(
             for field in registration_fields(kind).iter().chain(&["id"]) {
                 observed.insert((*field).into(), value(&registration, field).into());
             }
+            // OpenShell can't report the value a registration holds. One
+            // recorded before NemoClaw kept digests is taken to hold the value
+            // its variable holds now: its first observation that can read the
+            // variable records that value's digest, without registering the
+            // value again or replacing the sandboxes that attach it.
+            if !removing
+                && value(&observed, CREDENTIAL_DIGEST).is_empty()
+                && credential::from_variable(&observed)
+                && let Some(current) = credential::current(value(&observed, "credential_env"))
+            {
+                observed.insert(CREDENTIAL_DIGEST.into(), credential::digest(&current)?);
+            }
             Ok(Some(observed))
         }
         (None, None) => Ok(None),
@@ -291,10 +326,49 @@ pub(crate) async fn ensure(
     kind: &str,
     desired: &Row,
 ) -> Mutation {
-    let (profile, registration) = match rows(kind, desired) {
+    let fallback = value(desired, CREDENTIAL_DIGEST);
+    let register = credential::from_variable(desired).then_some(fallback);
+    establish(backend, kind, desired, register).await
+}
+
+/// Update the pair. The plan leaves the credential digest unknown, so it
+/// differs from the prior one, when the registration must hold the value its
+/// variable holds now; the update then registers that value again, even under
+/// the same variable, and records its digest. A failed update keeps the prior
+/// digest, so the next plan tries again.
+pub(crate) async fn update(
+    backend: &(impl Backend + ?Sized),
+    kind: &str,
+    desired: &Row,
+    prior: &Row,
+) -> Mutation {
+    let changed = [CREDENTIAL_DIGEST, "credential_env"]
+        .iter()
+        .any(|field| value(desired, field) != value(prior, field));
+    let register =
+        (credential::from_variable(desired) && changed).then(|| value(prior, CREDENTIAL_DIGEST));
+    establish(backend, kind, desired, register).await
+}
+
+/// Ensure the pair. With `register`, the registration takes the value its
+/// variable holds now and the resource records that value's digest, or the
+/// digest `register` holds when the registration fails.
+async fn establish(
+    backend: &(impl Backend + ?Sized),
+    kind: &str,
+    desired: &Row,
+    register: Option<&str>,
+) -> Mutation {
+    let (profile, mut registration) = match rows(kind, desired) {
         Ok(rows) => rows,
         Err(error) => return Mutation::failed(error),
     };
+    let mut desired = desired.clone();
+    if let Some(fallback) = register {
+        registration.insert(credential::REGISTER.into(), "true".into());
+        desired.insert(CREDENTIAL_DIGEST.into(), fallback.into());
+    }
+    let desired = &desired;
     let (profile_state, profile_error) = if apf_profile(desired) {
         // APF serves the profile; NemoClaw adopts it and never imports one.
         let adopted = backend
@@ -336,6 +410,18 @@ pub(crate) async fn ensure(
         (Some(established), None) => {
             let mut state = desired.clone();
             state.insert("id".into(), value(&established, "id").into());
+            if register.is_some() {
+                // The registration records the digest of the value it took.
+                match established
+                    .get(CREDENTIAL_DIGEST)
+                    .filter(|digest| !digest.is_empty())
+                {
+                    Some(digest) => {
+                        state.insert(CREDENTIAL_DIGEST.into(), digest.clone());
+                    }
+                    None => return Mutation::partial(state, ObservationError::Incomplete),
+                }
+            }
             Mutation::complete(state)
         }
         (None, None) => Mutation::failed(ObservationError::Incomplete),

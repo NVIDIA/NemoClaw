@@ -226,7 +226,7 @@ Values resolved through credential references stay out of configuration, plans, 
 This guarantee doesn't apply to literal container environment settings.
 OpenShell stores installed provider credentials for routing.
 Removing the local variable doesn't revoke them.
-Rotation under an unchanged reference isn't detected automatically.
+Apply detects a new value behind an unchanged inference, web search, or API reference and registers it; see [rotating credentials](../security/credential-rotation.md).
 
 The SDK and provider child process need access to referenced credentials during operations.
 Remove caller-owned environment values and TLS files when you no longer need them.
@@ -406,7 +406,7 @@ Check whether the desired edit updates a running resource, replaces it, or requi
 | Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |
 | Remove a sandbox | Deletes it, with its files and conversations |
 | Remove retained storage or a protected gateway binding | Apply refuses removal; assess a separate deployment and explicit retirement of the original |
-| Change a credential value behind the same environment reference | Unchanged apply doesn't detect rotation; see [credential lifecycle](../security/security.md#credentials-and-authentication) |
+| Change an inference, web search, or API credential value behind the same environment reference | Apply updates the registration with the new value and replaces each sandbox that attaches it, deleting that sandbox's files and conversations except on mounted volumes. Plan doesn't read the value, so it shows no change; see [rotating credentials](../security/credential-rotation.md) |
 
 Apply starts a stopped runtime again in its sandbox.
 See [agent runtimes during apply](#agent-runtimes-during-apply).

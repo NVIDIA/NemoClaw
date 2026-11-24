@@ -10,6 +10,7 @@ pub mod agent;
 mod client;
 mod composite;
 mod connected;
+mod credential;
 mod driver_config;
 mod gateway_source;
 mod gpu;
@@ -585,6 +586,28 @@ fn inference_sandbox_env(known: &Row, unknown: &[&str]) -> Option<String> {
     })
 }
 
+/// The digest of the credential value a registration holds, which NemoClaw
+/// records when it registers the value, since OpenShell never reports it. A
+/// plan that reads another value in the registration's credential variable,
+/// or names another variable, leaves the digest unknown, and the registration
+/// updates in place with the value. NemoClaw's deployment graph replaces the
+/// sandboxes that attach the registration when the digest changes, so their
+/// agents start with the value. Empty when the registration takes
+/// no credential from a variable, or holds one recorded before NemoClaw kept
+/// digests and not yet observed.
+trait CredentialDigest {
+    fn credential_digest(self) -> Self;
+}
+impl CredentialDigest for nemoclaw_tofu::Definition {
+    fn credential_digest(self) -> Self {
+        use credential::CREDENTIAL_DIGEST;
+        self.computed(CREDENTIAL_DIGEST, credential::plan)
+            .unknown_when_changed(CREDENTIAL_DIGEST, "credential_env")
+            .optional(&[CREDENTIAL_DIGEST])
+            .sensitive(&[CREDENTIAL_DIGEST])
+    }
+}
+
 /// OpenShell objects and their planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
     use nemoclaw_openshell::api::{MCP_POLICY, REST_POLICY};
@@ -633,7 +656,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         ])
         .validate_inputs(composite::validate_api)
         .replaces(binaries_changes)
-        .derived("registration", provider_registration),
+        .derived("registration", provider_registration)
+        .credential_digest(),
         // An inference server's profile and registration, as one resource
         // whose owner is its workspace's and whose endpoint and credential
         // come from the server's ref. A rotated credential reference updates
@@ -675,9 +699,11 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
             "cluster_source",
             POLICY_AUTHORITY,
         ])
+        .validate_inputs(composite::validate_inference)
         .replaces(inference_changes)
         .derived("registration", provider_registration)
-        .derived("sandbox_env", inference_sandbox_env),
+        .derived("sandbox_env", inference_sandbox_env)
+        .credential_digest(),
         Definition::new(
             "sandbox",
             &[
@@ -719,7 +745,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         ])
         // Omission means NemoClaw authors the policy, not the previous value.
         .reset_when_omitted(&[POLICY_AUTHORITY])
-        .validate_inputs(network::validate_grant_names)
+        .validate_inputs(network::validate_sandbox_inputs)
         // The URLs the gateway reports for the exposures; changed exposures
         // report theirs when applied.
         .computed(services::URLS, nemoclaw_tofu::carry_prior)
@@ -753,10 +779,17 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         definition.references = nemoclaw_openshell::references(definition.kind);
         // Version 1 took refs instead of names; version 2 takes a generic
         // launch instead of a Fabric runtime binding. Earlier state is rejected.
-        definition
+        let definition = definition
             .schema_version(2)
-            .generated("owner", nemoclaw_backend::generate_owner)
-            .generated("generation", nemoclaw_backend::generate_generation)
+            .generated("generation", nemoclaw_backend::generate_generation);
+        // A sandbox belongs to its workspace's owner, which the provider
+        // can't generate, so it's required. The workspace and credential
+        // resources generate theirs or take their workspace's.
+        if definition.kind == "sandbox" {
+            definition
+        } else {
+            definition.generated("owner", nemoclaw_backend::generate_owner)
+        }
     })
 }
 
