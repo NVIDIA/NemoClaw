@@ -10,6 +10,7 @@
 )]
 
 pub mod gate;
+mod host;
 pub mod identity;
 pub mod record;
 pub mod send;
