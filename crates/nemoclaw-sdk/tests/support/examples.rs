@@ -6,6 +6,10 @@ pub fn yaml_files(directory: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     for entry in std::fs::read_dir(directory).unwrap() {
         let entry = entry.unwrap();
+        // Event aliases are covered through their canonical platform files.
+        if entry.file_name() == "gtc-dc" {
+            continue;
+        }
         let path = entry.path();
         if entry.file_type().unwrap().is_dir() {
             files.extend(yaml_files(&path));

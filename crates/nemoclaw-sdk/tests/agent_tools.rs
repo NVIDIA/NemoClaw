@@ -95,7 +95,7 @@ fn shell_restriction_changes_only_the_enabled_list_and_restores_the_baseline_gra
 
 fn input(count: usize) -> Value {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap();
     let primary = value["spec"]["sandboxes"]["assistant"].clone();
     value["spec"]["sandboxes"] = Value::Object(
         (0..count)

@@ -52,7 +52,7 @@ See [CLI options and output](../references/cli.md) for bundle selection, formats
 
 A document contains sandboxes keyed by name, each with one harness and one agent: up to 256 with a Kubernetes or OpenShift gateway, and up to 32 with Docker or Podman, which run every sandbox on one host.
 See [sandbox count and cluster size](kubernetes.md#sandbox-count-and-cluster-size) for the reasons.
-Use the [multiple-sandbox example](../../examples/multiple-sandboxes.yaml) to share inference across different harnesses.
+Use the [multiple-sandbox example](../../examples/features/multiple-sandboxes.yaml) to share inference across different harnesses.
 [OpenClaw and Pi](../agents-inference/agents.md) can select multiple models.
 Each Deep Agents instance selects one.
 
@@ -66,7 +66,7 @@ See [service constraints](../agents-inference/inference.md#combining-local-and-h
 Use a local rootless Linux Podman engine through its Unix API socket.
 Rootful operation, remote Podman engines, and other operating systems are untested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-Set `gateway.target` to `podman`, with `engine` naming the local Podman API service's Unix socket, as [the Podman example](../../examples/managed-podman.yaml) does:
+Set `gateway.target` to `podman`, with `engine` naming the local Podman API service's Unix socket, as [the Podman example](../../examples/platforms/podman/deepagents-external-inference.yaml) does:
 
 ```yaml
 gateway:
@@ -124,7 +124,7 @@ The procedures below distinguish gateway settings, application inputs, and crede
 ### Running an Application Container
 
 Declare a `kind: container` service with an immutable image on a managed local Docker gateway.
-The [application container example](../../examples/application-container.yaml) runs an application beside one agent and passes it the workspace, sandbox, agent, and gateway address as literal environment values.
+The [application container example](../../examples/features/application-container.yaml) runs an application beside one agent and passes it the workspace, sandbox, agent, and gateway address as literal environment values.
 NemoClaw doesn't interpret them.
 Follow [Configuring a Container Service](container-services.md) for inputs, readiness, credential exposure, disposable data, and the distinction between application readiness and successful inference.
 VoiceClaw still needs separate qualification.

@@ -43,7 +43,8 @@ fn assert_silent(assessment: &DiscoveryAssessment, text: &str) {
 }
 
 fn document() -> Document {
-    Document::parse(&include_bytes!("../../../examples/onboarding/openclaw.yaml")[..]).unwrap()
+    Document::parse(&include_bytes!("../../../examples/platforms/docker/openclaw-hosted.yaml")[..])
+        .unwrap()
 }
 
 /// The queries that read a document's engine and its sandbox image.

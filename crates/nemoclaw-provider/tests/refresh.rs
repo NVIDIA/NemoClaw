@@ -73,7 +73,8 @@ async fn kubernetes_storage_absence_and_destroy_preserve_its_binding() {
 async fn teardown_does_not_resume_incomplete_retained_kubernetes_storage() {
     use nemoclaw_sdk::{compile, config::Document};
     let document = Document::parse(
-        include_bytes!("../../../examples/kubernetes/managed-development.yaml").as_slice(),
+        include_bytes!("../../../examples/platforms/kubernetes/managed-development.yaml")
+            .as_slice(),
     )
     .unwrap();
     let generations = ["kubernetes_storage", "kubernetes_gateway"]

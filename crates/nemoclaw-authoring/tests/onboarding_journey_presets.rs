@@ -9,9 +9,10 @@ use serde_json::{Value, json};
 
 fn guided() -> nemoclaw_authoring::JourneyState {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     JourneyDefinition::new("guided-presets", base)
         .ask(["/spec/sandboxes/assistant/harness/kind", "inference:preset"])
         // Exact guidance asks the API even where the vendor's preset decides it.
@@ -121,9 +122,10 @@ fn catalog_membership_is_checked_without_blocking_or_echoing_custom_models() {
 fn vendor_catalogs_follow_the_endpoint_and_preserve_an_unlisted_suggestion() {
     let capabilities = Capabilities::available();
     let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("editable-endpoint", base)
         .ask([
             "inference:preset",
@@ -612,9 +614,10 @@ fn custom_endpoint_questions_stay_user_facing_without_internal_provider_names() 
 #[test]
 fn switching_runtime_preserves_the_selected_model() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("runtime", base)
         .ask(["/spec/gateway/target"])
         .start(&capabilities)

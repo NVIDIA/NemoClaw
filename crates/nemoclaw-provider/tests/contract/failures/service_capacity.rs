@@ -19,9 +19,10 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     ] {
         fs::write(root.join(file), value.to_string()).unwrap();
     }
-    let document =
-        Document::parse(include_bytes!("../../../../../examples/spark/two-models.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../../examples/platforms/dgx-spark/two-models.yaml").as_slice(),
+    )
+    .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
     value["spec"]["gateway"] = json!({"management":"external", "endpoint":"http://127.0.0.1:1"});
     for service in value["spec"]["services"]
@@ -156,9 +157,10 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
 #[test]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 fn ollama_reads_reject_a_vllm_contract() {
-    let document =
-        Document::parse(include_bytes!("../../../../../examples/spark/two-models.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../../examples/platforms/dgx-spark/two-models.yaml").as_slice(),
+    )
+    .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
     value["spec"]["gateway"] = json!({"management":"external", "endpoint":"http://127.0.0.1:1"});
     // With an external gateway, services name their own engine.

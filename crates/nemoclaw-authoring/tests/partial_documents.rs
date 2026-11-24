@@ -58,7 +58,7 @@ fn supplied_invalid_name_is_distinct_from_missing_values() {
 
 #[test]
 fn complete_input_materializes_through_the_sdk() {
-    let yaml = include_bytes!("../../../examples/onboarding/openclaw.yaml");
+    let yaml = include_bytes!("../../../examples/platforms/docker/openclaw-hosted.yaml");
     let partial = PartialDocument::from_yaml(yaml).unwrap();
     let assessment = partial.assess();
 
@@ -71,7 +71,7 @@ fn complete_input_materializes_through_the_sdk() {
 
 #[test]
 fn inference_form_is_pending_when_absent_and_invalid_when_both_forms_are_supplied() {
-    let yaml = include_bytes!("../../../examples/onboarding/openclaw.yaml");
+    let yaml = include_bytes!("../../../examples/platforms/docker/openclaw-hosted.yaml");
     let original = Document::parse(yaml.as_slice()).unwrap();
     let mut value = serde_json::to_value(original).unwrap();
     let agent = value

@@ -1,1 +1,1 @@
-../kubernetes/hosted-nvidia.tf
+../platforms/kubernetes/hosted-nvidia.tf

@@ -19,7 +19,7 @@ run "fixtures" {
   command = plan
 
   module {
-    source = "./examples/kubernetes/external-gateway"
+    source = "./examples/platforms/kubernetes/external-gateway"
   }
 
   plan_options {
@@ -29,13 +29,13 @@ run "fixtures" {
 
 run "deploy" {
   module {
-    source = "./examples/kubernetes/external-gateway"
+    source = "./examples/platforms/kubernetes/external-gateway"
   }
 }
 
 run "verify" {
   module {
-    source = "./examples/kubernetes/external-gateway"
+    source = "./examples/platforms/kubernetes/external-gateway"
   }
 
   assert {
@@ -118,7 +118,7 @@ run "unchanged" {
   command = plan
 
   module {
-    source = "./examples/kubernetes/external-gateway"
+    source = "./examples/platforms/kubernetes/external-gateway"
   }
 
   variables {
@@ -141,7 +141,7 @@ run "unchanged" {
 
 run "replace_researcher" {
   module {
-    source = "./examples/kubernetes/external-gateway"
+    source = "./examples/platforms/kubernetes/external-gateway"
   }
 
   plan_options {
@@ -157,7 +157,7 @@ run "replace_researcher" {
 # recorded.
 run "teardown" {
   module {
-    source = "./examples/kubernetes/external-gateway"
+    source = "./examples/platforms/kubernetes/external-gateway"
   }
 
   variables {

@@ -34,9 +34,10 @@ fn credential_availability_never_contains_the_value() {
 #[test]
 fn endpoint_requests_deduplicate_shared_routes_and_preserve_harness_api_defaults() {
     use nemoclaw_sdk::{config::Document, inference_discovery::endpoint_requests};
-    let document =
-        Document::parse(include_bytes!("../../../examples/onboarding/openclaw.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../examples/platforms/docker/openclaw-hosted.yaml").as_slice(),
+    )
+    .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
     value["spec"]["inferenceProviders"]["nvidia-prod"]
         .as_object_mut()
@@ -79,7 +80,7 @@ fn a_cluster_service_endpoint_reads_no_catalog_while_https_and_private_addresses
         ("https://inference.example.com/v1", true),
         ("http://10.0.0.5:8000/v1", true),
     ] {
-        let mut input = crate::support::example("kubernetes/external-gateway.yaml");
+        let mut input = crate::support::example("platforms/kubernetes/external-gateway.yaml");
         input["spec"]["inferenceProviders"]["inference"]["endpoint"] = serde_json::json!(endpoint);
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
         let requests = endpoint_requests(&document).unwrap();

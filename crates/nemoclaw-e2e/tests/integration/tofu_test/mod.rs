@@ -139,10 +139,10 @@ fn every_scenario_test_names_its_inputs() {
             let scenario = name.strip_suffix(".tftest.hcl")?.to_owned();
             let case = match scenario.as_str() {
                 "dgx-station-openclaw-nemotron" => {
-                    Path::new(EXAMPLES).join("gtc-dc/openclaw-dgx-station.yaml")
+                    Path::new(EXAMPLES).join("platforms/dgx-station/openclaw-nemotron-super.yaml")
                 }
                 "dgx-spark-openclaw-nemotron" => {
-                    Path::new(EXAMPLES).join("gtc-dc/openclaw-dgx-spark.yaml")
+                    Path::new(EXAMPLES).join("platforms/dgx-spark/openclaw-nemotron-super.yaml")
                 }
                 _ => Path::new(CASES).join(format!("{scenario}.yaml")),
             };

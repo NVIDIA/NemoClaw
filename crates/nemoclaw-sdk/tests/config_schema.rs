@@ -55,7 +55,10 @@ fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
             "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
             "/spec/services/qwen",
         ),
-        ("managed-ollama.yaml", "/spec/services/ollama-server"),
+        (
+            "platforms/dgx-spark/openclaw-ollama.yaml",
+            "/spec/services/ollama-server",
+        ),
     ] {
         for policy in ["Always", "IfNotPresent", "Never", "always", ""] {
             let mut value = input(file);
@@ -85,10 +88,10 @@ fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
             }
         }
     }
-    let mut external = input("local.yaml");
+    let mut external = input("agents/openclaw.yaml");
     external["spec"]["gateway"]["target"]["docker"]["imagePullPolicy"] = json!("Never");
     agrees(&validator, &external, false);
-    let mut sandbox = input("local.yaml");
+    let mut sandbox = input("agents/openclaw.yaml");
     sandbox["spec"]["sandboxes"]["assistant"]["imagePullPolicy"] = json!("Never");
     agrees(&validator, &sandbox, false);
 }
@@ -96,7 +99,7 @@ fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
 #[test]
 fn input_schema_rejects_missing_required_fields_and_structural_nulls() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let original = input("local.yaml");
+    let original = input("agents/openclaw.yaml");
     agrees(&validator, &original, true);
     for path in [
         "/apiVersion",
@@ -162,7 +165,7 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_route_settings() {
     agrees(&validator, &value, true);
     value["spec"]["gateway"]["surprise"] = json!(true);
     agrees(&validator, &value, false);
-    let mut value = input("fabric-pi.yaml");
+    let mut value = input("agents/pi.yaml");
     value
         .pointer_mut("/spec/sandboxes/assistant/agent/inference/routes/0/overrides")
         .unwrap()["settings"] = json!({});
@@ -195,112 +198,122 @@ fn every_example_is_accepted_and_round_trips_without_changing_intent() {
 fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (file, path, replacement, accepted) in [
-        ("local.yaml", "/apiVersion", json!("future"), false),
-        ("local.yaml", "/metadata/name", json!("UPPER"), false),
         (
-            "local.yaml",
+            "agents/openclaw.yaml",
+            "/apiVersion",
+            json!("future"),
+            false,
+        ),
+        (
+            "agents/openclaw.yaml",
+            "/metadata/name",
+            json!("UPPER"),
+            false,
+        ),
+        (
+            "agents/openclaw.yaml",
             "/spec/gateway/management",
             json!("future"),
             false,
         ),
         (
-            "local.yaml",
+            "agents/openclaw.yaml",
             "/spec/gateway/target/docker/engine",
             json!("unix:///var/run/docker.sock"),
             true,
         ),
         (
-            "local.yaml",
+            "agents/openclaw.yaml",
             "/spec/gateway/credential",
             json!({"env": "TOKEN"}),
             false,
         ),
         (
-            "local.yaml",
+            "agents/openclaw.yaml",
             "/spec/gateway/target",
             json!({"podman": {}}),
             true,
         ),
         (
-            "local.yaml",
+            "agents/openclaw.yaml",
             "/spec/gateway/target",
             json!({"future": {}}),
             false,
         ),
         (
-            "managed-ollama.yaml",
+            "platforms/dgx-spark/openclaw-ollama.yaml",
             "/spec/services/ollama-server/image",
             json!("ollama/ollama:latest"),
             false,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/inferenceProviders/qwen/endpoint",
             json!("https://api.example.com/v1"),
             false,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/inferenceProviders/qwen/credential",
             json!({"env": "TOKEN"}),
             false,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/services/qwen/kind",
             json!("removed-backend"),
             false,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/services/qwen/serving/speculativeTokens",
             json!(1),
             false,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(0),
             true,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(59),
             false,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(60),
             true,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(3600),
             true,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/services/qwen/serving/startupTimeoutSeconds",
             json!(3601),
             false,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/services/qwen/memory/hostReserveGiB",
             json!(27),
             false,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/services/qwen/memory/hostReserveGiB",
             json!(0),
             true,
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/sandboxes/assistant/harness/kind",
             json!("deepagents"),
             true,
@@ -330,7 +343,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         agrees_at(&validator, &value, accepted, file, path);
     }
     for field in ["placement", "publication"] {
-        let mut value = input("spark/remote-vllm.yaml");
+        let mut value = input("platforms/dgx-spark/remote-vllm.yaml");
         value["spec"]["services"]["qwen"]
             .as_object_mut()
             .unwrap()
@@ -353,13 +366,16 @@ fn the_host_reserve_floor_is_6_gib_on_dedicated_memory_and_28_on_unified_memory_
     let h100 = json!({"profile": "h100", "architecture": "amd64"});
     for (value, service) in [
         (
-            with_hardware(input("spark/vllm.yaml"), "qwen", h100),
+            with_hardware(input("platforms/dgx-spark/vllm.yaml"), "qwen", h100),
             "qwen",
         ),
-        (input("nemotron-amd64.yaml"), "nemotron"),
+        (
+            input("platforms/remote-inference/openclaw-nemotron-amd64.yaml"),
+            "nemotron",
+        ),
         (
             with_hardware(
-                input("managed-ollama.yaml"),
+                input("platforms/dgx-spark/openclaw-ollama.yaml"),
                 "ollama-server",
                 json!({"profile": "l4", "architecture": "amd64"}),
             ),
@@ -376,16 +392,19 @@ fn the_host_reserve_floor_is_6_gib_on_dedicated_memory_and_28_on_unified_memory_
     compatibility["architecture"] = json!("amd64");
     compatibility["gpu"] = json!("NVIDIA H100 80GB HBM3");
     for (value, service) in [
-        (input("spark/vllm.yaml"), "qwen"),
+        (input("platforms/dgx-spark/vllm.yaml"), "qwen"),
         (
             with_hardware(
-                input("spark/vllm.yaml"),
+                input("platforms/dgx-spark/vllm.yaml"),
                 "qwen",
                 json!({"profile": "rtx-spark"}),
             ),
             "qwen",
         ),
-        (input("managed-ollama.yaml"), "ollama-server"),
+        (
+            input("platforms/dgx-spark/openclaw-ollama.yaml"),
+            "ollama-server",
+        ),
         (crate::support::fixture("inline-recipe.yaml"), "qwen"),
         (dedicated_recipe, "qwen"),
     ] {
@@ -427,7 +446,7 @@ fn defaulted_numeric_bounds_match_the_parser_at_each_boundary() {
             (max, true),
             (max + 1, false),
         ] {
-            let mut value = input("spark/vllm.yaml");
+            let mut value = input("platforms/dgx-spark/vllm.yaml");
             let service = &mut value["spec"]["services"]["qwen"];
             service["memory"]["minAvailableGiB"] = json!(6);
             service["memory"]["freeGateGiB"] = json!(24);
@@ -443,34 +462,38 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
     assert!(schema["x-nemoclaw-parser-checks"].as_array().unwrap().len() >= 4);
     let validator = jsonschema::validator_for(&schema).unwrap();
     for (file, path, replacement) in [
-        ("local.yaml", "/spec/inferenceProviders", json!({})),
         (
-            "local.yaml",
+            "agents/openclaw.yaml",
+            "/spec/inferenceProviders",
+            json!({}),
+        ),
+        (
+            "agents/openclaw.yaml",
             "/spec/sandboxes/assistant/agent/inference/routes/0/providerRef",
             json!("foreign"),
         ),
         (
-            "local.yaml",
+            "agents/openclaw.yaml",
             "/spec/gateway/endpoint",
             json!("http://remote.example.com"),
         ),
         (
-            "spark/remote-vllm.yaml",
+            "platforms/dgx-spark/remote-vllm.yaml",
             "/spec/services/qwen/publication/endpoint",
             json!("http://10.0.0.8:9999/v1"),
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/services/qwen/memory/freeGateGiB",
             json!(6),
         ),
         (
-            "managed-ollama.yaml",
+            "platforms/dgx-spark/openclaw-ollama.yaml",
             "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
             json!("untagged"),
         ),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             "/spec/gateway/target",
             json!({"podman": {"engine": "unix:///run/user/1000/podman/podman.sock"}}),
         ),
@@ -518,7 +541,7 @@ fn example_discovery_includes_nested_yaml_and_yml_and_excludes_other_files() {
 #[test]
 fn inference_providers_are_keyed_by_name_in_both_scopes() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let mut keyed = input("local.yaml");
+    let mut keyed = input("agents/openclaw.yaml");
     keyed["spec"]["inferenceProviders"] =
         json!({"local": {"provider": "openai", "endpoint": "http://172.20.0.1:11436/v1"}});
     let sandbox = &mut keyed["spec"]["sandboxes"]["assistant"];
@@ -635,7 +658,7 @@ fn sandboxes_are_keyed_by_name() {
         ]}}
     });
     let with = |sandboxes: Value| {
-        let mut value = input("local.yaml");
+        let mut value = input("agents/openclaw.yaml");
         value["spec"]["sandboxes"] = sandboxes;
         value
     };
@@ -693,13 +716,29 @@ fn sandboxes_are_keyed_by_name() {
 fn the_gateway_runtime_sets_how_many_sandboxes_a_document_holds() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (example, cap, runtime) in [
-        ("kubernetes/managed-development.yaml", 256, "Kubernetes"),
-        ("kubernetes/external-gateway.yaml", 256, "Kubernetes"),
-        ("openshift/managed-development.yaml", 256, "OpenShift"),
-        ("local.yaml", 32, "Docker"),
+        (
+            "platforms/kubernetes/managed-development.yaml",
+            256,
+            "Kubernetes",
+        ),
+        (
+            "platforms/kubernetes/external-gateway.yaml",
+            256,
+            "Kubernetes",
+        ),
+        (
+            "platforms/openshift/managed-development.yaml",
+            256,
+            "OpenShift",
+        ),
+        ("agents/openclaw.yaml", 32, "Docker"),
         // An omitted runtime selects Docker.
-        ("web-search.yaml", 32, "Docker"),
-        ("managed-podman.yaml", 32, "Podman"),
+        ("features/web-search.yaml", 32, "Docker"),
+        (
+            "platforms/podman/deepagents-external-inference.yaml",
+            32,
+            "Podman",
+        ),
     ] {
         let value = input(example);
         let sandbox = value["spec"]["sandboxes"]
@@ -736,7 +775,7 @@ fn the_gateway_runtime_sets_how_many_sandboxes_a_document_holds() {
 #[test]
 fn every_sandbox_requires_one_agent() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let value = input("local.yaml");
+    let value = input("agents/openclaw.yaml");
     agrees(&validator, &value, true);
     let mut missing = value.clone();
     missing["spec"]["sandboxes"]["assistant"]
@@ -753,7 +792,7 @@ fn gateway_variants_reject_fields_owned_by_the_other_mode() {
         ("networkCIDR", json!("")),
         ("imagePullPolicy", json!("Never")),
     ] {
-        let mut external = input("local.yaml");
+        let mut external = input("agents/openclaw.yaml");
         external["spec"]["gateway"][field] = value;
         agrees(&validator, &external, false);
     }
@@ -781,13 +820,19 @@ fn the_input_schema_names_no_gateway_image_pin() {
 fn a_gateway_image_is_rejected_as_an_unknown_field() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (file, image) in [
-        ("spark/vllm.yaml", json!(DEFAULT_GATEWAY_IMAGE)),
-        ("managed-podman.yaml", json!("")),
         (
-            "kubernetes/managed-development.yaml",
+            "platforms/dgx-spark/vllm.yaml",
             json!(DEFAULT_GATEWAY_IMAGE),
         ),
-        ("local.yaml", json!("")),
+        (
+            "platforms/podman/deepagents-external-inference.yaml",
+            json!(""),
+        ),
+        (
+            "platforms/kubernetes/managed-development.yaml",
+            json!(DEFAULT_GATEWAY_IMAGE),
+        ),
+        ("agents/openclaw.yaml", json!("")),
     ] {
         let mut value = input(file);
         value["spec"]["gateway"]["image"] = image;
@@ -805,7 +850,7 @@ fn a_gateway_image_is_rejected_as_an_unknown_field() {
 #[test]
 fn a_sandbox_cannot_choose_a_runtime_apart_from_its_gateway() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let mut value = input("managed-podman.yaml");
+    let mut value = input("platforms/podman/deepagents-external-inference.yaml");
     value["spec"]["sandboxes"]["assistant"]["runtime"] = json!({"provider": "docker"});
     agrees(&validator, &value, false);
 }
@@ -814,7 +859,7 @@ fn a_sandbox_cannot_choose_a_runtime_apart_from_its_gateway() {
 fn managed_podman_requires_an_explicit_engine() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let rule = "target.podman.engine must name the local Podman API service socket";
-    let mut value = input("managed-podman.yaml");
+    let mut value = input("platforms/podman/deepagents-external-inference.yaml");
     value["spec"]["gateway"]["target"]["podman"]
         .as_object_mut()
         .unwrap()
@@ -850,7 +895,7 @@ fn managed_podman_requires_an_explicit_engine() {
 #[test]
 fn external_gateway_tls_takes_a_ca_alone_or_with_a_client_certificate_and_key() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let complete = input("kubernetes/external-gateway.yaml");
+    let complete = input("platforms/kubernetes/external-gateway.yaml");
     agrees(&validator, &complete, true);
     let tls = complete["spec"]["gateway"]["tls"].clone();
     for (fields, accepted) in [
@@ -892,7 +937,7 @@ fn ollama_and_vllm_services_state_the_same_placement_requirement() {
 
 #[test]
 fn an_ollama_service_without_placement_is_refused_beside_podman_or_an_external_gateway() {
-    let managed = input("managed-ollama.yaml");
+    let managed = input("platforms/dgx-spark/openclaw-ollama.yaml");
     let mut podman = managed.clone();
     let target = &mut podman["spec"]["gateway"]["target"];
     *target = json!({"podman": target["docker"].take()});
@@ -916,7 +961,7 @@ fn an_ollama_service_without_placement_is_refused_beside_podman_or_an_external_g
 
 #[test]
 fn schema_errors_identify_the_contract_without_echoing_input_values_or_map_keys() {
-    let mut value = input("fabric-openclaw.yaml");
+    let mut value = input("agents/openclaw.yaml");
     value["spec"]["harnesses"] = json!({"SECRET-MAP-KEY": {
         "kind": "openclaw", "execution": {"timeoutSeconds": 0}
     }});
@@ -931,16 +976,19 @@ fn schema_errors_identify_the_contract_without_echoing_input_values_or_map_keys(
 fn schema_patterns_reject_trailing_newlines_in_identifiers_and_pins() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (file, path) in [
-        ("local.yaml", "/metadata/name"),
-        ("local.yaml", "/metadata/uid"),
-        ("local.yaml", "/spec/sandboxes/assistant/agent/name"),
+        ("agents/openclaw.yaml", "/metadata/name"),
+        ("agents/openclaw.yaml", "/metadata/uid"),
         (
-            "local.yaml",
+            "agents/openclaw.yaml",
+            "/spec/sandboxes/assistant/agent/name",
+        ),
+        (
+            "agents/openclaw.yaml",
             "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
         ),
-        ("spark/vllm.yaml", "/spec/services/qwen/image"),
+        ("platforms/dgx-spark/vllm.yaml", "/spec/services/qwen/image"),
         (
-            "managed-ollama.yaml",
+            "platforms/dgx-spark/openclaw-ollama.yaml",
             "/spec/services/ollama-server/model/digest",
         ),
     ] {
@@ -994,7 +1042,7 @@ fn schema_patterns_use_syntax_that_re2_validators_compile() {
 
 #[test]
 fn an_end_anchored_pattern_rejects_a_trailing_newline() {
-    let managed = input("kubernetes/managed-development.yaml");
+    let managed = input("platforms/kubernetes/managed-development.yaml");
     Document::parse(managed.to_string().as_bytes()).unwrap();
     for pointer in [
         "/metadata/uid",
@@ -1021,7 +1069,7 @@ fn an_end_anchored_pattern_rejects_a_trailing_newline() {
 fn metadata_uid_accepts_either_case_and_keeps_it_lowercase() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let lower = "5f0b6e1c-3a2d-4b8e-9c7f-1a2b3c4d5e6f";
-    let mut value = input("openclaw.yaml");
+    let mut value = input("features/inference-tuning.yaml");
     value["metadata"]["uid"] = json!(lower.to_uppercase());
     agrees(&validator, &value, true);
     let upper = Document::parse(value.to_string().as_bytes()).unwrap();
@@ -1045,8 +1093,8 @@ fn a_model_containers_gpu_devices_list_one_uuid_or_index_in_the_schema_and_the_p
     const UUID: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (file, service) in [
-        ("spark/vllm.yaml", "qwen"),
-        ("managed-ollama.yaml", "ollama-server"),
+        ("platforms/dgx-spark/vllm.yaml", "qwen"),
+        ("platforms/dgx-spark/openclaw-ollama.yaml", "ollama-server"),
     ] {
         for (devices, accepted) in [
             (json!(["0"]), true),
@@ -1086,7 +1134,7 @@ fn a_model_containers_gpu_devices_list_one_uuid_or_index_in_the_schema_and_the_p
 #[test]
 fn several_gpu_devices_are_refused_because_multi_gpu_serving_is_not_implemented() {
     for devices in [json!(["0", "1"]), json!([])] {
-        let mut value = input("spark/vllm.yaml");
+        let mut value = input("platforms/dgx-spark/vllm.yaml");
         value["spec"]["services"]["qwen"]["container"]["gpuDevices"] = devices;
         let error = Document::parse(value.to_string().as_bytes())
             .unwrap_err()
@@ -1096,7 +1144,7 @@ fn several_gpu_devices_are_refused_because_multi_gpu_serving_is_not_implemented(
             "{error}"
         );
     }
-    let mut value = input("spark/vllm.yaml");
+    let mut value = input("platforms/dgx-spark/vllm.yaml");
     value["spec"]["services"]["qwen"]["container"]["gpuDevices"] = json!(["all"]);
     let error = Document::parse(value.to_string().as_bytes())
         .unwrap_err()
@@ -1118,7 +1166,7 @@ fn gpu_devices_stay_unique_without_the_one_entry_limit() {
         (json!(["0", "0"]), false),
         (json!(["0", "1", "0"]), false),
     ] {
-        let mut value = input("spark/vllm.yaml");
+        let mut value = input("platforms/dgx-spark/vllm.yaml");
         value["spec"]["services"]["qwen"]["container"]["gpuDevices"] = devices.clone();
         assert_eq!(validator.is_valid(&value), accepted, "{devices}");
     }
@@ -1136,7 +1184,7 @@ fn vllm_parallel_sizes_are_bounded_positive_integers_or_omitted() {
         (json!(-1), false),
     ] {
         for field in ["tensorParallelSize", "pipelineParallelSize"] {
-            let mut value = input("spark/vllm.yaml");
+            let mut value = input("platforms/dgx-spark/vllm.yaml");
             value["spec"]["services"]["qwen"]["serving"][field] = size.clone();
             agrees(&validator, &value, accepted);
             let mut value = input(RECIPE);
@@ -1161,7 +1209,7 @@ fn vllm_parallel_sizes_are_bounded_positive_integers_or_omitted() {
 #[test]
 fn service_exposures_take_a_port_and_an_authorization_mode_openshell_accepts() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
-    let mut value = input("fabric-openclaw.yaml");
+    let mut value = input("agents/openclaw.yaml");
     let set = |value: &mut Value, exposures: Value| {
         value["spec"]["sandboxes"]["assistant"]["serviceExposures"] = exposures;
     };

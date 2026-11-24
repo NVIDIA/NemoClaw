@@ -26,7 +26,7 @@ async fn search_preserves_credentials_on_unchanged_ensure_and_removes_owned_regi
 async fn search_credential_lifecycle(provider_type: &str, credential_env: &str) {
     let fixture = Fixture::start().await;
     let mut doc =
-        Document::parse(include_str!("../../../../examples/fabric-openclaw.yaml").as_bytes())
+        Document::parse(include_str!("../../../../examples/agents/openclaw.yaml").as_bytes())
             .unwrap();
     nemoclaw_e2e::point_gateway_at(&mut doc, &fixture.endpoint);
     doc.spec.integrations = serde_json::from_value(serde_json::json!({
@@ -165,7 +165,7 @@ async fn separate_search_credentials_reach_only_their_selected_sandbox_attachmen
     }
     let fixture = Fixture::start().await;
     let mut doc =
-        Document::parse(include_str!("../../../../examples/fabric-openclaw.yaml").as_bytes())
+        Document::parse(include_str!("../../../../examples/agents/openclaw.yaml").as_bytes())
             .unwrap();
     nemoclaw_e2e::point_gateway_at(&mut doc, &fixture.endpoint);
     let other = doc.spec.sandboxes["assistant"].clone();

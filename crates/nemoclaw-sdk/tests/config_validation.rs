@@ -14,42 +14,62 @@ fn document(example: &str) -> Document {
 #[test]
 fn directly_constructed_documents_and_services_enforce_normalized_bounds() {
     for (example, service, path, invalid) in [
-        ("spark/vllm.yaml", "qwen", "/serving/port", json!(0)),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
+            "qwen",
+            "/serving/port",
+            json!(0),
+        ),
+        (
+            "platforms/dgx-spark/vllm.yaml",
             "qwen",
             "/serving/contextTokens",
             json!(-1),
         ),
-        ("spark/vllm.yaml", "qwen", "/serving/maxSequences", json!(0)),
         (
-            "spark/vllm.yaml",
+            "platforms/dgx-spark/vllm.yaml",
+            "qwen",
+            "/serving/maxSequences",
+            json!(0),
+        ),
+        (
+            "platforms/dgx-spark/vllm.yaml",
             "qwen",
             "/memory/hostReserveGiB",
             json!(0),
         ),
-        ("spark/vllm.yaml", "qwen", "/memory/kvCacheGiB", json!(0)),
-        ("spark/vllm.yaml", "qwen", "/memory/minFreeGiB", json!(1000)),
         (
-            "managed-ollama.yaml",
+            "platforms/dgx-spark/vllm.yaml",
+            "qwen",
+            "/memory/kvCacheGiB",
+            json!(0),
+        ),
+        (
+            "platforms/dgx-spark/vllm.yaml",
+            "qwen",
+            "/memory/minFreeGiB",
+            json!(1000),
+        ),
+        (
+            "platforms/dgx-spark/openclaw-ollama.yaml",
             "ollama-server",
             "/serving/port",
             json!(0),
         ),
         (
-            "managed-ollama.yaml",
+            "platforms/dgx-spark/openclaw-ollama.yaml",
             "ollama-server",
             "/serving/contextTokens",
             json!(65537),
         ),
         (
-            "managed-ollama.yaml",
+            "platforms/dgx-spark/openclaw-ollama.yaml",
             "ollama-server",
             "/memory/hostReserveGiB",
             json!(0),
         ),
         (
-            "managed-ollama.yaml",
+            "platforms/dgx-spark/openclaw-ollama.yaml",
             "ollama-server",
             "/model/digest",
             json!("secret-invalid-digest"),
@@ -74,7 +94,7 @@ fn directly_constructed_documents_and_services_enforce_normalized_bounds() {
 
 #[test]
 fn normalization_markers_are_accepted_only_before_defaults() {
-    let baseline = document("spark/vllm.yaml");
+    let baseline = document("platforms/dgx-spark/vllm.yaml");
     let path = "/spec/gateway/target/docker/networkCIDR";
     let mut value = serde_json::to_value(&baseline).unwrap();
     *value.pointer_mut(path).unwrap() = json!("");
@@ -85,8 +105,8 @@ fn normalization_markers_are_accepted_only_before_defaults() {
     let direct: Document = serde_json::from_value(value).unwrap();
     assert!(direct.validate().is_err(), "normalized: {path}");
     for example in [
-        "spark/vllm.yaml",
-        "managed-ollama.yaml",
+        "platforms/dgx-spark/vllm.yaml",
+        "platforms/dgx-spark/openclaw-ollama.yaml",
         "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
     ] {
         let baseline = document(example);
@@ -97,7 +117,7 @@ fn normalization_markers_are_accepted_only_before_defaults() {
 
 #[test]
 fn schema_diagnostics_never_echo_values_unknown_properties_or_definition_names() {
-    let baseline = serde_json::to_value(document("spark/vllm.yaml")).unwrap();
+    let baseline = serde_json::to_value(document("platforms/dgx-spark/vllm.yaml")).unwrap();
     for (path, replacement) in [
         ("/spec/services/qwen/image", json!("SECRET-VALUE")),
         (
@@ -126,7 +146,7 @@ fn schema_diagnostics_never_echo_values_unknown_properties_or_definition_names()
 
 #[test]
 fn semantic_checks_still_reject_schema_valid_relationships() {
-    let mut value = serde_json::to_value(document("spark/vllm.yaml")).unwrap();
+    let mut value = serde_json::to_value(document("platforms/dgx-spark/vllm.yaml")).unwrap();
     value["spec"]["services"]["qwen"]["memory"]["freeGateGiB"] = json!(6);
     let validator =
         jsonschema::validator_for(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
@@ -163,7 +183,7 @@ fn recipe_byte_limits_remain_semantic_checks_for_multibyte_strings() {
 
 #[test]
 fn policy_schema_owns_nonempty_destinations_and_rules() {
-    let baseline = serde_json::to_value(document("explicit-policy.yaml")).unwrap();
+    let baseline = serde_json::to_value(document("features/explicit-policy.yaml")).unwrap();
     let validator =
         jsonschema::validator_for(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
     let path = "/spec/sandboxes/assistant/network/policy/explicit/network_policies/documentation/endpoints/0";

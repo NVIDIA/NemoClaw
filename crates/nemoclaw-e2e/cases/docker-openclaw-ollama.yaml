@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# examples/managed-ollama.yaml: a managed Ollama service on the Docker gateway
+# examples/platforms/dgx-spark/openclaw-ollama.yaml: a managed Ollama service on the Docker gateway
 # network serving one OpenClaw agent. The integration runner points the
 # gateway and engine at its fixtures.
 apiVersion: nemoclaw.nvidia.com/v1alpha1

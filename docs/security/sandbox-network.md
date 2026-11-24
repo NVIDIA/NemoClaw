@@ -4,7 +4,7 @@
 # Configuring Sandbox Policy
 
 Use `sandboxes.<name>.network.policy.explicit` to declare filesystem, process, and egress policy.
-Start from [the explicit-policy example](../../examples/explicit-policy.yaml) and follow [deployment usage](../build-deploy/usage.md) to plan, apply, and export it.
+Start from [the explicit-policy example](../../examples/features/explicit-policy.yaml) and follow [deployment usage](../build-deploy/usage.md) to plan, apply, and export it.
 
 Before applying, select a fresh deployment UUID, an available gateway and inference endpoint, and an immutable agent image available to the runtime.
 Check that policy paths and process identities exist in that image.
@@ -102,7 +102,7 @@ A network can combine it with inline `grants` when no name appears in both.
 A reference to an undefined name fails and lists the defined names.
 A definition that no sandbox selects is validated but applies to none.
 Refer to [the authoring rule](../build-deploy/configuration-references.md#the-authoring-rule).
-The [full-featured OpenClaw example](../../examples/full-featured-openclaw.yaml) gives three sandboxes one policy.
+The [full-featured OpenClaw example](../../examples/features/combined-openclaw.yaml) gives three sandboxes one policy.
 
 ## Runtime Filesystem Access
 

@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 const RESEARCHERS: [&str; 4] = ["flights", "stays", "transport", "attractions"];
 
 fn document() -> Document {
-    Document::parse(include_bytes!("../../../examples/travel-team.yaml").as_slice())
+    Document::parse(include_bytes!("../../../examples/features/travel-team.yaml").as_slice())
         .expect("the travel team parses")
 }
 

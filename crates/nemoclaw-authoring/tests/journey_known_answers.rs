@@ -16,7 +16,10 @@ const TIER: &str = "/spec/sandboxes/assistant/network/tier";
 const ROUTE: &str = "/spec/sandboxes/assistant/agent/inference/routes/0";
 
 fn example() -> Value {
-    serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml")).unwrap()
+    serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap()
 }
 
 fn base(values: &Value) -> PartialDocument {

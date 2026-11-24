@@ -5,7 +5,7 @@
 
 A travel planning team of six agents, each in its own OpenShell sandbox, written as plain OpenTofu HCL against NemoClaw's providers.
 For a single agent, see [the travel example](../travel/).
-[`travel-team.yaml`](../../travel-team.yaml) describes the same roles with shorter instructions. Use this HCL example for authenticated booking with an enforced MCP tool allowlist.
+[`travel-team.yaml`](../../features/travel-team.yaml) describes the same roles with shorter instructions. Use this HCL example for authenticated booking with an enforced MCP tool allowlist.
 
 | Role | Harness | Model | Reaches |
 |---|---|---|---|

@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 #[test]
 fn managed_podman_selects_one_driver_and_mounts_the_declared_socket() {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/deepagents.yaml")).unwrap();
     value["spec"]["gateway"] = json!({"management":"managed","target":{"podman":{
         "engine":"unix:///run/user/1000/podman/podman.sock"
     }}});

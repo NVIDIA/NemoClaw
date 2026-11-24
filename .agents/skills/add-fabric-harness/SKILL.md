@@ -40,7 +40,7 @@ The stage:
 
 ## 3. Add the Example and Tests
 
-- **Example:** `examples/fabric-<name>.yaml`, copied from a sibling example, with `harness.kind` set to the adapter ID.
+- **Example:** `examples/agents/<name>.yaml`, copied from a sibling example, with `harness.kind` set to the adapter ID.
 - **Lists of harnesses:** both lists in [the SDK's configuration tests](../../../crates/nemoclaw-sdk/tests/config.rs).
 - **Contract fixture:** write it from the example with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
 

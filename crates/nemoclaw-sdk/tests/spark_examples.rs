@@ -18,13 +18,13 @@ fn arm64_hardware_scenarios_compile_their_declared_resources() {
     .map(|key| (key.into(), "a".repeat(32)))
     .into();
     for (directory, name) in [
-        ("spark", "pi-small.yaml"),
-        ("spark", "deepagents-team.yaml"),
-        ("spark", "shared-model.yaml"),
-        ("spark", "two-models.yaml"),
-        ("spark", "local-and-hosted.yaml"),
-        ("station", "vllm.yaml"),
-        ("station", "shared-model.yaml"),
+        ("platforms/dgx-spark", "pi-small.yaml"),
+        ("platforms/dgx-spark", "deepagents-team.yaml"),
+        ("platforms/dgx-spark", "shared-model.yaml"),
+        ("platforms/dgx-spark", "two-models.yaml"),
+        ("platforms/dgx-spark", "local-and-hosted.yaml"),
+        ("platforms/dgx-station", "vllm.yaml"),
+        ("platforms/dgx-station", "shared-model.yaml"),
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../examples")
@@ -73,7 +73,7 @@ fn arm64_hardware_scenarios_compile_their_declared_resources() {
                 assert!(!args.iter().any(|arg| arg == "--trust-remote-code"));
             }
         }
-        if directory == "station" {
+        if directory == "platforms/dgx-station" {
             assert_eq!(doc.spec.services.len(), 1, "station/{name}");
             let ServiceDefinition::Vllm(service) = doc.spec.services.values().next().unwrap()
             else {

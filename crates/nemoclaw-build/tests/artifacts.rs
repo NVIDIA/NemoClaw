@@ -322,7 +322,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         "LICENSE",
         "crates/sdk/src/lib.rs",
         "crates/nemoclaw-onboarding/src/lib.rs",
-        "examples/onboarding/openclaw.yaml",
+        "examples/platforms/docker/openclaw-hosted.yaml",
         "image/llama-cpp/Dockerfile",
         "image/ollama/Dockerfile",
         "image/supervisor/Dockerfile",
@@ -349,7 +349,8 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
     }
     assert_eq!(first, nemoclaw_build::source_inputs(root.path()).unwrap());
     std::fs::write(
-        root.path().join("examples/onboarding/openclaw.yaml"),
+        root.path()
+            .join("examples/platforms/docker/openclaw-hosted.yaml"),
         "changed onboarding defaults",
     )
     .unwrap();

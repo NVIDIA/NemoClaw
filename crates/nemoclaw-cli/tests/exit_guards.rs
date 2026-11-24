@@ -108,7 +108,7 @@ fn onboarding_without_a_terminal_exits_one_with_text_on_stderr() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().canonicalize().unwrap();
     let template = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/onboarding/openclaw.yaml")
+        .join("../../examples/platforms/docker/openclaw-hosted.yaml")
         .canonicalize()
         .unwrap();
     for (template, input) in [(None, ""), (Some(&template), "Input: <TEMPLATE>\n")] {
@@ -199,7 +199,7 @@ esac
         .unwrap();
         std::fs::write(
             root.join("input.yaml"),
-            include_str!("../../../examples/openclaw.yaml"),
+            include_str!("../../../examples/features/inference-tuning.yaml"),
         )
         .unwrap();
         Self {
@@ -241,7 +241,9 @@ esac
             .stdin
             .take()
             .unwrap()
-            .write_all(include_bytes!("../../../examples/openclaw.yaml"))
+            .write_all(include_bytes!(
+                "../../../examples/features/inference-tuning.yaml"
+            ))
             .unwrap();
         child.wait_with_output().unwrap()
     }

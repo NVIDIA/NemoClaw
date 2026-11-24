@@ -70,9 +70,10 @@ fn empty_sandbox_asks_for_harness_form_before_inline_harness_kind() {
 #[test]
 fn omitted_optional_sdk_field_stays_absent_even_when_its_scope_is_asked() {
     let capabilities = Capabilities::available();
-    let mut supplied: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut supplied: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     supplied["spec"]["inferenceProviders"]["nvidia-prod"]
         .as_object_mut()
         .unwrap()
@@ -115,9 +116,10 @@ fn omitted_optional_sdk_field_stays_absent_even_when_its_scope_is_asked() {
 #[test]
 fn exact_and_scope_guidance_share_one_inference_api_question() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let path = "/spec/inferenceProviders/nvidia-prod/api";
     let mut state = JourneyDefinition::new("same-api-decision", base)
         .ask([path])
@@ -150,9 +152,10 @@ fn exact_and_scope_guidance_share_one_inference_api_question() {
 #[test]
 fn exact_and_scope_guidance_keep_route_model_question_kind() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let path = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     let state = JourneyDefinition::new("same-model-decision", base)
         .ask([path])
@@ -174,9 +177,10 @@ fn exact_and_scope_guidance_keep_route_model_question_kind() {
 #[test]
 fn asked_inference_api_precedes_route_model_in_question_order() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("api-before-model", base)
         .ask([JourneyScope::RouteModels])
         .ask(["/spec/inferenceProviders/nvidia-prod/api"])
@@ -206,9 +210,10 @@ fn asked_inference_api_precedes_route_model_in_question_order() {
 #[test]
 fn omit_guidance_keeps_supplied_sdk_values_without_asking() {
     let capabilities = Capabilities::available();
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["spec"]["gateway"]["target"]["docker"]["port"] = json!(17699);
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let state = JourneyDefinition::new("supplied", base)
@@ -242,9 +247,10 @@ fn omit_guidance_keeps_supplied_sdk_values_without_asking() {
 #[test]
 fn omit_guidance_still_asks_absent_required_sdk_fields() {
     let capabilities = Capabilities::available();
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["metadata"].as_object_mut().unwrap().remove("name");
     values["spec"]["gateway"] = json!({"management": "external"});
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
@@ -266,9 +272,10 @@ fn omit_guidance_still_asks_absent_required_sdk_fields() {
 #[test]
 fn omit_guidance_keeps_valid_supplied_adapter_settings_and_asks_the_rest() {
     let capabilities = Capabilities::available();
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
         json!({"startup_timeout_seconds": 45, "read_timeout_seconds": "slow"});
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
@@ -325,9 +332,10 @@ fn omit_guidance_keeps_valid_supplied_adapter_settings_and_asks_the_rest() {
 #[test]
 fn omit_guidance_reports_the_supplied_values_it_kept_without_asking() {
     let capabilities = Capabilities::available();
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
         json!({"startup_timeout_seconds": 45});
     values["spec"]["gateway"]["target"]["docker"]["networkCIDR"] = json!("172.30.77.0/24");
@@ -368,9 +376,10 @@ fn omit_guidance_reports_the_supplied_values_it_kept_without_asking() {
 #[test]
 fn answers_to_omitted_required_fields_are_not_reported_as_kept() {
     let capabilities = Capabilities::available();
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["spec"]["gateway"] = json!({"management": "external"});
     values["spec"]["sandboxes"]["assistant"]["harness"] =
         json!({"kind": "nvidia.fabric.remote-agent"});
@@ -407,9 +416,10 @@ fn answers_to_omitted_required_fields_are_not_reported_as_kept() {
 #[test]
 fn adapter_settings_scope_omit_leaves_absent_optional_settings_unset_for_any_harness() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let resolution = JourneyDefinition::new("express", base.clone())
         .omit([JourneyScope::ActiveAdapterSettings])
         .start(&capabilities)
@@ -479,9 +489,10 @@ fn adapter_settings_scope_omit_leaves_absent_optional_settings_unset_for_any_har
 #[test]
 fn missing_required_sdk_leaf_values_become_questions_without_guidance() {
     let capabilities = Capabilities::available();
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["metadata"].as_object_mut().unwrap().remove("name");
     values["spec"]["sandboxes"]["assistant"]["agent"]
         .as_object_mut()
@@ -533,9 +544,10 @@ fn missing_required_sdk_leaf_values_become_questions_without_guidance() {
 #[test]
 fn exclusive_sdk_forms_become_choices_then_ask_for_the_selected_field() {
     let capabilities = Capabilities::available();
-    let mut agent_values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut agent_values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     agent_values["spec"]["sandboxes"]["assistant"]["agent"]
         .as_object_mut()
         .unwrap()
@@ -591,9 +603,10 @@ fn exclusive_sdk_forms_become_choices_then_ask_for_the_selected_field() {
         "switching forms must remove the incompatible supplied branch"
     );
 
-    let mut route_values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut route_values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     route_values["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]
         .as_object_mut()
         .unwrap()
@@ -628,9 +641,10 @@ fn exclusive_sdk_forms_become_choices_then_ask_for_the_selected_field() {
 #[test]
 fn missing_object_parent_exposes_its_unconditional_required_fields() {
     let capabilities = Capabilities::available();
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["spec"]["sandboxes"]["assistant"]
         .as_object_mut()
         .unwrap()
@@ -666,9 +680,10 @@ fn missing_object_parent_exposes_its_unconditional_required_fields() {
 #[test]
 fn invalid_supplied_sdk_leaf_is_an_editable_question_without_guidance() {
     let capabilities = Capabilities::available();
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["spec"]["sandboxes"]["assistant"]["agent"]["name"] = json!("Bad Name");
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("repair", base)
@@ -700,9 +715,10 @@ fn invalid_supplied_sdk_leaf_is_an_editable_question_without_guidance() {
 #[test]
 fn invalid_optional_sdk_leaf_can_be_omitted_without_guidance() {
     let capabilities = Capabilities::available();
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     // The port must be from 1024 through 65535.
     values["spec"]["gateway"]["target"]["docker"]["port"] = json!(80);
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
@@ -741,9 +757,10 @@ fn sparse_journey_follows_nested_fabric_conditionals() {
     });
     catalog.adapters = vec![adapter];
     let capabilities = Capabilities::from_catalog(&catalog);
-    let mut base: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut base: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     base["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture-schema-agent");
     let mut state = JourneyDefinition::new(
         "conditional",
@@ -814,9 +831,10 @@ fn conditional_adapter_journey() -> (Capabilities, nemoclaw_authoring::JourneySt
     catalog.adapters[0].descriptor["adapter_id"] = json!("fixture.conditional");
     catalog.adapters[0].descriptor["settings_schema"] = conditional_settings_schema();
     let capabilities = Capabilities::from_catalog(&catalog);
-    let mut base: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut base: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     base["spec"]["sandboxes"]["assistant"]["harness"] =
         json!({"kind":"fixture.conditional","settings":{}});
     let state = JourneyDefinition::new(
@@ -924,9 +942,10 @@ fn conditional_native_journey(model: bool) -> (Capabilities, nemoclaw_authoring:
     let adapter = &mut catalog.adapters[0];
     adapter.descriptor["adapter_id"] = json!("fixture.conditional");
     adapter.descriptor["settings_schema"] = json!({"type":"object","properties":{}});
-    let mut base: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut base: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     base["spec"]["sandboxes"]["assistant"]["harness"] = json!({"kind":"fixture.conditional"});
     if model {
         adapter.descriptor["model_schema"] = json!({
@@ -1050,9 +1069,10 @@ fn nested_adapter_guidance_asks_omits_and_warns_from_the_active_schema() {
     });
     catalog.adapters = vec![adapter];
     let capabilities = Capabilities::from_catalog(&catalog);
-    let mut base: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut base: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     base["spec"]["sandboxes"]["assistant"]["harness"] = json!({
         "kind":"fixture.nested-guidance",
         "settings":{"native":{"region":"west"}}
@@ -1117,9 +1137,10 @@ fn root_fabric_alternatives_are_answered_through_the_journey() {
     });
     catalog.adapters = vec![adapter];
     let capabilities = Capabilities::from_catalog(&catalog);
-    let mut base: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut base: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     base["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture-root-agent");
     base["spec"]["sandboxes"]["assistant"]["harness"]
         .as_object_mut()
@@ -1184,9 +1205,10 @@ fn changed_adapter_schema_reopens_an_invalid_answer_without_rewriting_it() {
     });
     catalog.adapters = vec![adapter.clone()];
     let capabilities = Capabilities::from_catalog(&catalog);
-    let mut value: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut value: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture-schema-agent");
     let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("changed-descriptor", base)
@@ -1234,9 +1256,10 @@ fn conflicting_adapter_descriptors_do_not_select_a_schema_by_catalog_order() {
         json!({"type":"object","properties":{"b":{"type":"boolean"}}});
     catalog.adapters = vec![first, second];
     let capabilities = Capabilities::from_catalog(&catalog);
-    let mut value: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut value: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture-schema-agent");
     let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
     let state = JourneyDefinition::new("conflicting-descriptors", base)
@@ -1258,9 +1281,10 @@ fn omitting_a_nested_optional_setting_does_not_create_its_parent_object() {
         "type":"object", "properties":{"native":{"type":"object", "properties":{"enabled":{"type":"boolean"}}}}
     });
     let capabilities = Capabilities::from_catalog(&catalog);
-    let mut value: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut value: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("test.optional-settings");
     let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("nested-optional", base)
@@ -1299,9 +1323,10 @@ fn conditional_native_model_settings_survive_a_model_change_and_sdk_roundtrip() 
     });
     catalog.adapters = vec![adapter];
     let capabilities = Capabilities::from_catalog(&catalog);
-    let mut value: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut value: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture.model-owner");
     let base = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("conditional-native", base)
@@ -1355,9 +1380,10 @@ fn conditional_native_model_settings_survive_a_model_change_and_sdk_roundtrip() 
 #[test]
 fn sparse_journey_asks_existing_deployment_fields_and_checks_complete_sdk_edits() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/spark/remote-vllm.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/dgx-spark/remote-vllm.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("deployment", base)
         .ask([JourneyScope::DeploymentFields])
         .start(&capabilities)
@@ -1460,9 +1486,10 @@ fn sparse_journey_uses_workflow_and_model_owner_schemas() {
             .pointer("/spec/sandboxes/assistant/agent/workflow/settings/region"),
         Some(&json!("west"))
     );
-    let mut base: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut base: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     base["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture.native-owner");
     let mut state = JourneyDefinition::new(
         "native",
@@ -1537,9 +1564,10 @@ fn exact_native_guidance_uses_active_fabric_fields_without_asking_the_whole_scop
         }}}
     },"provenance":[]})];
     let capabilities = Capabilities::from_catalog(&catalog);
-    let mut supplied: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut supplied: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     supplied["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("fixture.exact-native");
     let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("exact-native", base.clone())
@@ -1630,8 +1658,10 @@ fn exact_native_guidance_uses_active_fabric_fields_without_asking_the_whole_scop
 /// An OpenClaw configuration whose native settings break the adapter's schema:
 /// startup timeouts must be positive.
 fn invalid_openclaw_settings() -> PartialDocument {
-    let mut value: serde_json::Value =
-        serde_saphyr::from_str(include_str!("../../../examples/onboarding/openclaw.yaml")).unwrap();
+    let mut value: serde_json::Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     value["spec"]["sandboxes"]["assistant"]["harness"]["settings"]["startup_timeout_seconds"] =
         json!(0);
     PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap()
@@ -1704,9 +1734,10 @@ fn discovered_models_narrow_a_vendor_menu_without_restricting_custom_answers() {
         inference_discovery::{AuthenticationStatus, EndpointObservation},
     };
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("discovered", base)
         .ask([JourneyScope::RouteModels])
         .start(&capabilities)
@@ -1754,8 +1785,10 @@ fn discovered_models_narrow_a_vendor_menu_without_restricting_custom_answers() {
     assert_eq!(question.kind(), JourneyQuestionKind::InferenceModel);
     let preset = JourneyDefinition::new(
         "preset",
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap(),
+        PartialDocument::from_yaml(include_bytes!(
+            "../../../examples/platforms/docker/openclaw-hosted.yaml"
+        ))
+        .unwrap(),
     )
     .ask(["inference:preset"])
     .start(&capabilities)
@@ -1816,9 +1849,10 @@ fn discovered_models_narrow_a_vendor_menu_without_restricting_custom_answers() {
 #[test]
 fn target_question_offers_the_sdk_schema_targets_in_order() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let state = JourneyDefinition::new("target", base)
         .ask(["/spec/gateway/target"])
         .start(&capabilities)
@@ -1846,7 +1880,7 @@ fn target_question_offers_the_sdk_schema_targets_in_order() {
 fn an_external_gateway_offers_the_same_targets() {
     let capabilities = Capabilities::available();
     let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/fabric-pi.yaml")).unwrap();
+        PartialDocument::from_yaml(include_bytes!("../../../examples/agents/pi.yaml")).unwrap();
     let mut state = JourneyDefinition::new("target", base)
         .ask(["/spec/gateway/target"])
         .start(&capabilities)
@@ -1883,9 +1917,10 @@ fn an_external_gateway_offers_the_same_targets() {
 #[test]
 fn choosing_the_same_target_keeps_its_settings_and_another_drops_them() {
     let capabilities = Capabilities::available();
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["spec"]["gateway"]["target"] =
         json!({"docker": {"port": 17699, "networkCIDR": "172.30.77.0/24"}});
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
@@ -1926,9 +1961,10 @@ fn choosing_the_same_target_keeps_its_settings_and_another_drops_them() {
 #[test]
 fn choosing_podman_updates_the_matching_managed_gateway_default() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("target", base)
         .ask(["/spec/gateway/target"])
         .start(&capabilities)
@@ -1959,9 +1995,10 @@ fn choosing_podman_updates_the_matching_managed_gateway_default() {
 fn a_runtime_no_local_engine_answered_for_gets_no_guessed_engine() {
     use nemoclaw_sdk::config::ComputeDriver;
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("target", base)
         .ask(["/spec/gateway/target"])
         .start(&capabilities)
@@ -1988,9 +2025,10 @@ fn docker_only_journey(
     capabilities: &Capabilities,
     ask: &[&str],
 ) -> (nemoclaw_authoring::JourneyState, DiscoveryObservations) {
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("target", base)
         .ask(ask.iter().copied())
         .start(capabilities)
@@ -2068,9 +2106,10 @@ fn accepting_suggestions_never_points_a_runtime_without_a_local_engine_at_docker
 #[test]
 fn a_machine_that_was_never_asked_keeps_the_default_engine_suggestion() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let engine = "/spec/gateway/target/docker/engine";
     let state = JourneyDefinition::new("target", base)
         .ask([engine])
@@ -2173,9 +2212,10 @@ fn delegation_facts(capabilities: &Capabilities) -> DelegationFacts {
         discovery::ObservationStatus,
         inference_discovery::{AuthenticationStatus, CredentialObservation, EndpointObservation},
     };
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("delegate", base)
         .ask([
             "/spec/sandboxes/assistant/harness/kind",
@@ -2242,9 +2282,10 @@ fn delegation_facts(capabilities: &Capabilities) -> DelegationFacts {
 #[test]
 fn sparse_journey_delegation_requires_current_target_observations() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("delegate", base)
         .ask(["/spec/sandboxes/assistant/harness/kind", "/metadata/name"])
         .start(&capabilities)
@@ -2455,8 +2496,10 @@ fn missing_catalog_key_keeps_curated_suggestions_without_allowing_delegation() {
 #[test]
 fn delegation_is_refused_for_a_route_backed_by_a_managed_service() {
     let capabilities = Capabilities::available();
-    let base = PartialDocument::from_yaml(include_bytes!("../../../examples/managed-ollama.yaml"))
-        .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("delegate", base)
         .ask(["/spec/sandboxes/assistant/harness/kind"])
         .start(&capabilities)
@@ -2493,9 +2536,10 @@ fn delegation_is_refused_for_a_route_backed_by_a_managed_service() {
 fn delegation_is_refused_before_a_harness_is_accepted() {
     let capabilities = Capabilities::available();
     let facts = delegation_facts(&capabilities);
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let state = JourneyDefinition::new("delegate", base)
         .ask(["/spec/sandboxes/assistant/harness/kind"])
         .start(&capabilities)
@@ -2513,7 +2557,7 @@ fn delegation_is_refused_before_a_harness_is_accepted() {
 fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
     let capabilities = Capabilities::available();
     let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../examples/spark/local-and-hosted.yaml"
+        "../../../examples/platforms/dgx-spark/local-and-hosted.yaml"
     ))
     .unwrap();
     let mut state = JourneyDefinition::new("routes", base)
@@ -2597,7 +2641,7 @@ fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
 fn referenced_inference_routes_are_selected_and_edited_through_the_same_journey() {
     let capabilities = Capabilities::available();
     let mut document = nemoclaw_sdk::config::Document::parse(
-        &include_bytes!("../../../examples/multiple-providers.yaml")[..],
+        &include_bytes!("../../../examples/features/multiple-providers.yaml")[..],
     )
     .unwrap();
     document
@@ -2675,7 +2719,7 @@ fn referenced_inference_routes_are_selected_and_edited_through_the_same_journey(
 fn referenced_harness_settings_are_owned_by_the_referenced_definition() {
     let capabilities = Capabilities::available();
     let mut document = nemoclaw_sdk::config::Document::parse(
-        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+        &include_bytes!("../../../examples/features/multiple-models.yaml")[..],
     )
     .unwrap();
     document
@@ -2715,7 +2759,7 @@ fn referenced_harness_settings_are_owned_by_the_referenced_definition() {
 fn revisiting_a_referenced_harness_choice_does_not_create_an_inline_harness() {
     let capabilities = Capabilities::available();
     let mut document = nemoclaw_sdk::config::Document::parse(
-        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+        &include_bytes!("../../../examples/features/multiple-models.yaml")[..],
     )
     .unwrap();
     document
@@ -2751,7 +2795,7 @@ fn revisiting_a_referenced_harness_choice_does_not_create_an_inline_harness() {
 fn referenced_model_settings_are_written_to_the_selected_route() {
     let capabilities = Capabilities::available();
     let mut document = nemoclaw_sdk::config::Document::parse(
-        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+        &include_bytes!("../../../examples/features/multiple-models.yaml")[..],
     )
     .unwrap();
     document
@@ -2809,7 +2853,7 @@ fn workflow_answers_belong_to_the_agent_when_the_harness_is_referenced() {
     },"provenance":[]})];
     let capabilities = Capabilities::from_catalog(&catalog);
     let mut document = nemoclaw_sdk::config::Document::parse(
-        &include_bytes!("../../../examples/multiple-models.yaml")[..],
+        &include_bytes!("../../../examples/features/multiple-models.yaml")[..],
     )
     .unwrap();
     document
@@ -2858,7 +2902,7 @@ fn workflow_answers_belong_to_the_agent_when_the_harness_is_referenced() {
 #[test]
 fn omitting_an_implicit_api_keeps_the_sdk_default_without_writing_an_override() {
     let capabilities = Capabilities::available();
-    let bytes = include_bytes!("../../../examples/explicit-policy.yaml");
+    let bytes = include_bytes!("../../../examples/features/explicit-policy.yaml");
     let original = nemoclaw_sdk::config::Document::parse(&bytes[..]).unwrap();
     let base = PartialDocument::from_yaml(bytes).unwrap();
     let mut state = JourneyDefinition::new("implicit-api", base)
@@ -2890,8 +2934,10 @@ fn omitting_an_implicit_api_keeps_the_sdk_default_without_writing_an_override() 
 #[test]
 fn absent_optional_adapter_settings_remain_unsupplied_until_answered() {
     let capabilities = Capabilities::available();
-    let base = PartialDocument::from_yaml(include_bytes!("../../../examples/explicit-policy.yaml"))
-        .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/features/explicit-policy.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("optional-adapter", base)
         .ask([JourneyScope::ActiveAdapterSettings])
         .start(&capabilities)
@@ -2917,7 +2963,7 @@ fn absent_optional_adapter_settings_remain_unsupplied_until_answered() {
 #[test]
 fn editing_a_route_model_preserves_explicit_credential_references() {
     let capabilities = Capabilities::available();
-    let yaml = include_str!("../../../examples/onboarding/openclaw.yaml")
+    let yaml = include_str!("../../../examples/platforms/docker/openclaw-hosted.yaml")
         .replace("NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY");
     let base = PartialDocument::from_yaml(yaml.as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("credential-reference", base)
@@ -2945,7 +2991,7 @@ fn editing_a_route_model_preserves_explicit_credential_references() {
 fn route_preset_changes_only_the_selected_external_provider() {
     let capabilities = Capabilities::available();
     let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../examples/spark/local-and-hosted.yaml"
+        "../../../examples/platforms/dgx-spark/local-and-hosted.yaml"
     ))
     .unwrap();
     let mut state = JourneyDefinition::new("route-presets", base)
@@ -3093,9 +3139,10 @@ fn partial_journey_recomputes_questions_after_answers_and_omissions() {
 #[test]
 fn accepting_a_supplied_suggestion_resolves_an_explicit_ask() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let definition = JourneyDefinition::new("guided", base).ask(["/metadata/name"]);
     let mut state = definition.start(&capabilities).unwrap();
     let suggested = state
@@ -3122,9 +3169,10 @@ fn accepting_a_supplied_suggestion_resolves_an_explicit_ask() {
 #[test]
 fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
     let capabilities = Capabilities::available();
-    let mut sparse: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut sparse: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     sparse
         .pointer_mut("/spec/sandboxes/assistant/agent/inference/routes/0/overrides")
         .unwrap()
@@ -3231,9 +3279,10 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
 #[test]
 fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let preset = "inference:preset";
     let api = "/spec/inferenceProviders/nvidia-prod/api";
     let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
@@ -3375,9 +3424,10 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
 #[test]
 fn compatible_inference_preset_requires_an_endpoint_answer() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("custom", base)
         .ask([
             "inference:preset",
@@ -3451,9 +3501,10 @@ fn compatible_inference_preset_requires_an_endpoint_answer() {
 #[test]
 fn inference_dependencies_wait_for_preset_and_custom_endpoint() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let api = "/spec/inferenceProviders/nvidia-prod/api";
     let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     let endpoint = "/spec/inferenceProviders/nvidia-prod/endpoint";
@@ -3493,9 +3544,10 @@ fn inference_dependencies_wait_for_preset_and_custom_endpoint() {
 #[test]
 fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("api-dependency", base)
         .ask([
             "/metadata/name",
@@ -3567,7 +3619,7 @@ fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
 fn changing_the_second_provider_api_reopens_its_route_model() {
     let capabilities = Capabilities::available();
     let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../examples/spark/local-and-hosted.yaml"
+        "../../../examples/platforms/dgx-spark/local-and-hosted.yaml"
     ))
     .unwrap();
     let mut state = JourneyDefinition::new("second-provider-api", base)
@@ -3600,9 +3652,10 @@ fn changing_the_second_provider_api_reopens_its_route_model() {
 #[test]
 fn optional_sdk_question_can_be_deliberately_omitted() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("optional-api", base)
         .ask(["/spec/inferenceProviders/nvidia-prod/api"])
         .omit([
@@ -3657,9 +3710,10 @@ fn invalid_answer_does_not_mutate_a_sparse_journey() {
 #[test]
 fn switching_harness_reopens_the_active_adapter_without_losing_its_values() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let definition =
         JourneyDefinition::new("switch", base).ask(["/spec/sandboxes/assistant/harness/kind"]);
     let mut state = definition.start(&capabilities).unwrap();
@@ -3762,9 +3816,10 @@ fn accepted_answers_can_be_revisited_without_losing_other_values() {
 #[test]
 fn fabric_invalid_value_reopens_a_question_even_when_sdk_document_is_valid() {
     let capabilities = Capabilities::available();
-    let mut base: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut base: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     base["spec"]["sandboxes"]["assistant"]["harness"]["settings"] = json!({"openclaw_command": 42});
     let base = PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("fabric-invalid", base)
@@ -3799,9 +3854,10 @@ fn fabric_invalid_value_reopens_a_question_even_when_sdk_document_is_valid() {
 #[test]
 fn fully_supplied_express_definition_has_no_current_questions() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let definition = JourneyDefinition::new("express", base).omit([
         "adapter:nvidia.fabric.openclaw:/agent_id",
         "adapter:nvidia.fabric.openclaw:/channel_config",
@@ -3830,9 +3886,10 @@ fn fully_supplied_express_definition_has_no_current_questions() {
 #[test]
 fn missing_catalog_schema_keeps_unreachable_guidance_as_a_warning() {
     let capabilities = Capabilities::from_harnesses(["nvidia.fabric.openclaw".parse().unwrap()]);
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let definition =
         JourneyDefinition::new("catalog-gap", base).ask(["adapter:nvidia.fabric.hermes:/mode"]);
 
@@ -3853,9 +3910,10 @@ fn missing_catalog_schema_keeps_unreachable_guidance_as_a_warning() {
 #[test]
 fn supplied_template_can_finish_a_guided_journey_through_one_resolver() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let definition = JourneyDefinition::new("guided-complete", base)
         .ask(["/metadata/name", "/spec/sandboxes/assistant/harness/kind"])
         .omit([
@@ -3988,9 +4046,10 @@ fn missing_gateway_asks_for_the_schema_discriminator() {
 
 #[test]
 fn external_gateway_choice_reveals_its_required_endpoint() {
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["spec"]["gateway"] = json!({});
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let capabilities = Capabilities::available();
@@ -4051,9 +4110,10 @@ fn external_gateway_choice_reveals_its_required_endpoint() {
 
 #[test]
 fn supplied_gateway_discriminator_can_be_deliberately_asked() {
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let capabilities = Capabilities::available();
     let journey = JourneyDefinition::new("gateway-choice", base)
         .ask(["/spec/gateway/management"])
@@ -4071,9 +4131,10 @@ fn supplied_gateway_discriminator_can_be_deliberately_asked() {
 
 #[test]
 fn sdk_guidance_can_name_a_field_in_a_later_gateway_branch() {
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let capabilities = Capabilities::available();
     let mut journey = JourneyDefinition::new("future-gateway-field", base)
         .ask(["/spec/gateway/management", "/spec/gateway/tls"])
@@ -4097,9 +4158,10 @@ fn sdk_guidance_can_name_a_field_in_a_later_gateway_branch() {
     let after = journey.resolve(&capabilities).unwrap();
     assert!(after.question("/spec/gateway/tls").is_some());
 
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut omitted = JourneyDefinition::new("omit-future-gateway-field", base)
         .ask(["/spec/gateway/management"])
         .omit(["/spec/gateway/tls"])
@@ -4123,9 +4185,10 @@ fn sdk_guidance_can_name_a_field_in_a_later_gateway_branch() {
 
 #[test]
 fn invalid_supplied_gateway_discriminator_is_a_repair_question() {
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["spec"]["gateway"]["management"] = json!("unknown");
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let capabilities = Capabilities::available();
@@ -4153,9 +4216,10 @@ fn invalid_supplied_gateway_discriminator_is_a_repair_question() {
 
 #[test]
 fn accepted_implicit_gateway_choice_can_be_revisited() {
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["spec"]["gateway"] = json!({});
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let capabilities = Capabilities::available();
@@ -4187,9 +4251,10 @@ fn accepted_implicit_gateway_choice_can_be_revisited() {
 
 #[test]
 fn switching_gateway_management_drops_fields_from_the_previous_branch() {
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     // A target's `networkCIDR` is defined only for managed gateways; its
     // `engine` is defined for both forms.
     values["spec"]["gateway"]["target"] = json!({"podman": {"networkCIDR": "10.200.0.0/24"}});
@@ -4281,9 +4346,10 @@ fn answer_that_leaves_the_journey_unresolvable_is_rejected() {
         json!({"type":"object","properties":{"b":{"type":"boolean"}}});
     catalog.adapters.extend([first, second]);
     let capabilities = Capabilities::from_catalog(&catalog);
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut journey = JourneyDefinition::new("unresolvable-answer", base)
         .ask(["/spec/sandboxes/assistant/harness/kind"])
         .start(&capabilities)
@@ -4304,9 +4370,10 @@ fn answer_that_leaves_the_journey_unresolvable_is_rejected() {
 
 #[test]
 fn omitted_endpoint_is_asked_after_switching_to_an_external_gateway() {
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let capabilities = Capabilities::available();
     let mut journey = JourneyDefinition::new("omitted-endpoint", base)
         .ask(["/spec/gateway/management"])
@@ -4336,9 +4403,10 @@ fn omitted_endpoint_is_asked_after_switching_to_an_external_gateway() {
 
 #[test]
 fn adapter_setting_questions_carry_fabric_descriptions() {
-    let mut values: serde_json::Value =
-        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let mut values: serde_json::Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     values["spec"]["sandboxes"]["assistant"]["harness"] = json!({"kind": "nvidia.fabric.hermes"});
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let capabilities = Capabilities::available();
@@ -4529,9 +4597,10 @@ fn the_engine_question_has_no_note_when_an_engine_answered() {
 #[test]
 fn the_engine_question_has_no_note_before_the_machine_was_asked() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let engine = "/spec/gateway/target/docker/engine";
     let state = JourneyDefinition::new("target", base)
         .ask([engine])

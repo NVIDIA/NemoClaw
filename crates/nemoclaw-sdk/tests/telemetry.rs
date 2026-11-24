@@ -74,7 +74,9 @@ fn managed_gateways_follow_nemoclaw_telemetry() {
         let launch = &docker["data"]["openshell_docker_gateway_runtime"]["managed_gateway_runtime"];
         assert_eq!(launch["openshell_telemetry"], expected, "{launch}");
         // Podman's gateway resource records it, and its container follows.
-        let podman = compile(include_bytes!("../../../examples/managed-podman.yaml"));
+        let podman = compile(include_bytes!(
+            "../../../examples/platforms/podman/deepagents-external-inference.yaml"
+        ));
         let row: nemoclaw_sdk::backend::Row =
             podman["resource"]["openshell_podman_gateway"]["runtime"]
                 .as_object()
@@ -141,7 +143,10 @@ fn a_managed_gateway_keeps_the_telemetry_it_was_compiled_with() {
             .map(|key| (key.into(), "a".repeat(32)))
             .into();
             let document = nemoclaw_sdk::config::Document::parse(
-                include_bytes!("../../../examples/managed-podman.yaml").as_slice(),
+                include_bytes!(
+                    "../../../examples/platforms/podman/deepagents-external-inference.yaml"
+                )
+                .as_slice(),
             )
             .unwrap();
             let graph = nemoclaw_sdk::compile::compile(&document, &generations, "0.1.0").unwrap();

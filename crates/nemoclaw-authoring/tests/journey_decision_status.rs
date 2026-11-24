@@ -7,9 +7,10 @@ use serde_json::json;
 #[test]
 fn supplied_values_and_user_decisions_are_distinct() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut session = JourneyDefinition::new("decision-status", base)
         .ask([
             "/metadata/name",

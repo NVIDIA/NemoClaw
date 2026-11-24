@@ -925,7 +925,7 @@ mod tests {
     /// A sandbox whose managed inference rule takes its addresses from the
     /// cluster profile it uses, and that profile's desired fields.
     fn cluster_case() -> (Row, Row) {
-        let rows = nemoclaw_test_fixtures::openshell::contract_rows("fabric-openclaw");
+        let rows = nemoclaw_test_fixtures::openshell::contract_rows("openclaw");
         let row = |kind: &str| {
             rows.iter()
                 .find(|(name, _)| *name == kind)

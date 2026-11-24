@@ -107,7 +107,7 @@ That data source takes the gateway `endpoint`, the `credential_env` variable hol
 For mutual TLS, it also takes the `tls_certificate_env` and `tls_key_env` variables, set together, naming a client certificate and key.
 Its `ref` carries those names, never their values.
 For a managed Kubernetes or OpenShift gateway, it takes `kubernetes`, the gateway's specification as JSON, instead of `endpoint` and the credential and TLS variables.
-The specification's `settings` hold the gateway's `target`, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
+The specification's `settings` hold the gateway's `target`, as in [the Kubernetes HCL example](../../examples/platforms/kubernetes/hosted-nvidia.tf).
 Each provider that reaches such a gateway opens its own port forward on a free loopback port and keeps it open while OpenTofu runs.
 The forward uses the kubeconfig the specification names, or the service account of the pod it runs in when the specification names none, and the development credentials in the SDK's state directory.
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.

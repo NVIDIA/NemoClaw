@@ -14,7 +14,7 @@ The runtime policy credit remains in `crates/nemoclaw-runtime/NOTICE.md` inside 
 The upstream image retains its vLLM and installed dependency notices.
 Model license and notice files present at the selected repository root are downloaded with the model snapshot.
 
-The [AMD64 Nemotron example](../../examples/nemotron-amd64.yaml) adapts its configuration from NemoClaw main revision `97745a7ad9649f851704493e4b670b3674f875aa`:
+The [AMD64 Nemotron example](../../examples/platforms/remote-inference/openclaw-nemotron-amd64.yaml) adapts its configuration from NemoClaw main revision `97745a7ad9649f851704493e4b670b3674f875aa`:
 
 - [Serving recipe](https://github.com/NVIDIA/NemoClaw/blob/97745a7ad9649f851704493e4b670b3674f875aa/managed-inference/recipes/vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1.yaml).
 - [Model identity](https://github.com/NVIDIA/NemoClaw/blob/97745a7ad9649f851704493e4b670b3674f875aa/managed-inference/models/vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.v1.yaml).

@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 #[test]
 fn declaration_scope_combinations_preserve_runtime_and_authored_intent() {
     let input: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap();
     let generations: Generations = [
         "workspace",
         "provider",

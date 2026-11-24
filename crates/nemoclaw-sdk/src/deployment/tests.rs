@@ -799,9 +799,11 @@ async fn a_stopped_podman_gateway_container_is_named_with_how_to_start_it() {
          echo 'Resource observation: observation transport failed' >&2\nexit 1\n",
     )
     .unwrap();
-    let document =
-        Document::parse(include_bytes!("../../../../examples/managed-podman.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../examples/platforms/podman/deepagents-external-inference.yaml")
+            .as_slice(),
+    )
+    .unwrap();
     let engine = document.spec.gateway.as_managed().unwrap().engine();
     let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
     let cancel = CancellationToken::new();
@@ -1098,9 +1100,10 @@ fn destroy_drift_errors_distinguish_undeclared_resources_from_missing_saved_ids(
 
 #[test]
 fn runtime_plans_accept_only_declared_local_image_observations_and_teardown_deletions() {
-    let document =
-        Document::parse(include_bytes!("../../../../examples/spark/two-models.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../examples/platforms/dgx-spark/two-models.yaml").as_slice(),
+    )
+    .unwrap();
     let record = Record::new(document.clone()).unwrap();
     let targets = compile::runtime_targets(&document, &record.generations).unwrap();
     let mut allowed = allowed(&targets);
@@ -1883,7 +1886,12 @@ fn an_existing_issuers_token_reaches_gateway_only_runs() {
 fn plan_passes_opentofu_only_the_references_plan_reads() {
     fn yaml_files(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(directory).unwrap() {
-            let path = entry.unwrap().path();
+            let entry = entry.unwrap();
+            // Event aliases are covered through their canonical platform files.
+            if entry.file_name() == "gtc-dc" {
+                continue;
+            }
+            let path = entry.path();
             if path.is_dir() {
                 yaml_files(&path, files);
             } else if path

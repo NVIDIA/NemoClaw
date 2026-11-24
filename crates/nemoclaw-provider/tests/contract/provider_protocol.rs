@@ -11,9 +11,10 @@ struct Experiment {
 impl Experiment {
     fn hardware_config(&self, invalid: bool) {
         use nemoclaw_sdk::{compile, config::Document};
-        let document =
-            Document::parse(include_bytes!("../../../../examples/spark/vllm.yaml").as_slice())
-                .unwrap();
+        let document = Document::parse(
+            include_bytes!("../../../../examples/platforms/dgx-spark/vllm.yaml").as_slice(),
+        )
+        .unwrap();
         let generations = [
             ("managed_gateway".into(), "a".repeat(32)),
             ("inference_service".into(), "b".repeat(32)),

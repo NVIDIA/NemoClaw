@@ -3,7 +3,7 @@
 
 # Using Inline Model Recipes
 
-A [vLLM service without a recipe](../../examples/spark/vllm.yaml) needs a pinned image and model snapshot.
+A [vLLM service without a recipe](../../examples/platforms/dgx-spark/vllm.yaml) needs a pinned image and model snapshot.
 Use [the vLLM runtime image build](../build-deploy/build.md#building-a-runtime-image).
 When the model needs preparation or serving features supplied by its runtime image, declare `recipe` instead of `hardware` under `spec.services.<name>`.
 The recipe supplies the hardware compatibility requirements.

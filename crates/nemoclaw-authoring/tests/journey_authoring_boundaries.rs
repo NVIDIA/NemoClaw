@@ -6,7 +6,10 @@ use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind, Networ
 use serde_json::{Value, json};
 
 fn supplied() -> Value {
-    serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml")).unwrap()
+    serde_saphyr::from_slice(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap()
 }
 
 /// Rename the supplied provider, keyed by name, and the route that references it.
@@ -189,7 +192,7 @@ fn the_single_sandbox_keeps_its_name_and_questions_use_it() {
 
 #[test]
 fn a_complete_multi_sandbox_document_parses_but_is_outside_the_v1_journey_envelope() {
-    let bytes = include_bytes!("../../../examples/multiple-sandboxes.yaml");
+    let bytes = include_bytes!("../../../examples/features/multiple-sandboxes.yaml");
     let expected = Document::parse(&bytes[..]).unwrap();
     let partial = PartialDocument::from_yaml(bytes).unwrap();
     assert_eq!(partial.assess().document(), Some(&expected));
@@ -243,9 +246,10 @@ fn a_missing_fabric_catalog_does_not_rewrite_supplied_harness_intent() {
 #[test]
 fn unsupported_protocol_answer_is_rejected_without_mutating_the_document() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    let base = PartialDocument::from_yaml(include_bytes!(
+        "../../../examples/platforms/docker/openclaw-hosted.yaml"
+    ))
+    .unwrap();
     let mut state = JourneyDefinition::new("protocol", base)
         .ask([JourneyScope::InferenceApi])
         .start(&capabilities)

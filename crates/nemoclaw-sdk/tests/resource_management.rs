@@ -15,67 +15,67 @@ fn ownership_follows_configuration_instead_of_optional_annotations() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     for (source, parent, field, declaration) in [
         (
-            include_str!("../../../examples/fabric-openclaw.yaml"),
+            include_str!("../../../examples/agents/openclaw.yaml"),
             "/spec/inferenceProviders/local",
             "management",
             json!("external"),
         ),
         (
-            include_str!("../../../examples/managed-ollama-gpu.yaml"),
-            "/spec/inferenceProviders/qwen",
+            include_str!("../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"),
+            "/spec/inferenceProviders/local",
             "management",
             json!("managed"),
         ),
         (
-            include_str!("../../../examples/managed-ollama-gpu.yaml"),
+            include_str!("../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"),
             "/spec/gateway",
             "network",
             json!({"management":"managed"}),
         ),
         (
-            include_str!("../../../examples/managed-ollama-gpu.yaml"),
+            include_str!("../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"),
             "/spec/gateway",
             "storage",
             json!({"management":"managed"}),
         ),
         (
-            include_str!("../../../examples/managed-ollama-gpu.yaml"),
+            include_str!("../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"),
+            "/spec/services/ollama-server",
+            "management",
+            json!("managed"),
+        ),
+        (
+            include_str!("../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"),
+            "/spec/services/ollama-server",
+            "storage",
+            json!({"management":"managed"}),
+        ),
+        (
+            include_str!("../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"),
+            "/spec/services/ollama-server/model",
+            "management",
+            json!("managed"),
+        ),
+        (
+            include_str!("../../../examples/platforms/dgx-spark/vllm.yaml"),
             "/spec/services/qwen",
             "management",
             json!("managed"),
         ),
         (
-            include_str!("../../../examples/managed-ollama-gpu.yaml"),
+            include_str!("../../../examples/platforms/dgx-spark/vllm.yaml"),
             "/spec/services/qwen",
             "storage",
             json!({"management":"managed"}),
         ),
         (
-            include_str!("../../../examples/managed-ollama-gpu.yaml"),
+            include_str!("../../../examples/platforms/dgx-spark/vllm.yaml"),
             "/spec/services/qwen/model",
             "management",
             json!("managed"),
         ),
         (
-            include_str!("../../../examples/spark/vllm.yaml"),
-            "/spec/services/qwen",
-            "management",
-            json!("managed"),
-        ),
-        (
-            include_str!("../../../examples/spark/vllm.yaml"),
-            "/spec/services/qwen",
-            "storage",
-            json!({"management":"managed"}),
-        ),
-        (
-            include_str!("../../../examples/spark/vllm.yaml"),
-            "/spec/services/qwen/model",
-            "management",
-            json!("managed"),
-        ),
-        (
-            include_str!("../../../examples/spark/remote-vllm.yaml"),
+            include_str!("../../../examples/platforms/dgx-spark/remote-vllm.yaml"),
             "/spec/services/qwen/placement",
             "network",
             json!({"management":"managed"}),
@@ -100,14 +100,16 @@ fn ownership_follows_configuration_instead_of_optional_annotations() {
 #[test]
 fn provider_selects_exactly_one_connection_form() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
-    let original = input(include_str!("../../../examples/managed-ollama-gpu.yaml"));
+    let original = input(include_str!(
+        "../../../examples/platforms/dgx-spark/openclaw-ollama.yaml"
+    ));
     for fields in [
         json!({}),
-        json!({"serviceRef":"qwen", "endpoint":"http://127.0.0.1:18888/v1"}),
-        json!({"serviceRef":"qwen", "credential":{"env":"UNUSED"}}),
+        json!({"serviceRef":"ollama-server", "endpoint":"http://127.0.0.1:18888/v1"}),
+        json!({"serviceRef":"ollama-server", "credential":{"env":"UNUSED"}}),
     ] {
         let mut value = original.clone();
-        let provider = value["spec"]["inferenceProviders"]["qwen"]
+        let provider = value["spec"]["inferenceProviders"]["local"]
             .as_object_mut()
             .unwrap();
         provider.remove("serviceRef");

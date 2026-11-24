@@ -14,7 +14,7 @@ fn generations() -> Generations {
 
 fn input(api: Value, attached: bool) -> Value {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap();
     value["spec"]["sandboxes"]["assistant"]["integrations"] = json!({ "bookings": api });
     if attached {
         value["spec"]["sandboxes"]["assistant"]["agent"]["integrationRefs"] = json!(["bookings"]);

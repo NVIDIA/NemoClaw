@@ -10,7 +10,7 @@ run "plan" {
   command = plan
 
   module {
-    source = "./examples/kubernetes/hosted-nvidia.tf"
+    source = "./examples/platforms/kubernetes/hosted-nvidia.tf"
   }
 
   variables {
@@ -64,7 +64,7 @@ run "workspace_name_over_openshell_limit" {
   command = plan
 
   module {
-    source = "./examples/kubernetes/hosted-nvidia.tf"
+    source = "./examples/platforms/kubernetes/hosted-nvidia.tf"
   }
 
   variables {

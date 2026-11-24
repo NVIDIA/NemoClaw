@@ -11,7 +11,7 @@ It never plans or applies, creates no deployment state, and keeps no credential 
 With the [build prerequisites](../../docs/build-deploy/build.md) installed, run from the repository root:
 
 ```sh
-cargo run -p nemoclaw-cli -- onboard examples/onboarding/openclaw.yaml --output my-deployment.yaml
+cargo run -p nemoclaw-cli -- onboard examples/platforms/docker/openclaw-hosted.yaml --output my-deployment.yaml
 ```
 
 A built CLI takes the same arguments, as `nemoclaw onboard`.
@@ -38,7 +38,7 @@ After you choose a harness, **Ctrl+D** accepts the remaining suggested settings 
 The standalone example runs the same questionnaire without reading the target:
 
 ```sh
-cargo run -p nemoclaw-onboarding -- examples/onboarding/openclaw.yaml --output my-deployment.yaml
+cargo run -p nemoclaw-onboarding -- examples/platforms/docker/openclaw-hosted.yaml --output my-deployment.yaml
 ```
 
 ## Target Checks

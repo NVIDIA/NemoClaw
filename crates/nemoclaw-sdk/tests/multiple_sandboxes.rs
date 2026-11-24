@@ -19,7 +19,7 @@ fn generations() -> Generations {
     .into()
 }
 fn example() -> Value {
-    serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap()
+    serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap()
 }
 fn graph(value: &Value) -> Value {
     compile(
@@ -105,8 +105,10 @@ fn adding_a_sandbox_preserves_existing_resource_addresses_and_values() {
 
 #[test]
 fn five_agent_example_compiles_to_five_independent_sandboxes_sharing_inference() {
-    let value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/multiple-sandboxes.yaml")).unwrap();
+    let value: Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/features/multiple-sandboxes.yaml"
+    ))
+    .unwrap();
     assert!(
         jsonschema::validator_for(&nemoclaw_sdk::config::schema::input_schema())
             .unwrap()

@@ -64,9 +64,10 @@ async fn podman_gateway_rechecks_network_and_image_prerequisites_before_saved_pl
         Some((response.0, serde_json::to_vec(&response.1).unwrap()))
     }).await;
     let e = Installation::new();
-    let document =
-        Document::parse(include_bytes!("../../../../../examples/spark/vllm.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../../examples/platforms/dgx-spark/vllm.yaml").as_slice(),
+    )
+    .unwrap();
     let generations = [
         ("managed_gateway".into(), "a".repeat(32)),
         ("inference_service".into(), "b".repeat(32)),

@@ -8,7 +8,7 @@ use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::json;
 use std::process::Output;
 
-/// The local example's OpenShell resources, applied by one workspace.
+/// The OpenClaw example's OpenShell resources, applied by one workspace.
 struct Local {
     workspace: TofuWorkspace,
     endpoint: String,
@@ -17,7 +17,7 @@ impl Local {
     fn new(endpoint: &str) -> Self {
         let workspace = TofuWorkspace::with_providers(tofu(), &[("openshell", &provider())]);
         fs::copy(
-            Path::new(FIXTURES).join("local.tf.json"),
+            Path::new(FIXTURES).join("openclaw.tf.json"),
             workspace.path().join("main.tf.json"),
         )
         .unwrap();

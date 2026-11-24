@@ -27,7 +27,7 @@ The `kind-kubernetes-development` scenario deploys one agent with the `kubernete
 Its CLI runs with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
 The agent must answer from its recorded runtime with the stub's reply.
 Its document names no gateway port, since each command forwards its own free port, and a plan of the applied deployment must report no changes.
-Its sandbox has an explicit policy, as the [GTC DC Kubernetes example](../../examples/kubernetes/hosted-nvidia.yaml) has, with one entry that gives `python3` the stub's `/health`; the managed inference grant gives the image's executables only the stub's `/v1/**` paths.
+Its sandbox has an explicit policy, as the [GTC DC Kubernetes example](../../examples/platforms/kubernetes/hosted-nvidia.yaml) has, with one entry that gives `python3` the stub's `/health`; the managed inference grant gives the image's executables only the stub's `/v1/**` paths.
 The `tests/e2e/hcl/command` module then runs `python3` twice in the sandbox: a request to the stub's `/health` must get the stub's 404, where OpenShell's proxy would answer 403 without the entry, and a connection to the API server's Service at `10.96.0.1`, the first address of kind's Service network, must fail with `EACCES`, OpenShell's refusal, because no entry names it.
 The address is literal, so DNS can't cause the refusal.
 Destroy must then keep only the gateway's storage.

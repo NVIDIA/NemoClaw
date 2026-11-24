@@ -100,7 +100,7 @@ async fn compiled_discovery_requires_the_image_runtime_metadata() {
         atomic::{AtomicUsize, Ordering},
     };
     let document = Document::parse(
-        include_bytes!("../../../../../examples/onboarding/openclaw.yaml").as_slice(),
+        include_bytes!("../../../../../examples/platforms/docker/openclaw-hosted.yaml").as_slice(),
     )
     .unwrap();
     let image = document.spec.sandboxes["assistant"].image.ref_.clone();

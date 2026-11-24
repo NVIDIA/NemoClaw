@@ -36,7 +36,7 @@ fn grants_search_in_sandbox_policy(policy: &Value) -> bool {
 
 fn input() -> Value {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/openclaw.yaml")).unwrap();
     value["spec"]["sandboxes"]["assistant"]["integrations"] =
         json!({"search":{"kind":"webSearch","provider":"brave","credential":{"env":"SEARCH_KEY"}}});
     value["spec"]["sandboxes"]["assistant"]["agent"]["integrationRefs"] = json!(["search"]);

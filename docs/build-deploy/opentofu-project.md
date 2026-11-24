@@ -135,7 +135,7 @@ The travel team takes the name from `var.workspace`, and the travel example name
 Two copies of the travel example on one Docker engine also collide on its container and volume names and its host port.
 
 HCL that installs a managed Kubernetes or OpenShift gateway also keeps that gateway's ownership receipt and development credentials in the directory that `NEMOCLAW_KUBERNETES_STATE` names.
-Keep that directory with the state, as the [GTC DC example](../../examples/gtc-dc/README.md#amd64-kubernetes-with-nvidia-cloud-inference) describes, because a runner that starts empty does not have it.
+Keep that directory with the state, as the [GTC DC example](../../examples/platforms/nemotron-super.md#amd64-kubernetes-with-nvidia-cloud-inference) describes, because a runner that starts empty does not have it.
 
 ## Running From CI/CD
 
@@ -209,7 +209,7 @@ In a pipeline, map it from your secret store into the job's environment.
 The gateway connection takes names the same way: `data.openshell_gateway` takes `credential_env` for the gateway's bearer credential, `tls_ca_env` for the variable naming its CA file, and `tls_certificate_env` and `tls_key_env` for mutual TLS.
 For a managed Kubernetes or OpenShift gateway, `openshell_kubernetes_storage`, `openshell_kubernetes_auth`, and `openshell_kubernetes_gateway` take `kubeconfig_env`, the variable whose value is the kubeconfig file's path, and `environment`, the variables the kubeconfig's exec credential plugin needs.
 Without `kubeconfig_env`, the provider uses the service account of the pod that runs OpenTofu, as [Managed Kubernetes Gateway](../references/provider.md#managed-kubernetes-gateway) describes.
-The Helm provider takes the same kubeconfig as `config_path` in its `kubernetes` attribute, and `data.openshell_gateway` names the variable in `settings.target.kubernetes.kubeconfig.env` of its `kubernetes` specification, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
+The Helm provider takes the same kubeconfig as `config_path` in its `kubernetes` attribute, and `data.openshell_gateway` names the variable in `settings.target.kubernetes.kubeconfig.env` of its `kubernetes` specification, as in [the Kubernetes HCL example](../../examples/platforms/kubernetes/hosted-nvidia.tf).
 
 A model server's key reaches `openshell_inference` through its `server` object, and the provider reads the key during apply.
 For a server NemoClaw does not run, such as the travel team's hosted model in [`models.tf`](../../examples/hcl/travel-team/models.tf), the literal `inference_server` object names the key's variable in `credential_env`.
@@ -290,7 +290,7 @@ Upstream keys are not revoked.
 
 For HCL that installs a managed Kubernetes or OpenShift gateway, a plain `tofu destroy` fails at plan and deletes nothing.
 The provider never deletes `openshell_kubernetes_storage`, and a plan that would delete it fails with "This resource is retained and cannot be deleted", even with `destroy` set.
-Follow the [GTC DC example's teardown](../../examples/gtc-dc/README.md#amd64-kubernetes-with-nvidia-cloud-inference), which targets `openshell_kubernetes_auth` to remove authentication, the gateway, and the agents, and keeps the storage with its namespace, key Secret, and gateway storage.
+Follow the [GTC DC example's teardown](../../examples/platforms/nemotron-super.md#amd64-kubernetes-with-nvidia-cloud-inference), which targets `openshell_kubernetes_auth` to remove authentication, the gateway, and the agents, and keeps the storage with its namespace, key Secret, and gateway storage.
 
 Set the providers' `destroy` setting, which the examples take from a variable:
 
