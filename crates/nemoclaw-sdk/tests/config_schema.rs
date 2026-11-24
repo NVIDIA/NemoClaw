@@ -1306,3 +1306,47 @@ fn a_managed_gateway_must_allow_the_driver_config_its_sandboxes_set() {
     external["spec"]["sandboxes"]["assistant"]["driverConfig"] = json!({"docker": {"mounts": [{"type": "volume", "source": "skills", "target": "/sandbox/skills"}]}});
     agrees(&validator, &external, true);
 }
+
+#[test]
+fn editors_read_the_message_the_parser_reports_for_each_rule() {
+    // An image tag instead of a digest: an editor shows the pattern rule's
+    // message, which is the one the parser reports.
+    let mut value = input("local.yaml");
+    value["spec"]["sandboxes"]["assistant"]["image"]["ref"] = json!("nc-fabric:latest");
+    let error = Document::parse(value.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    let schema = input_schema();
+    let rule = &schema["$defs"]["Image"]["properties"]["ref"];
+    let message = rule["patternErrorMessage"].as_str().unwrap_or_default();
+    assert!(
+        !message.is_empty() && error.ends_with(message),
+        "{error}\n{rule}"
+    );
+    // Every rule with a message gives it to editors.
+    fn unread(node: &Value, path: &str, found: &mut Vec<String>) {
+        match node {
+            Value::Object(object) => {
+                if let Some(message) = object.get("x-nemoclaw-error")
+                    && (object.get("errorMessage") != Some(message)
+                        || (object.contains_key("pattern")
+                            && object.get("patternErrorMessage") != Some(message)))
+                {
+                    found.push(path.to_owned());
+                }
+                for (key, child) in object {
+                    unread(child, &format!("{path}/{key}"), found);
+                }
+            }
+            Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    unread(child, &format!("{path}/{index}"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    unread(&schema, "", &mut found);
+    assert!(found.is_empty(), "{found:#?}");
+}
