@@ -135,7 +135,7 @@ For example, `v0.1.0-rc.12` is `0.1.12` and `v0.1.0` is `0.1.999`.
 The helper refuses a version it can't order: a patch above 64, or a candidate above 998.
 The product name carries the bundle's own version, which **Settings** > **Apps** shows beside the package version.
 
-When CI / Bundle selects the installer checks, `E2E installer` builds the package from the Windows bundle and installs, upgrades, downgrades, and uninstalls it on the runner; see [its sources](../../tools/release/windows-installer/README.md#testing-the-package).
+When CI / Bundle selects the installer checks, `E2E installer` builds the package from the Windows bundle, then installs it on the runner, checks that a failed upgrade restores it, upgrades it, refuses a downgrade, and uninstalls it; see [its sources](../../tools/release/windows-installer/README.md#testing-the-package).
 
 
 ### Final Releases Require Signing

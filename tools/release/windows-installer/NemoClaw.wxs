@@ -23,10 +23,12 @@
     <SummaryInformation Description="NVIDIA NemoClaw Agent Configs command-line interface" />
 
     <!-- Remove the installed version before installing this one, so no file
-         that only the old bundle had remains. Same-version builds, such as
-         two CI builds after one release candidate, replace each other. -->
+         that only the old bundle had remains. Keep removal inside the install
+         transaction so a failed upgrade restores the old version.
+         Same-version builds, such as two CI builds after one release candidate,
+         replace each other. -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
-                  Schedule="afterInstallValidate"
+                  Schedule="afterInstallInitialize"
                   DowngradeErrorMessage="A newer version of NVIDIA NemoClaw Agent Configs is already installed. To install this version, first uninstall the newer one in Settings &gt; Apps &gt; Installed apps." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="$(Compression)" />
 
