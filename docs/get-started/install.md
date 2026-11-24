@@ -61,8 +61,20 @@ A release candidate's installer isn't signed or notarized until NVIDIA's install
 
    For a signed installer, you can open the file in Finder instead and follow the installer's pages.
 
-3. Open a new Terminal window and run `nemoclaw --version`, which prints `nemoclaw` and the release's version.
-   Windows that were already open don't have the new `PATH`.
+3. If you previously installed an archive, remove its `PATH` export from your shell's startup file, such as `~/.zshrc` or `~/.bashrc`.
+   That export can put the archive's CLI before the installer's CLI, even in a new Terminal window.
+   Keep the archive's directory if existing deployments still need that version; run it by its full path.
+
+4. Open a new Terminal window and check which CLI it selects:
+
+   ```sh
+   command -v nemoclaw
+   nemoclaw --version
+   ```
+
+   Expect `/usr/local/nemoclaw/bin/nemoclaw` and the installed release's version.
+   If another path appears, remove that installation's `PATH` entry from your shell configuration and open another Terminal window.
+   Windows that were already open do not have the new `PATH`.
 
 Before your first deployment, install and start Docker Desktop or Podman, then run `nemoclaw onboard` in a directory for your deployment and follow the [first-deployment guide](first-deployment.md).
 As with the archive, keep `/usr/local/nemoclaw` unchanged, don't link `nemoclaw` elsewhere, and run it from your deployment's directory.
@@ -70,13 +82,35 @@ As with the archive, keep `/usr/local/nemoclaw` unchanged, don't link `nemoclaw`
 ### Upgrading with the macOS Installer
 
 Install the new release's installer as above.
-It removes `/usr/local/nemoclaw` before it installs, so only the new release's files remain.
+It moves `/usr/local/nemoclaw` to `/usr/local/nemoclaw.previous` before installing the new bundle, so no old files remain in the installed directory.
+After the replacement payload installs successfully, it removes the previous bundle.
+If installation fails before that cleanup, it retains the previous bundle for [recovery](#recovering-from-a-failed-macos-installer-upgrade).
 
 A deployment keeps using the release that created it, as [upgrading](#upgrading) describes, and the installer doesn't keep the old release.
 Before you upgrade, destroy the deployments that the installed release created, or unpack that release's `darwin_arm64` archive into its own directory, as in [installing on Linux or macOS](#installing-on-linux-or-macos), to run its CLI by path later.
 
+### Recovering from a Failed macOS Installer Upgrade
+
+If `/usr/local/nemoclaw.previous` remains after an unsuccessful upgrade, restore it before retrying.
+The installer refuses to replace this recovery copy.
+Close any running CLI operations, then run:
+
+```sh
+sudo sh -c 'set -eu
+test -d /usr/local/nemoclaw.previous
+rm -rf /usr/local/nemoclaw
+mv /usr/local/nemoclaw.previous /usr/local/nemoclaw'
+/usr/local/nemoclaw/bin/nemoclaw --version
+```
+
+The directory check stops the command before removal if there is no recovery copy.
+This restores the previous bundle and removes the incomplete replacement, without changing deployment directories or shell settings.
+Recovery is manual; the installer does not roll back automatically.
+If no previous bundle exists, retry the installer to replace an incomplete first installation.
+
 ### Uninstalling with the macOS Installer
 
+If an upgrade failed, [restore the previous bundle](#recovering-from-a-failed-macos-installer-upgrade) first.
 First destroy the deployments that the release created and remove what they retain, as [uninstalling](#uninstalling) describes.
 Then remove the CLI, the `PATH` entry, and the package's record:
 
