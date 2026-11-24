@@ -21,11 +21,12 @@ When you move that pin, pin the digest of Hermes's published image for the same 
 ## Regenerating the Bundled Catalog
 
 The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric source that `fabric.tar.gz` pins under `imageSources.fabric` in [`versions.json`](../../versions.json).
-Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, such as a freshly built agent image's `/opt/fabric/bin/python`. Pass that revision and checksum, and `--adapter` once for each adapter ID the current catalog lists:
+Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, such as a freshly built agent image's `/opt/fabric/bin/python`. Pass that revision and checksum, `--adapter` once for each adapter ID the current catalog lists, and `--target ADAPTER_ID=TARGET_ID` once for each workflow target it lists:
 
 ```sh
 python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM \
   --adapter nvidia.fabric.claude --adapter nvidia.fabric.codex ... \
+  --target nvidia.fabric.nooa=nvidia.nooa.arc-solver --target nvidia.fabric.nooa=nvidia.nooa.coding-agent \
   --output image/fabric/catalog.json
 ```
 

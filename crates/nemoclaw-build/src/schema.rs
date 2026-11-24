@@ -13,7 +13,15 @@ pub fn schema_bytes() -> Vec<u8> {
 }
 
 pub fn generate(root: &Path, check: bool) -> Result<(), String> {
-    let reference = render_reference(&input_schema())?;
+    let schema = input_schema();
+    let unexplained = nemoclaw_sdk::config::schema::unexplained_rules(&schema);
+    if !unexplained.is_empty() {
+        return Err(format!(
+            "errors from these schema rules would show only a JSON Schema keyword; add an x-nemoclaw-error message: {}",
+            unexplained.join(", ")
+        ));
+    }
+    let reference = render_reference(&schema)?;
     generated_file(root, SCHEMA_PATH, &schema_bytes(), check)?;
     generated_file(root, REFERENCE_PATH, reference.as_bytes(), check)
 }

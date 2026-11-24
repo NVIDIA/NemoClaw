@@ -83,6 +83,29 @@ fn render(test: &str) {
     let mut openshift = spec();
     openshift_target(&mut openshift);
     write("openshift.json", &values(&openshift));
+    // The chart renders its shared supervisor only for this topology.
+    let mut shared_supervisor = openshift.clone();
+    shared_supervisor.settings.config = Some(
+        serde_json::from_value(json!({"openshell.drivers.kubernetes": {
+            "supervisor_topology": "gateway"
+        }}))
+        .unwrap(),
+    );
+    write(
+        "openshift-shared-supervisor.json",
+        &values(&shared_supervisor),
+    );
+    let mut sized = spec();
+    let cluster = sized.settings.target.cluster_mut().unwrap();
+    cluster.data_storage_class = Some("fast-local".into());
+    cluster.resources = Some(
+        serde_json::from_value(json!({
+            "requests": {"cpu": "500m", "memory": "1Gi"},
+            "limits": {"memory": "4Gi"}
+        }))
+        .unwrap(),
+    );
+    write("sized.json", &values(&sized));
     let mut exposed = spec();
     exposed.settings.target.cluster_mut().unwrap().expose = Some(
         serde_json::from_value(json!({
@@ -149,6 +172,12 @@ fn an_exposed_openshift_gateway_is_published_by_the_charts_pass_through_route() 
 
 #[test]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; pulls the pinned chart"]
-fn on_openshift_the_chart_leaves_the_gateway_uid_to_openshift() {
+fn on_openshift_the_chart_leaves_the_gateway_and_supervisor_ids_to_openshift() {
     render("tests/openshift.tftest.hcl");
+}
+
+#[test]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; pulls the pinned chart"]
+fn the_gateway_gets_its_volume_class_and_resources_as_written() {
+    render("tests/sized.tftest.hcl");
 }

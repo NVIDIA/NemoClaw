@@ -362,6 +362,9 @@ pub fn definitions() -> serde_json::Map<String, Value> {
     let mut generator = schemars::generate::SchemaSettings::draft2020_12().into_generator();
     generator.subschema_for::<ExplicitPolicy>();
     let mut defs = generator.take_definitions(true);
+    // As the configuration schema does, so these stay equal to its definitions.
+    defs.values_mut()
+        .for_each(nemoclaw_runtime::schema::bound_integers);
     constrain(&mut defs);
     defs
 }
@@ -384,9 +387,77 @@ impl ExplicitPolicy {
             .map_err(|_| ConfigError::new("invalid or unsupported explicit sandbox policy"))?;
         let policy = openshell_policy::parse_sandbox_policy(&input.to_string())
             .map_err(|_| ConfigError::new("invalid or unsupported explicit sandbox policy"))?;
-        openshell_policy::validate_sandbox_policy(&policy)
-            .map_err(|_| ConfigError::new("explicit sandbox policy failed OpenShell validation"))?;
+        openshell_policy::validate_sandbox_policy(&policy).map_err(|violations| {
+            let mut reasons: Vec<&str> = violations.iter().map(violation).collect();
+            reasons.sort_unstable();
+            reasons.dedup();
+            ConfigError(format!(
+                "explicit sandbox policy failed OpenShell validation: {}",
+                reasons.join("; ")
+            ))
+        })?;
         Ok(policy)
+    }
+}
+
+/// What OpenShell's validator found, without the paths, hosts, names, or
+/// values it quotes. The match is exhaustive, so a new violation at another
+/// OpenShell pin needs a description here.
+fn violation(violation: &openshell_policy::PolicyViolation) -> &'static str {
+    use openshell_policy::PolicyViolation as V;
+    match violation {
+        V::InvalidProcessIdentity { .. } => {
+            "process run_as_user and run_as_group must be sandbox or a numeric ID in OpenShell's sandbox range"
+        }
+        V::PathTraversal { .. } => "a filesystem path contains a .. component",
+        V::RelativePath { .. } => "a filesystem path is not absolute",
+        V::OverlyBroadPath { .. } => "a read-write filesystem path is too broad, such as /",
+        V::FieldTooLong { .. } => "a filesystem path is longer than OpenShell allows",
+        V::TooManyPaths { .. } => "the filesystem policy lists more paths than OpenShell allows",
+        V::TldWildcard { .. } => "a network endpoint's host is a wildcard over a top-level domain",
+        V::MissingEndpointHost { .. } => "a network endpoint has no host",
+        V::MissingTcpEndpointHost { .. } => "a TCP network endpoint has no DNS host name",
+        V::TcpEndpointIpLiteral { .. } => {
+            "a TCP network endpoint names an IP address instead of a DNS host name"
+        }
+        V::InvalidTcpEndpointHost { .. } => {
+            "a TCP network endpoint's host name is not one policy DNS can resolve"
+        }
+        V::MissingEndpointPort { .. } => "a network endpoint has no port",
+        V::InvalidEndpointPort { .. } => "a network endpoint's port is outside 1 through 65535",
+        V::InvalidHostWildcard { .. } => {
+            "a network endpoint's host wildcard does not match how OpenShell matches hosts"
+        }
+        V::MissingSigningService { .. } => {
+            "a network endpoint sets credential_signing without signing_service"
+        }
+        V::UnknownCredentialSigning { .. } => {
+            "a network endpoint's credential_signing is not one OpenShell supports"
+        }
+        V::CredentialSigningWithBodyRewrite { .. } => {
+            "a network endpoint sets both credential_signing and request_body_credential_rewrite"
+        }
+        V::InvalidL7Endpoint { .. } => "a network endpoint's protocol rules are invalid",
+        V::InvalidMiddlewareConfig { .. } => "a network middleware's configuration is invalid",
+        V::TooManyMiddlewareConfigs { .. } => {
+            "the policy attaches more network middlewares than OpenShell allows"
+        }
+        V::DuplicateMiddlewareOrder { .. } => "two network middlewares have the same order",
+        V::TooManyMiddlewareSelectorPatterns { .. } => {
+            "a network middleware lists more include and exclude patterns than OpenShell allows"
+        }
+        V::MiddlewareTlsSkipConflict { .. } => {
+            "a network middleware selects an endpoint that skips TLS inspection"
+        }
+        V::InvalidLandlockCompatibility { .. } => {
+            "landlock compatibility is not one OpenShell supports"
+        }
+        V::MissingMcpVersions { .. } => "an MCP endpoint has no protocol revision",
+        V::McpOptionsOnNonMcpEndpoint { .. } => "an endpoint that isn't MCP sets MCP settings",
+        V::UnsupportedMcpVersion { .. } => {
+            "an MCP endpoint allows a protocol revision OpenShell doesn't support"
+        }
+        V::DuplicateMcpVersion { .. } => "an MCP endpoint lists a protocol revision twice",
     }
 }
 

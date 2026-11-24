@@ -117,6 +117,8 @@ mod kubernetes_expired_authentication;
 mod kubernetes_exposure;
 #[path = "kubernetes_gateway.rs"]
 mod kubernetes_gateway;
+#[path = "kubernetes_gateway_settings.rs"]
+mod kubernetes_gateway_settings;
 #[path = "kubernetes_inference.rs"]
 mod kubernetes_inference;
 #[path = "kubernetes_interruption.rs"]
@@ -164,6 +166,8 @@ mod network_references;
 mod observability;
 #[path = "ollama_proxy.rs"]
 mod ollama_proxy;
+#[path = "plan_credentials.rs"]
+mod plan_credentials;
 #[path = "provider_references.rs"]
 mod provider_references;
 #[path = "reference_combinations.rs"]

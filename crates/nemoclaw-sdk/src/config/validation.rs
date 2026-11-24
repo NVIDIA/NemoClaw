@@ -70,7 +70,7 @@ impl Document {
             require(
                 self.spec.gateway.compute_driver().is_kubernetes()
                     || sandbox.image.metadata.is_none(),
-                "image.metadata is available only for Kubernetes and OpenShift; Docker and Podman use engine image inspection",
+                super::constraints::IMAGE_METADATA_TARGETS,
             )?;
             if let Some(metadata) = &sandbox.image.metadata {
                 schema::validate_definition("FileRef", metadata)?;
@@ -194,6 +194,31 @@ impl super::ManagedGateway {
                 self.compute_driver().as_str()
             };
             crate::managed::gateway_config::check(config, driver).map_err(ConfigError)?;
+        }
+        // Kubernetes refuses a request above its limit only when Helm
+        // creates the gateway's StatefulSet, after apply has created the
+        // namespace and issuer; plan refuses it before anything changes.
+        if let Some(super::GatewayResources {
+            requests: Some(requests),
+            limits: Some(limits),
+        }) = self.cluster().and_then(|target| target.resources.as_ref())
+        {
+            let target = match self.target {
+                super::ManagedTarget::OpenShift(_) => "openshift",
+                _ => "kubernetes",
+            };
+            for (name, request, limit) in [
+                ("cpu", requests.millicores(), limits.millicores()),
+                ("memory", requests.mebibytes(), limits.mebibytes()),
+            ] {
+                if let (Some(request), Some(limit)) = (request, limit)
+                    && request > limit
+                {
+                    return Err(ConfigError(format!(
+                        "spec.gateway.target.{target}.resources.requests.{name} must not exceed resources.limits.{name}"
+                    )));
+                }
+            }
         }
         let Some(local) = self.local() else {
             return match self.endpoint() {

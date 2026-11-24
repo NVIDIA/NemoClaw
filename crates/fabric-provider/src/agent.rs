@@ -9,7 +9,6 @@ use nemoclaw_fabric::agent::{
     SECTIONS, SETTINGS,
 };
 use openshell_provider::OpenShell;
-use std::borrow::Cow;
 
 /// Starts and stops agents through Fabric's `fabric-agent-ctl` in their sandbox.
 #[derive(Clone)]
@@ -18,7 +17,8 @@ pub struct AgentBackend(pub OpenShell);
 /// What the sandbox's Fabric bridge reconciles for an agent: its sandbox by
 /// name, and the document the agent's inputs compose.
 fn configuration_row(row: &Row) -> Result<Row, ObservationError> {
-    let config = agent::compose(row).map_err(|_| ObservationError::Query)?;
+    // As the harness image's adapter accepts it; the plan checked the same.
+    let config = agent::compose_for_harness(row).map_err(|_| ObservationError::Query)?;
     let mut configured = nemoclaw_openshell::without_gateway(row);
     configured.insert("name".into(), row.get(SANDBOX).cloned().unwrap_or_default());
     configured.insert("config_json".into(), config.to_string());
@@ -96,7 +96,7 @@ impl Backend for AgentBackend {
 }
 
 /// The agent's document is valid Fabric configuration that its harness accepts.
-fn validate(known: &Row, unknown: &[&str]) -> Result<(), Cow<'static, str>> {
+fn validate(known: &Row, unknown: &[&str]) -> Result<(), nemoclaw_tofu::InputError> {
     let document = [NAME, DESCRIPTION, ADAPTER_ID, HARNESS_CATALOG, SETTINGS.1]
         .into_iter()
         .chain(SECTIONS.map(|(_, field)| field));

@@ -432,7 +432,7 @@ pub struct Sandbox {
     pub image: Image,
     #[serde(rename = "network")]
     #[schemars(default)]
-    /// Sandbox network policy; omission selects isolated egress with grants for declared inference.
+    /// Sandbox network policy; omission selects isolated egress with grants for declared inference. Changing network rules, middleware bindings, or grants updates the running sandbox in place; changing filesystem, Landlock, or process settings replaces it.
     pub network: super::Network,
     #[serde(
         rename = "driverConfig",
@@ -440,7 +440,7 @@ pub struct Sandbox {
         skip_serializing_if = "Option::is_none"
     )]
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
-    /// OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.
+    /// OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it. The gateway must allow driver configuration: on a managed gateway, unless driverConfig is empty, spec.gateway.config must set allow_driver_config: true in the compute driver's table, such as openshell.drivers.docker, or plan rejects the sandbox.
     pub driver_config: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "u32", range(min = 1))]
@@ -651,7 +651,7 @@ pub struct Harness {
     pub kind: super::HarnessKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "FabricSection")]
-    /// Fabric's runtime section, passed to Fabric unchanged, such as timeout_seconds and max_turns. The deployment sets artifacts and, for adapters that accept it, keep_state; a different authored value fails.
+    /// Fabric's runtime section, passed to Fabric unchanged, such as timeout_seconds and max_turns. The deployment sets artifacts and, where both the CLI's Fabric catalog and the image's adapter accept it, keep_state; a different authored value fails.
     pub runtime: Option<FabricSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "FabricSection")]

@@ -70,9 +70,10 @@ These controls belong only to the reference fixture.
 
 `cargo images build` ([source](../../crates/nemoclaw-build/src/images.rs)) builds each image's `catalog` stage, which runs [`catalog.py`](../../image/fabric/catalog.py) without starting an adapter, then its `labeled` stage with the result as `io.nemoclaw.fabric.catalog`.
 A Dockerfile can't set a label from something its own build computes, so the catalog passes between the two builds as a build argument, and the `labeled` stage fails unless it matches the installed catalog.
-Each harness stage declares its adapters, their files, their executables, and any paths their harness writes beyond the image's default policy in `/opt/nemoclaw/adapters.json`.
+Each harness stage declares its adapters, their files, their executables, any paths their harness writes beyond the image's default policy, and the workflow targets it installs for them in `/opt/nemoclaw/adapters.json`.
+The `generic` stage takes its targets from the harness's `targets` in [`docker-bake.hcl`](../../docker-bake.hcl).
 The catalog adds those paths, such as the terminal devices the Hermes image declares for browser chat, to that image's `runtime.policy.filesystem_policy.read_write`; other images' default policies are unchanged.
-The descriptors come unmodified from Fabric's `nemo-fabric-adapter-catalog` package; an adapter Fabric does not publish, such as the test adapter, declares the descriptor file its package installed.
+The adapter and target descriptors come unmodified from Fabric's `nemo-fabric-adapter-catalog` package; an adapter or target Fabric does not publish, such as the test adapter, declares the descriptor file its package installed.
 Direct Docker Bake builds attach no metadata.
 
 | Image file | Contents |

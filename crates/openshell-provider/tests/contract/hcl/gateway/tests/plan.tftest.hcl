@@ -18,6 +18,7 @@ run "plan" {
       && toset(data.openshell_docker_gateway_runtime.gateway.env) == toset([
         "OPENSHELL_DB_URL=sqlite:${var.data_path}/gateway.db",
         "XDG_STATE_HOME=${var.data_path}/state",
+        "OPENSHELL_TELEMETRY_ENABLED=false",
       ])
     )
     error_message = "The Docker gateway must launch from its typed settings and keep its state under its data path."

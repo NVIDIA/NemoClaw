@@ -192,9 +192,12 @@ impl Spec {
             namespace: get("namespace")?,
             authentication,
             environment,
-            // Exposure configures the Helm release, not these platform
+            // Exposure, the gateway volume's StorageClass, and the gateway's
+            // resources configure the Helm release, not these platform
             // resources.
             expose: None,
+            data_storage_class: None,
+            resources: None,
         });
         let spec = Self {
             layout: 1,

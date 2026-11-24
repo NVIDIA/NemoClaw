@@ -50,28 +50,29 @@ fn preview_ids_cannot_replace_main_previews() {
     }
     assert_eq!(
         preview_url("nemoclaw-v1-pr-12").unwrap(),
-        "https://nvidia-preview-nemoclaw-v1-pr-12.docs.buildwithfern.com/nemoclaw"
+        "https://nvidia-preview-nemoclaw-v1-pr-12.docs.buildwithfern.com/nemoclaw/v1"
     );
     assert!(preview_url("nemoclaw-v1").is_ok());
 }
 
 #[test]
-fn preview_requires_success_and_its_own_url() {
+fn successful_preview_opens_its_product_home() {
     let expected = preview_url("nemoclaw-v1-pr-1").unwrap();
-    let reported = format!("Published docs to {expected}/v1/overview\n");
+    let reported = format!("Published docs to {expected}/overview\n");
     assert_eq!(
         published_preview("nemoclaw-v1-pr-1", true, &reported).unwrap(),
-        format!("{expected}/v1/overview")
+        format!("{expected}/home")
     );
     // Fern colours its output; the URL ends at the escape sequence.
     let coloured = format!("Published docs to {expected}\u{1b}[0m\n");
     assert_eq!(
         published_preview("nemoclaw-v1-pr-1", true, &coloured).unwrap(),
-        expected
+        format!("{expected}/home")
     );
     assert!(published_preview("nemoclaw-v1-pr-1", false, &reported).is_err());
     for output in [
         String::new(),
+        "Published docs to https://nvidia-preview-nemoclaw-v1-pr-1.docs.buildwithfern.com/nemoclaw/latest".to_owned(),
         "Published docs to https://other.example/nemoclaw".to_owned(),
         format!("Published docs to {expected}-other"),
     ] {
@@ -83,41 +84,26 @@ fn preview_requires_success_and_its_own_url() {
 }
 
 #[test]
-fn public_release_requires_enablement_a_v0_1_tag_and_the_tagged_commit() {
-    let release = |enabled: Option<&str>, kind: Option<&str>, tag: Option<&str>| Release {
-        enabled: enabled.map(Into::into),
-        ref_type: kind.map(Into::into),
-        ref_name: tag.map(Into::into),
+fn public_docs_accept_only_final_v1_release_tags() {
+    let release = |kind: &str, tag: &str| Release {
+        ref_type: Some(kind.into()),
+        ref_name: Some(tag.into()),
     };
-    let ok = release(Some("true"), Some("tag"), Some("v0.1.0"));
-    assert_eq!(ok.tag().unwrap(), "v0.1.0");
-    assert!(
-        release(None, Some("tag"), Some("v0.1.0"))
-            .tag()
-            .unwrap_err()
-            .contains("FERN_V1_PUBLIC_ENABLED")
-    );
-    assert!(
-        release(Some("false"), Some("tag"), Some("v0.1.0"))
-            .tag()
-            .is_err()
-    );
-    assert!(
-        release(Some("true"), Some("branch"), Some("v1"))
-            .tag()
-            .is_err()
-    );
-    for tag in ["v1.0.0", "v0.2.0", "v0.1", "v0.1.0/x", "0.1.0", "v0.1.0-"] {
-        assert!(
-            release(Some("true"), Some("tag"), Some(tag)).tag().is_err(),
-            "{tag}"
-        );
+    for tag in ["v0.1.0", "v0.1.12"] {
+        assert_eq!(release("tag", tag).tag().unwrap(), tag);
     }
-    assert!(
-        release(Some("true"), Some("tag"), Some("v0.1.3-rc.1"))
-            .tag()
-            .is_ok()
-    );
+    for tag in [
+        "v0.0.123",
+        "v0.1.0-rc.1",
+        "v0.1.0-rc1",
+        "v0.1.0+build",
+        "v0.1.01",
+        "v0.2.0",
+        "v0.1.",
+    ] {
+        assert!(release("tag", tag).tag().is_err(), "{tag}");
+    }
+    assert!(release("branch", "v0.1.0").tag().is_err());
 }
 
 #[test]

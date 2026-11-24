@@ -496,7 +496,7 @@ fn docker_gateway_launch_matches_the_compiled_container() {
     let data = "/var/lib/docker/volumes/gateway-data/_data";
     let container = spec.container(data).unwrap();
     let endpoint = spec.endpoint();
-    let launch = docker_gateway_launch(&spec.name, &endpoint, data).unwrap();
+    let launch = docker_gateway_launch(&spec.name, &endpoint, data, spec.telemetry).unwrap();
     assert_eq!(container.entrypoint, Some(launch.entrypoint));
     assert_eq!(container.cmd, Some(launch.command));
     assert_eq!(container.env, Some(launch.env));
@@ -510,7 +510,7 @@ fn docker_gateway_launch_matches_the_compiled_container() {
         (spec.name.as_str(), endpoint.as_str(), "/data path"),
     ] {
         assert!(
-            docker_gateway_launch(name, endpoint, data_path).is_err(),
+            docker_gateway_launch(name, endpoint, data_path, None).is_err(),
             "{name} {endpoint} {data_path}"
         );
     }

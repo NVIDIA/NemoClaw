@@ -463,7 +463,7 @@ impl Backend for OpenShellBackend {
     }
     async fn update(&self, kind: &str, desired: &Row, prior: &Row) -> Mutation {
         if crate::composite::KINDS.contains(&kind) {
-            return crate::composite::ensure(self, kind, desired).await;
+            return crate::composite::update(self, kind, desired, prior).await;
         }
         match self.0.client_for(desired).await {
             Ok(client) => client.update(kind, desired, prior).await,

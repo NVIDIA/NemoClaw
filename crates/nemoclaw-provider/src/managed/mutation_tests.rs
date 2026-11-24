@@ -17,6 +17,49 @@ struct State {
     /// Archive uploads: the start count at the time, the request path, and the archive.
     writes: Vec<(usize, String, Vec<u8>)>,
 }
+/// A gateway recorded before NemoClaw decided its OpenShell telemetry may
+/// carry either setting, or none, so observing it reports no drift and the
+/// plan that records a setting replaces it. A gateway recorded with a setting
+/// must carry exactly that one.
+#[test]
+fn a_gateways_telemetry_setting_is_drift_only_once_it_is_recorded() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    let data = "/var/lib/docker/volumes/fixture/_data";
+    let container = |spec: &Spec, setting: Option<&str>| {
+        let launch = serde_json::to_value(spec.container(data).unwrap()).unwrap();
+        let mut config = launch.clone();
+        config.as_object_mut().unwrap().remove("HostConfig");
+        config.as_object_mut().unwrap().remove("NetworkingConfig");
+        let mut env: Vec<String> = serde_json::from_value(config["Env"].clone()).unwrap();
+        env.retain(|variable| !variable.starts_with("OPENSHELL_TELEMETRY_ENABLED="));
+        env.extend(setting.map(|value| format!("OPENSHELL_TELEMETRY_ENABLED={value}")));
+        config["Env"] = json!(env);
+        serde_json::from_value::<bollard::models::ContainerInspectResponse>(json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":config,"HostConfig":launch["HostConfig"],"NetworkSettings":{"Networks":{spec.network():{"IPAddress":spec.gateway_address().unwrap()}}},"State":{"Running":true,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":data,"RW":true},{"Type":"bind","Source":"/var/run/docker.sock","Destination":"/var/run/docker.sock","RW":true}]})).unwrap()
+    };
+    let verify = |spec: &Spec, setting| {
+        crate::managed::verify_container(
+            spec,
+            &container(spec, setting),
+            data,
+            Some(&[]),
+            "sha256:runtime",
+        )
+    };
+    spec.telemetry = None;
+    for setting in [None, Some("true"), Some("false")] {
+        assert!(verify(&spec, setting).is_ok(), "{setting:?}");
+    }
+    spec.telemetry = Some(false);
+    assert!(verify(&spec, Some("false")).is_ok());
+    for setting in [None, Some("true")] {
+        let drift = verify(&spec, setting).unwrap_err().to_string();
+        assert!(
+            drift.contains("environment drifted"),
+            "{setting:?}: {drift}"
+        );
+    }
+}
 
 #[tokio::test]
 async fn image_pull_policy_controls_registry_requests_and_requires_a_local_image() {

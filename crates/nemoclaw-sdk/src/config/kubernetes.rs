@@ -5,7 +5,7 @@ use super::{FileRef, SecretRef};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// An existing cluster for a managed gateway, reached with an explicit kubeconfig and context or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. Without expose, NemoClaw reaches the gateway through a port forward on a free local port for each command, so the document names no port.
+/// An existing cluster for a managed gateway, reached with an explicit kubeconfig and context or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox, and a default StorageClass unless dataStorageClass names another, are platform prerequisites that the SDK does not check. Without expose, NemoClaw reaches the gateway through a port forward on a free local port for each command, so the document names no port.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ManagedKubernetes {
@@ -38,6 +38,67 @@ pub struct ManagedKubernetes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "KubernetesExpose")]
     pub expose: Option<KubernetesExpose>,
+    /// StorageClass of the gateway's data volume, which holds its SQLite database; omit to use the cluster's default StorageClass. Use a block-backed class: SQLite runs in write-ahead-log mode, which NFS and other network filesystems do not support. The SDK does not check that the class exists: with a missing class, the volume's claim stays pending and apply fails when Helm's wait times out. Fixed after the first plan, because the claim keeps the class it was created with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 253))]
+    pub data_storage_class: Option<String>,
+    /// CPU and memory for the gateway container, which the chart's resources take as written. Omitted, the gateway requests 250m CPU and 256Mi and is limited to 1 CPU and 2Gi, which fit 256 sandboxes. Set, it replaces all four, and a quantity it leaves out takes Kubernetes' default: a namespace LimitRange's, or for a request, its limit. A change restarts the gateway, and its sandboxes keep running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "GatewayResources")]
+    pub resources: Option<GatewayResources>,
+}
+
+/// A Kubernetes container's CPU and memory requests and limits.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GatewayResources {
+    /// What the scheduler reserves for the gateway on its node. Each request must not exceed its limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "GatewayResourceList")]
+    pub requests: Option<GatewayResourceList>,
+    /// The most the gateway may use: Kubernetes throttles its CPU at the CPU limit, and restarts it after it exceeds the memory limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "GatewayResourceList")]
+    pub limits: Option<GatewayResourceList>,
+}
+
+/// Quantities of CPU and memory.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GatewayResourceList {
+    /// CPU in cores with up to three decimals, such as "1" or "0.5", or in millicores, such as 250m. Quote cores: YAML reads an unquoted 1 or 0.5 as a number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String")]
+    pub cpu: Option<String>,
+    /// Memory in whole mebibytes or gibibytes, such as 512Mi or 2Gi. Kubernetes reads a lowercase m as thousandths of a byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String")]
+    pub memory: Option<String>,
+}
+
+impl GatewayResourceList {
+    /// Millicores of a CPU quantity the schema accepted.
+    pub(crate) fn millicores(&self) -> Option<u64> {
+        let cpu = self.cpu.as_deref()?;
+        if let Some(millicores) = cpu.strip_suffix('m') {
+            return millicores.parse().ok();
+        }
+        let (cores, fraction) = cpu.split_once('.').unwrap_or((cpu, ""));
+        let fraction: u64 = format!("{fraction:0<3}").parse().ok()?;
+        cores
+            .parse::<u64>()
+            .ok()?
+            .checked_mul(1000)?
+            .checked_add(fraction)
+    }
+    /// Mebibytes of a memory quantity the schema accepted.
+    pub(crate) fn mebibytes(&self) -> Option<u64> {
+        let memory = self.memory.as_deref()?;
+        match memory.strip_suffix("Gi") {
+            Some(gibibytes) => gibibytes.parse::<u64>().ok()?.checked_mul(1024),
+            None => memory.strip_suffix("Mi")?.parse().ok(),
+        }
+    }
 }
 
 /// Publication of a managed cluster gateway's endpoint, through exactly one of `service` and `route`.

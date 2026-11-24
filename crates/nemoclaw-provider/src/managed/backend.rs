@@ -50,7 +50,11 @@ impl ManagedBackend {
             Some(storage) => storage.row()?,
             None => gateway_row(kind, row)?,
         };
-        for attribute in ["image_pull_policy", nemoclaw_sdk::managed::CONFIG_ATTRIBUTE] {
+        for attribute in [
+            "image_pull_policy",
+            nemoclaw_sdk::managed::CONFIG_ATTRIBUTE,
+            nemoclaw_sdk::managed::TELEMETRY_ATTRIBUTE,
+        ] {
             if let Some(value) = row.get(attribute) {
                 result.insert(attribute.into(), value.clone());
             }

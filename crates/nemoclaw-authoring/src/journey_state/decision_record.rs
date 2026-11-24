@@ -17,6 +17,9 @@ pub(super) struct DecisionRecord {
     pub(super) accepted_model_settings: BTreeSet<(usize, String)>,
     pub(super) omitted_model_settings: BTreeSet<(usize, String)>,
     pub(super) reopened_model_settings: BTreeMap<(usize, String), String>,
+    /// Questions the journey answered itself, such as an image question the
+    /// engine's one image for the harness settles, until the user answers them.
+    pub(super) defaulted: BTreeSet<String>,
 }
 
 impl DecisionRecord {
@@ -69,6 +72,7 @@ impl DecisionRecord {
         self.accepted.insert(id.into());
         self.targets.insert(id.into(), target.clone());
         self.reopened_by.remove(id);
+        self.defaulted.remove(id);
         if let QuestionTarget::ModelSetting { route, .. } = target {
             let key = (*route, id.to_owned());
             self.accepted_model_settings.insert(key.clone());

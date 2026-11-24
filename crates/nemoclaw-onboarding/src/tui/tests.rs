@@ -1651,6 +1651,63 @@ fn exactly_one_local_image_for_the_harness_is_chosen_without_asking_and_saved() 
     assert!(review.contains(HERMES_IMAGE), "{review}");
 }
 
+/// The only image on the engine for the harness is chosen without asking, but
+/// when the review's read finds it can't run the configuration, onboarding
+/// asks for the image again, says why, and doesn't choose it again (#14798).
+#[test]
+fn an_only_image_that_cannot_run_the_configuration_is_asked_for_with_the_reason() {
+    use nemoclaw_sdk::discovery::plan_queries;
+    use nemoclaw_sdk::fabric_capabilities::{CapabilityCheck, CompatibilityReport, Support};
+    const REJECTION: &str = "spec.sandboxes[assistant].harness.runtime.keep_state: the adapter does not declare that it keeps its state in an agent-named folder";
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[HERMES_IMAGE]));
+    while wizard.question().unwrap().is_some() {
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    }
+    let document = wizard
+        .resolution()
+        .unwrap()
+        .assessment()
+        .document()
+        .cloned()
+        .unwrap();
+    let image_query = plan_queries(&document)
+        .unwrap()
+        .into_iter()
+        .find(|query| matches!(query, DiscoveryQuery::Fabric(_)))
+        .unwrap();
+    wizard.record(
+        image_query,
+        DiscoveryObservation::Fabric(FabricObservation {
+            status: ObservationStatus::Available,
+            compatibility: Some(CompatibilityReport {
+                status: Support::Unsupported,
+                adapter_id: Some("nvidia.fabric.hermes".into()),
+                checks: vec![CapabilityCheck {
+                    requirement: "fabric_configuration".into(),
+                    status: Support::Unsupported,
+                    reason: REJECTION.into(),
+                }],
+            }),
+            ..FabricObservation::unknown("fixture")
+        }),
+    );
+    let question = wizard
+        .question()
+        .unwrap()
+        .expect("the image is asked for again");
+    assert_eq!(question.id(), IMAGE_QUESTION);
+    let note = question.note().unwrap_or_default();
+    assert!(
+        note.contains(HERMES_IMAGE) && note.contains(REJECTION),
+        "{note}"
+    );
+    let text = flat(&screen(&wizard, 160, 60));
+    assert!(text.contains("can't run this configuration"), "{text}");
+}
+
 /// The chosen image is only a default: going back from the next question asks
 /// for it, so the user can enter another image.
 #[test]

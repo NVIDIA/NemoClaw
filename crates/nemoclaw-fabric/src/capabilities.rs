@@ -79,8 +79,8 @@ fn overall(checks: &[CapabilityCheck]) -> Support {
 /// selected adapter, Fabric's own compatibility check accepts the configuration
 /// against that adapter's descriptor, and an explicit filesystem policy lets the
 /// adapter read its files. Whether the image's Fabric runtime is compatible is
-/// Fabric's to report when the agent starts, as is a workflow whose target the
-/// image's catalog doesn't describe.
+/// Fabric's to report when the agent starts, as is a workflow when the image's
+/// catalog records no workflow targets.
 pub fn assess_fabric(catalog: &FabricCatalog, request: &FabricRequirements) -> CompatibilityReport {
     let adapter_id = request
         .configuration
@@ -174,15 +174,18 @@ const CONFIGURATION: &str = "fabric_configuration";
 /// the image's adapter descriptor. Fabric decides what its adapters accept, so
 /// this reports each issue it finds, with the field the user wrote where the
 /// request records one, instead of repeating any of its rules. A workflow needs
-/// its target's descriptor; when the image's catalog has none, the check is left
-/// to Fabric when the agent starts.
+/// its target's descriptor, which the image's catalog registers by ID; whether
+/// the target suits the adapter is Fabric's to decide. A target the catalog
+/// doesn't register is unsupported, unless the catalog registers no targets at
+/// all. Such a catalog may predate workflow targets, so the check is left to
+/// Fabric when the agent starts.
 fn configuration_checks(
     catalog: &FabricCatalog,
     adapter: &crate::catalog::FabricAdapter,
     request: &FabricRequirements,
 ) -> Vec<CapabilityCheck> {
     use nemo_fabric_core::{
-        AdapterDescriptor, FabricConfig, FabricError, ResolvedAdapterTargetDescriptor,
+        AdapterDescriptor, AdapterTargetDescriptor, FabricConfig, FabricError,
         inspect_adapter_config,
     };
     let unsupported = |reason: &str| CapabilityCheck {
@@ -190,7 +193,10 @@ fn configuration_checks(
         status: Support::Unsupported,
         reason: reason.into(),
     };
-    let Ok(config) = serde_json::from_value::<FabricConfig>(request.configuration.clone()) else {
+    // The configuration this image's adapter would run, as the agent sends it.
+    let mut configuration = request.configuration.clone();
+    crate::agent::fit_to_adapter(&mut configuration, &adapter.descriptor);
+    let Ok(config) = serde_json::from_value::<FabricConfig>(configuration) else {
         return vec![unsupported(
             "configuration: is not a valid Fabric configuration",
         )];
@@ -205,14 +211,27 @@ fn configuration_checks(
         None => None,
         Some(workflow) => {
             let found = catalog.targets.iter().find_map(|target| {
-                serde_json::from_value::<ResolvedAdapterTargetDescriptor>(target.clone())
+                serde_json::from_value::<AdapterTargetDescriptor>(target["descriptor"].clone())
                     .ok()
-                    .map(|resolved| resolved.descriptor)
                     .filter(|target| target.id == workflow.target_id)
             });
+            let field = authored_field(&request.provenance, "workflow.target_id");
             match found {
                 Some(target) => Some(target),
-                None => return Vec::new(),
+                None if catalog.targets.is_empty() => {
+                    return vec![CapabilityCheck {
+                        requirement: CONFIGURATION.into(),
+                        status: Support::Unknown,
+                        reason: format!(
+                            "{field}: the image's catalog records no workflow targets; Fabric checks the workflow when the agent starts"
+                        ),
+                    }];
+                }
+                None => {
+                    return vec![unsupported(&format!(
+                        "{field}: the image does not register the selected workflow target"
+                    ))];
+                }
             }
         }
     };

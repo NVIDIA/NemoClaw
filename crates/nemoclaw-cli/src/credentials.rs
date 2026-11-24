@@ -18,6 +18,23 @@ impl std::error::Error for FulfillmentError {}
 
 #[derive(Debug, Default)]
 struct TransientSecrets(BTreeMap<String, String>);
+impl TransientSecrets {
+    /// Adds the unresolved references that `environment` sets, without
+    /// asking for the others.
+    fn add_available<'a>(
+        &mut self,
+        references: impl IntoIterator<Item = &'a str>,
+        mut environment: impl FnMut(&str) -> Option<String>,
+    ) {
+        for reference in references {
+            if !self.0.contains_key(reference)
+                && let Some(value) = environment(reference).filter(|value| !value.is_empty())
+            {
+                self.0.insert(reference.to_owned(), value);
+            }
+        }
+    }
+}
 impl Secrets for TransientSecrets {
     fn resolve(&self, reference: &str) -> Result<String, ObservationError> {
         self.0
@@ -125,8 +142,12 @@ impl EchoGuard {
     }
 }
 
+/// Resolves the `required` references from the environment or by asking, and
+/// the document's other references that the environment sets. The SDK
+/// reports a missing one that the operation doesn't read as deferred.
 pub(crate) async fn fulfill<R: AsyncBufRead + Unpin>(
     document: &Document,
+    required: Vec<&str>,
     non_interactive: bool,
     can_prompt: bool,
     lines: &mut Lines<R>,
@@ -141,30 +162,40 @@ pub(crate) async fn fulfill<R: AsyncBufRead + Unpin>(
     } else {
         PromptMode::Visible
     };
-    Ok(Arc::new(
-        fulfill_references(
-            document.credential_names(),
-            non_interactive,
-            |name| std::env::var(name).ok(),
-            prompt_mode,
-            lines,
-            &mut stderr,
-            cancel,
-        )
-        .await?,
-    ))
+    let mut secrets = fulfill_references(
+        required,
+        non_interactive,
+        |name| std::env::var(name).ok(),
+        prompt_mode,
+        lines,
+        &mut stderr,
+        cancel,
+    )
+    .await?;
+    secrets.add_available(document.credential_names(), |name| std::env::var(name).ok());
+    Ok(Arc::new(secrets))
 }
 
 pub(crate) async fn attach<R: AsyncBufRead + Unpin>(
     deployment: Deployment,
     document: &Document,
+    required: Vec<&str>,
     non_interactive: bool,
     can_prompt: bool,
     lines: &mut Lines<R>,
     cancel: &CancellationToken,
 ) -> Result<Deployment, Box<dyn std::error::Error>> {
-    Ok(deployment
-        .with_secrets(fulfill(document, non_interactive, can_prompt, lines, cancel).await?))
+    Ok(deployment.with_secrets(
+        fulfill(
+            document,
+            required,
+            non_interactive,
+            can_prompt,
+            lines,
+            cancel,
+        )
+        .await?,
+    ))
 }
 
 async fn fulfill_references<'a, R, I, E>(
@@ -365,6 +396,37 @@ mod tests {
         );
         assert!(error.to_string().contains("API_KEY"));
         assert!(prompts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn references_the_command_does_not_read_come_only_from_the_environment() {
+        let mut prompts = Vec::new();
+        let mut input = tokio::io::BufReader::new(&b"gateway-secret\n"[..]).lines();
+        let mut resolver = fulfill_references(
+            ["GATEWAY_KEY"],
+            false,
+            |_| None,
+            PromptMode::Visible,
+            &mut input,
+            &mut prompts,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        resolver.add_available(["GATEWAY_KEY", "INFERENCE_KEY", "SEARCH_KEY"], |name| {
+            (name != "SEARCH_KEY").then(|| format!("environment-{name}"))
+        });
+
+        assert_eq!(
+            String::from_utf8(prompts).unwrap(),
+            "Credential for GATEWAY_KEY: "
+        );
+        assert_eq!(resolver.resolve("GATEWAY_KEY").unwrap(), "gateway-secret");
+        assert_eq!(
+            resolver.resolve("INFERENCE_KEY").unwrap(),
+            "environment-INFERENCE_KEY"
+        );
+        assert!(resolver.resolve("SEARCH_KEY").is_err());
     }
 
     #[cfg(unix)]

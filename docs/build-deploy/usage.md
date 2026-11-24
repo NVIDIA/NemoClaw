@@ -226,7 +226,7 @@ Values resolved through credential references stay out of configuration, plans, 
 This guarantee doesn't apply to literal container environment settings.
 OpenShell stores installed provider credentials for routing.
 Removing the local variable doesn't revoke them.
-Rotation under an unchanged reference isn't detected automatically.
+Apply detects a new value behind an unchanged inference, web search, or API reference and registers it; see [rotating credentials](../security/credential-rotation.md).
 
 The SDK and provider child process need access to referenced credentials during operations.
 Remove caller-owned environment values and TLS files when you no longer need them.
@@ -397,7 +397,8 @@ Check whether the desired edit updates a running resource, replaces it, or requi
 | External inference endpoint, provider implementation, or authenticated or anonymous mode | Changes a selected provider's profile and registration; a change to a sandbox's launch specification replaces the sandbox |
 | Harness adapter, sandbox image, driver configuration, agent identity, or provider attachments | Replaces the sandbox, deleting its files and conversations |
 | Service exposures | Updates the sandbox's endpoints in place; the sandbox keeps its files and conversations |
-| Sandbox network policy | Replaces the sandbox, deleting its files and conversations (except on mounted volumes); see [policy changes](../security/sandbox-network.md#verifying-and-changing-the-configuration) |
+| Sandbox network rules, middleware bindings, or grants | Updates the running sandbox's policy in place; the sandbox keeps its files and conversations, and connections it opened under the previous rules close; see [policy changes](../security/sandbox-network.md#verifying-and-changing-the-configuration) |
+| Sandbox policy's filesystem, Landlock, or process settings, or a policy APF governs | Replaces the sandbox, deleting its files and conversations (except on mounted volumes); see [policy changes](../security/sandbox-network.md#verifying-and-changing-the-configuration) |
 | Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](../agents-inference/inference.md#setting-container-limits-and-update-policy), and [model constraints](../agents-inference/models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation can replace the proxy container while retaining its independently bound credential storage |
 | Deployment UID, gateway management or target, established gateway port or endpoint, or bound credential or gateway engine | Can't retarget the existing state; create a separate deployment, and for another target, see [Adapting a Document to Another Target](#adapting-a-document-to-another-target) |
@@ -405,7 +406,7 @@ Check whether the desired edit updates a running resource, replaces it, or requi
 | Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |
 | Remove a sandbox | Deletes it, with its files and conversations |
 | Remove retained storage or a protected gateway binding | Apply refuses removal; assess a separate deployment and explicit retirement of the original |
-| Change a credential value behind the same environment reference | Unchanged apply doesn't detect rotation; see [credential lifecycle](../security/security.md#credentials-and-authentication) |
+| Change an inference, web search, or API credential value behind the same environment reference | Apply updates the registration with the new value and replaces each sandbox that attaches it, deleting that sandbox's files and conversations except on mounted volumes. Plan doesn't read the value, so it shows no change; see [rotating credentials](../security/credential-rotation.md) |
 
 Apply starts a stopped runtime again in its sandbox.
 See [agent runtimes during apply](#agent-runtimes-during-apply).
@@ -634,7 +635,7 @@ This procedure applies to managed Kubernetes and OpenShift deployments.
 NemoClaw installs the gateway release atomically: when the install fails or Helm's 600-second wait times out, Helm uninstalls the release before the apply returns, and the apply's error carries Helm's reason.
 The namespace, credential key, and the gateway's volume claims stay.
 Helm removes the gateway's pods with the release, so to see why the gateway didn't become ready, read its pods' events and logs while the apply waits.
-Correct the cause, such as a missing default StorageClass or an unreachable OIDC issuer, then apply again.
+Correct the cause, such as a missing StorageClass or an unreachable OIDC issuer, then apply again.
 
 After a first interrupt, the apply waits for the install to finish or for Helm to uninstall it.
 A second interrupt, a crash, or a killed process can stop the install before then, which leaves the release `pending-install` in the cluster without a binding in the state.

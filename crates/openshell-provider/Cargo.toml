@@ -30,7 +30,9 @@ nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 nemoclaw-provider = { path = "../nemoclaw-provider", optional = true }
 nemoclaw-sdk = { path = "../nemoclaw-sdk", optional = true }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
+argon2.workspace = true
 async-trait.workspace = true
+getrandom.workspace = true
 openshell-core.workspace = true
 prost-types.workspace = true
 openshell-policy.workspace = true

@@ -41,9 +41,12 @@ Known engine incompatibility or conflicting image platform, manifest digest, or 
 The [onboarding guide](../../crates/nemoclaw-onboarding/README.md) describes how to run it, what it reads from the target, and what to do with the saved file.
 
 Plan and apply derive credential requirements from the parsed document.
-They use a matching nonempty environment variable first and prompt only for unresolved references.
+Apply requires every credential reference.
+Plan requires only the gateway, cluster, and image metadata references, which it reads.
+It takes inference, web search, and API integration credentials from the environment when they are set, and reports a missing one as deferred work.
+Each command uses a matching nonempty environment variable first and prompts only for unresolved required references.
 Terminal prompts hide entered values.
-When configuration is read from stdin, all credential references must already be satisfied by nonempty environment variables because stdin is occupied by the document stream.
+When configuration is read from stdin, the required references must already be satisfied by nonempty environment variables because stdin is occupied by the document stream.
 The CLI retains collected values only in memory for the current operation and supplies them through the SDK secrets boundary.
 Use `--non-interactive` with plan or apply to fail with the unresolved reference names instead of prompting.
 Credential values are not written to desired state, output, diagnostics, or deployment state by this fulfillment step.
@@ -61,7 +64,7 @@ Each option applies to the commands in its scope:
 | `--progress MODE` | All commands | `auto` (default) selects inline terminal progress or plain redirected output. `plain` disables animation. `off` suppresses progress. |
 | `--output FILE`, `-o FILE` | `export`, `onboard` | Write YAML to a file. Onboarding requires a new file. |
 | `--output FORMAT`, `-o FORMAT` | `plan`, `apply`, `destroy` | Select `text` (default) or `json`, including destroy previews. |
-| `--non-interactive` | `plan`, `apply` | Resolve credential references from nonempty environment variables and fail instead of prompting when any remain unresolved. |
+| `--non-interactive` | `plan`, `apply` | Resolve credential references from nonempty environment variables and fail instead of prompting when a required reference remains unresolved. |
 | `--destroy` | `plan` | Preview destroy. Cannot be combined with a YAML input. |
 | `--help`, `-h` | CLI and subcommands | Display help. |
 | `--version`, `-V` | CLI | Display the CLI version. |

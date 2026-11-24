@@ -34,7 +34,7 @@ The other sections of Fabric's agent configuration go where they belong, under F
 
 Sandboxes that share a harness definition through `harnessRef` share its `runtime` and `telemetry`, and each agent keeps its own instructions, tools, and skills.
 The [travel team example](../../examples/travel-team.yaml) gives four researchers one harness definition and each its own instructions.
-The deployment sets the configuration's `metadata`, `harness`, and `models`, `runtime.artifacts`, `runtime.keep_state` for adapters that accept it, and `environment.provider` and `environment.workspace`.
+The deployment sets the configuration's `metadata`, `harness`, and `models`, `runtime.artifacts`, `runtime.keep_state` where both the CLI's Fabric catalog and the image's adapter accept it, and `environment.provider` and `environment.workspace`.
 An authored section that sets one of those fields to another value fails planning.
 See [the SDK configuration projection](../../crates/nemoclaw-sdk/src/fabric_config.rs) for the deployment boundary.
 
@@ -452,7 +452,7 @@ Hermes's Brave plugin, for example, reads `BRAVE_SEARCH_API_KEY`:
 
 Exported YAML and OpenTofu state retain the host reference, not its value.
 Destroy removes the owned provider and profile without revoking the upstream key.
-Unchanged apply doesn't rotate a changed value behind an unchanged reference.
+Apply registers a new value behind an unchanged reference and replaces the sandboxes that use the search; see [rotating credentials](../security/credential-rotation.md).
 Follow [credential retirement](../security/security.md#credentials-and-authentication) when replacing or revoking the key.
 
 The profile admits only the search requests the harness's executables make: Brave's `GET /res/v1/web/search`, or Tavily's `POST /search` and `POST /extract`.

@@ -44,6 +44,28 @@ Plan and apply:
   Before, apply failed after creating the gateway, which remained until destroy.
 - Plan and the `nemoclaw onboard` review report an agent image that the engine doesn't hold as not present, and link the [agent image build instructions](../../docs/build-deploy/build.md#building-agent-images).
   See [pulling from private registries](../../docs/build-deploy/usage.md#pulling-from-private-registries).
+- Apply detects a new value behind an unchanged inference, web search, or API credential reference, and registers it ([#14803](https://github.com/NVIDIA/NemoClaw/issues/14803)).
+  The OpenShell provider records an Argon2id digest of each value it registers as the registration's `credential_digest`; a plan that reads another value updates the registration in place, and the deployment replaces each sandbox that attaches the registration, so its agent starts with the new value.
+  See [rotating credentials](../../docs/security/credential-rotation.md).
+  `nemoclaw plan` doesn't read these credentials, so it shows no change for a new value, and a recreated registration now also replaces the sandboxes that attach it.
+  Before, apply reported no resource changes, and running agents kept the old value until their sandboxes were replaced for another reason.
+- An agent image whose adapter doesn't accept `runtime.keep_state`, such as one built from another Fabric revision than the CLI's, plans and runs without it ([#14798](https://github.com/NVIDIA/NemoClaw/issues/14798)).
+  Each of its runtimes gets its own state folder.
+  Before, plan and the `nemoclaw onboard` review rejected it over `harness.runtime.keep_state`, a field the configuration doesn't need to set.
+- When the only image on the engine for the chosen harness can't run the configuration, `nemoclaw onboard` asks for the image again and says why, instead of choosing that image without asking.
+- Plan and apply no longer fail with `managed runtime environment drifted` when `NEMOCLAW_DISABLE_TELEMETRY` differs from the value a Podman gateway was created with.
+  NemoClaw records the gateway's OpenShell telemetry setting when it plans the deployment, so the next plan with the other value replaces the gateway and keeps its storage, as it does for a Docker gateway.
+- A gateway NemoClaw manages sends no OpenShell telemetry when a CI variable such as `CI=true` is set, as NemoClaw's own record already didn't.
+  Before, only `NEMOCLAW_DISABLE_TELEMETRY` turned it off, so CI runs reported gateway telemetry.
+
+Gateways:
+
+- A managed `kubernetes` or `openshift` gateway takes `dataStorageClass`, the StorageClass of its data volume, and `resources`, its container's CPU and memory requests and limits, which the chart takes as written ([#14588](https://github.com/NVIDIA/NemoClaw/issues/14588)).
+  See [Choosing the Gateway's StorageClass and Resources](../../docs/build-deploy/kubernetes.md#choosing-the-gateways-storageclass-and-resources).
+  Plan refuses a changed `dataStorageClass` on an existing deployment, memory in units other than whole `Mi` or `Gi`, and a request above its limit.
+  Before, the volume took the cluster's default StorageClass, and the gateway always requested 250m CPU and 256Mi and was limited to 1 CPU and 2Gi.
+- On the `openshift` target, the shared supervisor that `supervisor_topology = "gateway"` selects also leaves its UID, group, and `fsGroup` to OpenShift, as the gateway does.
+  Before, the chart ran it as UID and group 65534, which `restricted-v2` refuses.
 
 ### Changes in v0.1.0-rc12
 
@@ -355,7 +377,22 @@ See [migration](../../docs/get-started/migration.md) for where each earlier task
 
 ### Breaking Changes Since v0.1.0-rc12
 
-No change since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affects existing deployments or documents yet.
+These changes since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affect existing deployments or documents:
+
+- The intent record is now version 33, so this release refuses any deployment that `v0.1.0-rc12` or an earlier build of this branch created, without changing its state.
+  Destroy each one with the bundle that created it, then create it again with this release.
+  See [compatibility](../../docs/references/compatibility.md#deployment-state).
+- Agent images register the Fabric workflow targets they install, so plan checks a sandbox with a `workflow` against Fabric's compatibility check too ([#14600](https://github.com/NVIDIA/NemoClaw/issues/14600)).
+  A document that sets a field the workflow's adapter doesn't accept, such as a route's `maxTokens` for NOOA, or a `workflow.target_id` the image doesn't register, now fails plan naming that field.
+  Before, plan passed it and the agent failed to start after apply created resources.
+  With an image built before this change, whose catalog lists no workflow targets, plan reports the image's Fabric capabilities as unverified and Fabric checks the configuration when the agent starts.
+- Plan rejects a sandbox's `driverConfig` on a managed gateway whose `spec.gateway.config` doesn't set `allow_driver_config: true` in the compute driver's table, such as `openshell.drivers.docker`, naming the sandbox's `driverConfig` ([#14781](https://github.com/NVIDIA/NemoClaw/issues/14781)); editors that use the configuration schema show it too.
+  An empty `driverConfig` is still accepted.
+  Before, plan passed it and OpenShell refused the sandbox during apply, after other resources were created.
+- In HCL, `openshell_sandbox` requires `owner`, its workspace's owner, such as `owner = openshell_workspace.example.owner`, and plan rejects a sandbox without it.
+  Before, the provider generated an owner that never matched the workspace's, so apply failed.
+  Plan also rejects a sandbox policy that OpenShell's validator refuses, a sandbox that attaches more than 32 registrations, and an `openshell_inference` without a supported `api`, `server`, or `binaries`, while the workspace's owner or generation is still to be generated. Each error names the attribute and the reason.
+  Before, these passed plan and failed during apply.
 
 ### Breaking Changes in v0.1.0-rc12
 

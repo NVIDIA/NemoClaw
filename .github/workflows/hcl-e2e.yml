@@ -382,6 +382,13 @@ jobs:
           if [[ -x $NEMOCLAW_HCL_RUN/e2e ]]; then executable="$NEMOCLAW_HCL_RUN/e2e"; fi
           "$executable" hcl_live::docker_cleanup --exact --ignored --nocapture
           test "$destroyed" = true
+      - name: Release this run's cached model mount
+        if: always() && inputs.target == 'dgx-station'
+        run: |
+          [[ -n ${NEMOCLAW_HCL_RUN:-} && -f ${NEMOCLAW_HCL_DOCUMENT:-} ]] || exit 0
+          executable="$GITHUB_WORKSPACE/.build/e2e"
+          if [[ -x $NEMOCLAW_HCL_RUN/e2e ]]; then executable="$NEMOCLAW_HCL_RUN/e2e"; fi
+          "$executable" hcl_live::model_cache_cleanup --exact --ignored --nocapture
       # Reports hold outcomes only; requests, replies, state, and credentials stay on the runner.
       - name: Upload observations and cleanup receipt
         if: always()

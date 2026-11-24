@@ -82,6 +82,72 @@ pub(super) fn loaded_policy_contains(
     Ok(policy_json(&comparable)? == policy_json(&declared)?)
 }
 
+/// The settings a sandbox starts with, which OpenShell never changes on a
+/// running one: everything in its policy but its network rules and
+/// middleware bindings.
+pub(super) fn startup_settings(policy: &proto::SandboxPolicy) -> Result<String, ObservationError> {
+    policy_json(&proto::SandboxPolicy {
+        network_policies: Default::default(),
+        network_middlewares: Default::default(),
+        ..policy.clone()
+    })
+}
+
+/// Whether a change to `field` replaces the sandbox. OpenShell changes a
+/// running sandbox's network rules and middleware bindings in place, as
+/// `openshell policy set` does, but applies the rest of its policy only when
+/// it starts. So a policy change replaces the sandbox when it changes its
+/// startup settings, when APF governs its policy, or when either policy isn't
+/// known yet.
+pub(super) fn policy_changes(
+    field: &str,
+    prior: &nemoclaw_tofu::State,
+    proposed: &nemoclaw_tofu::State,
+) -> bool {
+    use tf_provider::value::Value;
+    let startup = |state: &nemoclaw_tofu::State| -> Option<String> {
+        let value = |field: &str| match state.get(field) {
+            Some(Value::Value(value)) => Some(value.as_str()),
+            Some(Value::Null) | None => Some(""),
+            Some(Value::Unknown) => None,
+        };
+        if !value(crate::POLICY_AUTHORITY)?.is_empty() {
+            return None;
+        }
+        let launch = nemoclaw_openshell::runtime::Launch::from_json(value("launch_json")?).ok()?;
+        let input = serde_json::from_str(value("policy_json")?).ok()?;
+        startup_settings(&launch.policy(&input).ok()?).ok()
+    };
+    field == "policy_json"
+        && match (startup(prior), startup(proposed)) {
+            (Some(prior), Some(proposed)) => prior != proposed,
+            _ => true,
+        }
+}
+
+/// The policy that changes a running sandbox's network rules to `declared`'s:
+/// `declared` with the filesystem paths of `loaded`, the policy the sandbox
+/// holds now, so the new revision keeps the paths OpenShell added when the
+/// sandbox started, as OpenShell's guide to `openshell policy set` asks. The
+/// sandbox must hold `declared`'s other settings.
+pub(super) fn updated_policy(
+    loaded: &proto::SandboxPolicy,
+    mut declared: proto::SandboxPolicy,
+) -> Result<proto::SandboxPolicy, ObservationError> {
+    let mut started = loaded.clone();
+    started
+        .network_policies
+        .clone_from(&declared.network_policies);
+    started
+        .network_middlewares
+        .clone_from(&declared.network_middlewares);
+    if !loaded_policy_contains(&started, &policy_json(&declared)?)? {
+        return Err(ObservationError::BindingMismatch);
+    }
+    declared.filesystem.clone_from(&loaded.filesystem);
+    Ok(declared)
+}
+
 pub(super) fn row_policy(row: &Row) -> Result<proto::SandboxPolicy, ObservationError> {
     agent::launch(row)?.policy(&policy_input(row)?)
 }
@@ -90,29 +156,83 @@ pub(super) fn validate_row_policy(row: &Row) -> Result<(), ObservationError> {
     row_policy(row).map(|_| ())
 }
 
-/// Managed grants are named in OpenShell's policy, so their names must be
-/// unique; checked when planning, while names are known.
-pub(super) fn validate_grant_names(
+/// A sandbox's inputs that OpenShell would refuse, checked when planning once
+/// they're known, even while its owner or generation are still to be
+/// generated: the registrations it attaches, and its policy, merged with the
+/// launch's as creation merges them, against OpenShell's pinned validator.
+pub(super) fn validate_sandbox_inputs(
     known: &Row,
     unknown: &[&str],
-) -> Result<(), std::borrow::Cow<'static, str>> {
-    let Some(encoded) = known.get("policy_json").filter(|value| !value.is_empty()) else {
+) -> Result<(), nemoclaw_tofu::InputError> {
+    use nemoclaw_tofu::InputError;
+    let given = |field: &str| {
+        known
+            .get(field)
+            .filter(|value| !value.is_empty() && !unknown.contains(&field))
+    };
+    if let Some(names) = given("provider_names_json") {
+        let limit = nemoclaw_openshell::SANDBOX_PROVIDERS;
+        if serde_json::from_str::<Vec<serde_json::Value>>(names)
+            .is_ok_and(|names| names.len() > limit)
+        {
+            return Err(InputError::at(
+                "provider_names_json",
+                format!("OpenShell attaches at most {limit} registrations to one sandbox"),
+            ));
+        }
+        inference::provider_names(names).map_err(|_| {
+            InputError::at(
+                "provider_names_json",
+                "providers must not attach a registration twice",
+            )
+        })?;
+    }
+    let Some(encoded) = given("policy_json") else {
         return Ok(());
     };
-    if unknown.contains(&"policy_json") {
-        return Ok(());
-    }
-    let input: nemoclaw_openshell::runtime::PolicyInput =
-        serde_json::from_str(encoded).map_err(|_| "policy is not a valid sandbox policy")?;
+    let input: nemoclaw_openshell::runtime::PolicyInput = serde_json::from_str(encoded)
+        .map_err(|_| InputError::at("policy_json", "policy is not a valid sandbox policy"))?;
+    // Managed grants are named in OpenShell's policy, so their names must be
+    // unique.
     if input.has_duplicate_grant() {
-        return Err("policy grants must have unique names".into());
+        return Err(InputError::at(
+            "policy_json",
+            "policy grants must have unique names",
+        ));
     }
+    // The launch's policy applies unless the sandbox authors one.
+    let Some(launch) = given("launch_json") else {
+        return Ok(());
+    };
+    let launch = nemoclaw_openshell::runtime::Launch::from_json(launch).map_err(|_| {
+        InputError::at(
+            "launch_json",
+            "launch_json is not a valid launch: a command, environment, policy, and absolute executables",
+        )
+    })?;
+    let policy = launch.merged_policy(&input).map_err(|_| {
+        InputError::at(
+            "policy_json",
+            "policy grants must not take the name of a network rule the policy declares",
+        )
+    })?;
+    policy.to_proto().map_err(|error| {
+        // The authored explicit policy replaces the launch's; managed grants
+        // join either.
+        if input.explicit.is_some() {
+            InputError::at("policy_json", error.0).within(&["explicit"])
+        } else if !input.managed.is_empty() {
+            InputError::at("policy_json", error.0).within(&["managed"])
+        } else {
+            InputError::at("launch_json", error.0)
+        }
+    })?;
     Ok(())
 }
 
 #[cfg(test)]
 mod grant_name_tests {
-    use super::validate_grant_names;
+    use super::validate_sandbox_inputs;
     use serde_json::json;
 
     fn row(managed: serde_json::Value) -> nemoclaw_tofu::Row {
@@ -129,13 +249,18 @@ mod grant_name_tests {
 
     #[test]
     fn grants_need_unique_names() {
-        assert!(validate_grant_names(&row(json!([grant("model"), grant("search")])), &[]).is_ok());
-        let error =
-            validate_grant_names(&row(json!([grant("model"), grant("model")])), &[]).unwrap_err();
-        assert_eq!(error, "policy grants must have unique names");
+        assert!(
+            validate_sandbox_inputs(&row(json!([grant("model"), grant("search")])), &[]).is_ok()
+        );
+        let error = validate_sandbox_inputs(&row(json!([grant("model"), grant("model")])), &[])
+            .unwrap_err();
+        assert_eq!(
+            error,
+            nemoclaw_tofu::InputError::at("policy_json", "policy grants must have unique names")
+        );
         // Unknown policies are checked once known.
         assert!(
-            validate_grant_names(
+            validate_sandbox_inputs(
                 &row(json!([grant("model"), grant("model")])),
                 &["policy_json"]
             )

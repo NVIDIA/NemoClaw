@@ -138,7 +138,36 @@ impl Document {
     pub fn inference_endpoint(&self) -> Result<String, ConfigError> {
         Ok(self.inference_connection()?.endpoint)
     }
+    /// Every credential reference. Apply resolves them all before it changes
+    /// anything.
     pub fn credential_names(&self) -> Vec<&str> {
+        let mut names = self.plan_credential_names();
+        if let Ok(providers) = self.selected_inference_providers() {
+            for provider in providers {
+                if let Some(credential) = &provider.credential {
+                    names.push(credential.env.as_str());
+                }
+            }
+        }
+        for sandbox in self.sandboxes() {
+            for binding in sandbox
+                .integration_bindings(&self.spec.integrations)
+                .expect("validated integration references")
+            {
+                match binding.definition {
+                    Integration::WebSearch(search) => names.push(&search.credential.env),
+                    Integration::Api(api) => names.push(&api.credential.env),
+                }
+            }
+        }
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+    /// The references plan reads: the gateway's, the cluster's, and image
+    /// metadata files. Only apply reads inference and integration credentials,
+    /// when it registers their providers, so plan defers a missing one.
+    pub fn plan_credential_names(&self) -> Vec<&str> {
         let g = &self.spec.gateway;
         let mut names = Vec::new();
         if let Some(kubernetes) = g.as_kubernetes() {
@@ -163,25 +192,9 @@ impl Document {
         if let Some(tls) = g.managed_apf().and_then(|apf| apf.tls.as_ref()) {
             names.push(tls.ca.env.as_str());
         }
-        if let Ok(providers) = self.selected_inference_providers() {
-            for provider in providers {
-                if let Some(credential) = &provider.credential {
-                    names.push(credential.env.as_str());
-                }
-            }
-        }
         for sandbox in self.sandboxes() {
             if let Some(metadata) = &sandbox.definition.image.metadata {
                 names.push(metadata.env.as_str());
-            }
-            for binding in sandbox
-                .integration_bindings(&self.spec.integrations)
-                .expect("validated integration references")
-            {
-                match binding.definition {
-                    Integration::WebSearch(search) => names.push(&search.credential.env),
-                    Integration::Api(api) => names.push(&api.credential.env),
-                }
             }
         }
         names.sort_unstable();

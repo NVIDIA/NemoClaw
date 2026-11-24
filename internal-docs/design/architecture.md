@@ -54,11 +54,11 @@ The native bundle includes the pinned Helm provider; no Helm CLI is required.
 | OpenTofu | Execute dependencies and retain each provider's resource state |
 | OpenShell provider | Bind or create and retain the namespace, and create and retain the encryption key; prepare and remove the development issuer; verify object identities and gateway readiness |
 | Helm provider | Install, upgrade, and remove the pinned OpenShell chart release, using the prepared namespace and credentials |
-| Platform operator | Install and maintain Agent Sandbox, the default StorageClass, and OpenShift security prerequisites |
+| Platform operator | Install and maintain Agent Sandbox, the gateway volume's StorageClass, and OpenShift security prerequisites |
 
 The OpenShell provider does not install or remove the chart, and the Helm release cannot create or adopt the namespace or take ownership of existing resources.
 Before Helm can change the release, NemoClaw verifies retained Kubernetes identities; after installation, it records the StatefulSet identity and observes readiness.
-For OpenShift, the chart values leave the gateway's UID and `fsGroup` unset, so OpenShift's security context constraint assigns them from the namespace's range.
+For OpenShift, the chart values leave the gateway's UID and `fsGroup`, and a shared supervisor's UID, group, and `fsGroup`, unset, so OpenShift's security context constraint assigns them from the namespace's range.
 Teardown reverses that order, removes the release before the issuer, and retains the namespace, encryption key, and persistent volumes.
 Before teardown accepts a missing release, the authentication resource must independently confirm that its Helm release records are absent.
 The SDK also checkpoints an established release binding before removal because the pinned Helm provider can forget it after a failed lookup.

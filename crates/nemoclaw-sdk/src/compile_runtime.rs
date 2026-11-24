@@ -90,6 +90,7 @@ fn runtime_targets_with_plans(
         gateway: settings.runtime_settings(),
         image: crate::config::DEFAULT_GATEWAY_IMAGE.into(),
         process: None,
+        telemetry: Some(crate::managed::gateway_telemetry_enabled()),
     };
     // The listen port changes Docker compute, not initialized data or credentials.
     let storage = gateway.storage();

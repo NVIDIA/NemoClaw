@@ -134,8 +134,11 @@ Other inputs are typed too:
   The block's attributes and blocks follow the sandbox policy model with snake_case names: an optional `explicit` policy, whose named network rules are labeled blocks, and `managed` deployment grants, a list of blocks with unique `name`s.
   Because grants are unlabeled, a `dynamic "managed"` block can generate them in a sandbox that uses `for_each`. OpenTofu requires the labels of dynamic blocks to be known when it validates, before `each.key` is.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
+  Changing network rules, middleware bindings, or grants updates the sandbox in place, as `openshell policy set` does: the sandbox keeps its files and agent, and connections it opened under the previous rules close.
+  OpenShell applies filesystem, Landlock, and process settings only when a sandbox starts, so changing them replaces the sandbox, as does any change to a policy APF governs.
+  Plan checks the policy, merged with the launch's policy and managed grants as creation merges them, with OpenShell's pinned policy validator, and names the block that holds it and the reason it fails.
 - `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
-  OpenShell attaches at most 32 to one sandbox and refuses to create a sandbox with more.
+  OpenShell attaches at most 32 to one sandbox, so plan rejects a sandbox with more.
 - `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables that managed endpoint grants naming none allow.
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox. It does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
@@ -148,14 +151,19 @@ Other inputs are typed too:
   Adding, changing, or removing a block updates the sandbox in place, as `openshell service expose` and `openshell service delete` do. So does a declared endpoint observed differently on the gateway. Endpoints under other names stay as they are.
 - The computed `policy_hash` is the hash OpenShell reports for the sandbox's loaded policy, including paths OpenShell adds itself. It is recorded when the policy first loads with every declared rule intact. A different hash later is drift.
   Creating a sandbox waits, within the 120-second startup deadline, for it to load its policy, so a policy changed after the first apply is drift. A sandbox that has not loaded one by then, one that exited, and one whose configuration OpenShell rejected are recorded without a hash, and the next apply that finds the policy loaded records it.
+  A plan that changes the network rules leaves the hash unknown. The update sends the declared rules with the loaded policy's filesystem paths, OpenShell's own included, and waits the same way for the sandbox to load them. If the sandbox fails to load the new policy, the update restores the previous one and fails.
+  A hash that changed together with the policy input the sandbox records, as after an update whose reply was lost, is recorded rather than reported as drift.
 - The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry. A plan that changes the `service` blocks leaves it unknown until apply.
-- `owner` and `generation` are optional. When omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
+- `openshell_sandbox` requires `owner`, the owner of its workspace, such as `openshell_workspace.example.owner`; plan rejects a sandbox without it.
+  The other resources' `owner` and `generation`, and the sandbox's `generation`, are optional. When omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
+  Inference and API credential resources take their workspace's owner from its `ref`.
 
 ```hcl
 resource "openshell_sandbox" "assistant" {
   gateway      = data.openshell_gateway.current.ref
   workspace    = openshell_workspace.example.ref
   name         = "assistant"
+  owner        = openshell_workspace.example.owner
   image        = var.image
   launch_json  = data.fabric_harnesses.assistant.launch_json
   providers    = [openshell_inference.local.ref]
@@ -195,7 +203,7 @@ It takes:
 
 Plans reject a missing `server` or `binaries`.
 The schema lists them as optional so that when one of the two OpenShell objects disappears, the next plan shows drift.
-A rotated credential reference updates the registration in place. Adding or removing authentication, or any other change, replaces the resource, and removal deletes both objects.
+A rotated credential reference, or a new value behind the same `credential_env`, updates the registration in place, as [credential digests](#credential-digests) describes. Adding or removing authentication, or any other change, replaces the resource, and removal deletes both objects.
 A sandbox that attaches it also needs a policy that allows traffic to the server's endpoint.
 Its `ref` has type `openshell_provider`, so sandboxes take it in `providers`.
 Generated graphs register each selected inference provider this way, passing a literal `inference_server` object built from the provider definition rather than a readiness read's `ref`.
@@ -277,7 +285,7 @@ A DNS name receives no private-network grant.
 `binaries` must list the absolute paths of the callers allowed to use the credential.
 
 The provider resolves the host variable during apply and sends its value to OpenShell's credential store.
-OpenTofu state and the exported `ref` contain the variable name, never its value.
+OpenTofu state and the exported `ref` contain the variable name and a [digest](#credential-digests) of the value, never the value itself.
 OpenShell projects a credential placeholder into `NEMOCLAW_API_BOOKING_KEY` for `name = "booking"`.
 The agent does not receive the stored credential value.
 Set `sandbox_env` to project it under another name, such as a variable the sandbox's tools already read.
@@ -286,10 +294,9 @@ Give each a different `sandbox_env`, or list every URL that shares a key in one 
 The registration is named `booking` and its profile `nemoclaw-api-booking`.
 
 Changing `credential_env` updates the stored credential in place on the next apply, retaining the registration and attached sandbox.
-Changing only the value of the same host variable does not create a plan change.
-Use a new variable reference to rotate it.
+A new value behind the same host variable updates the registration in place, as [credential digests](#credential-digests) describes.
 Credential propagation to an already-running client has not been qualified.
-An unchanged plan reads the binding without resolving the host secret.
+Plan reads the host variable only to check it against the digest, and only when its environment holds the variable.
 A missing profile is recreated in place.
 A missing registration replaces the reconstructible pair without replacing its sandbox.
 Foreign ownership or an incomplete observation stops planning.
@@ -298,6 +305,21 @@ To remove the credential, first detach or explicitly remove sandboxes using its 
 Removal deletes the registration and its owned profile.
 It does not unset the host variable or revoke the key at the API service.
 Endpoint, REST or MCP policy, authentication and executable changes replace the pair. Arrange for attached sandboxes to detach or be replaced first.
+
+#### Credential Digests
+
+`openshell_inference` and `openshell_api` record `credential_digest`, an Argon2id digest of the credential value the registration holds, when they take that value from `credential_env`.
+OpenShell can't report a registered value, so the provider records the digest when it registers the value, with a random salt and OWASP's minimum Argon2id parameters, and observations keep it.
+The schema marks it sensitive, so plans hide it.
+It is empty for a registration without a credential or with a `credential_source`.
+
+When a plan's environment holds the variable `credential_env` names and its value doesn't match the digest, the plan updates the registration in place and leaves `credential_digest` unknown, and apply registers the value and records its digest.
+A plan whose environment doesn't hold the variable keeps the digest and plans no change.
+A changed `credential_env` also leaves the digest unknown.
+A registration that an earlier provider release created has no digest; its first observation that can read the variable records the digest of the value it holds then, without updating the registration.
+
+The provider never replaces a sandbox for a new credential.
+NemoClaw's deployment graph lists the digest of each registration a sandbox attaches in the sandbox's `lifecycle.replace_triggered_by`, so a new value, or a recreated registration, replaces that sandbox and its agent.
 
 ### OpenShell Gateway Installation
 
@@ -535,9 +557,9 @@ Each resource is reconciled and protected as follows:
 
 | Resource | Reconciliation | Protection |
 |---|---|---|
-| Inference and API credentials | Create the profile and then the registration. Recreate a missing profile and rotate a credential reference in place. Replace on any other input change or a missing registration. | The same checks for both objects. A failure between them records the identity, so the next apply replaces the resource. |
+| Inference and API credentials | Create the profile and then the registration. Recreate a missing profile, and update in place for a rotated credential reference or a new credential value. Replace on any other input change or a missing registration. | The same checks for both objects. A failure between them records the identity, so the next apply replaces the resource. |
 | Fabric agent | Apply the public Fabric document. Replace the agent on any input change. | Verify the parent sandbox identity. Refuse a replacement unless the sandbox is replaced too. |
-| Sandbox | Create and observe the declared sandbox. Replace it on any change to its specification. | Replacement and deletion delete its files and conversation history. Data that must survive belongs on a mounted volume. |
+| Sandbox | Create and observe the declared sandbox. Update its service exposures and network rules in place. Replace it on any other change to its specification. | Replacement and deletion delete its files and conversation history. Data that must survive belongs on a mounted volume. |
 | Workspace | Create and observe. Delete only during explicit teardown. | Refuse replacement and automatic recreation of a missing binding. `lifecycle { prevent_destroy = true }` retains it, as generated graphs do during apply. |
 
 OpenShell refuses deletion of profiles referenced by registrations and registrations attached to sandboxes.
@@ -545,7 +567,7 @@ Inference and API credential resources therefore recreate a missing profile in p
 Generated graphs create an `openshell_inference` only for definitions selected by sandboxes.
 Unused YAML definitions have no resource lifecycle.
 Standalone HCL can remove or replace an inference resource, while removing a last selection in SDK YAML also changes the sandbox's specification, which replaces the sandbox.
-Endpoint and policy changes that also change a sandbox's launch specification replace the sandbox.
+Endpoint and policy changes that also change a sandbox's launch specification, or its filesystem, Landlock, or process settings, replace the sandbox.
 Refer to [change paths](../build-deploy/usage.md#choosing-the-change-path).
 
 The provider's `destroy` setting authorizes explicit teardown of workspaces.
@@ -630,8 +652,9 @@ The SDK checks image identity, source revision and platform, and that the image 
 An image without the adapter is unsupported. NemoClaw does not compare Fabric revisions: the image's own Fabric runtime reports an incompatibility when the agent starts.
 With `config_json`, the data source also runs Fabric's own compatibility check of the configuration against the image's adapter descriptor.
 It reports each issue as an unsupported check (`fabric_configuration`).
-A workflow is checked only when the image's catalog describes its target.
-Otherwise Fabric checks it inside the sandbox when the agent starts.
+A workflow is checked against the target descriptor that the image's catalog registers under `workflow.target_id`; Fabric decides whether the target suits the adapter.
+A target the catalog doesn't register is unsupported on `workflow.target_id`.
+When the catalog registers no workflow targets, as in a catalog that predates them, the check is `unknown` and Fabric checks the configuration inside the sandbox when the agent starts.
 A check at plan time catches what the adapter declares it can't accept.
 It doesn't establish that the agent starts.
 Deployment postconditions name the sandbox and adapter and preserve unsupported check reasons in text and JSON errors.

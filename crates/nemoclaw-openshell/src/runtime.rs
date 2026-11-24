@@ -136,6 +136,14 @@ impl Launch {
     /// plus managed grants, which allow this launch's executables unless they
     /// name their own.
     pub fn policy(&self, input: &PolicyInput) -> Result<proto::SandboxPolicy, ObservationError> {
+        self.merged_policy(input)?
+            .to_proto()
+            .map_err(|_| ObservationError::Incomplete)
+    }
+    /// [`Self::policy`] before OpenShell's validation, which
+    /// [`crate::policy::ExplicitPolicy::to_proto`] applies. A managed grant
+    /// named like one of the policy's network rules is a binding mismatch.
+    pub fn merged_policy(&self, input: &PolicyInput) -> Result<ExplicitPolicy, ObservationError> {
         let mut policy = input.explicit.as_ref().unwrap_or(&self.policy).clone();
         for rule in &input.managed {
             let name = &rule.name;
@@ -152,7 +160,7 @@ impl Launch {
             }
             policy.network_policies.insert(name.clone(), rule);
         }
-        policy.to_proto().map_err(|_| ObservationError::Incomplete)
+        Ok(policy)
     }
     /// Resolve only marked Service rules; all other authored policy bytes stay intact.
     pub fn granted_policy(

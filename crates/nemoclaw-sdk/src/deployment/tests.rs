@@ -1461,6 +1461,64 @@ async fn changing_the_gateway_endpoint_preserves_saved_state() {
     }
 }
 
+/// The gateway volume's claim keeps the StorageClass it was created with, so
+/// plan and apply refuse an added, removed, or changed `dataStorageClass`
+/// before they read or change anything. Resources aren't bound: Helm restarts
+/// the gateway with new ones.
+#[tokio::test]
+async fn changing_the_gateway_storage_class_preserves_saved_state() {
+    let bundle_directory = guard_bundle();
+    let (document, _) = kubernetes_context();
+    let with = |settings: serde_json::Value| {
+        let mut value = serde_json::to_value(&document).unwrap();
+        value["spec"]["gateway"]["target"]["kubernetes"]
+            .as_object_mut()
+            .unwrap()
+            .extend(settings.as_object().unwrap().clone());
+        Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+    };
+    let (fast, slow) = (
+        with(json!({"dataStorageClass": "fast"})),
+        with(json!({"dataStorageClass": "slow"})),
+    );
+    for (original, changed) in [(&document, &fast), (&fast, &document), (&fast, &slow)] {
+        let state_directory = tempfile::tempdir().unwrap();
+        let store = Store::open(state_directory.path()).unwrap();
+        store.save(&Record::new(original.clone()).unwrap()).unwrap();
+        drop(store);
+        let intent = state_directory.path().join("intent.json");
+        let before = fs::read(&intent).unwrap();
+        let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
+        for apply in [false, true] {
+            let error = deployment
+                .run(changed, &CancellationToken::new(), apply)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, Error::Conflict(message) if message.starts_with("state is bound to a different gateway StorageClass:")),
+                "{error:?}"
+            );
+            assert_eq!(fs::read(&intent).unwrap(), before);
+        }
+    }
+    let state_directory = tempfile::tempdir().unwrap();
+    let store = Store::open(state_directory.path()).unwrap();
+    store.save(&Record::new(fast.clone()).unwrap()).unwrap();
+    drop(store);
+    let resized = with(json!({
+        "dataStorageClass": "fast",
+        "resources": {"limits": {"cpu": "2", "memory": "4Gi"}}
+    }));
+    let error = Deployment::new(state_directory.path(), bundle_directory.path())
+        .run(&resized, &CancellationToken::new(), false)
+        .await
+        .unwrap_err();
+    assert!(
+        !matches!(error, Error::Conflict(message) if message.starts_with("state is bound")),
+        "{error:?}"
+    );
+}
+
 #[test]
 fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
     let address = "docker_container.runtime";
@@ -1816,4 +1874,43 @@ fn an_existing_issuers_token_reaches_gateway_only_runs() {
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let environment = gateway_environment(&document, &OidcValues, Path::new("state")).unwrap();
     assert_eq!(environment["OIDC_TOKEN"], "test-OIDC_TOKEN");
+}
+
+/// Plan passes OpenTofu exactly the references `plan_credential_names`
+/// lists, for every example: a credential that only apply reads, including a
+/// kind added later, never becomes one plan requires.
+#[test]
+fn plan_passes_opentofu_only_the_references_plan_reads() {
+    fn yaml_files(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                yaml_files(&path, files);
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension == "yaml")
+            {
+                files.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    yaml_files(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples"),
+        &mut files,
+    );
+    let mut deferred = 0;
+    for path in files {
+        let document = Document::parse(std::fs::File::open(&path).unwrap()).unwrap();
+        let passed = super::opentofu::plan_environment(&document);
+        assert_eq!(
+            passed.credential_names(),
+            document.plan_credential_names(),
+            "{}",
+            path.display()
+        );
+        deferred += document.credential_names().len() - document.plan_credential_names().len();
+    }
+    // Some example names a credential that only apply reads.
+    assert!(deferred > 0);
 }

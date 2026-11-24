@@ -242,7 +242,15 @@ pub(crate) fn verify_container(
     }
     let mut expected_env = environment(image_env);
     expected_env.extend(environment(expected.env.as_deref()));
-    if environment(config.env.as_deref()) != expected_env {
+    let mut actual_env = environment(config.env.as_deref());
+    // A gateway recorded before NemoClaw decided its OpenShell telemetry may
+    // have been created with either setting, or none; replacing it records one.
+    if spec.telemetry.is_none() {
+        for env in [&mut expected_env, &mut actual_env] {
+            env.remove(nemoclaw_sdk::managed::OPENSHELL_TELEMETRY_ENV);
+        }
+    }
+    if actual_env != expected_env {
         return Err(Error::Conflict("managed runtime environment drifted"));
     }
     let mounts = container

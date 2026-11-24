@@ -10,6 +10,7 @@ pub mod agent;
 mod client;
 mod composite;
 mod connected;
+mod credential;
 mod driver_config;
 mod gateway_source;
 mod gpu;
@@ -266,10 +267,15 @@ fn provider_row(
     );
     Ok(row)
 }
+/// A sandbox's row, checked against `current`, the policy it holds now:
+/// its latest revision, or the one it was created with until it has one.
+/// Without one, as for teardown and for checks of a bound sandbox's identity
+/// and launch, its network rules and grants go unchecked.
 fn sandbox_row(
     response: proto::SandboxResponse,
     name: &str,
     removing: bool,
+    current: Option<&proto::SandboxPolicy>,
 ) -> Result<(Row, bool, network::ClusterGrants), ObservationError> {
     let sandbox = response.sandbox.ok_or(ObservationError::Incomplete)?;
     let meta = sandbox
@@ -301,8 +307,13 @@ fn sandbox_row(
     if !inference.is_empty() {
         expected_environment.insert(PROVIDERS_ENV.into(), inference.clone());
     }
-    let observed_policy = spec.policy.as_ref().ok_or(ObservationError::Incomplete)?;
-    let grants = network::recorded_grants(&input, observed_policy)?;
+    // A sandbox keeps the startup settings of the policy it was created with,
+    // but its network rules change in place.
+    let created = spec.policy.as_ref().ok_or(ObservationError::Incomplete)?;
+    let grants = current
+        .map(|current| network::recorded_grants(&input, current))
+        .transpose()?
+        .unwrap_or_default();
     let (authority, provenance) = policy_authority(&meta.annotations)?;
     // APF admitted a sandbox NemoClaw did not declare APF-governed, so its
     // policy is APF's, not the one NemoClaw authored.
@@ -316,10 +327,20 @@ fn sandbox_row(
     }
     // NemoClaw authored the policy unless APF governs it; APF's admission
     // replaces the submitted policy with its bundle's.
-    if authority.is_empty()
-        && policy_json(observed_policy)? != policy_json(&launch.granted_policy(&input, &grants)?)?
-    {
-        return Err(ObservationError::BindingMismatch);
+    if authority.is_empty() {
+        if network::startup_settings(created)?
+            != network::startup_settings(&launch.policy(&input)?)?
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
+        if let Some(current) = current
+            && !network::loaded_policy_contains(
+                current,
+                &policy_json(&launch.granted_policy(&input, &grants)?)?,
+            )?
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
     }
     let expected_providers = inference::provider_names(&inference)?;
     if spec.providers != expected_providers {
@@ -420,6 +441,14 @@ pub(crate) const POLICY_PROVENANCE: &str = "policy_provenance";
 /// replacement.
 pub(crate) const EXITED: &str = "exited";
 
+/// Why a sandbox's latest policy revision isn't in force: the sandbox
+/// refused it.
+pub(crate) const POLICY_REFUSED: &str =
+    "the sandbox failed to load its latest policy revision; apply a policy it can load";
+/// Why a changed policy isn't in force after the sandbox refused it.
+pub(crate) const POLICY_RESTORED: &str =
+    "the sandbox failed to load the changed policy, so its previous policy was restored";
+
 /// The hash of the loaded policy revision, once it keeps every declared rule.
 /// `expected` is `None` when APF authored the policy: NemoClaw then declares
 /// no rules, and only records the hash.
@@ -428,6 +457,12 @@ fn active_policy(
     expected: Option<&str>,
 ) -> Result<String, ObservationError> {
     let revision = response.revision.ok_or(ObservationError::Incomplete)?;
+    // The sandbox's load error stays private, as its admission diagnostics do.
+    if revision.status == proto::PolicyStatus::Failed as i32 {
+        return Err(ObservationError::SandboxConfigurationRejected {
+            reason: POLICY_REFUSED,
+        });
+    }
     let policy = revision
         .policy
         .as_ref()
@@ -452,12 +487,13 @@ async fn checked_sandbox_row_with<F>(
     workspace: &str,
     name: &str,
     removing: bool,
+    current: Option<&proto::SandboxPolicy>,
     check: impl FnOnce(Row) -> F,
 ) -> Result<(Row, bool, network::ClusterGrants), ObservationError>
 where
     F: std::future::Future<Output = Result<network::ClusterGrants, ObservationError>>,
 {
-    let (mut row, ready, grants) = sandbox_row(response, name, removing)?;
+    let (mut row, ready, grants) = sandbox_row(response, name, removing, current)?;
     row.insert("workspace".into(), workspace.into());
     if !removing && check(row.clone()).await? != grants {
         return Err(ObservationError::BindingMismatch);
@@ -550,6 +586,28 @@ fn inference_sandbox_env(known: &Row, unknown: &[&str]) -> Option<String> {
     })
 }
 
+/// The digest of the credential value a registration holds, which NemoClaw
+/// records when it registers the value, since OpenShell never reports it. A
+/// plan that reads another value in the registration's credential variable,
+/// or names another variable, leaves the digest unknown, and the registration
+/// updates in place with the value. NemoClaw's deployment graph replaces the
+/// sandboxes that attach the registration when the digest changes, so their
+/// agents start with the value. Empty when the registration takes
+/// no credential from a variable, or holds one recorded before NemoClaw kept
+/// digests and not yet observed.
+trait CredentialDigest {
+    fn credential_digest(self) -> Self;
+}
+impl CredentialDigest for nemoclaw_tofu::Definition {
+    fn credential_digest(self) -> Self {
+        use credential::CREDENTIAL_DIGEST;
+        self.computed(CREDENTIAL_DIGEST, credential::plan)
+            .unknown_when_changed(CREDENTIAL_DIGEST, "credential_env")
+            .optional(&[CREDENTIAL_DIGEST])
+            .sensitive(&[CREDENTIAL_DIGEST])
+    }
+}
+
 /// OpenShell objects and their planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
     use nemoclaw_openshell::api::{MCP_POLICY, REST_POLICY};
@@ -598,7 +656,8 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         ])
         .validate_inputs(composite::validate_api)
         .replaces(binaries_changes)
-        .derived("registration", provider_registration),
+        .derived("registration", provider_registration)
+        .credential_digest(),
         // An inference server's profile and registration, as one resource
         // whose owner is its workspace's and whose endpoint and credential
         // come from the server's ref. A rotated credential reference updates
@@ -640,9 +699,11 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
             "cluster_source",
             POLICY_AUTHORITY,
         ])
+        .validate_inputs(composite::validate_inference)
         .replaces(inference_changes)
         .derived("registration", provider_registration)
-        .derived("sandbox_env", inference_sandbox_env),
+        .derived("sandbox_env", inference_sandbox_env)
+        .credential_digest(),
         Definition::new(
             "sandbox",
             &[
@@ -662,9 +723,12 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
                 services::FIELD,
             ],
             // Service exposures change on the live sandbox, as `openshell
-            // service expose` and `openshell service delete` change them.
-            &[services::FIELD],
+            // service expose` and `openshell service delete` change them, and
+            // so do its network rules, as `openshell policy set` changes them.
+            &[services::FIELD, "policy_json"],
         )
+        // Any other policy change replaces the sandbox.
+        .replaces(network::policy_changes)
         // The policy hash is empty until the loaded policy is observed.
         .optional(&[
             POLICY_AUTHORITY,
@@ -681,14 +745,16 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         ])
         // Omission means NemoClaw authors the policy, not the previous value.
         .reset_when_omitted(&[POLICY_AUTHORITY])
-        .validate_inputs(network::validate_grant_names)
+        .validate_inputs(network::validate_sandbox_inputs)
         // The URLs the gateway reports for the exposures; changed exposures
         // report theirs when applied.
         .computed(services::URLS, nemoclaw_tofu::carry_prior)
         .unknown_when_changed(services::URLS, services::FIELD)
         // The loaded policy's hash, OpenShell's additions included; later
-        // observations must find the same one.
+        // observations must find the same one. Network rules changed in place
+        // load as a new revision, whose hash is known once applied.
         .computed(POLICY_HASH, reissue_when_unproven)
+        .unknown_when_changed(POLICY_HASH, "policy_json")
         // APF's token for an APF-governed sandbox's loaded policy; a policy APF
         // did not issue is planned to be issued again in place, with a new
         // token and hash.
@@ -713,10 +779,17 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         definition.references = nemoclaw_openshell::references(definition.kind);
         // Version 1 took refs instead of names; version 2 takes a generic
         // launch instead of a Fabric runtime binding. Earlier state is rejected.
-        definition
+        let definition = definition
             .schema_version(2)
-            .generated("owner", nemoclaw_backend::generate_owner)
-            .generated("generation", nemoclaw_backend::generate_generation)
+            .generated("generation", nemoclaw_backend::generate_generation);
+        // A sandbox belongs to its workspace's owner, which the provider
+        // can't generate, so it's required. The workspace and credential
+        // resources generate theirs or take their workspace's.
+        if definition.kind == "sandbox" {
+            definition
+        } else {
+            definition.generated("owner", nemoclaw_backend::generate_owner)
+        }
     })
 }
 
