@@ -152,6 +152,8 @@ Docker deployments pull private images through `spec.registries`; Kubernetes dep
 
 ## Publishing
 
+Prepare a final product release with the [Maintainer Evening skill](../../.agents/skills/nemoclaw-maintainer-evening/SKILL.md).
+Its [tag-cut step](../../.agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md#cut-the-approved-tag) checks the release notes at the approved commit before creating and pushing the final tag.
 Push a final tag only from a commit whose release candidate has completed installer, onboarding, QA, and product sign-off; until then, the draft and packages stay private.
 The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the draft's [version pins](#version-pins) match the tag and those images, the [security assessment](image-assessment.md#hosted-enforcement) passes, the registry digests are unchanged, and the [provenance](#verifying-provenance) of every image, CLI archive, and `SHA256SUMS` is attested.
 Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
