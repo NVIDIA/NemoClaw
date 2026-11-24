@@ -390,7 +390,7 @@ fn the_pinned_openshell_cli_matches_the_openshell_version() {
             .unwrap();
         assert!(
             url.starts_with(&format!(
-                "https://github.com/NVIDIA/OpenShell/releases/download/v{version}/openshell-"
+                "https://github.com/ai-openshell/openshell/releases/download/v{version}/openshell-"
             )),
             "{platform}: {url}"
         );

@@ -57,9 +57,9 @@ regex = "1"
 url = "2"
 ipnet = "2"
 nix = { version = "0.29", features = ["signal", "term"] }
-openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "ce58cf8e9b953281352d98a637e41616295b1318", default-features = false }
-openshell-sdk = { git = "https://github.com/NVIDIA/OpenShell", rev = "ce58cf8e9b953281352d98a637e41616295b1318", default-features = false }
-openshell-policy = { git = "https://github.com/NVIDIA/OpenShell", rev = "ce58cf8e9b953281352d98a637e41616295b1318", default-features = false }
+openshell-core = { git = "https://github.com/ai-openshell/openshell", rev = "152c59d3178039e3fbb4a5595f9fff7216a6be92", default-features = false }
+openshell-sdk = { git = "https://github.com/ai-openshell/openshell", rev = "152c59d3178039e3fbb4a5595f9fff7216a6be92", default-features = false }
+openshell-policy = { git = "https://github.com/ai-openshell/openshell", rev = "152c59d3178039e3fbb4a5595f9fff7216a6be92", default-features = false }
 tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }
 prost = "0.14"
 prost-types = "0.14"
@@ -97,7 +97,7 @@ k8s-openapi = { version = "0.28", default-features = false, features = ["latest"
 determinator = "0.12"
 guppy = "0.17"
 
-[patch."https://github.com/NVIDIA/OpenShell"]
+[patch."https://github.com/ai-openshell/openshell"]
 openshell-sdk = { path = "crates/vendor/openshell-sdk" }
 
 [patch."https://github.com/aneoconsulting/tf-provider"]

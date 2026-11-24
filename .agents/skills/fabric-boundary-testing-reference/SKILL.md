@@ -41,7 +41,7 @@ For each behavior:
    When an open PR moves the pin, name it and say which answer it would change.
 3. **Find the owner in both repositories.** Read NemoClaw's [upstream boundaries](../../../internal-docs/design/scope.md#upstream-boundaries), `internal-docs/design/`, and the user documentation under `docs/` for the feature.
    At the pin, start with the Testing section of Fabric's `CONTRIBUTING.md`, `.agents/skills/validate-change/SKILL.md`, the adapter's source and tests, and the `justfile` and `.github/workflows/`, which show what CI runs.
-   Follow OpenShell or native-harness ownership when the sources point there: read `NVIDIA/OpenShell` at the release `versions.json` names, and each harness at the version `image/fabric/Dockerfile` pins.
+   Follow OpenShell or native-harness ownership when the sources point there: read `ai-openshell/openshell` at the release `versions.json` names, and each harness at the version `image/fabric/Dockerfile` pins.
    Keep four kinds of source apart: a required contract, proposed scope such as an open issue, the current implementation, and observed passing evidence.
    Check each issue's and PR's current state before relying on it.
    When evidence is missing or conflicts, report an open ownership or contract question; don't invent scope or propose a workaround.
