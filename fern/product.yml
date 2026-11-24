@@ -29,7 +29,7 @@ navbar-links:
     value: https://github.com/NVIDIA/NemoClaw
 
 products:
-  - display-name: NemoClaw v0
+  - display-name: NemoClaw (v0)
     href: https://docs.nvidia.com/nemoclaw/v0/user-guide/openclaw/home
     target: _self
   - display-name: NemoClaw Agent Configs (v1)
