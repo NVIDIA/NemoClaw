@@ -13,6 +13,7 @@ Use the [public guide](../docs/README.md) for deployment tasks. The pages here r
 | Exercise OpenTofu and bundles with local fixtures | [Integration tests](contributing/integration-tests.md) |
 | Test explicitly owned live resources | [Live tests](contributing/live-tests.md) |
 | Stage a private v1 release | [Release staging](contributing/releases.md) |
+| Cut a final v1 product release | [Maintainer release-tag skill](../.agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md) |
 | Track changes between release candidates | [Release candidate notes](contributing/release-candidates.md) |
 | Write and reorganize guides | [Documentation contribution](contributing/documentation.md) |
 | Validate, preview, or publish the site | [Documentation build](contributing/documentation-build.md) |

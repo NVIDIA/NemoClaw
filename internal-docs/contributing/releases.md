@@ -26,8 +26,6 @@ Until every package exists, `v1` pushes skip pushing images with a warning, and 
 
 ## Staging From a Tag
 
-Before creating a final tag, [check its release notes at the commit you intend to tag](../../.agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md) and complete the [publishing requirements](#publishing).
-For a release candidate, record changes in the [internal release candidate notes](release-candidates.md).
 Push a semver tag on a `v1` commit, starting with `v0.1.0-rc.1`; the `v1` branch ships 0.1 releases.
 Version tags are permanent: a repository rule forbids deleting them.
 
@@ -154,6 +152,7 @@ Docker deployments pull private images through `spec.registries`; Kubernetes dep
 
 ## Publishing
 
+To cut a final product release, follow the [maintainer release-tag skill](../../.agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md). It checks the release notes at the approved commit before creating and pushing the final tag.
 Push a final tag only from a commit whose release candidate has completed installer, onboarding, QA, and product sign-off; until then, the draft and packages stay private.
 The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the draft's [version pins](#version-pins) match the tag and those images, the [security assessment](image-assessment.md#hosted-enforcement) passes, the registry digests are unchanged, and the [provenance](#verifying-provenance) of every image, CLI archive, and `SHA256SUMS` is attested.
 Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
