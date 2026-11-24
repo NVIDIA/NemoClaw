@@ -19,8 +19,11 @@ pub const SCENARIOS: &str = "crates/nemoclaw-e2e/tests/e2e/hcl/tests";
 /// The variable through which a case reads the NVIDIA API key, which only
 /// the hosted and GPU jobs provide.
 pub const NVIDIA_KEY: &str = "NVIDIA_INFERENCE_API_KEY";
-/// The qualified Station case reuses the GTC document rather than a second copy.
-pub const STATION_CASE: &str = "dgx-station-openclaw-nemotron";
+/// Station cases reuse their GTC documents rather than second copies.
+pub const STATION_CASES: [&str; 2] = [
+    "dgx-station-openclaw-nemotron",
+    "dgx-station-hermes-nemotron",
+];
 
 /// Where a live case runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
@@ -75,9 +78,16 @@ pub struct Needs {
 
 /// A case's document and scenario.
 pub fn files(id: &str) -> [String; 2] {
-    if id == STATION_CASE {
+    if STATION_CASES.contains(&id) {
         return [
-            "examples/gtc-dc/openclaw-dgx-station.yaml".into(),
+            format!(
+                "examples/gtc-dc/{}-dgx-station.yaml",
+                if id == "dgx-station-hermes-nemotron" {
+                    "hermes"
+                } else {
+                    "openclaw"
+                }
+            ),
             format!("crates/nemoclaw-e2e/tests/e2e/hcl/manual/{id}.tftest.hcl"),
         ];
     }
@@ -105,11 +115,10 @@ pub fn live(root: &Path) -> Result<BTreeSet<String>> {
             ids.insert(id.to_owned());
         }
     }
-    if files(STATION_CASE)
-        .iter()
-        .all(|path| root.join(path).is_file())
-    {
-        ids.insert(STATION_CASE.into());
+    for id in STATION_CASES {
+        if files(id).iter().all(|path| root.join(path).is_file()) {
+            ids.insert(id.into());
+        }
     }
     Ok(ids)
 }
@@ -175,7 +184,7 @@ pub fn placements(root: &Path) -> Result<BTreeMap<String, Needs>> {
         .into_iter()
         .map(|(id, document)| {
             let mut needed = needs(&document).map_err(|error| format!("the {id} case: {error}"))?;
-            if id == STATION_CASE {
+            if STATION_CASES.contains(&id.as_str()) {
                 needed.runner = Runner::DgxStation;
             }
             Ok((id, needed))
