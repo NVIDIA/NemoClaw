@@ -6,7 +6,7 @@
 Edit repository Markdown; Cargo generates the Fern pages and navigation from those sources.
 The official site has separate products for NemoClaw v0 and NemoClaw Agent Configs.
 The Agent Configs product publishes under `/nemoclaw/v1/` on staging and production.
-The local preview shows only **Latest (v1)** and uses the generated Agent Configs navigation.
+The local preview shows only **Latest** and uses the generated Agent Configs navigation.
 Publication does not qualify the procedures or product configurations they describe.
 
 ## Sources and Outputs

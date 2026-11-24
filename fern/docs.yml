@@ -56,7 +56,7 @@ experimental:
     - ./_main/fern/components
 
 versions:
-  - display-name: Latest (v1)
+  - display-name: Latest
     path: ./_generated/navigation.yml
     slug: v1
 
