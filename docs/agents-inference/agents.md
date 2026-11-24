@@ -94,9 +94,13 @@ Preserve existing directories; reuse a verified client when two NemoClaw release
 When their pins differ, select the appropriate directory in each deployment's shell.
 Changing `PATH` does not alter another installation, a running process, or a gateway.
 
-On Windows AMD64, use PowerShell with the selected release's `version-pins.json` in the current directory.
+OpenShell 0.1.10 has no published Windows client archive, so the current checkout does not pin a native Windows download.
+Use the [WSL2 walkthrough](../get-started/windows-wsl.md) for the matching Linux client.
+Do not substitute the older Windows 0.1.9 client for a 0.1.10 pin.
+
+For a release that includes a Windows AMD64 archive entry, use PowerShell with that release's `version-pins.json` in the current directory.
 This client connects to the deployment's gateway; it does not add a Windows sandbox compute driver.
-The pinned OpenShell 0.1.9 Windows package comes from its [`windows` branch revision](https://github.com/NVIDIA/OpenShell/tree/7e4e113e3249238b61db71947c4b79b2d7a247e3), which differs from the release tag's source.
+The older OpenShell 0.1.9 Windows package comes from its [`windows` branch revision](https://github.com/NVIDIA/OpenShell/tree/7e4e113e3249238b61db71947c4b79b2d7a247e3), which differs from the release tag's source.
 Use the archive checksum rather than the version string to identify it.
 
 ```powershell
@@ -104,7 +108,7 @@ $ErrorActionPreference = 'Stop'
 $pins = Get-Content -Raw .\version-pins.json | ConvertFrom-Json
 $client = $pins.components.openshellClient
 $archive = $client.archives.windows_amd64
-if (!$client.version -or !$archive.url -or !$archive.sha256) { throw 'This release does not pin a Windows client' }
+if (!$client.version -or !$archive.url -or !$archive.sha256) { throw 'This release does not pin a Windows client; use the WSL2 walkthrough' }
 $clientDir = Join-Path $env:LOCALAPPDATA "NemoClaw\clients\openshell\$($client.version)"
 if (Test-Path -LiteralPath $clientDir) { throw 'Directory exists; preserve it and select its verified client or choose a new directory' }
 New-Item -ItemType Directory -Path $clientDir | Out-Null

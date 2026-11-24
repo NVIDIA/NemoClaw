@@ -34,7 +34,7 @@ Managed model services aren't supported on Kubernetes.
     Without its API, the chart's preflight stops the install.
   - A StorageClass for the gateway's volume: the cluster's default, or the class that the target's [`dataStorageClass`](#choosing-the-gateways-storageclass-and-resources) names.
     Without it, the volume's claim stays pending and apply fails when Helm's wait times out.
-  - A network plugin that enforces ingress and egress NetworkPolicy in the deployment's namespace, as [OpenShell requires](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/kubernetes/setup.mdx#prerequisites).
+  - A network plugin that enforces ingress and egress NetworkPolicy in the deployment's namespace, as [OpenShell requires](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/kubernetes/setup.mdx#prerequisites).
     OpenShell's NetworkPolicies stop each sandbox's workload pod from reaching the network except through its supervisor, and the development issuer's policy admits only the gateway.
 
   NemoClaw checks none of these.
@@ -156,6 +156,8 @@ nemoclaw apply --state-dir .local/kubernetes deployment.yaml
 
 Apply creates the gateway and every sandbox, and starts each agent.
 Without `expose`, plan and apply report the gateway as `not published`: other clients reach it through a port forward of their own, as [Reaching the Gateway From the OpenShell CLI](#reaching-the-gateway-from-the-openshell-cli) shows.
+OpenShell's chart turns off gateway service routing, so the gateway reports no sandbox [service URLs](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway) and apply lists none; reach services with [`openshell forward service`](../agents-inference/interfaces.md#forwarding-a-native-service).
+To route them through the gateway, set `enable_gateway_service_routing: true` in the `openshell.gateway` table of [`spec.gateway.config`](usage.md#configuring-a-managed-gateway), as OpenShell's [service routing](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/configuration.mdx#service-routing) describes.
 Keep the state directory: it holds the cluster ownership receipt and the development issuer's keys, and destroy needs both.
 [Managed Kubernetes ownership](../../internal-docs/design/architecture.md#managed-kubernetes-ownership) describes which component owns each resource.
 
@@ -184,7 +186,7 @@ spec:
         user_role: openshell-users
 ```
 
-- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configuring-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments.
+- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configuring-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments.
   OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access.
   Omitted settings take OpenShell's defaults.
   The `oidc` profile requires the table.
@@ -287,8 +289,7 @@ spec:
 - **Creating the Route:** Helm creates it with the identity that applies, which needs `create`, `update`, and `delete` on `routes` in the `route.openshift.io` API group, and OpenShift sets a Route's host only for an identity that can create `routes/custom-host`.
   OpenShift's `admin` and `edit` roles grant both.
 
-Sandbox [service URLs](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway) skip the gateway's sign-in, so anyone who reaches the endpoint with a service's host name reaches that service, which must authenticate its own clients.
-The URLs that apply prints don't open remotely yet ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
+Sandbox [service URLs](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway), when the gateway [routes services](#deploying-with-a-managed-gateway), skip the gateway's sign-in, so anyone who reaches the endpoint with a service's host name reaches that service, which must authenticate its own clients, and they don't open remotely yet ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
 
 The chart writes the certificate once, when it creates the Secrets `<release>-server-tls`, `<release>-client-tls`, and `<release>-jwt-keys`, and destroy keeps them.
 A new deployment with the same `metadata.uid` in the same namespace reuses the retained Secrets, whose certificate might not name its host.
@@ -368,7 +369,7 @@ A token with the role `admin_role` names reaches the deployment's workspace.
 A token with only the role `user_role` names reaches it once a platform admin adds the token's subject to the workspace.
 Until then, sandbox commands fail with `not a member of workspace` and print the `openshell workspace member add` command to run.
 With only that role, `openshell status` also reports `authorization denied`, because its check reads gateway details that only an admin may read.
-See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
+See [OpenShell's authentication guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
 
 ### Referencing Registry Credentials
 
@@ -558,14 +559,14 @@ Start from [the OpenShift example](../../examples/platforms/openshift/managed-de
 
 OpenShift assigns each namespace a UID and group range and admits only those identities.
 The pinned chart runs the gateway as UID 1000 with `fsGroup: 1000`, which the `restricted-v2` security context constraint rejects.
-On the `openshift` target, NemoClaw sets the chart's `securityContext.runAsUser` and `podSecurityContext.fsGroup` to `null`, as [the chart's OpenShift install](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/deploy/helm/openshell/README.md#install-on-openshift) does, so `restricted-v2` runs the gateway as the range's first UID and group.
+On the `openshift` target, NemoClaw sets the chart's `securityContext.runAsUser` and `podSecurityContext.fsGroup` to `null`, as [the chart's OpenShift install](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/deploy/helm/openshell/README.md#install-on-openshift) does, so `restricted-v2` runs the gateway as the range's first UID and group.
 OpenShell runs each sandbox as the same UID.
 The [OpenShift Local qualification](https://github.com/NVIDIA/NemoClaw/issues/12733) predates this: there, NemoClaw read the namespace's range and passed its first UID and group to the chart.
 This has since run by hand on one OpenShift Local 4.22.14 node (linux/amd64): `restricted-v2` gave the gateway the range's first UID and `fsGroup`, and two agents replied through it with OIDC authentication.
 [Current limits](../resources/limits.md#platforms-models-and-placement) lists what remains untested.
 
 With `supervisor_topology = "gateway"` in the `openshell.drivers.kubernetes` table of [`spec.gateway.config`](usage.md#configuring-a-managed-gateway), the chart also runs a shared supervisor Deployment, which supervises all sandboxes, as UID and group 65534.
-On the `openshift` target, NemoClaw also sets that supervisor's `runAsUser`, `runAsGroup`, and `fsGroup` under `supervisor.podSecurityContext` to `null`, as [the chart's OpenShift overlay](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/deploy/helm/openshell/ci/values-openshift-scc.yaml) does.
+On the `openshift` target, NemoClaw also sets that supervisor's `runAsUser`, `runAsGroup`, and `fsGroup` under `supervisor.podSecurityContext` to `null`, as [the chart's OpenShift overlay](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/deploy/helm/openshell/ci/values-openshift-scc.yaml) does.
 On OpenShift Local 4.22.14, `restricted-v2` refused the supervisor's pod with the chart's IDs and admitted it with the nulls, as the range's first UID and group; no deployment with a shared supervisor has run on OpenShift.
 
 The agent images need no OpenShift variant: any UID can read their workspace seed.
@@ -582,7 +583,7 @@ Sandboxes still need `image.metadata`.
 
 NemoClaw doesn't put a managed gateway behind a Gateway API ingress, because TLS would end at the Gateway, which conflicts with NemoClaw's mTLS ([current limits](../resources/limits.md#platforms-models-and-placement)).
 On OpenShift, [a pass-through Route](#through-an-openshift-route) can publish a managed gateway instead.
-Instead, the platform operator installs the OpenShell chart behind a Gateway API ingress with OpenShell's [Kubernetes ingress guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/kubernetes/ingress.mdx), and the deployment connects to it with `management: external`.
+Instead, the platform operator installs the OpenShell chart behind a Gateway API ingress with OpenShell's [Kubernetes ingress guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/kubernetes/ingress.mdx), and the deployment connects to it with `management: external`.
 No automated test covers this setup.
 [#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) records runs of these steps behind Envoy Gateway v1.8.1 with a Keycloak issuer, with OpenShell 0.1.7 on single-node kind and k3d clusters and with OpenShell 0.1.8 on kind: an agent replied through the ingress in each, and requests longer than 15 seconds failed until the request timeout below was disabled.
 
@@ -590,7 +591,7 @@ The operator follows the guide with these choices:
 
 - **Version:** Replace `<version>` in its `helm` commands with the `openshell` version in [`versions.json`](../../versions.json).
   NemoClaw rejects a gateway that reports another OpenShell version.
-- **TLS:** Use its [end-to-end TLS](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/kubernetes/ingress.mdx#end-to-end-tls-backendtlspolicy) setup.
+- **TLS:** Use its [end-to-end TLS](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/kubernetes/ingress.mdx#end-to-end-tls-backendtlspolicy) setup.
   Its `server.disableTls=true` setup sends bearer tokens unencrypted from the ingress to the gateway pod.
   Its plaintext setup can't serve NemoClaw, which accepts an `http://` gateway endpoint only on a literal loopback address.
 - **Authentication:** Configure an OIDC issuer, as the guide's HTTPS setups do.
@@ -649,12 +650,12 @@ spec:
   NemoClaw [reads it on every run](../security/credential-rotation.md#gateway-connections) and never refreshes it.
   When it expires, get a new one and rerun.
 - **Roles:** NemoClaw reads the gateway's version and drivers on every plan, apply, and destroy, and creates and deletes its workspace.
-  OpenShell allows all three only to a Platform Admin ([role model](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/workspaces.mdx#understand-the-role-model)).
-  The token therefore needs the gateway's `admin_role`, by default `openshell-admin` in the `realm_access.roles` claim, unless the gateway leaves both `admin_role` and `user_role` empty ([OIDC settings](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/authentication.mdx#oidc)).
+  OpenShell allows all three only to a Platform Admin ([role model](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/workspaces.mdx#understand-the-role-model)).
+  The token therefore needs the gateway's `admin_role`, by default `openshell-admin` in the `realm_access.roles` claim, unless the gateway leaves both `admin_role` and `user_role` empty ([OIDC settings](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx#oidc)).
   Without it, plan fails with `observation permission denied`.
   If the gateway sets `scopes_claim`, the token also needs `config:read`, `workspace:read`, `workspace:write`, `sandbox:read`, `sandbox:write`, `provider:read` and `provider:write`, or `openshell:all`.
 - **Service URLs:** [service exposure](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway) URLs skip the gateway's authentication, so prefer [`openshell forward service`](../agents-inference/interfaces.md#forwarding-a-native-service).
-  The chart routes only gRPC, so the URLs need the operator's own route, as the guide's [Route Sandbox Service Traffic](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/kubernetes/ingress.mdx#route-sandbox-service-traffic) section describes.
+  OpenShell's chart reports them only when the operator sets `enable_gateway_service_routing: true` ([service routing](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/configuration.mdx#service-routing)), and it routes only gRPC, so the URLs also need the operator's own route, as the guide's [Route Sandbox Service Traffic](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/kubernetes/ingress.mdx#route-sandbox-service-traffic) section describes.
   OpenShell builds them with the gateway pod's port, 8080, so behind an ingress on port 443 the URLs that apply prints name a port the ingress doesn't serve.
   With the chart's default service domain, the recorded runs printed `https://<workspace>--<sandbox>--<service>.openshell.localhost:8080/`.
 

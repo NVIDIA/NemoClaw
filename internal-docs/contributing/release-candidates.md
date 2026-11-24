@@ -77,6 +77,22 @@ Gateways:
 - On the `openshift` target, the shared supervisor that `supervisor_topology = "gateway"` selects also leaves its UID, group, and `fsGroup` to OpenShift, as the gateway does.
   Before, the chart ran it as UID and group 65534, which `restricted-v2` refuses.
 
+OpenShell 0.1.10:
+
+- OpenShell moved to [`ai-openshell/openshell`](https://github.com/ai-openshell/openshell): the pinned CLI downloads from that repository's releases, and the gateway, supervisor, and sandbox images and the gateway chart come from `quay.io/ai-openshell` instead of `ghcr.io/nvidia/openshell`.
+  A cluster that mirrors or allowlists OpenShell's images needs the new names.
+- A client that reconnects to an address that policy DNS answered after the answer's TTL has passed, as OpenClaw's Node.js does, connects again: OpenShell refreshes and checks the destination first.
+  Before, OpenShell refused the connection, so an OpenClaw agent's model request failed and its runtime stopped.
+- Restarting a sandbox no longer sometimes reports it as `Error` with `ContainerExited` while it's still starting.
+- On Kubernetes, deleting a sandbox and then creating one with the same name works reliably.
+- Sandboxed workloads can set their own CPU affinity, nice value, and resource limits, and signal themselves.
+- A proxy failure before a response starts returns `502 Bad Gateway` with a request ID, and HTTP clients learn promptly when an upstream closes an idle connection.
+
+OpenTofu 1.13.10:
+
+- The bundle's OpenTofu is 1.13.10, built with Go 1.27.4 for GO-2026-6859, an HTTP/1 server crash.
+  `tofu test` overrides resources in indexed modules correctly.
+
 ### Changes in v0.1.0-rc12
 
 These changes reached `v1` between the `v0.1.0-rc11` and `v0.1.0-rc12` tags.
@@ -403,6 +419,9 @@ These changes since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affect e
   Before, the provider generated an owner that never matched the workspace's, so apply failed.
   Plan also rejects a sandbox policy that OpenShell's validator refuses, a sandbox that attaches more than 32 registrations, and an `openshell_inference` without a supported `api`, `server`, or `binaries`, while the workspace's owner or generation is still to be generated. Each error names the attribute and the reason.
   Before, these passed plan and failed during apply.
+- A managed `kubernetes` or `openshift` gateway reports no sandbox service URLs, so apply lists none: OpenShell 0.1.10's chart turns off gateway service routing.
+  To route services through the gateway, set `enable_gateway_service_routing: true` in the `openshell.gateway` table of `spec.gateway.config`, as [deploying with a managed gateway](../../docs/build-deploy/kubernetes.md#deploying-with-a-managed-gateway) describes, or reach them with `openshell forward service`.
+  Before, apply listed URLs that didn't open as printed ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
 
 ### Breaking Changes in v0.1.0-rc12
 

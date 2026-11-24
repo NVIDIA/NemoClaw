@@ -127,7 +127,7 @@ The platform must create both named volumes on the gateway's Docker engine, gran
 Default admission requires `openshell.ai/sandbox-attachable=true` and `openshell.ai/sandbox-attachable-workspace=<OpenShell-workspace-name>` on each volume.
 An operator-configured label map replaces these defaults.
 Use the authorized OpenShell workspace name, not the sandbox name or Kubernetes namespace.
-See [external resource admission](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#external-resource-admission).
+See [external resource admission](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/configuration.mdx#external-resource-admission).
 The bundled images use UID and GID `10001:10001`.
 Check the identity for a custom image or OpenShift namespace.
 The gateway must allow driver configuration, and the sandbox's filesystem policy must allow writes to both target paths.
@@ -139,7 +139,7 @@ For an external gateway, its administrator enables OpenShell's `allow_driver_con
 Mounts default to read-only, so `read_only: false` is required for agent writes.
 Don't mount over `/sandbox` or the image's working directory.
 OpenShell protects its workspace root and control paths.
-For driver-specific settings and admission labels, follow the pinned OpenShell [Docker](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-docker/README.md), [Podman](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-podman/README.md), or [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-kubernetes/README.md) instructions.
+For driver-specific settings and admission labels, follow the pinned OpenShell [Docker](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/crates/openshell-driver-docker/README.md), [Podman](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/crates/openshell-driver-podman/README.md), or [Kubernetes](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/crates/openshell-driver-kubernetes/README.md) instructions.
 Kubernetes uses PVCs rather than Docker named volumes.
 
 ### Choosing What to Retain for Each Harness

@@ -458,6 +458,15 @@ fn violation(violation: &openshell_policy::PolicyViolation) -> &'static str {
             "an MCP endpoint allows a protocol revision OpenShell doesn't support"
         }
         V::DuplicateMcpVersion { .. } => "an MCP endpoint lists a protocol revision twice",
+        V::CedarMutuallyExclusiveWithNetworkPolicies => {
+            "the policy sets both a Cedar policy and network policies"
+        }
+        V::InvalidCedarPolicy { .. } => "the policy's Cedar source is invalid",
+        V::CedarUnsupported => "the policy sets a Cedar policy, which this OpenShell build rejects",
+        V::EndpointSettingsRequireCedar => {
+            "the policy sets endpoint settings, which apply only to Cedar policies"
+        }
+        V::InvalidEndpointSetting { .. } => "an endpoint setting is invalid",
     }
 }
 

@@ -6,7 +6,7 @@
 # beside a copy of harness/main.tf.
 
 terraform {
-  required_version = "= 1.13.9"
+  required_version = "= 1.13.10"
 }
 
 variable "fixture_image" {

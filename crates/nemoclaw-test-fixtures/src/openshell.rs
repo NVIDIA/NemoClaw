@@ -1074,7 +1074,8 @@ fn create_sandbox(
     }
     state.created("sandbox");
     // The gateway stores each exposure as ExposeService does and reports each
-    // endpoint's URL.
+    // endpoint's URL. It routes services itself and has no application
+    // origin, so each preferred URL is the gateway-routed one.
     let meta = sandbox.metadata.clone().unwrap();
     let mut service_urls = HashMap::new();
     for exposure in q.service_exposures {
@@ -1090,7 +1091,9 @@ fn create_sandbox(
     }
     Ok(p::SandboxResponse {
         sandbox: Some(sandbox),
+        gateway_service_urls: service_urls.clone(),
         service_urls,
+        application_service_urls: HashMap::new(),
     })
 }
 fn get_sandbox(state: &mut State, q: &p::GetSandboxRequest) -> Result<p::SandboxResponse, Status> {
@@ -1144,9 +1147,12 @@ fn service_response(endpoint: p::ServiceEndpoint) -> p::ServiceEndpointResponse 
     } else {
         format!("{workspace}--{}--{}", endpoint.sandbox, endpoint.name)
     };
+    let url = format!("http://{host}.services.fixture.test/");
     p::ServiceEndpointResponse {
         endpoint: Some(endpoint),
-        url: format!("http://{host}.services.fixture.test/"),
+        gateway_url: url.clone(),
+        url,
+        application_url: String::new(),
     }
 }
 fn get_service(
