@@ -651,7 +651,7 @@ pub struct Harness {
     pub kind: super::HarnessKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "FabricSection")]
-    /// Fabric's runtime section, passed to Fabric unchanged, such as timeout_seconds and max_turns. The deployment sets artifacts and, for adapters that accept it, keep_state; a different authored value fails.
+    /// Fabric's runtime section, passed to Fabric unchanged, such as timeout_seconds and max_turns. The deployment sets artifacts and, where both the CLI's Fabric catalog and the image's adapter accept it, keep_state; a different authored value fails.
     pub runtime: Option<FabricSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "FabricSection")]
