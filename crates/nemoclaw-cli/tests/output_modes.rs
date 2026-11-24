@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{fs, process::Command};
+use std::fs;
 
 #[test]
 fn json_selection_does_not_turn_usage_errors_into_operation_results() {
@@ -9,10 +9,7 @@ fn json_selection_does_not_turn_usage_errors_into_operation_results() {
         vec!["apply", "-o", "json", "--progress", "off"],
         vec!["destroy", "-o", "json", "--unknown-option"],
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-            .args(args)
-            .output()
-            .unwrap();
+        let output = crate::nemoclaw().args(args).output().unwrap();
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());
         let diagnostic = String::from_utf8(output.stderr).unwrap();
@@ -25,7 +22,7 @@ fn json_selection_does_not_turn_usage_errors_into_operation_results() {
 #[test]
 fn help_remains_text_when_json_output_is_requested() {
     for operation in ["plan", "apply", "destroy"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        let output = crate::nemoclaw()
             .args([operation, "-o", "json", "--help"])
             .output()
             .unwrap();
@@ -47,7 +44,7 @@ fn failure_json_and_progress_stay_separate_when_either_stream_is_redirected() {
             for redirect_stdout in [false, true] {
                 let state = directory.path().join("state-must-not-exist");
                 let captured = directory.path().join("redirected-stream");
-                let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw"));
+                let mut command = crate::nemoclaw();
                 command
                     .args([operation, "-o", "json", "--progress", mode, "--verbose"])
                     .env("TERM", "xterm-kitty")
@@ -143,7 +140,7 @@ fn terminal_brand_and_color_respect_streams_and_no_color() {
             None,
         )
         .unwrap();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw"));
+        let mut command = crate::nemoclaw();
         command
             .args([
                 "destroy",

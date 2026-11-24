@@ -17,12 +17,30 @@ pub(crate) enum CommandResult {
     Operation(Box<OperationResult>),
 }
 
+/// Runs the command, and hands back with its result the document it read:
+/// the input of `apply`, the saved intent of `destroy`, or what `onboard` wrote.
 pub(crate) async fn run<R: AsyncRead + Unpin>(
+    cli: Cli,
+    stdin: R,
+    cancel: &CancellationToken,
+    force_stop: &CancellationToken,
+    progress: Arc<dyn Fn(Progress) + Send + Sync>,
+) -> (
+    Result<CommandResult, Box<dyn std::error::Error>>,
+    Option<Document>,
+) {
+    let mut read = None;
+    let result = execute(cli, stdin, cancel, force_stop, progress, &mut read).await;
+    (result, read)
+}
+
+async fn execute<R: AsyncRead + Unpin>(
     cli: Cli,
     mut stdin: R,
     cancel: &CancellationToken,
     force_stop: &CancellationToken,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
+    read: &mut Option<Document>,
 ) -> Result<CommandResult, Box<dyn std::error::Error>> {
     let Cli {
         state_dir,
@@ -36,6 +54,11 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             nemoclaw_onboarding::Source::Template,
         );
         let saved = nemoclaw_onboarding::author(source, output, true, cancel).await?;
+        if saved {
+            *read = std::fs::File::open(output)
+                .ok()
+                .and_then(|file| Document::parse(file).ok());
+        }
         return Ok(CommandResult::Authored(saved.then(|| output.clone())));
     }
     let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), force_stop, progress)?;
@@ -66,6 +89,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             ..
         } => {
             let document = document(&file, &mut stdin, cancel).await?;
+            *read = Some(document.clone());
             let mut lines = tokio::io::BufReader::new(stdin).lines();
             deployment = credentials::attach(
                 deployment,
@@ -89,10 +113,20 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
                 deployment.export(cancel).await?,
             )));
         }
-        Command::Destroy { .. } => deployment.destroy(cancel).await?,
+        Command::Destroy { .. } => {
+            *read = saved_intent(&state_dir);
+            deployment.destroy(cancel).await?
+        }
         Command::Onboard { .. } => unreachable!("onboarding returns before deployment setup"),
     };
     Ok(CommandResult::Operation(Box::new(result)))
+}
+
+/// The document in `<state-dir>/intent.json`, the deployment `destroy` removes.
+fn saved_intent(state_dir: &Path) -> Option<Document> {
+    let bytes = std::fs::read(state_dir.join("intent.json")).ok()?;
+    let mut intent: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    serde_json::from_value(intent.get_mut("document")?.take()).ok()
 }
 
 #[cfg(test)]
@@ -137,6 +171,7 @@ mod tests {
                     Arc::new(|_| {})
                 )
                 .await
+                .0
                 .is_err()
             );
         }
@@ -158,10 +193,24 @@ mod tests {
                 Arc::new(|_| {}),
             )
             .await
+            .0
             .err()
             .unwrap();
             assert!(!error.to_string().contains("secret-sentinel"));
             assert!(!state.exists());
         }
+    }
+
+    #[test]
+    fn destroy_reads_the_document_saved_in_the_intent() {
+        let directory = tempfile::tempdir().unwrap();
+        assert_eq!(saved_intent(directory.path()), None);
+        let document =
+            Document::parse(include_bytes!("../../../examples/openclaw.yaml").as_slice()).unwrap();
+        let intent = serde_json::json!({"version": 1, "document": document});
+        std::fs::write(directory.path().join("intent.json"), intent.to_string()).unwrap();
+        assert_eq!(saved_intent(directory.path()), Some(document));
+        std::fs::write(directory.path().join("intent.json"), "{broken").unwrap();
+        assert_eq!(saved_intent(directory.path()), None);
     }
 }

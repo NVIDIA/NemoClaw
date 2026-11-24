@@ -6,7 +6,8 @@
 //! Every run here sets the HTTP proxy variables to a local listener that a
 //! test owns. A client that honours those variables connects to the listener
 //! instead of the network, and the test fails on any connection. A client that
-//! ignores them is not caught.
+//! ignores them is not caught. Every run also turns the telemetry record off;
+//! `telemetry.rs` runs the same commands with it on, against a local receiver.
 //!
 //! A successful plan, apply, destroy or export needs a runtime to act on, so
 //! these tests pin the paths that end before one: onboarding without a
@@ -16,10 +17,10 @@
 use std::{io::ErrorKind, net::TcpListener, path::Path, process::Command};
 
 /// A local listener that the proxy variables of every run name.
-struct NetworkGuard(TcpListener);
+pub(crate) struct NetworkGuard(TcpListener);
 
 impl NetworkGuard {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         Self(listener)
@@ -42,7 +43,7 @@ impl NetworkGuard {
         }
     }
 
-    fn assert_no_connection(&self, context: &str) {
+    pub(crate) fn assert_no_connection(&self, context: &str) {
         assert_eq!(
             self.connections(),
             0,
@@ -51,9 +52,9 @@ impl NetworkGuard {
     }
 
     /// The CLI with every proxy variable naming this listener and no proxy
-    /// exemptions. Standard input is empty unless a test replaces it.
+    /// exemptions, and telemetry off. Standard input is empty unless a test replaces it.
     fn nemoclaw(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw"));
+        let mut command = crate::nemoclaw();
         for name in [
             "HTTP_PROXY",
             "HTTPS_PROXY",
@@ -150,9 +151,9 @@ fn onboarding_without_a_terminal_exits_one_with_text_on_stderr() {
 /// it. Its OpenTofu answers `init`, an empty `plan` and an empty `show`, and
 /// fails any other call, so no command can apply or destroy anything.
 #[cfg(unix)]
-struct Fixture {
+pub(crate) struct Fixture {
     _directory: tempfile::TempDir,
-    root: std::path::PathBuf,
+    pub(crate) root: std::path::PathBuf,
 }
 
 #[cfg(unix)]
@@ -166,7 +167,7 @@ case "$1" in
 esac
 "#;
 
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         use nemoclaw_sdk::{
             bundle::{Manifest, executable, hash_file, required_files},
             compile::OPENTOFU_VERSION,
@@ -212,21 +213,7 @@ esac
     /// this bundle and a state directory of its own, and with progress off.
     fn run(&self, guard: &NetworkGuard, args: &[&str], state: &str) -> std::process::Output {
         use std::io::Write;
-        let mut command = guard.nemoclaw();
-        for arg in args {
-            match *arg {
-                "INPUT" => command.arg(self.root.join("input.yaml")),
-                other => command.arg(other),
-            };
-        }
-        if matches!(args.first(), Some(&("plan" | "apply"))) {
-            command.arg("--non-interactive");
-        }
-        command
-            .args(["--progress", "off", "--bundle"])
-            .arg(self.root.join("bundle"))
-            .arg("--state-dir")
-            .arg(self.root.join(state));
+        let mut command = self.command(guard, args, state);
         // `-` reads the configuration from standard input.
         if !args.contains(&"-") {
             return command.output().unwrap();
@@ -244,6 +231,26 @@ esac
             .write_all(include_bytes!("../../../examples/openclaw.yaml"))
             .unwrap();
         child.wait_with_output().unwrap()
+    }
+
+    /// The command [`Fixture::run`] runs.
+    pub(crate) fn command(&self, guard: &NetworkGuard, args: &[&str], state: &str) -> Command {
+        let mut command = guard.nemoclaw();
+        for arg in args {
+            match *arg {
+                "INPUT" => command.arg(self.root.join("input.yaml")),
+                other => command.arg(other),
+            };
+        }
+        if matches!(args.first(), Some(&("plan" | "apply"))) {
+            command.arg("--non-interactive");
+        }
+        command
+            .args(["--progress", "off", "--bundle"])
+            .arg(self.root.join("bundle"))
+            .arg("--state-dir")
+            .arg(self.root.join(state));
+        command
     }
 }
 

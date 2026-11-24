@@ -12,3 +12,13 @@ mod executable;
 mod exit_guards;
 #[path = "output_modes.rs"]
 mod output_modes;
+#[path = "telemetry.rs"]
+mod telemetry;
+
+/// The built CLI with the telemetry record off. Every test that runs the CLI
+/// starts here; `telemetry.rs` turns the record back on for a local receiver.
+pub(crate) fn nemoclaw() -> std::process::Command {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_nemoclaw"));
+    command.env("NEMOCLAW_DISABLE_TELEMETRY", "1");
+    command
+}

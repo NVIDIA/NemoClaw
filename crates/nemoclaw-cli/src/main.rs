@@ -63,6 +63,14 @@ fn main() -> ExitCode {
 
 async fn run() -> ExitCode {
     let cli = Cli::parse();
+    let started = std::time::Instant::now();
+    let label = telemetry::gate::check();
+    let operation = match &cli.command {
+        args::Command::Apply { .. } => Some(telemetry::record::Operation::Apply),
+        args::Command::Destroy { .. } => Some(telemetry::record::Operation::Destroy),
+        args::Command::Onboard { .. } => Some(telemetry::record::Operation::Onboard),
+        _ => None,
+    };
     let output_format = cli.command.output_format();
     let context = formatting::RenderContext::new(&cli);
     let (cancel, force_stop) = (CancellationToken::new(), CancellationToken::new());
@@ -78,17 +86,38 @@ async fn run() -> ExitCode {
         _ => None,
     };
     let mut reporter = progress::Reporter::new(cli.progress, cli.verbose, context.header());
-    let result = dispatch::run(
+    let stage = telemetry::Stage::default();
+    let (result, document) = dispatch::run(
         cli,
         tokio::io::stdin(),
         &cancel,
         &force_stop,
-        context.progress(reporter.callback()),
+        stage.watch(context.progress(reporter.callback())),
     )
     .await;
     reporter.finish();
     signals.abort();
-    match result {
+    let ended = match &result {
+        Ok(dispatch::CommandResult::Operation(result)) => Some(telemetry::Ended::Succeeded(
+            result
+                .changes
+                .iter()
+                .map(|change| change.actions.clone())
+                .collect(),
+        )),
+        Ok(dispatch::CommandResult::Authored(saved)) => saved
+            .is_some()
+            .then(|| telemetry::Ended::Succeeded(Vec::new())),
+        Ok(dispatch::CommandResult::Export(_)) => None,
+        // `onboard` sends a record only when it writes the configuration.
+        Err(_) if operation == Some(telemetry::record::Operation::Onboard) => None,
+        Err(error) if formatting::error_exit_code(error.as_ref()) == 130 => {
+            Some(telemetry::Ended::Cancelled)
+        }
+        Err(_) => Some(telemetry::Ended::Failed),
+    };
+    let duration = started.elapsed();
+    let code = match result {
         Ok(result) => {
             match formatting::render(result, output_format, &context).and_then(|output| {
                 io::write_output(
@@ -111,7 +140,19 @@ async fn run() -> ExitCode {
             }
         }
         Err(error) => report_error(error.as_ref(), output_format, &context),
+    };
+    // After the output is written; the send gives up within its time limit.
+    if let Some((operation, ended)) = operation.zip(ended) {
+        let finished = telemetry::Finished {
+            operation,
+            ended,
+            stage: &stage,
+            duration,
+            document: document.as_ref(),
+        };
+        telemetry::report(label, finished).await;
     }
+    code
 }
 
 fn report_error(
