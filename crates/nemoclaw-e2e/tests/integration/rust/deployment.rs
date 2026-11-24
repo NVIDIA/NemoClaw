@@ -283,9 +283,10 @@ async fn an_invalid_sandbox_create_leaves_a_deployment_that_can_be_corrected_and
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn shell_restriction_and_restore_replace_only_the_target_sandbox() {
-    let mut document =
-        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
-            .unwrap();
+    let mut document = Document::parse(
+        include_str!("../../../../../examples/agents/fabric-openclaw.yaml").as_bytes(),
+    )
+    .unwrap();
     // Tool names belong to the adapter, not the SDK or the gateway fixture.
     document
         .spec
@@ -442,9 +443,10 @@ async fn shell_restriction_and_restore_replace_only_the_target_sandbox() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() {
-    let mut document =
-        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
-            .unwrap();
+    let mut document = Document::parse(
+        include_str!("../../../../../examples/agents/fabric-openclaw.yaml").as_bytes(),
+    )
+    .unwrap();
     document.spec.integrations = serde_json::from_value(serde_json::json!({
         "search": {"kind":"webSearch", "provider":"tavily", "credential":{"env":"SEARCH_KEY"}},
         "bookings": {"kind":"api", "endpoints":["https://bookings.example.com/mcp"],
@@ -561,9 +563,10 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn changed_service_exposures_keep_the_sandbox_and_its_agent() {
-    let mut document =
-        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
-            .unwrap();
+    let mut document = Document::parse(
+        include_str!("../../../../../examples/agents/fabric-openclaw.yaml").as_bytes(),
+    )
+    .unwrap();
     let exposures = |value| serde_json::from_value(value).unwrap();
     document
         .spec
@@ -629,9 +632,10 @@ async fn changed_service_exposures_keep_the_sandbox_and_its_agent() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn changed_network_grants_keep_the_sandbox_and_its_agent() {
-    let mut document =
-        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
-            .unwrap();
+    let mut document = Document::parse(
+        include_str!("../../../../../examples/agents/fabric-openclaw.yaml").as_bytes(),
+    )
+    .unwrap();
     let network = |path: &str| {
         serde_json::from_value(serde_json::json!({
             "tier": "isolated",
@@ -1138,7 +1142,7 @@ async fn rejected_policy_fails_promptly_with_context_and_allows_recovery_or_dest
         let directory = tempfile::tempdir().unwrap();
         let fixture = Fixture::start().await;
         let mut document = Document::parse(
-            include_str!("../../../../../examples/explicit-policy.yaml").as_bytes(),
+            include_str!("../../../../../examples/features/explicit-policy.yaml").as_bytes(),
         )
         .unwrap();
         nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);

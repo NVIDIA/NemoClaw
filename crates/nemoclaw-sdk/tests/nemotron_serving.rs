@@ -8,8 +8,10 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 
 fn input() -> Value {
-    let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
+    let mut value: Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"
+    ))
+    .unwrap();
     let service = &mut value["spec"]["services"]["qwen"];
     *service = json!({
         "kind":"vllm", "authentication":"bearer",
@@ -179,8 +181,11 @@ fn native_serving_schema_rejects_ambiguous_budgets_and_unsafe_overrides() {
 #[test]
 fn native_container_contract_and_remote_example_preserve_declared_settings() {
     use nemoclaw_sdk::{compile, managed::Spec};
-    let doc =
-        Document::parse(include_str!("../../../examples/nemotron-amd64.yaml").as_bytes()).unwrap();
+    let doc = Document::parse(
+        include_str!("../../../examples/platforms/podman/vllm/remote/amd64/nemotron-amd64.yaml")
+            .as_bytes(),
+    )
+    .unwrap();
     let generations = ["managed_gateway", "inference_service"]
         .map(|k| (k.into(), "a".repeat(32)))
         .into();

@@ -51,5 +51,4 @@ Replacement or destroy can lose its data.
 Before switching from `ollama` or `vllm`, check the managed model's hardware, readiness, authentication, cache, and retention requirements in [model services](../agents-inference/models.md).
 There is no automatic state migration between service kinds.
 
-This user-facing contract follows the container decision in the inspected `origin/v1` revision `1636069b91f402242a35714fde1011042c3f1f70` ([design rationale](../../internal-docs/design/container-contract.md)).
-It describes the declared container boundary, not a live qualification of an arbitrary application image.
+Verify your application image on the selected host before relying on it. VoiceClaw deployment requires separate qualification.

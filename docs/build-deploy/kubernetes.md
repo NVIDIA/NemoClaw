@@ -57,7 +57,7 @@ Destroy removes both with the gateway release.
 
 A cluster sandbox names its image's metadata bundle in `image.metadata`, because no local engine can inspect the image there.
 
-For a published release, take both from the release: use an agent image's index reference from its notes in `image.ref`, and download the matching `<image>.metadata.json` it attaches.
+For v0.1.0, pair the release's agent image index digest in `image.ref` with the matching `<image>.metadata.json` attachment. Set `image.metadata.env` to an environment variable name and set that variable to the metadata file path. Use the same pair for plan and apply. Do not mix metadata from another image or replace the digest with a tag.
 One bundle covers every Linux platform the index lists, so it serves ARM64 and AMD64 nodes.
 
 An image you build must match the architecture of the nodes that run the sandboxes.
@@ -100,7 +100,7 @@ Size the cluster for the sandboxes you declare:
   At the kubelet's default of 110 pods per node, they need at least five nodes, plus room for the gateway, the issuer, and the cluster's own pods.
   A node allowed more than 250 pods also needs a pod range larger than a /24.
 - **Node memory:** In a recorded run, each OpenClaw sandbox used about 0.85 GiB of node memory, about 210 GiB for 256 ([#14403](https://github.com/NVIDIA/NemoClaw/issues/14403)).
-- **Storage:** A managed gateway gives each sandbox a 2 GiB workspace claim, so 256 sandboxes claim 512 GiB, from the cluster's default StorageClass unless `workspace_storage_class` in [`spec.gateway.config`](usage.md#configuring-a-managed-gateway) names another, as [the placement example](../../examples/kubernetes/sandbox-placement.yaml) does.
+- **Storage:** A managed gateway gives each sandbox a 2 GiB workspace claim, so 256 sandboxes claim 512 GiB, from the cluster's default StorageClass unless `workspace_storage_class` in [`spec.gateway.config`](usage.md#configuring-a-managed-gateway) names another, as [the placement example](../../examples/platforms/kubernetes/sandbox-placement.yaml) does.
   OpenShell deletes a sandbox whose pod hasn't started within 5 minutes, so add sandboxes in steps the StorageClass provisions in that time.
   k3s's local-path provisioner made about one volume every 2 seconds.
   Steps of 64 sandboxes started within about 3 minutes, and a single apply of 256 lost 100.
@@ -118,8 +118,8 @@ See [inference](../agents-inference/inference.md).
 The SDK binds the namespace, creating it if it doesn't exist, adds a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
 NemoClaw and its `openshell` and `fabric` providers reach the gateway through port forwards they open on free local ports for each command, also when you [publish the gateway](#publishing-the-gateway-outside-the-cluster).
 Unless you publish it, the document names no gateway address or port.
-Start from [the Kubernetes example](../../examples/kubernetes/managed-development.yaml).
-[The examples' index](../../examples/kubernetes/README.md) lists the others.
+Start from [the Kubernetes example](../../examples/platforms/kubernetes/managed-development.yaml).
+[The examples' index](../../examples/platforms/kubernetes/README.md) lists the others.
 To start from a Docker or Podman document instead, make the edits in [Adapting a Document to Another Target](usage.md#adapting-a-document-to-another-target).
 Replace these deployment-specific inputs under `spec.gateway.target.kubernetes` before running the commands:
 
@@ -163,7 +163,7 @@ Keep the state directory: it holds the cluster ownership receipt and the develop
 
 The `development` profile runs a token issuer for this deployment, which isn't an identity service.
 Only NemoClaw can get its tokens, so it gives you no access of your own: to invoke agents or run `openshell` commands against the gateway, use the `oidc` profile and [reach the gateway from the OpenShell CLI](#reaching-the-gateway-from-the-openshell-cli).
-To have the gateway authenticate users through your identity provider instead, use the `oidc` profile, as [the OIDC example](../../examples/kubernetes/managed-oidc.yaml) does:
+To have the gateway authenticate users through your identity provider instead, use the `oidc` profile, as [the OIDC example](../../examples/platforms/kubernetes/managed-oidc.yaml) does:
 
 ```yaml
 spec:
@@ -235,7 +235,7 @@ Either forwards to the gateway's TLS listener, so TLS and client certificates pa
 `expose.service` sets the OpenShell chart's own gateway Service to `NodePort` at the endpoint's port.
 The Service doesn't publish the gateway's plaintext metrics port, and the gateway then serves no metrics.
 CI publishes a gateway with the `oidc` profile on kind, where two agents reply to a client that dials the node's address with the issuer's token and the gateway's client certificate.
-[The NodePort example](../../examples/kubernetes/published-nodeport.yaml) publishes one with the `oidc` profile.
+[The NodePort example](../../examples/platforms/kubernetes/published-nodeport.yaml) publishes one with the `oidc` profile.
 
 ```yaml
 spec:
@@ -261,7 +261,7 @@ spec:
 On OpenShift, `expose.route` has the chart create a Route for the endpoint's host with `passthrough` TLS termination: the cluster's router forwards each encrypted connection, by the host name the client sends, to the chart's gateway Service, which stays inside the cluster.
 Only the `openshift` target takes `expose.route`.
 On other clusters, use `expose.service`.
-[The Route example](../../examples/kubernetes/published-route.yaml) publishes one with the `oidc` profile.
+[The Route example](../../examples/platforms/openshift/published-route.yaml) publishes one with the `oidc` profile.
 No automated test runs a Route, because CI has no OpenShift cluster.
 CI checks the Route that the pinned chart renders from NemoClaw's values.
 
@@ -373,7 +373,7 @@ See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/
 ### Referencing Registry Credentials
 
 On a managed gateway, OpenShell's `image_pull_secrets` setting names the Kubernetes Secrets in the deployment's namespace that sandbox pods pull with.
-Set it in the `openshell.drivers.kubernetes` table of [`spec.gateway.config`](usage.md#configuring-a-managed-gateway), as [the OIDC example](../../examples/kubernetes/managed-oidc.yaml) does:
+Set it in the `openshell.drivers.kubernetes` table of [`spec.gateway.config`](usage.md#configuring-a-managed-gateway), as [the OIDC example](../../examples/platforms/kubernetes/managed-oidc.yaml) does:
 
 ```yaml
 spec:
@@ -554,7 +554,7 @@ Bind the ClusterRole with a ClusterRoleBinding and the Role with a RoleBinding i
 
 Use the `openshift` target, which takes the same fields as `kubernetes`.
 Everything else matches the managed Kubernetes deployment above.
-Start from [the OpenShift example](../../examples/openshift/managed-development.yaml).
+Start from [the OpenShift example](../../examples/platforms/openshift/managed-development.yaml).
 
 OpenShift assigns each namespace a UID and group range and admits only those identities.
 The pinned chart runs the gateway as UID 1000 with `fsGroup: 1000`, which the `restricted-v2` security context constraint rejects.
@@ -573,7 +573,7 @@ The agent images need no OpenShift variant: any UID can read their workspace see
 ## Using an Existing Gateway
 
 To use an OpenShell gateway someone else runs on the cluster, set `gateway.management: external` and `gateway.target` to `kubernetes: {}` or `openshift: {}`.
-Give its endpoint, credential, and TLS material as environment references, as in [the external gateway example](../../examples/kubernetes/external-gateway.yaml).
+Give its endpoint, credential, and TLS material as environment references, as in [the external gateway example](../../examples/platforms/kubernetes/external-gateway.yaml).
 NemoClaw then manages only the sandboxes.
 It neither installs nor removes the gateway.
 Sandboxes still need `image.metadata`.
@@ -694,7 +694,7 @@ spec:
 - **Ollama:** Its health endpoint answers before it has a model, and it doesn't pull one when a request names it.
   Pull the route's model into the server before the first agent request.
 
-Start from [the in-cluster vLLM example](../../examples/kubernetes/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../../examples/kubernetes/in-cluster-ollama.yaml) for a server without a key.
+Start from [the in-cluster vLLM example](../../examples/platforms/kubernetes/vllm/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../../examples/platforms/kubernetes/ollama/in-cluster-ollama.yaml) for a server without a key.
 
 ## Destroying a Deployment
 

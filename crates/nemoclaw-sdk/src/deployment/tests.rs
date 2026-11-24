@@ -799,9 +799,10 @@ async fn a_stopped_podman_gateway_container_is_named_with_how_to_start_it() {
          echo 'Resource observation: observation transport failed' >&2\nexit 1\n",
     )
     .unwrap();
-    let document =
-        Document::parse(include_bytes!("../../../../examples/managed-podman.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../examples/platforms/podman/managed-podman.yaml").as_slice(),
+    )
+    .unwrap();
     let engine = document.spec.gateway.as_managed().unwrap().engine();
     let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
     let cancel = CancellationToken::new();
@@ -1098,9 +1099,11 @@ fn destroy_drift_errors_distinguish_undeclared_resources_from_missing_saved_ids(
 
 #[test]
 fn runtime_plans_accept_only_declared_local_image_observations_and_teardown_deletions() {
-    let document =
-        Document::parse(include_bytes!("../../../../examples/spark/two-models.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../examples/platforms/docker/vllm/dgx-spark/two-models.yaml")
+            .as_slice(),
+    )
+    .unwrap();
     let record = Record::new(document.clone()).unwrap();
     let targets = compile::runtime_targets(&document, &record.generations).unwrap();
     let mut allowed = allowed(&targets);

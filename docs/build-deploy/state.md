@@ -64,7 +64,9 @@ Only one runtime can use the folder at a time.
 To discard the state, delete the folder or the volume.
 The table covers the harness targets in the [image build matrix](../../docker-bake.hcl).
 A descriptor in the image catalog alone doesn't establish that a harness is installed or qualified on a platform.
-Replacing or deleting the sandbox, as any agent configuration change does, deletes files in its writable layer.
+Replacing or deleting the sandbox deletes files in its writable layer.
+Changing either [sandbox CPU or memory limits](../agents-inference/agents.md#cpu-and-memory-limits) replaces the sandbox.
+Before applying a size change, back up writable-layer files you need to keep.
 Use mounted volumes for files that must survive replacement.
 Retaining files doesn't by itself resume a native conversation.
 Each declared agent runs in its own NVIDIA OpenShell sandbox.
@@ -296,7 +298,7 @@ The state directory keeps the ownership receipt, which records the namespace's U
 Use [operation recovery](usage.md#updates-and-recovery) with the original configuration and retained state.
 For a failed or interrupted native Helm release removal, use [Helm removal recovery](usage.md#recovering-an-interrupted-helm-removal).
 Preserve the checkpoint and current state together.
-For a move from an earlier product version, use [migration](../get-started/migration.md).
+To [evaluate NemoClaw Agent Configs alongside NemoClaw v0](../get-started/migration.md), create a separate deployment.
 The platform owns transfer of mounted native data.
 A copied volume doesn't move deployment ownership or establish compatibility with another harness version.
 Moving deployment state to another host is unqualified, and native conversation continuity depends on Fabric and the selected harness.

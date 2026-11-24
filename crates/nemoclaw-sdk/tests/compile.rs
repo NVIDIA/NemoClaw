@@ -556,8 +556,10 @@ fn sandboxes_request_the_cpu_and_memory_their_author_chose() {
     let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
-    let mut value: serde_json::Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let mut value: serde_json::Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/agents/fabric-openclaw.yaml"
+    ))
+    .unwrap();
     let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
     let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
     let sandbox = &graph["resource"]["openshell_sandbox"]["assistant"];
@@ -596,7 +598,8 @@ fn sandboxes_request_the_cpu_and_memory_their_author_chose() {
 #[test]
 fn only_sandboxes_that_attach_a_registration_restart_for_its_credential() {
     let mut document =
-        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+        Document::parse(include_str!("../../../examples/agents/fabric-openclaw.yaml").as_bytes())
+            .unwrap();
     document.spec.integrations = serde_json::from_value(serde_json::json!({
         "bookings": {"kind":"api", "endpoints":["https://bookings.example.com/mcp"],
             "credential":{"env":"BOOKINGS_API_KEY"}}
@@ -665,11 +668,11 @@ fn sandboxes_pass_driver_configuration_through() {
     }});
     for (example, config) in [
         (
-            include_str!("../../../examples/fabric-openclaw.yaml"),
+            include_str!("../../../examples/agents/fabric-openclaw.yaml"),
             docker,
         ),
         (
-            include_str!("../../../examples/kubernetes/external-gateway.yaml"),
+            include_str!("../../../examples/platforms/kubernetes/external-gateway.yaml"),
             kubernetes,
         ),
     ] {
@@ -706,8 +709,10 @@ fn isolated_sandboxes_take_extra_network_grants() {
     let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
-    let mut value: serde_json::Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let mut value: serde_json::Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/agents/fabric-openclaw.yaml"
+    ))
+    .unwrap();
     let grant = serde_json::json!({"endpoints": [{
         "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
         "rules": [{"allow": {"method": "GET", "path": "/**"}}]
@@ -773,8 +778,10 @@ fn docker_providers_authenticate_to_listed_registries() {
     ]
     .map(|key| (key.into(), "a".repeat(32)))
     .into();
-    let mut value: serde_json::Value =
-        serde_saphyr::from_str(include_str!("../../../examples/managed-ollama.yaml")).unwrap();
+    let mut value: serde_json::Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"
+    ))
+    .unwrap();
     let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
     let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
     let providers = graph["provider"]["docker"]
@@ -832,11 +839,11 @@ fn the_apply_time_gateway_read_waits_for_a_managed_gateway() {
     for (name, source) in [
         (
             "podman",
-            include_str!("../../../examples/managed-podman.yaml"),
+            include_str!("../../../examples/platforms/podman/managed-podman.yaml"),
         ),
         (
             "docker",
-            include_str!("../../../examples/managed-ollama.yaml"),
+            include_str!("../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"),
         ),
     ] {
         let document = nemoclaw_sdk::config::Document::parse(source.as_bytes()).unwrap();
@@ -854,8 +861,10 @@ fn sandbox_service_exposures_compile_in_openshells_terms() {
     let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
-    let mut value: serde_json::Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let mut value: serde_json::Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/agents/fabric-openclaw.yaml"
+    ))
+    .unwrap();
     let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
     let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
     assert!(

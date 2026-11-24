@@ -58,7 +58,7 @@ fn an_external_gateway_reads_only_its_image_store_like_plan() {
 
 #[test]
 fn only_the_selected_routes_model_catalog_is_read() {
-    let document = document("../../examples/spark/local-and-hosted.yaml");
+    let document = document("../../examples/platforms/docker/vllm/dgx-spark/local-and-hosted.yaml");
     let inference = |route| {
         discovery_queries(&document, Some(route))
             .unwrap()
@@ -77,7 +77,8 @@ fn only_the_selected_routes_model_catalog_is_read() {
 /// rest.
 #[test]
 fn hardware_of_service_engines_is_the_first_named_exclusion() {
-    let document = document("../../examples/spark/remote-vllm.yaml");
+    let document =
+        document("../../examples/platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml");
     let hardware = |queries: &[DiscoveryQuery]| {
         queries
             .iter()
@@ -95,7 +96,8 @@ fn hardware_of_service_engines_is_the_first_named_exclusion() {
 /// engine itself.
 #[test]
 fn an_unresolved_engine_is_the_second_named_exclusion() {
-    let document = document("../../examples/spark/remote-vllm.yaml");
+    let document =
+        document("../../examples/platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml");
     let image_reads = |queries: &[DiscoveryQuery]| {
         queries
             .iter()
@@ -108,8 +110,11 @@ fn an_unresolved_engine_is_the_second_named_exclusion() {
 
 #[test]
 fn managed_service_route_has_no_external_catalog_to_discover() {
-    let document =
-        Document::parse(&include_bytes!("../../../examples/managed-ollama.yaml")[..]).unwrap();
+    let document = Document::parse(
+        &include_bytes!("../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml")
+            [..],
+    )
+    .unwrap();
     let before = document.clone();
     assert_eq!(
         inference_request_for_document(&document, None).unwrap(),

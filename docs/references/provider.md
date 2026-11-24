@@ -107,7 +107,7 @@ That data source takes the gateway `endpoint`, the `credential_env` variable hol
 For mutual TLS, it also takes the `tls_certificate_env` and `tls_key_env` variables, set together, naming a client certificate and key.
 Its `ref` carries those names, never their values.
 For a managed Kubernetes or OpenShift gateway, it takes `kubernetes`, the gateway's specification as JSON, instead of `endpoint` and the credential and TLS variables.
-The specification's `settings` hold the gateway's `target`, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
+The specification's `settings` hold the gateway's `target`, as in [the Kubernetes HCL example](../../examples/platforms/kubernetes/hosted-inference/hosted-nvidia.tf).
 Each provider that reaches such a gateway opens its own port forward on a free loopback port and keeps it open while OpenTofu runs.
 The forward uses the kubeconfig the specification names, or the service account of the pod it runs in when the specification names none, and the development credentials in the SDK's state directory.
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
@@ -279,7 +279,7 @@ Include the server's initialization and tool discovery methods and the allowed `
 Each tool rule can use one selector, either `allow.tool` or `allow.params.name`.
 A resource sets at most one of `rest` and `mcp`, and neither when APF serves its profile, because APF's profile sets the endpoint's rules.
 If the gateway defines a global policy, that policy controls authorization.
-Refer to the [HCL travel team](https://github.com/NVIDIA/NemoClaw/tree/v1/examples/hcl/travel-team) for the rules and Hermes header configuration.
+Refer to the [HCL travel team](https://github.com/NVIDIA/NemoClaw/tree/v1/examples/features/travel-team/hcl) for the rules and Hermes header configuration.
 A literal IP grants only that address.
 A DNS name receives no private-network grant.
 `binaries` must list the absolute paths of the callers allowed to use the credential.
@@ -725,7 +725,7 @@ Onboarding offers the observed identifiers as model suggestions for an endpoint 
 
 Credentials remain a direct SDK concern: `observe_credentials` reports whether each selected reference resolves, separately from remote authentication.
 Gateway and resource discovery reuse the existing strict lifecycle reads that the following sections describe, and preserve bindings when refresh fails.
-Refer to [SDK discovery](sdk.md#discovering-before-authoring-or-planning) and [onboarding target checks](../../crates/nemoclaw-onboarding/README.md#target-checks).
+Refer to [SDK discovery](sdk.md#discovering-before-authoring-or-planning) and [onboarding target checks](../get-started/onboard.md#target-checks).
 
 ## Gateway Capabilities
 
@@ -1084,9 +1084,9 @@ Refer to [compatibility](compatibility.md) for the supported examples, import, a
 [Using the Providers From Your Own OpenTofu Project](../build-deploy/opentofu-project.md) covers installation, state, pipelines, credentials, and what the CLI and SDK add.
 
 Every resource and data source takes inputs that can be written in HCL.
-[`examples/hcl/travel`](../../examples/hcl/travel/main.tf) is a complete hand-written configuration: a Pi agent in an OpenShell sandbox, answering with a local Ollama server placed with Docker, and allowed only HTTPS `GET` requests to one site.
+[`examples/features/travel/hcl`](../../examples/features/travel/hcl/main.tf) is a complete hand-written configuration: a Pi agent in an OpenShell sandbox, answering with a local Ollama server placed with Docker, and allowed only HTTPS `GET` requests to one site.
 An integration test applies it unchanged against the bundle's providers.
-[`examples/hcl/travel-team`](../../examples/hcl/travel-team/README.md) scales the same pattern to a team of six agents with their own sandboxes, models, and grants.
+[`examples/features/travel-team/hcl`](../../examples/features/travel-team/hcl/README.md) scales the same pattern to a team of six agents with their own sandboxes, models, and grants.
 Writing one by hand:
 
 - Install the providers from a bundle, as [Installing the Providers From a Bundle](../build-deploy/opentofu-project.md#installing-the-providers-from-a-bundle) describes.

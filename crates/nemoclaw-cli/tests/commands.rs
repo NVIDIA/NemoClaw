@@ -191,7 +191,7 @@ fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
         fs::write(state.join(name), contents).unwrap();
     }
     let document = nemoclaw_sdk::config::Document::parse(
-        include_bytes!("../../../examples/explicit-policy.yaml").as_slice(),
+        include_bytes!("../../../examples/features/explicit-policy.yaml").as_slice(),
     )
     .unwrap();
     let mut invalid = serde_json::to_value(&document).unwrap();
@@ -318,7 +318,7 @@ fn failed_progress_is_visible_without_verbose_and_stays_on_stderr() {
 
 fn write_credential_document(directory: &std::path::Path) -> std::path::PathBuf {
     let path = directory.join("credential-input.yaml");
-    let yaml = include_str!("../../../examples/openclaw.yaml").replace(
+    let yaml = include_str!("../../../examples/agents/openclaw.yaml").replace(
         "      endpoint: https://inference.example.com/v1",
         "      endpoint: https://inference.example.com/v1\n      credential: {env: STORY_CREDENTIAL_KEY}",
     );

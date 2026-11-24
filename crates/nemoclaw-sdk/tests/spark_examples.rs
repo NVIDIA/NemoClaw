@@ -18,16 +18,16 @@ fn arm64_hardware_scenarios_compile_their_declared_resources() {
     .map(|key| (key.into(), "a".repeat(32)))
     .into();
     for (directory, name) in [
-        ("spark", "pi-small.yaml"),
-        ("spark", "deepagents-team.yaml"),
-        ("spark", "shared-model.yaml"),
-        ("spark", "two-models.yaml"),
-        ("spark", "local-and-hosted.yaml"),
-        ("station", "vllm.yaml"),
-        ("station", "shared-model.yaml"),
+        ("dgx-spark", "pi-small.yaml"),
+        ("dgx-spark", "deepagents-team.yaml"),
+        ("dgx-spark", "shared-model.yaml"),
+        ("dgx-spark", "two-models.yaml"),
+        ("dgx-spark", "local-and-hosted.yaml"),
+        ("dgx-station", "vllm.yaml"),
+        ("dgx-station", "shared-model.yaml"),
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples")
+            .join("../../examples/platforms/docker/vllm")
             .join(directory)
             .join(name);
         let doc = Document::parse(std::fs::File::open(path).unwrap())
@@ -73,7 +73,7 @@ fn arm64_hardware_scenarios_compile_their_declared_resources() {
                 assert!(!args.iter().any(|arg| arg == "--trust-remote-code"));
             }
         }
-        if directory == "station" {
+        if directory == "dgx-station" {
             assert_eq!(doc.spec.services.len(), 1, "station/{name}");
             let ServiceDefinition::Vllm(service) = doc.spec.services.values().next().unwrap()
             else {

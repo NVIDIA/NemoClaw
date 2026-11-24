@@ -17,8 +17,7 @@ COPY skills /opt/example/skills
 COPY --chmod=755 example-tool /usr/local/bin/example-tool
 ```
 
-NemoClaw doesn't publish base images yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
-Until it does, [build them](build.md) and push them to your registry.
+Use the base image digest from your release. For a harness without a release image, [build the image](build.md) and push it to your registry.
 A local image ID such as `name@sha256:<id>` can't be used in `FROM`.
 Use a registry digest or a local tag.
 

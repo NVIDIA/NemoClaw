@@ -80,9 +80,24 @@ fn check_yaml(source: &Path, text: &str) -> Result<()> {
 
 fn anchors(text: &str) -> BTreeSet<String> {
     let mut anchors = BTreeSet::new();
+    let mut aliases = BTreeSet::new();
     let mut heading = None;
     for event in parser(text) {
         match event {
+            // GitHub Markdown accepts named HTML anchors. Preserve links to
+            // these aliases when the visible heading changes.
+            Event::Html(html) | Event::InlineHtml(html) => {
+                if let Some(name) = html.trim().strip_prefix("<a name=\"")
+                    && let Some((name, end)) = name.split_once('"')
+                    && matches!(end, ">" | "></a>")
+                    && !name.is_empty()
+                    && name
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+                {
+                    aliases.insert(name.to_owned());
+                }
+            }
             Event::Start(Tag::Heading { .. }) => heading = Some(String::new()),
             Event::Text(text) | Event::Code(text) if heading.is_some() => {
                 heading.as_mut().unwrap().push_str(&text);
@@ -114,6 +129,7 @@ fn anchors(text: &str) -> BTreeSet<String> {
             _ => {}
         }
     }
+    anchors.extend(aliases);
     anchors
 }
 
@@ -199,7 +215,7 @@ impl Renderer<'_> {
                 .is_some_and(|extension| extension == "md")
             && !anchors(&fs::read_to_string(&target)?).contains(anchor)
         {
-            return Err(format!("{}: missing heading in {destination}", source.display()).into());
+            return Err(format!("{}: missing anchor in {destination}", source.display()).into());
         }
         let suffix = fragment.map(|a| format!("#{a}")).unwrap_or_default();
         if !image && let Some(slug) = self.routes.get(&target) {

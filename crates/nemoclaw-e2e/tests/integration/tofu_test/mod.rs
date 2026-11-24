@@ -138,12 +138,12 @@ fn every_scenario_test_names_its_inputs() {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
             let scenario = name.strip_suffix(".tftest.hcl")?.to_owned();
             let case = match scenario.as_str() {
-                "dgx-station-openclaw-nemotron" => {
-                    Path::new(EXAMPLES).join("gtc-dc/openclaw-dgx-station.yaml")
-                }
-                "dgx-spark-openclaw-nemotron" => {
-                    Path::new(EXAMPLES).join("gtc-dc/openclaw-dgx-spark.yaml")
-                }
+                "dgx-station-openclaw-nemotron" => Path::new(EXAMPLES)
+                    .join("platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml"),
+                "dgx-station-hermes-nemotron" => Path::new(EXAMPLES)
+                    .join("platforms/docker/vllm/dgx-station/hermes-dgx-station.yaml"),
+                "dgx-spark-openclaw-nemotron" => Path::new(EXAMPLES)
+                    .join("platforms/docker/vllm/dgx-spark/openclaw-dgx-spark.yaml"),
                 _ => Path::new(CASES).join(format!("{scenario}.yaml")),
             };
             (!case.is_file()).then(|| format!("e2e/hcl/tests/{name}"))

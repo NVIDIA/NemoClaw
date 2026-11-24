@@ -1,12 +1,11 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Assessing Migration From an Earlier Version
+# Evaluating NemoClaw Agent Configs Alongside NemoClaw v0
 
-The desired-state SDK, schema, and state format do not promise compatibility with the earlier product.
-The current CLI has no state adoption or migration command.
-To start a v1 deployment from an earlier deployment's settings, [convert its configuration export](#starting-from-the-earlier-export).
-Keep the earlier deployment's tooling, configuration, and state while evaluating a separate NemoClaw Agent Configs deployment.
+Evaluate NemoClaw Agent Configs in a separate deployment without changing your NemoClaw v0 tooling, configuration, or state.
+The CLI can't adopt an existing deployment or migrate its state.
+[Author new deployment YAML](onboard.md) or [start from an export](#starting-from-the-earlier-export) if your NemoClaw v0 CLI supports the report-capable exporter.
 
 NemoClaw has no upgrade, native-data transfer or rollback procedure: native data belongs to the harness, and moving its storage belongs to the platform.
 The evaluation steps below create a separate deployment.
@@ -18,8 +17,8 @@ Choose the current owner of the task rather than translating earlier CLI command
 
 | Earlier task | Current destination |
 |---|---|
-| Install with npm | Build the native bundle from source; releases are tracked in [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) |
-| Interactive onboarding and agent-specific aliases | `nemoclaw onboard` writes deployment YAML for the one `nemoclaw` CLI; see the [onboarding guide](../../crates/nemoclaw-onboarding/README.md) |
+| Install with npm | [Install the v0.1.0 native bundle](install.md) |
+| Interactive onboarding and agent-specific aliases | `nemoclaw onboard` writes deployment YAML for the one `nemoclaw` CLI; see the [onboarding guide](onboard.md) |
 | `launch`, `status`, `doctor`, `backup-all`, or `rebuild` | No equivalent commands; the [CLI reference](../references/cli.md) lists the current ones |
 | Imperative inference or sandbox changes | [Desired-state lifecycle](../build-deploy/usage.md), with explicit update/replacement limits |
 | Export configuration (`config export`) | `nemoclaw export`; see [CLI reference](../references/cli.md) and [state](../build-deploy/state.md) |
@@ -45,12 +44,13 @@ These checks aren't a conversion mechanism.
 
 ## Starting From the Earlier Export
 
-The earlier product's `nemoclaw config export` writes v1 YAML for one sandbox.
-That YAML can't be planned as written: its image is a placeholder, and it reuses the earlier deployment's identity and gateway port.
-The [V0 migration skill](../../.agents/skills/nemoclaw-v0-migration/SKILL.md) completes it; an assistant with this checkout can follow it, or you can follow its steps yourself.
+NemoClaw v0's `nemoclaw config export` writes NemoClaw Agent Configs YAML for one sandbox.
+The report-capable exporter assigns a new UUID but keeps the earlier gateway port and writes an image placeholder.
+If your version of NemoClaw v0 does not include the report-capable exporter, skip export and [author separate deployment YAML](onboard.md) using the settings you can carry over.
+Follow [Preparing a Separate Deployment From a NemoClaw v0 Export](../../.agents/skills/nemoclaw-v0-migration/SKILL.md) yourself or with an assistant that has access to this checkout.
 It leaves the earlier deployment untouched and moves no native data.
 
-1. On the earlier deployment's host, export the sandbox with the CLI of a V0 release with the export report:
+1. On the NemoClaw v0 host, export the sandbox using a CLI that includes the [report-capable exporter](https://github.com/NVIDIA/NemoClaw/pull/14602) from revision `7892283831683e8b8b7a167b5cf1006d7bc262a5`:
 
    ```sh
    nemoclaw config export SANDBOX --output v0-export.yaml
@@ -61,15 +61,20 @@ It leaves the earlier deployment untouched and moves no native data.
    Check those capabilities in the task map above before continuing without them.
 2. Read the comment block at the top of the export.
    Each line names a setting the export left out, replaced with a placeholder, or rewrote.
-   An export without the first line `# nemoclaw-export-report: 1` comes from a release without the report; export again with a release that writes it.
-3. Ask the assistant to read `.agents/skills/nemoclaw-v0-migration/SKILL.md` and complete the export.
-   It assigns a fresh UUID, state directory, and free gateway port, selects an agent image, replaces the parts of the policy that describe the earlier image, writes the settings v1 can hold, and lists the ones it can't.
-4. Review the completed YAML and the list of lost settings, then plan it as step 4 below describes.
+   If the first line is not `# nemoclaw-export-report: 1`, stop and [author a separate YAML file](onboard.md) instead.
+3. Ask the assistant to read `.agents/skills/nemoclaw-v0-migration/SKILL.md` and prepare the separate deployment YAML.
+   The assistant assigns a fresh UUID, state directory, and free gateway port. It selects an agent image and updates the policy for that image.
+   It writes supported settings and lists those it couldn't carry over.
+4. Review the completed YAML for a free gateway port and an immutable agent image reference.
+5. Review the list of settings the conversion could not carry over.
+6. [Evaluate the new deployment](#evaluating-v1-beside-the-existing-deployment).
 
 The skill lists the harnesses and revisions it has been run with.
 Deep Agents exports and exports with managed inference services are untested.
 
-## Evaluating v1 Beside the Existing Deployment
+<a name="evaluating-v1-beside-the-existing-deployment"></a>
+
+## Evaluating NemoClaw Agent Configs Beside the Existing Deployment
 
 Use a separate identity and state directory so the comparison doesn't mutate an earlier deployment.
 
@@ -77,16 +82,20 @@ Use a separate identity and state directory so the comparison doesn't mutate an 
    Use that version's documentation and tools to inspect it.
 2. Check the task mapping above for workflows you rely on.
    If a workflow you need is in [current limits](../resources/limits.md) or [Out of Scope](../resources/out-of-scope.md), keep the earlier deployment available rather than assuming feature parity.
-3. Build a separate matched v1 bundle and images, then prepare a fresh UUID and dedicated state directory using [the first-deployment guide](first-deployment.md).
+3. [Install the v0.1.0 bundle](install.md).
+4. Prepare a fresh UUID and dedicated state directory using [the first-deployment guide](first-deployment.md).
    Check names, exposed ports, model capacity, and credentials so the evaluation doesn't overwrite or exhaust the original deployment's resources.
-4. Plan and apply only the new v1 configuration/state.
-   Verify the native interface and an actual agent reply, then check configuration export and [unchanged reapply](../build-deploy/usage.md#verifying-an-unchanged-reapply).
-5. Validate each required task in the new deployment before switching use to it.
-   An agent reply alone doesn't validate tools, channels, history continuity, or workload quality.
-6. If evaluation fails, continue using the retained earlier deployment and diagnose v1 with its own bundle and state.
-   Preview any v1 teardown separately and retain data needed for investigation before destroying its sandbox.
+5. Plan the Agent Configs deployment using only its YAML and state directory.
+6. Apply the reviewed changes to the new deployment.
+7. Verify a reply through the native interface.
+8. Check [configuration export](../build-deploy/state.md).
+9. Check [unchanged reapply](../build-deploy/usage.md#verifying-an-unchanged-reapply).
+10. Validate each required task before switching to Agent Configs.
+    An agent reply alone doesn't validate tools, channels, history continuity, or workload quality.
 
-Continuing to use an untouched earlier deployment isn't a rollback of data written in v1.
+If evaluation fails, keep using the earlier deployment. Diagnose Agent Configs with its own bundle and state. Before removing the evaluation deployment, preserve data needed for investigation and [preview teardown](first-deployment.md#previewing-and-removing-the-deployment).
+
+Continuing to use an untouched earlier deployment isn't a rollback of data written in NemoClaw Agent Configs.
 NemoClaw has no procedure to transfer those changes back to the earlier runtime.
 Don't retire the old deployment when the required native-data backup, transfer, or return path is unverified.
 
@@ -105,14 +114,12 @@ Retain the earlier deployment until the required continuity has been verified.
 
 ## Finding Earlier Documentation
 
-The [combined staging site](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/overview) has a version selector:
+The staging site has separate guides for the two products:
 
-- **v1** describes the desired-state product.
-- **v0** contains the earlier guides and their release history.
-  Start at its [OpenClaw home](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v0/user-guide/openclaw/home).
+- [NemoClaw Agent Configs](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/overview) covers the desired-state architecture and workflows.
+- [NemoClaw v0](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v0/user-guide/openclaw/home) covers the previous version and its release history.
 
 Use the earlier deployment's actual version when selecting commands or assessing historical qualification.
-Publishing the combined site and checking its legacy routes are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
-For Classic llama.cpp users, [the managed GGUF contract](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) carries repository/revision/file/SHA-256 identity into v1.
+If you ran llama.cpp with NemoClaw v0, [the managed GGUF contract](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) uses the repository, revision, file, and SHA-256 to identify the model in NemoClaw Agent Configs.
 Revalidate each model, host, and required agent task against the [qualified configuration and its limits](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp).

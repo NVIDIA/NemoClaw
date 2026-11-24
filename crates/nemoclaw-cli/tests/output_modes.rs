@@ -38,7 +38,11 @@ fn help_remains_text_when_json_output_is_requested() {
 fn failure_json_and_progress_stay_separate_when_either_stream_is_redirected() {
     let directory = tempfile::tempdir().unwrap();
     let config = directory.path().join("input.yaml");
-    fs::write(&config, include_str!("../../../examples/openclaw.yaml")).unwrap();
+    fs::write(
+        &config,
+        include_str!("../../../examples/agents/openclaw.yaml"),
+    )
+    .unwrap();
     for operation in ["plan", "apply", "destroy"] {
         for mode in ["auto", "plain", "off"] {
             for redirect_stdout in [false, true] {

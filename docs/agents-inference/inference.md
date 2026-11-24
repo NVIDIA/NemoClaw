@@ -30,7 +30,7 @@ Omitting `default` selects the sole route.
 Duplicate names and missing defaults are errors.
 Use `inferenceRef` to reuse the whole selection without repeating it.
 
-The [multiple-model example](../../examples/multiple-models.yaml) gives a researcher smart and fast choices and a writer only the fast model.
+The [multiple-model example](../../examples/features/multiple-models.yaml) gives a researcher smart and fast choices and a writer only the fast model.
 It assumes an existing endpoint serving both model IDs.
 It doesn't provision that server or download either model.
 Select a gateway, current agent image, endpoint, and models using the prerequisites below before applying it with a fresh deployment UID and state directory.
@@ -59,7 +59,7 @@ For Pi, see [model selection and updates](agents.md#pi-model-selection).
 
 ## Combining Local and Hosted Providers
 
-The [multiple-provider example](../../examples/multiple-providers.yaml) gives a researcher a hosted smart model and a local fast model.
+The [multiple-provider example](../../examples/features/multiple-providers.yaml) gives a researcher a hosted smart model and a local fast model.
 The writer selects only the local model.
 Each route selects its own `provider` or `providerRef`, with that provider's API and credential reference.
 The sandbox attaches the union of those selections, deduplicated by definition identity.
@@ -105,13 +105,16 @@ The following paths have different prerequisites and retention behavior:
 
 | Situation | Configuration and owning guide | Example to adapt |
 |---|---|---|
-| You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../../examples/inference-tuning.yaml), [Hermes authentication](../../examples/hermes-auth.yaml) |
+| You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../../examples/features/inference-tuning.yaml), [Hermes authentication](../../examples/features/hermes-auth.yaml) |
 | NemoClaw should run Ollama on a declared NVIDIA GPU | Declare a service with `kind: ollama`, hardware requirements, a pinned runtime image, a model name and digest, memory, and serving settings | [Managed Ollama](#running-managed-ollama) |
 | Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#using-external-ollama-through-a-managed-proxy) |
-| You run a model server in a Kubernetes or OpenShift gateway's cluster | External `endpoint` naming its Service, `http://<service>.<namespace>.svc.cluster.local:<port>/v1`, and an optional credential reference; follow [in-cluster model servers](../build-deploy/kubernetes.md#using-a-model-server-in-the-cluster) | [In-cluster vLLM](../../examples/kubernetes/in-cluster-vllm.yaml), [in-cluster Ollama](../../examples/kubernetes/in-cluster-ollama.yaml) |
-| NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../../examples/spark/vllm.yaml) |
-| The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../../examples/spark/remote-vllm.yaml) |
+| You run a model server in a Kubernetes or OpenShift gateway's cluster | External `endpoint` naming its Service, `http://<service>.<namespace>.svc.cluster.local:<port>/v1`, and an optional credential reference; follow [in-cluster model servers](../build-deploy/kubernetes.md#using-a-model-server-in-the-cluster) | [In-cluster vLLM](../../examples/platforms/kubernetes/vllm/in-cluster-vllm.yaml), [in-cluster Ollama](../../examples/platforms/kubernetes/ollama/in-cluster-ollama.yaml) |
+| NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; refer to [managed models](models.md) | [Generic vLLM](../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml) |
+| NemoClaw should serve a pinned public GGUF on a CUDA GPU | Declare `kind: llamaCpp` with a pinned runtime image and the repository, revision, filename, and SHA-256 for the GGUF | [Managed llama.cpp](models.md#serving-a-pinned-gguf-with-llamacpp) |
+| The engine running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../../examples/platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Use an immutable image that packages the recipe's reviewed tools, and declare an [inline recipe](recipes.md) | [Recipe declaration](recipes.md#declaration) |
+
+An external endpoint remains under its operator's control after destroy. A managed service's container belongs to the deployment, but some data and credentials can outlive it. Review [deletion and retention](../build-deploy/state.md#deletion-and-retention) before retiring either deployment.
 
 Service ownership doesn't depend on the harness.
 The service must support the [request API](#choosing-the-request-api) selected by that harness.
@@ -229,7 +232,7 @@ If the machine running NemoClaw doesn't trust the certificate, onboarding report
 
 Explicit API selection, tuning, and authentication require an agent image built from this revision.
 [Build it](../build-deploy/build.md#building-agent-images) and use its immutable digest in `sandboxes.<name>.image.ref`.
-The [tuning example](../../examples/inference-tuning.yaml) and [Hermes authentication example](../../examples/hermes-auth.yaml) contain zero-digest placeholders.
+The [tuning example](../../examples/features/inference-tuning.yaml) and [Hermes authentication example](../../examples/features/hermes-auth.yaml) contain zero-digest placeholders.
 Replace them before deployment.
 Set their gateway and inference endpoints and model IDs for your services, and assign a fresh deployment UID.
 Changing the model, native settings, or image replaces the agent's sandbox, deleting its files and conversations, as described in [the change path](../build-deploy/usage.md#choosing-the-change-path).
@@ -237,7 +240,7 @@ Changing the model, native settings, or image replaces the agent's sandbox, dele
 ## Running Managed Ollama
 
 Declare `kind: ollama` under `spec.services` to run Ollama through the same package-independent installer contract as vLLM.
-The [GPU example](../../examples/managed-ollama-gpu.yaml) selects NVIDIA DGX Spark and a pinned public Qwen3 model.
+The [GPU example](../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml) selects NVIDIA DGX Spark and a pinned public Qwen3 model.
 Before applying, choose a fresh deployment UID and state directory, a current agent image, and a hardware profile matching the inference host.
 The inference host needs Linux, Docker with NVIDIA container GPU access, an NVIDIA GPU for the container (the host's only GPU, or the one that [`container.gpuDevices`](#setting-container-limits-and-update-policy) selects), and enough host memory, GPU memory, and disk for the declared budget.
 Use the [hardware profile reference](models.md#choosing-a-hardware-profile) for other GPU families and explicit CPU architecture.
@@ -511,7 +514,7 @@ When retiring the deployment, remove the retained credential volume with [Removi
 ## Tuning OpenClaw's Primary Route
 
 Set the public model output limit with `maxTokens`.
-The [tuning example](../../examples/inference-tuning.yaml) uses:
+The [tuning example](../../examples/features/inference-tuning.yaml) uses:
 
 ```yaml
 overrides:
@@ -537,7 +540,7 @@ Configure that service's limits separately.
 The SDK doesn't infer native support from an adapter name or from accepting the YAML structure.
 
 The managed Ollama examples for OpenClaw set the service's `serving.contextTokens` to `32768`.
-The [managed Hermes example](../../examples/managed-hermes.yaml) sets `65536`, because [Hermes needs at least `64000`](#sizing-the-context-for-hermes).
+The [managed Hermes example](../../examples/platforms/docker/ollama/dgx-spark/managed-hermes.yaml) sets `65536`, because [Hermes needs at least `64000`](#sizing-the-context-for-hermes).
 An operator-reported OpenClaw prompt used 19,947 tokens in one setup, before allowing space for a reply.
 Size the model, KV cache, and GPU memory for the selected context.
 The OpenClaw adapter owns how it uses the context window.
@@ -549,8 +552,8 @@ The pinned Hermes Agent requires a model context window of at least 64,000 token
 It reads the window from the model server.
 Route settings don't change it.
 For a Hermes route to managed vLLM or Ollama, set `serving.contextTokens` between `64000` and the schema maximum, `65536`, and choose a model that supports that context.
-The [managed Hermes example](../../examples/managed-hermes.yaml) serves `nemotron-3-nano:4b`, whose 256K-token native window covers that range.
-`Qwen/Qwen3-4B`, used by the [Spark vLLM example](../../examples/spark/vllm.yaml), has a 40,960-token native window, so it can't be served at Hermes's 64,000-token minimum.
+The [managed Hermes example](../../examples/platforms/docker/ollama/dgx-spark/managed-hermes.yaml) serves `nemotron-3-nano:4b`, whose 256K-token native window covers that range.
+`Qwen/Qwen3-4B`, used by the [Spark vLLM example](../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml), has a 40,960-token native window, so it can't be served at Hermes's 64,000-token minimum.
 With `qwen3:0.6b` at `serving.contextTokens: 32768`, below Hermes's minimum, Hermes still started and replied in the `docker-openclaw-hermes-ollama` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios).
 One reply doesn't qualify that setup.
 In one operator test, Hermes answered a request through cluster vLLM serving `Qwen/Qwen3-4B-Instruct-2507` with `serving.contextTokens: 65536`.

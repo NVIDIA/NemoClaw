@@ -189,7 +189,7 @@ fn the_single_sandbox_keeps_its_name_and_questions_use_it() {
 
 #[test]
 fn a_complete_multi_sandbox_document_parses_but_is_outside_the_v1_journey_envelope() {
-    let bytes = include_bytes!("../../../examples/multiple-sandboxes.yaml");
+    let bytes = include_bytes!("../../../examples/features/multiple-sandboxes.yaml");
     let expected = Document::parse(&bytes[..]).unwrap();
     let partial = PartialDocument::from_yaml(bytes).unwrap();
     assert_eq!(partial.assess().document(), Some(&expected));

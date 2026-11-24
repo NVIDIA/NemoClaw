@@ -308,6 +308,46 @@ fn prepare_executable(source: &Path, destination: &Path) -> Result<()> {
     }
     Ok(())
 }
+fn submit_3s(
+    input: &Path,
+    scratch: &Path,
+    result_filename: &str,
+    id: &str,
+    secret: &str,
+) -> Result<()> {
+    capture(
+        Command::new("nvsec")
+            .env("HOME", scratch)
+            .env("XDG_CACHE_HOME", scratch)
+            .env("TMPDIR", scratch)
+            .env("NVSEC_SSA_CLIENT_ID", id)
+            .env("NVSEC_SSA_CLIENT_SECRET", secret)
+            .args([
+                "3s",
+                "submit",
+                "--description",
+                "NemoClaw macOS release signing",
+                "--job_type",
+                "MACOS",
+                "--scope",
+                "SIGNING_MACOS",
+                "--auth",
+                "ssa",
+                "--input_file",
+            ])
+            .arg(input)
+            .args(["--download", "--timeout", "600", "--result_dir"])
+            .arg(scratch)
+            .args([
+                "--result_filename",
+                result_filename,
+                "--nspect_id",
+                "NSPECT-SQ44-PJFM",
+            ]),
+        None,
+    )?;
+    Ok(())
+}
 fn sign(bundle: &Path) -> Result<()> {
     if required("MACOS_THIRD_PARTY_SIGNING_APPROVED")? != "true" {
         return Err("Product Security approval is required".into());
@@ -330,37 +370,7 @@ fn sign(bundle: &Path) -> Result<()> {
                 .arg(&member),
             None,
         )?;
-        capture(
-            Command::new("nvsec")
-                .env("HOME", &scratch.0)
-                .env("XDG_CACHE_HOME", &scratch.0)
-                .env("TMPDIR", &scratch.0)
-                .env("NVSEC_SSA_CLIENT_ID", &id)
-                .env("NVSEC_SSA_CLIENT_SECRET", &secret)
-                .args([
-                    "3s",
-                    "submit",
-                    "--description",
-                    "NemoClaw macOS release signing",
-                    "--job_type",
-                    "MACOS",
-                    "--scope",
-                    "SIGNING_MACOS",
-                    "--auth",
-                    "ssa",
-                    "--input_file",
-                ])
-                .arg(&archive)
-                .args(["--download", "--timeout", "600", "--result_dir"])
-                .arg(&scratch.0)
-                .args([
-                    "--result_filename",
-                    "signed.zip",
-                    "--nspect_id",
-                    "NSPECT-SQ44-PJFM",
-                ]),
-            None,
-        )?;
+        submit_3s(&archive, &scratch.0, "signed.zip", &id, &secret)?;
         // Read just the expected member; never extract service-returned paths.
         let listing = capture(Command::new("unzip").arg("-Z1").arg(&signed), None)?;
         if listing != format!("{member}\n").as_bytes() {
@@ -386,6 +396,48 @@ fn sign(bundle: &Path) -> Result<()> {
         fs::remove_file(signed).map_err(|_| "Could not remove result archive")?;
     }
     Ok(())
+}
+// Installer packages retain their .pkg extension so 3S selects pkg signing.
+// Submit the package directly: a ZIP selects application signing in 3S.
+// Replace the input only after the returned package passes validation.
+fn sign_package_with(
+    package: &Path,
+    scratch: &Path,
+    submit: impl FnOnce(&Path, &Path) -> Result<()>,
+) -> Result<()> {
+    let member = package
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("Invalid package name")?;
+    if !member.ends_with(".pkg") {
+        return Err("Expected a .pkg installer".into());
+    }
+    safe_program(package.parent().ok_or("Missing package directory")?, member)?;
+    let payload = scratch.join(member);
+    fs::copy(package, &payload).map_err(|_| "Could not copy installer")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&payload, fs::Permissions::from_mode(0o644))
+            .map_err(|_| "Could not set package permissions")?;
+    }
+    let signed = scratch.join("signed.pkg");
+    submit(&payload, &signed)?;
+    let bytes = fs::read(&signed).map_err(|_| "3S did not return a signed installer")?;
+    if !bytes.starts_with(b"xar!") {
+        return Err("3S did not return an installer package".into());
+    }
+    // The hosted Mac verifies the Developer ID Installer identity and notarization.
+    fs::write(package, bytes).map_err(|_| "Could not save signed installer")?;
+    Ok(())
+}
+fn sign_package(package: &Path) -> Result<()> {
+    let scratch = Scratch::new()?;
+    let (id, secret, token) = credentials()?;
+    drop(token);
+    sign_package_with(package, &scratch.0, |archive, _| {
+        submit_3s(archive, &scratch.0, "signed.pkg", &id, &secret)
+    })
 }
 fn notarize(bundle: &Path) -> Result<()> {
     let names = inventory(bundle)?;
@@ -424,7 +476,7 @@ fn notarize(bundle: &Path) -> Result<()> {
 }
 // Job metadata is an early rejection; Vault validates the signed issuer claims.
 fn admit_with(job: &str, login: impl FnOnce() -> Result<()>) -> Result<()> {
-    if job != "sign-macos-3s" {
+    if !matches!(job, "sign-macos-3s" | "sign-macos-installer-3s") {
         return Err("This runner accepts only the release signing job".into());
     }
     login()
@@ -443,13 +495,17 @@ fn run() -> Result<()> {
         return admit();
     }
     if args.len() != 3 {
-        return Err("Usage: macos-signing admit | sign BUNDLE | notarize BUNDLE".into());
+        return Err(
+            "Usage: macos-signing admit | sign BUNDLE | sign-package PACKAGE | notarize BUNDLE"
+                .into(),
+        );
     }
     let bundle = Path::new(&args[2])
         .canonicalize()
         .map_err(|_| "Missing bundle")?;
     match args[1].as_str() {
         "sign" => sign(&bundle),
+        "sign-package" => sign_package(&bundle),
         "notarize" => notarize(&bundle),
         _ => Err("Unknown signing operation".into()),
     }
@@ -486,6 +542,65 @@ mod tests {
         })
         .is_ok());
         assert!(called.get());
+    }
+    #[test]
+    fn installer_job_requires_vault_admission() {
+        let called = std::cell::Cell::new(false);
+        assert!(admit_with("sign-macos-installer-3s", || {
+            called.set(true);
+            Ok(())
+        })
+        .is_ok());
+        assert!(called.get());
+        assert!(admit_with("sign-macos-installer-3s", || Err("denied".into())).is_err());
+    }
+    #[test]
+    fn package_signing_submits_a_pkg_and_preserves_input_on_failure() {
+        let root = env::temp_dir().join(format!("nemoclaw-package-test-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let package = root.join("nemoclaw-v0.1.0-rc.1-darwin_arm64.pkg");
+        let work = root.join("work");
+        fs::create_dir(&work).unwrap();
+        for failure in ["none", "service", "invalid", "empty"] {
+            fs::write(&package, b"xar!unsigned package").unwrap();
+            let result = sign_package_with(&package, &work, |input, output| {
+                assert_eq!(
+                    input.extension().unwrap(),
+                    "pkg",
+                    "3S selects package signing from the input extension"
+                );
+                assert_eq!(fs::read(input).unwrap(), b"xar!unsigned package");
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    assert_eq!(
+                        fs::metadata(input).unwrap().permissions().mode() & 0o777,
+                        0o644
+                    );
+                }
+                if failure == "service" {
+                    return Err("submission failed".into());
+                }
+                let bytes = match failure {
+                    "empty" => b"".as_slice(),
+                    "invalid" => b"not a package".as_slice(),
+                    _ => b"xar!signed package".as_slice(),
+                };
+                fs::write(output, bytes).unwrap();
+                Ok(())
+            });
+            if failure == "none" {
+                assert!(result.is_ok(), "{result:?}");
+                assert_eq!(fs::read(&package).unwrap(), b"xar!signed package");
+            } else {
+                assert!(result.is_err(), "{failure}");
+                assert_eq!(fs::read(&package).unwrap(), b"xar!unsigned package");
+            }
+            for entry in fs::read_dir(&work).unwrap() {
+                fs::remove_file(entry.unwrap().path()).unwrap();
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn rejected_submission_stops_release() {
