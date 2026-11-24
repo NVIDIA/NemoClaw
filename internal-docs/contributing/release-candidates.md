@@ -44,6 +44,10 @@ Plan and apply:
   Before, apply failed after creating the gateway, which remained until destroy.
 - Plan and the `nemoclaw onboard` review report an agent image that the engine doesn't hold as not present, and link the [agent image build instructions](../../docs/build-deploy/build.md#building-agent-images).
   See [pulling from private registries](../../docs/build-deploy/usage.md#pulling-from-private-registries).
+- An agent image whose adapter doesn't accept `runtime.keep_state`, such as one built from another Fabric revision than the CLI's, plans and runs without it ([#14798](https://github.com/NVIDIA/NemoClaw/issues/14798)).
+  Each of its runtimes gets its own state folder.
+  Before, plan and the `nemoclaw onboard` review rejected it over `harness.runtime.keep_state`, a field the configuration doesn't need to set.
+- When the only image on the engine for the chosen harness can't run the configuration, `nemoclaw onboard` asks for the image again and says why, instead of choosing that image without asking.
 
 ### Changes in v0.1.0-rc12
 

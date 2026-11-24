@@ -559,6 +559,37 @@ async fn a_restarted_runtime_starts_with_the_same_agent_document_as_the_first() 
 }
 
 #[tokio::test]
+async fn an_image_whose_adapter_keeps_no_state_starts_its_agent_without_kept_state() {
+    // An image built from another Fabric revision can carry an adapter that
+    // doesn't accept `runtime.keep_state`, although the CLI's catalog does
+    // (#14798). The agent starts without it instead of being refused.
+    let catalog = |accepts: serde_json::Value| {
+        serde_json::json!({"adapters": [{"descriptor": {
+            "adapter_id": "nvidia.fabric.hermes", "config": {"accepts": accepts}
+        }}]})
+        .to_string()
+    };
+    for (accepts, kept) in [
+        (serde_json::json!(["models", "runtime.keep_state"]), true),
+        (serde_json::json!(["models"]), false),
+    ] {
+        let fixture = Fixture::start().await;
+        let client = client(&fixture);
+        let sandbox = create_sandbox(&client, "fabric-hermes").await;
+        let mut desired = desired_with(&sandbox, &kept_state_config());
+        desired.insert(
+            nemoclaw_fabric::agent::HARNESS_CATALOG.into(),
+            catalog(accepts),
+        );
+        let started = AgentBackend(client.clone()).ensure("agent", &desired).await;
+        assert!(started.error().is_none(), "{:?}", started.error());
+        let [sent]: [serde_json::Value; 1] = started_documents(&fixture).try_into().unwrap();
+        assert_eq!(sent["runtime"].get("keep_state").is_some(), kept, "{sent}");
+        assert_eq!(sent["runtime"]["artifacts"], "/sandbox/artifacts");
+    }
+}
+
+#[tokio::test]
 async fn a_failed_runtime_that_holds_kept_state_stops_before_another_starts() {
     let fixture = Fixture::start().await;
     let client = client(&fixture);

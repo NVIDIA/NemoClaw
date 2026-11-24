@@ -174,8 +174,9 @@ impl JourneyState {
     }
 
     /// Offer each sandbox image question the images on the engine that install
-    /// its harness, suggesting the newest unless the suggestion is one of
-    /// them; with none, link the build instructions.
+    /// its harness, suggesting the newest that a read hasn't rejected unless the
+    /// suggestion is one of them; with none, link the build instructions. A
+    /// rejected image is still offered, with why it can't run the configuration.
     fn offer_agent_images(
         &self,
         questions: &mut [JourneyQuestion],
@@ -204,21 +205,38 @@ impl JourneyState {
                 ));
                 continue;
             }
+            let rejected = observed.references.iter().find_map(|reference| {
+                observations
+                    .image_rejection(reference)
+                    .map(|reason| (reference, reason))
+            });
+            if let Some((reference, reason)) = rejected {
+                question.note = Some(format!(
+                    "{reference} can't run this configuration: {reason}. Enter another image, or see {BUILD_AGENT_IMAGES} to build one."
+                ));
+            }
             if !question
                 .suggestion
                 .as_ref()
                 .is_some_and(|suggestion| references.contains(suggestion))
             {
-                question.suggestion = references.first().cloned();
+                question.suggestion = observed
+                    .references
+                    .iter()
+                    .find(|reference| observations.image_rejection(reference).is_none())
+                    .or(observed.references.first())
+                    .cloned()
+                    .map(Value::String);
             }
             question.choices = references;
         }
     }
 
     /// Answer the sandbox image question with the one image the engine holds
-    /// for the harness, unless the document names another, and say whether it
-    /// answered. The read depends on the harness, the target and the engine,
-    /// so it waits until none of their questions is open.
+    /// for the harness, unless the document names another or a read found the
+    /// image can't run the configuration, and say whether it answered. The read
+    /// depends on the harness, the target and the engine, so it waits until
+    /// none of their questions is open.
     pub fn answer_single_agent_images(
         &mut self,
         capabilities: &Capabilities,
@@ -246,6 +264,9 @@ impl JourneyState {
             let [only] = observed.references.as_slice() else {
                 continue;
             };
+            if observations.image_rejection(only).is_some() {
+                continue;
+            }
             if self
                 .authored
                 .values
@@ -255,15 +276,45 @@ impl JourneyState {
                 continue;
             }
             // A reference the schema rejects leaves the question to its user.
-            answered |= self
+            if self
                 .answer(
                     capabilities,
                     question.id(),
                     Some(Value::String(only.clone())),
                 )
-                .is_ok();
+                .is_ok()
+            {
+                self.decisions.defaulted.insert(question.id().to_owned());
+                answered = true;
+            }
         }
         answered
+    }
+
+    /// Withdraw each image the journey chose itself once a read finds it can't
+    /// run the configuration, so its question asks again, and say whether any
+    /// was withdrawn. An image the user chose stays, and the review reports it.
+    pub fn withdraw_rejected_images(&mut self, observations: &DiscoveryObservations) -> bool {
+        let rejected: Vec<String> = self
+            .decisions
+            .defaulted
+            .iter()
+            .filter(|id| {
+                self.authored
+                    .values
+                    .pointer(id)
+                    .and_then(Value::as_str)
+                    .is_some_and(|image| observations.image_rejection(image).is_some())
+            })
+            .cloned()
+            .collect();
+        for id in &rejected {
+            if self.authored.put_sdk_field(id, None).is_ok() {
+                self.decisions.defaulted.remove(id);
+                self.decisions.accepted.remove(id);
+            }
+        }
+        !rejected.is_empty()
     }
 
     /// The chosen local target of a managed gateway without an authored
