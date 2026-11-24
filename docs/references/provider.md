@@ -136,8 +136,9 @@ Other inputs are typed too:
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
   Changing network rules, middleware bindings, or grants updates the sandbox in place, as `openshell policy set` does: the sandbox keeps its files and agent, and connections it opened under the previous rules close.
   OpenShell applies filesystem, Landlock, and process settings only when a sandbox starts, so changing them replaces the sandbox, as does any change to a policy APF governs.
+  Plan checks the policy, merged with the launch's policy and managed grants as creation merges them, with OpenShell's pinned policy validator, and names the block that holds it and the reason it fails.
 - `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
-  OpenShell attaches at most 32 to one sandbox and refuses to create a sandbox with more.
+  OpenShell attaches at most 32 to one sandbox, so plan rejects a sandbox with more.
 - `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables that managed endpoint grants naming none allow.
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox. It does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
@@ -153,13 +154,16 @@ Other inputs are typed too:
   A plan that changes the network rules leaves the hash unknown. The update sends the declared rules with the loaded policy's filesystem paths, OpenShell's own included, and waits the same way for the sandbox to load them. If the sandbox fails to load the new policy, the update restores the previous one and fails.
   A hash that changed together with the policy input the sandbox records, as after an update whose reply was lost, is recorded rather than reported as drift.
 - The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry. A plan that changes the `service` blocks leaves it unknown until apply.
-- `owner` and `generation` are optional. When omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
+- `openshell_sandbox` requires `owner`, the owner of its workspace, such as `openshell_workspace.example.owner`; plan rejects a sandbox without it.
+  The other resources' `owner` and `generation`, and the sandbox's `generation`, are optional. When omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
+  Inference and API credential resources take their workspace's owner from its `ref`.
 
 ```hcl
 resource "openshell_sandbox" "assistant" {
   gateway      = data.openshell_gateway.current.ref
   workspace    = openshell_workspace.example.ref
   name         = "assistant"
+  owner        = openshell_workspace.example.owner
   image        = var.image
   launch_json  = data.fabric_harnesses.assistant.launch_json
   providers    = [openshell_inference.local.ref]

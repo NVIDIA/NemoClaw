@@ -440,7 +440,7 @@ pub struct Sandbox {
         skip_serializing_if = "Option::is_none"
     )]
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
-    /// OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.
+    /// OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it. The gateway must allow driver configuration: on a managed gateway, unless driverConfig is empty, spec.gateway.config must set allow_driver_config: true in the compute driver's table, such as openshell.drivers.docker, or plan rejects the sandbox.
     pub driver_config: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "u32", range(min = 1))]

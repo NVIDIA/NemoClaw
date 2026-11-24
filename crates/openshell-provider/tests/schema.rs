@@ -18,7 +18,9 @@ fn schema_matches_the_checked_in_snapshot() {
 }
 
 /// Every resource generates an omitted generation, and an omitted owner
-/// unless a reference carries it, as a workspace reference carries its owner.
+/// unless a reference carries it, as a workspace reference carries its owner,
+/// or it requires one: a sandbox belongs to its workspace's owner, which the
+/// provider can't generate.
 #[test]
 fn every_resource_generates_or_carries_its_owner_and_generation() {
     let mut diagnostics = Diagnostics::default();
@@ -40,15 +42,20 @@ fn every_resource_generates_or_carries_its_owner_and_generation() {
                 );
                 continue;
             }
+            let constraint = schema
+                .block
+                .attributes
+                .get(attribute)
+                .map(|a| &a.constraint);
+            if attribute == "owner" && kind == "sandbox" {
+                assert!(
+                    matches!(constraint, Some(AttributeConstraint::Required)),
+                    "{kind}.owner must be required"
+                );
+                continue;
+            }
             assert!(
-                matches!(
-                    schema
-                        .block
-                        .attributes
-                        .get(attribute)
-                        .map(|a| &a.constraint),
-                    Some(AttributeConstraint::OptionalComputed)
-                ),
+                matches!(constraint, Some(AttributeConstraint::OptionalComputed)),
                 "{kind}.{attribute} must be optional and computed"
             );
         }

@@ -71,13 +71,20 @@ fn registration_marker(kind: &str) -> &'static str {
     }
 }
 
+const BINARIES: &str = "binaries must list the executables allowed to use the provider";
+const INFERENCE_API: &str =
+    "api must be openai-completions, openai-responses, or anthropic-messages";
+const INFERENCE_SERVER: &str = "server must be the ref of an inference server's readiness read";
+
+fn no_binaries(row: &Row) -> bool {
+    value(row, "binaries_json").is_empty() || value(row, "binaries_json") == "[]"
+}
+
 /// Inputs plans require that the schema lists as optional, because an
 /// observation reports them empty when their half of the pair is missing.
 fn validate(kind: &str, desired: &Row) -> Result<(), Error> {
-    if value(desired, "binaries_json").is_empty() || value(desired, "binaries_json") == "[]" {
-        return Err(Error::Conflict(
-            "binaries must list the executables allowed to use the provider",
-        ));
+    if no_binaries(desired) {
+        return Err(Error::Conflict(BINARIES));
     }
     match kind {
         API => {
@@ -112,14 +119,10 @@ fn validate(kind: &str, desired: &Row) -> Result<(), Error> {
         }
         _ => {
             if inference_provider_type(value(desired, "api")).is_none() {
-                return Err(Error::Conflict(
-                    "api must be openai-completions, openai-responses, or anthropic-messages",
-                ));
+                return Err(Error::Conflict(INFERENCE_API));
             }
             if value(desired, "endpoint").is_empty() {
-                return Err(Error::Conflict(
-                    "server must be the ref of an inference server's readiness read",
-                ));
+                return Err(Error::Conflict(INFERENCE_SERVER));
             }
         }
     }
@@ -128,10 +131,7 @@ fn validate(kind: &str, desired: &Row) -> Result<(), Error> {
 
 /// Validate endpoint and authentication even when the workspace or gateway
 /// depends on an object that OpenTofu has not created yet.
-pub(crate) fn validate_api(
-    known: &Row,
-    unknown: &[&str],
-) -> Result<(), std::borrow::Cow<'static, str>> {
+pub(crate) fn validate_api(known: &Row, unknown: &[&str]) -> Result<(), nemoclaw_tofu::InputError> {
     if [
         "name",
         "endpoints_json",
@@ -150,6 +150,27 @@ pub(crate) fn validate_api(
         return Ok(());
     }
     validate(API, known).map_err(|error| error.to_string().into())
+}
+
+/// Check an inference registration's inputs while planning, even while its
+/// workspace, owner, generation, or gateway are still to be created or
+/// generated, naming the attribute each rejection concerns.
+pub(crate) fn validate_inference(
+    known: &Row,
+    unknown: &[&str],
+) -> Result<(), nemoclaw_tofu::InputError> {
+    use nemoclaw_tofu::InputError;
+    let checked = |field| !unknown.contains(&field);
+    if checked("binaries_json") && no_binaries(known) {
+        return Err(InputError::at("binaries_json", BINARIES));
+    }
+    if checked("api") && inference_provider_type(value(known, "api")).is_none() {
+        return Err(InputError::at("api", INFERENCE_API));
+    }
+    if checked("endpoint") && value(known, "endpoint").is_empty() {
+        return Err(InputError::at("endpoint", INFERENCE_SERVER));
+    }
+    Ok(())
 }
 
 pub(crate) async fn plan(

@@ -381,6 +381,13 @@ These changes since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affect e
   A document that sets a field the workflow's adapter doesn't accept, such as a route's `maxTokens` for NOOA, or a `workflow.target_id` the image doesn't register, now fails plan naming that field.
   Before, plan passed it and the agent failed to start after apply created resources.
   With an image built before this change, whose catalog lists no workflow targets, plan reports the image's Fabric capabilities as unverified and Fabric checks the configuration when the agent starts.
+- Plan rejects a sandbox's `driverConfig` on a managed gateway whose `spec.gateway.config` doesn't set `allow_driver_config: true` in the compute driver's table, such as `openshell.drivers.docker`, naming the sandbox's `driverConfig` ([#14781](https://github.com/NVIDIA/NemoClaw/issues/14781)); editors that use the configuration schema show it too.
+  An empty `driverConfig` is still accepted.
+  Before, plan passed it and OpenShell refused the sandbox during apply, after other resources were created.
+- In HCL, `openshell_sandbox` requires `owner`, its workspace's owner, such as `owner = openshell_workspace.example.owner`, and plan rejects a sandbox without it.
+  Before, the provider generated an owner that never matched the workspace's, so apply failed.
+  Plan also rejects a sandbox policy that OpenShell's validator refuses, a sandbox that attaches more than 32 registrations, and an `openshell_inference` without a supported `api`, `server`, or `binaries`, while the workspace's owner or generation is still to be generated. Each error names the attribute and the reason.
+  Before, these passed plan and failed during apply.
 
 ### Breaking Changes in v0.1.0-rc12
 

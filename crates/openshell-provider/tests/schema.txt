@@ -166,7 +166,7 @@ resource openshell_sandbox (version 2)
   launch_json: string, required
   memory: string, optional, computed
   name: string, required
-  owner: string, optional, computed
+  owner: string, required
   policy_authority: string, optional, computed
   policy_hash: string, computed
   policy_provenance: string, computed
