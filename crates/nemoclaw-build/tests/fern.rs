@@ -50,7 +50,7 @@ fn preview_ids_cannot_replace_main_previews() {
     }
     assert_eq!(
         preview_url("nemoclaw-v1-pr-12").unwrap(),
-        "https://nvidia-preview-nemoclaw-v1-pr-12.docs.buildwithfern.com/nemoclaw"
+        "https://nvidia-preview-nemoclaw-v1-pr-12.docs.buildwithfern.com/nemoclaw/v1"
     );
     assert!(preview_url("nemoclaw-v1").is_ok());
 }
@@ -58,10 +58,10 @@ fn preview_ids_cannot_replace_main_previews() {
 #[test]
 fn preview_requires_success_and_its_own_url() {
     let expected = preview_url("nemoclaw-v1-pr-1").unwrap();
-    let reported = format!("Published docs to {expected}/v1/overview\n");
+    let reported = format!("Published docs to {expected}/overview\n");
     assert_eq!(
         published_preview("nemoclaw-v1-pr-1", true, &reported).unwrap(),
-        format!("{expected}/v1/overview")
+        format!("{expected}/overview")
     );
     // Fern colours its output; the URL ends at the escape sequence.
     let coloured = format!("Published docs to {expected}\u{1b}[0m\n");
@@ -72,6 +72,7 @@ fn preview_requires_success_and_its_own_url() {
     assert!(published_preview("nemoclaw-v1-pr-1", false, &reported).is_err());
     for output in [
         String::new(),
+        "Published docs to https://nvidia-preview-nemoclaw-v1-pr-1.docs.buildwithfern.com/nemoclaw/latest".to_owned(),
         "Published docs to https://other.example/nemoclaw".to_owned(),
         format!("Published docs to {expected}-other"),
     ] {

@@ -15,7 +15,7 @@ Publication does not qualify the procedures or product configurations they descr
 | Repository `docs/*.md` and selected subdirectories | Generated `fern/_generated/pages/*.mdx` and `navigation.yml` |
 | [Pinned main revision](../../fern/main-source.json) | Earlier guides, generated agent variants, changelog, components, and assets under ignored `fern/_main/` |
 | SDK types and constraints | [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) and [configuration reference](../../docs/reference/configuration.md); stale checked-in output fails validation |
-| [Fern configuration](../../fern/docs.yml) | Combined PR previews, the NVIDIA theme, and retained legacy redirects |
+| [Fern configuration](../../fern/docs.yml) | Combined local preview, the NVIDIA theme, and retained legacy redirects |
 | [Fern CLI pin](../../fern/fern.config.json) | The exact CLI used locally and in CI |
 
 The [Cargo renderer](../../crates/nemoclaw-build/src/docs.rs) preserves code examples and license comments, removes the source H1 because Fern supplies the title, and converts file links to published routes.
@@ -111,6 +111,7 @@ cargo run --locked -p nemoclaw-build -- fern preview --id nemoclaw-v1-my-branch
 ```
 
 This writes a remotely hosted preview; do not include secrets in documentation.
+The preview builds the same [v1 product](../../fern/product.yml) as official staging. The preview URL opens `/nemoclaw/v1/`, and its v0 links open official staging.
 The helper passes the token to Fern through the environment, does not store it in the repository, and prints the verified preview URL.
 Unset a locally supplied token when finished.
 Delete only the preview you own:
@@ -127,7 +128,7 @@ Manual runs perform validation only.
 
 | Event | Publication |
 |---|---|
-| Same-repository PR targeting `v1` with `FERN_TOKEN` | `nemoclaw-v1-pr-N` preview, with one updated PR comment |
+| Same-repository PR targeting `v1` with `FERN_TOKEN` | Isolated v1 product at `nvidia-preview-nemoclaw-v1-pr-N.docs.buildwithfern.com/nemoclaw/v1`, linked in the PR comment |
 | PR targeting another branch, fork PR, Dependabot PR, or PR without the token | Validation only |
 | Push to `v1` | Publish the official v1 staging site, then delete associated merged v1 PR previews |
 | Final `v0.1.<patch>` tag on a commit reachable from `origin/v1` | Publish the tagged guides to the [public v1 home](https://docs.nvidia.com/nemoclaw/v1/home) |

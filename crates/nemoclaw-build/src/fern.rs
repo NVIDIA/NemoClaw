@@ -75,7 +75,7 @@ pub fn preview_url(identifier: &str) -> Result<String> {
         return Err("preview ID must be nemoclaw-v1 or start with nemoclaw-v1- and use lowercase words/numbers".into());
     }
     Ok(format!(
-        "https://nvidia-preview-{identifier}.docs.buildwithfern.com/nemoclaw"
+        "https://nvidia-preview-{identifier}.docs.buildwithfern.com/nemoclaw/v1"
     ))
 }
 
@@ -386,8 +386,12 @@ fn run_fern(root: &Path, arguments: &[&str], directory: Option<&Path>) -> Result
 
 /// Run Fern and return whether it succeeded and its combined output, also
 /// echoed to stdout.
-fn capture_fern(root: &Path, arguments: &[&str]) -> Result<(bool, String)> {
-    let result = fern_command(root, None)?
+fn capture_fern(
+    root: &Path,
+    arguments: &[&str],
+    directory: Option<&Path>,
+) -> Result<(bool, String)> {
+    let result = fern_command(root, directory)?
         .args(arguments)
         .output()
         .map_err(|_| "cannot run fern")?;
@@ -477,7 +481,9 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
 
 /// Assemble a v1-only Product at the same base path on staging and production.
 /// The tag fixes both the v1 guides and the v0 revision that supplies their home and header.
-fn checked_product(root: &Path) -> Result<tempfile::TempDir> {
+fn checked_product(root: &Path, instance: &str) -> Result<tempfile::TempDir> {
+    crate::schema::generate(root, true)?;
+    crate::docs::generate(root, false, None).map_err(|e| e.to_string())?;
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
     let directory = temp.path().canonicalize().map_err(|e| e.to_string())?;
@@ -504,24 +510,33 @@ fn checked_product(root: &Path) -> Result<tempfile::TempDir> {
             .arg(root.join("fern/_generated")),
         "assemble the v1 product and shared home",
     )?;
-    for (input, output) in [
-        ("product.yml", "docs.yml"),
-        ("fern.config.json", "fern.config.json"),
-    ] {
-        fs::copy(
-            root.join("fern").join(input),
-            project.join("fern").join(output),
-        )
-        .map_err(|e| format!("cannot install {input} into the v1 product: {e}"))?;
+    let fern = project.join("fern");
+    fs::copy(
+        root.join("fern/fern.config.json"),
+        fern.join("fern.config.json"),
+    )
+    .map_err(|e| format!("cannot install fern.config.json into the v1 product: {e}"))?;
+    let mut config =
+        fs::read_to_string(root.join("fern/product.yml")).map_err(|e| e.to_string())?;
+    if instance == STAGING {
+        // PR previews share this project with staging, but serve v1 on their own host.
+        // Take the product selector and the shared home's v0 links back to official staging.
+        let v0 = format!("https://{STAGING}/v0/");
+        config = config.replace("https://docs.nvidia.com/nemoclaw/v0/", &v0);
+        let home = project.join("docs/preview-v1-home.mdx");
+        let content = fs::read_to_string(&home).map_err(|e| e.to_string())?;
+        let linked = content
+            .replace("](/nemoclaw/v0/", &format!("]({v0}"))
+            .replace("href=\"/nemoclaw/v0/", &format!("href=\"{v0}"));
+        fs::write(home, linked).map_err(|e| e.to_string())?;
     }
+    fs::write(fern.join("docs.yml"), config).map_err(|e| e.to_string())?;
     run_fern(&root, &["check", "--local"], Some(&project.join("fern")))?;
     Ok(temp)
 }
 
 fn publish_product(root: &Path, instance: &str) -> Result<()> {
-    crate::schema::generate(root, true)?;
-    crate::docs::generate(root, false, None).map_err(|e| e.to_string())?;
-    let project = checked_product(root)?;
+    let project = checked_product(root, instance)?;
     let directory = project.path().join("site/fern");
     run_fern(
         root,
@@ -544,11 +559,9 @@ pub fn check(root: &Path) -> Result<()> {
     // Node resolves the imported `yaml` package from an absolute path.
     let root = &std::path::absolute(root).map_err(|_| "cannot resolve the repository root")?;
     prepare_main(root)?;
-    crate::schema::generate(root, true)?;
-    crate::docs::generate(root, false, None).map_err(|e| e.to_string())?;
+    checked_product(root, STAGING)?;
     crate::docs::generate(root, true, None).map_err(|e| e.to_string())?;
     validate_v1(root)?;
-    checked_product(root)?;
     // Main keeps its own route checker; Fern's stricter rule reports legacy
     // Markdown-download URLs and relative component links as broken.
     run_fern(root, &["check", "--local"], None)
@@ -562,18 +575,19 @@ pub fn dev(root: &Path) -> Result<()> {
 /// Publish an isolated preview and return its URL.
 pub fn preview(root: &Path, identifier: &str) -> Result<String> {
     preview_url(identifier)?;
-    check(root)?;
+    let project = checked_product(root, STAGING)?;
     let (succeeded, text) = capture_fern(
         root,
         &[
             "generate",
             "--docs",
             "--instance",
-            STAGING,
+            &format!("{STAGING}/v1"),
             "--preview",
             "--id",
             identifier,
         ],
+        Some(&project.path().join("site/fern")),
     )?;
     let url = published_preview(identifier, succeeded, &text)?;
     if let Some(file) = std::env::var_os("GITHUB_OUTPUT") {
@@ -589,12 +603,20 @@ pub fn preview(root: &Path, identifier: &str) -> Result<String> {
 
 pub fn delete(root: &Path, identifier: &str) -> Result<()> {
     let url = preview_url(identifier)?;
-    let (succeeded, text) = capture_fern(root, &["docs", "preview", "delete", &url])?;
-    if succeeded || text.lines().any(|line| line == "Domain not registered") {
-        Ok(())
-    } else {
-        Err("Fern preview deletion failed".into())
+    // PRs opened before the switch can still own the preview's parent mount.
+    let legacy = url.strip_suffix("/v1").expect("v1 product preview URL");
+    for mount in [url.as_str(), legacy] {
+        let (succeeded, text) = capture_fern(root, &["docs", "preview", "delete", mount], None)?;
+        if !succeeded
+            && !text.lines().any(|line| {
+                line == "Domain not registered"
+                    || line.contains(&format!("Preview site not found: {mount}"))
+            })
+        {
+            return Err("Fern preview deletion failed".into());
+        }
     }
+    Ok(())
 }
 
 /// Publish the v1 Product from a final tag on v1 history.

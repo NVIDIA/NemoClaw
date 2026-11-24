@@ -30,7 +30,7 @@ navbar-links:
 
 products:
   - display-name: v0
-    href: /nemoclaw/v0/user-guide/openclaw/home
+    href: https://docs.nvidia.com/nemoclaw/v0/user-guide/openclaw/home
     target: _self
   - display-name: v1
     slug: /
