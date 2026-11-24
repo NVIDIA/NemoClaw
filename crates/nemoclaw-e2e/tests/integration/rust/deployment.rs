@@ -720,14 +720,16 @@ pub(crate) struct Lifecycle {
     pub(crate) fixture: Fixture,
     pub(crate) directory: tempfile::TempDir,
     pub(crate) bundle: PathBuf,
+    /// The value every credential the tests reference resolves to.
+    pub(crate) credential: std::sync::Arc<std::sync::Mutex<String>>,
 }
 
 /// Fixture values for the credentials the tests reference.
-struct FixtureSecrets;
+struct FixtureSecrets(std::sync::Arc<std::sync::Mutex<String>>);
 impl nemoclaw_sdk::Secrets for FixtureSecrets {
     fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
         assert!(["NOUS_API_KEY", "SEARCH_KEY", "BOOKINGS_API_KEY"].contains(&name));
-        Ok("fixture-only-inference-key".into())
+        Ok(self.0.lock().unwrap().clone())
     }
 }
 
@@ -746,8 +748,11 @@ impl Lifecycle {
         let received = timings.clone();
         let resource_events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let resources = resource_events.clone();
+        let credential = std::sync::Arc::new(std::sync::Mutex::new(String::from(
+            "fixture-only-inference-key",
+        )));
         let deployment = Deployment::new(directory.path(), &bundle)
-            .with_secrets(std::sync::Arc::new(FixtureSecrets))
+            .with_secrets(std::sync::Arc::new(FixtureSecrets(credential.clone())))
             .with_progress(std::sync::Arc::new(move |event| {
                 if let nemoclaw_sdk::Progress::Resource {
                     resource,
@@ -775,6 +780,7 @@ impl Lifecycle {
             fixture,
             directory,
             bundle,
+            credential,
         }
     }
 

@@ -46,6 +46,12 @@ pub(super) trait OpenShellGateway: Send + Sync {
     ) -> Result<Option<Row>, ObservationError>;
     async fn create(&self, kind: &str, want: &Row) -> Result<String, ObservationError>;
     async fn update_provider(&self, want: &Row, live: &Row) -> Result<(), ObservationError>;
+    /// The digest of the credential value a registration takes from the
+    /// variable `want` names, resolved as registering it resolves it.
+    async fn credential_digest(&self, want: &Row) -> Result<String, ObservationError> {
+        let _ = want;
+        Err(ObservationError::Authentication)
+    }
     async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError>;
     /// Ask OpenShell to update the bound sandbox's configuration without a
     /// policy, so its policy authority issues the policy again.
@@ -326,6 +332,14 @@ impl OpenShellGateway for ConnectedOpenShellGateway {
 
     async fn update_provider(&self, want: &Row, live: &Row) -> Result<(), ObservationError> {
         ConnectedOpenShellGateway::update_provider(self, want, live).await
+    }
+
+    async fn credential_digest(&self, want: &Row) -> Result<String, ObservationError> {
+        let variable = want
+            .get("credential_env")
+            .map(String::as_str)
+            .unwrap_or_default();
+        crate::credential::digest(&self.secrets.resolve(variable)?)
     }
 
     async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {

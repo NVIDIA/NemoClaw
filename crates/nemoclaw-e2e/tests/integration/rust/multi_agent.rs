@@ -29,6 +29,30 @@ fn three_agents() -> Document {
     document
 }
 
+/// Two OpenClaw agents from the example: the assistant calls an API whose
+/// credential `BOOKINGS_API_KEY` names, and the reader doesn't.
+fn one_agent_with_an_api() -> Document {
+    let mut document =
+        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
+            .unwrap();
+    document.spec.integrations = serde_json::from_value(serde_json::json!({
+        "bookings": {"kind":"api", "endpoints":["https://bookings.example.com/mcp"],
+            "credential":{"env":"BOOKINGS_API_KEY"}}
+    }))
+    .unwrap();
+    let mut reader = document.spec.sandboxes["assistant"].clone();
+    reader.agent.name = "reader".into();
+    document.spec.sandboxes.insert("reader".into(), reader);
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .agent
+        .integration_refs = vec!["bookings".into()];
+    document
+}
+
 /// The `start` and `stop` operations run in sandboxes since exec call `from`,
 /// as (sandbox, operation).
 fn lifecycle_calls(state: &State, from: usize) -> Vec<(&str, &str)> {
@@ -58,6 +82,76 @@ fn sandbox_ids(lifecycle: &Lifecycle) -> BTreeMap<String, String> {
             (metadata.name.clone(), metadata.id.clone())
         })
         .collect()
+}
+
+// A new value behind the same credential reference updates the API
+// registration with it, and replaces only the sandbox whose agent uses that
+// registration, so the agent starts with the value. Plan, which doesn't read
+// the credential, and an apply with the same value change nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn a_new_credential_value_updates_its_registration_and_restarts_only_its_agent() {
+    let lifecycle = Lifecycle::start(&one_agent_with_an_api().yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    let applied = sandbox_ids(&lifecycle);
+    let (document, cancel) = (&lifecycle.document, &lifecycle.cancel);
+    let unchanged = lifecycle.deployment.apply(document, cancel).await.unwrap();
+    assert!(unchanged.changes.is_empty(), "{:?}", unchanged.changes);
+    assert_eq!(lifecycle.fixture.state.lock().unwrap().effects, effects);
+
+    *lifecycle.credential.lock().unwrap() = "replaced-fixture-only-key".into();
+    let planned = lifecycle.deployment.plan(document, cancel).await.unwrap();
+    assert!(planned.changes.is_empty(), "{:?}", planned.changes);
+    let calls = lifecycle.fixture.state.lock().unwrap().exec_calls.len();
+    let rotated = lifecycle.deployment.apply(document, cancel).await.unwrap();
+    let changes: BTreeMap<_, _> = rotated
+        .changes
+        .iter()
+        .map(|change| {
+            (
+                change.resource.as_str(),
+                (change.actions.join(","), change.reason.as_deref()),
+            )
+        })
+        .collect();
+    let registration = changes
+        .keys()
+        .find(|resource| resource.starts_with("openshell_api."))
+        .copied()
+        .unwrap_or_else(|| panic!("no registration update: {changes:?}"));
+    let attached = format!("attached credential changed: {registration}");
+    assert_eq!(
+        changes,
+        BTreeMap::from([
+            (registration, ("update".into(), Some("credential changed"))),
+            (
+                "openshell_sandbox.assistant",
+                ("delete,create".into(), Some(attached.as_str()))
+            ),
+            ("fabric_agent.assistant", ("delete,create".into(), None)),
+        ])
+    );
+    let after = sandbox_ids(&lifecycle);
+    assert_ne!(after["assistant"], applied["assistant"]);
+    assert_eq!(after["reader"], applied["reader"]);
+    {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        let credentials: Vec<_> = state
+            .providers
+            .values()
+            .flat_map(|provider| provider.credentials.values())
+            .collect();
+        assert_eq!(credentials, ["replaced-fixture-only-key"]);
+        // The assistant's agent stops, and starts in its new sandbox; the
+        // reader's agent keeps running.
+        assert_eq!(
+            lifecycle_calls(&state, calls),
+            [("assistant", "stop"), ("assistant", "start")]
+        );
+    }
+    let settled = lifecycle.deployment.apply(document, cancel).await.unwrap();
+    assert!(settled.changes.is_empty(), "{:?}", settled.changes);
+    lifecycle.destroy();
 }
 
 // The failure is injected on an update, so the assistant's agent is already

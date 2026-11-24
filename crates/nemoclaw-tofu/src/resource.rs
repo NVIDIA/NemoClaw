@@ -387,6 +387,7 @@ impl Resource for ResourceAdapter {
                         } else {
                             AttributeConstraint::Required
                         },
+                        sensitive: self.definition.sensitive.contains(&name),
                         ..Default::default()
                     },
                 )

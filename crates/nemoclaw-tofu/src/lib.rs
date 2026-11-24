@@ -105,6 +105,8 @@ pub struct Definition {
     /// Inputs the backend uses but does not observe, such as how to reach it.
     /// Observations and mutations keep the recorded or desired value.
     pub carried: Vec<&'static str>,
+    /// Attributes OpenTofu hides from plan and apply output.
+    pub sensitive: Vec<&'static str>,
 }
 
 impl Definition {
@@ -135,10 +137,15 @@ impl Definition {
             references: Vec::new(),
             schema_version: 0,
             carried: Vec::new(),
+            sensitive: Vec::new(),
         }
     }
     pub fn optional(mut self, fields: &[&'static str]) -> Self {
         self.optional.extend_from_slice(fields);
+        self
+    }
+    pub fn sensitive(mut self, names: &[&'static str]) -> Self {
+        self.sensitive.extend_from_slice(names);
         self
     }
     pub fn reset_when_omitted(mut self, fields: &[&'static str]) -> Self {

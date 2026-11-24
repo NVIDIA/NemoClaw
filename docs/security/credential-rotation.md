@@ -4,7 +4,8 @@
 # Rotating Credentials
 
 This page describes how to rotate each credential a deployment uses.
-NemoClaw does not detect a new value behind an unchanged credential reference, and it does not revoke upstream keys.
+Apply detects a new value behind an unchanged reference to an inference, web search, or API key, and registers it.
+NemoClaw does not revoke upstream keys.
 Revoking an old key is the key owner's job.
 
 ## Running Agents Keep the Key They Started With
@@ -12,21 +13,34 @@ Revoking an old key is the key owner's job.
 NVIDIA OpenShell gives each process the credential revision current when the process started.
 After a key is updated, a running agent keeps using the old key, and only processes started afterwards receive the new one.
 An agent restarts only when its sandbox is replaced, for example when its configuration changes.
+When apply registers a new inference, web search, or API key, it replaces each sandbox that attaches that registration, so the sandbox's agent starts with the new key.
+Replacing a sandbox deletes its files and conversations, except those on mounted volumes.
 Keep the old upstream key valid until every sandbox that uses it has been replaced, then revoke it.
 Refer to OpenShell's [runtime limitations](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/providers/profiles.mdx#runtime-limitations).
 
 ## Inference, Web Search, and API Keys You Supply
 
 These keys are named by a credential reference: `credential.env` in YAML, or `credential_env` in HCL.
-Changing only the value behind the same variable makes no plan change, so rotate through a new variable:
+When the provider registers a key, it records an Argon2id digest of the key in OpenTofu state as the registration's `credential_digest`, never the key itself.
+A plan that can read the variable checks its value against that digest.
+Rotate one of these keys as follows:
 
 1. Create the new key with the upstream service, keeping the old one valid.
-2. Put the new key in a new environment variable, and point the credential reference at it.
-3. Plan. The provider registration shows an in-place update. For inference, web search, and API registrations, this does not replace sandboxes.
-4. Apply.
-5. Wait until each sandbox using the key has been replaced, then revoke the old key upstream.
+2. Put the new key in the same environment variable, or in a new one that the credential reference names.
+3. Apply.
+   The changes it reports show the registration updated in place, with the reason `credential changed`, and each sandbox that attaches the registration replaced together with its agent, with the reason `attached credential changed:` and the registration's address.
+   Sandboxes that don't attach the registration keep running.
+4. Revoke the old key upstream.
 
-In hand-written HCL, `tofu apply -replace=openshell_sandbox.NAME` replaces a sandbox, and its agent, so it picks up the new key immediately.
+`nemoclaw plan` doesn't read inference or integration credentials, so it shows no change for a new value; only apply reads them.
+An apply that finds the same value changes nothing.
+
+In hand-written HCL, a `tofu plan` whose environment holds the new value shows the registration's in-place update.
+The provider doesn't replace sandboxes.
+To replace a sandbox, and its agent, when the key changes, list the registration's `credential_digest` in the sandbox's `lifecycle.replace_triggered_by`, as NemoClaw's own deployments do, or run `tofu apply -replace=openshell_sandbox.NAME`.
+A registration that an earlier provider release created has no `credential_digest`.
+The first plan or apply that can read its variable records the digest of the value the variable then holds, without updating the registration or replacing sandboxes.
+If that value differs from the registered one, rotate it once through a new variable.
 
 ## Generated Keys and Managed Gateway Keys
 

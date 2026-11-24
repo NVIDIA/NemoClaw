@@ -222,10 +222,18 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
         }
     }
     // A changed agent configuration replaces the sandbox, through a
-    // terraform_data holding the configuration Fabric receives.
-    assert_eq!(
-        sandbox["lifecycle"]["replace_triggered_by"],
-        json!(["terraform_data.agent_worker"])
+    // terraform_data holding the configuration Fabric receives, and so does
+    // a new credential value in the registration the sandbox attaches.
+    let triggers = sandbox["lifecycle"]["replace_triggered_by"]
+        .as_array()
+        .unwrap();
+    assert_eq!(triggers.len(), 2, "{triggers:?}");
+    assert_eq!(triggers[0], "terraform_data.agent_worker");
+    let registration = triggers[1].as_str().unwrap();
+    assert!(
+        registration.starts_with("openshell_inference.")
+            && registration.ends_with(".credential_digest"),
+        "{registration}"
     );
     let configuration = &resources["terraform_data"]["agent_worker"];
     let input: serde_json::Value =

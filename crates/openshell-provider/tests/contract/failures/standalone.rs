@@ -33,15 +33,21 @@ impl Standalone {
         Self { root }
     }
     fn run(&self, args: &[&str], success: bool) -> Output {
-        let output = self
-            .root
-            .command()
+        self.run_with(args, success, Some("fixture-secret"))
+    }
+    /// Run with `registration_key` as `NEMOCLAW_TEST_REGISTRATION_KEY`'s
+    /// value, or without that variable.
+    fn run_with(&self, args: &[&str], success: bool, registration_key: Option<&str>) -> Output {
+        let mut command = self.root.command();
+        command
             .args(args)
             .arg("-no-color")
-            .env("NEMOCLAW_TEST_REGISTRATION_KEY", "fixture-secret")
-            .env("NEMOCLAW_TEST_ROTATED_KEY", "rotated-fixture-secret")
-            .output()
-            .unwrap();
+            .env("NEMOCLAW_TEST_ROTATED_KEY", "rotated-fixture-secret");
+        match registration_key {
+            Some(key) => command.env("NEMOCLAW_TEST_REGISTRATION_KEY", key),
+            None => command.env_remove("NEMOCLAW_TEST_REGISTRATION_KEY"),
+        };
+        let output = command.output().unwrap();
         assert_eq!(
             output.status.success(),
             success,
@@ -70,19 +76,117 @@ impl Standalone {
     }
     /// Declare the inference registration without its sandbox.
     fn registrations_only(&self) {
+        self.set_variable("sandbox", json!(false));
+    }
+    fn set_variable(&self, name: &str, value: Value) {
         let path = self.root.path().join("terraform.tfvars.json");
         let mut variables: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        variables["sandbox"] = json!(false);
+        variables[name] = value;
         fs::write(path, variables.to_string()).unwrap();
     }
+    /// The inference registration's recorded credential digest.
+    fn credential_digest(&self) -> String {
+        let state: Value = serde_json::from_slice(&self.state()).unwrap();
+        state["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|resource| resource["type"] == "openshell_inference")
+            .unwrap()["instances"][0]["attributes"]["credential_digest"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
     fn noop(&self) {
-        self.run(&["plan", "-input=false", "-out=noop.plan"], true);
+        self.noop_with(Some("fixture-secret"));
+    }
+    fn noop_with(&self, registration_key: Option<&str>) {
+        self.run_with(
+            &["plan", "-input=false", "-out=noop.plan"],
+            true,
+            registration_key,
+        );
         let output = self.run(&["show", "-json", "noop.plan"], true);
         let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
         for change in plan["resource_changes"].as_array().unwrap() {
             assert_eq!(change["change"]["actions"], json!(["no-op"]));
         }
     }
+}
+
+/// A new value behind the same credential variable updates the inference
+/// registration in place with that value. The same value, or a plan that
+/// can't read the variable, plans nothing. State holds only a digest that
+/// doesn't contain the value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
+async fn standalone_registration_updates_in_place_when_its_credential_value_changes() {
+    let fixture = Fixture::start().await;
+    let tofu = Standalone::new(&fixture.endpoint);
+    tofu.registrations_only();
+    tofu.set_variable("credential_env", json!("NEMOCLAW_TEST_REGISTRATION_KEY"));
+    tofu.apply();
+    let recorded = tofu.credential_digest();
+    assert!(recorded.starts_with("$argon2id$"), "{recorded}");
+    assert!(
+        !String::from_utf8(tofu.state())
+            .unwrap()
+            .contains("fixture-secret")
+    );
+    let (effects, created) = {
+        let state = fixture.state.lock().unwrap();
+        (state.effects, state.created_providers.len())
+    };
+    for unchanged in [Some("fixture-secret"), None] {
+        tofu.noop_with(unchanged);
+    }
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+
+    let replaced = Some("replaced-fixture-secret");
+    tofu.run_with(
+        &["plan", "-input=false", "-out=rotate.plan"],
+        true,
+        replaced,
+    );
+    let plan: Value =
+        serde_json::from_slice(&tofu.run(&["show", "-json", "rotate.plan"], true).stdout).unwrap();
+    let changes: Vec<_> = plan["resource_changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|change| change["change"]["actions"] != json!(["no-op"]))
+        .collect();
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(changes[0]["address"], "openshell_inference.inference[0]");
+    assert_eq!(changes[0]["change"]["actions"], json!(["update"]));
+    assert_eq!(
+        changes[0]["change"]["after_unknown"]["credential_digest"],
+        json!(true)
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+
+    tofu.run_with(&["apply", "-input=false", "rotate.plan"], true, replaced);
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.created_providers.len(), created);
+        let credentials: Vec<_> = state
+            .providers
+            .values()
+            .flat_map(|provider| provider.credentials.values())
+            .collect();
+        assert_eq!(credentials, ["replaced-fixture-secret"]);
+    }
+    let rotated = tofu.credential_digest();
+    assert!(
+        rotated.starts_with("$argon2id$") && rotated != recorded,
+        "{rotated}"
+    );
+    assert!(
+        !String::from_utf8(tofu.state())
+            .unwrap()
+            .contains("replaced-fixture-secret")
+    );
+    tofu.noop_with(replaced);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

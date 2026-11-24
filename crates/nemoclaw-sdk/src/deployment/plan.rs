@@ -22,6 +22,8 @@ pub(super) struct ResourceChange {
     pub mode: Option<String>,
     pub address: String,
     pub deposed: Option<String>,
+    /// Why OpenTofu replaces the resource, such as `replace_by_triggers`.
+    pub action_reason: Option<String>,
     pub change: PlannedChange,
 }
 #[derive(Deserialize)]
@@ -31,6 +33,8 @@ struct PlannedResourceChange {
     address: String,
     #[serde(default)]
     deposed: Option<String>,
+    #[serde(default)]
+    action_reason: Option<String>,
     change: PlannedChange,
 }
 impl From<PlannedResourceChange> for ResourceChange {
@@ -48,6 +52,7 @@ impl From<PlannedResourceChange> for ResourceChange {
             mode: planned.mode,
             address: planned.address,
             deposed: planned.deposed,
+            action_reason: planned.action_reason,
             change,
         }
     }
@@ -85,6 +90,43 @@ pub(super) struct PlannedChange {
     pub before: Value,
     #[serde(default)]
     pub after: Value,
+    /// The attributes known only after apply.
+    #[serde(default)]
+    pub after_unknown: Value,
+}
+
+/// Whether `change` takes another credential value: it leaves an inference
+/// or API registration's credential digest unknown until apply.
+fn takes_credential(change: &ResourceChange) -> bool {
+    let kind = change.address.split_once('.').map(|(kind, _)| kind);
+    matches!(kind, Some("openshell_inference" | "openshell_api"))
+        && change.deposed.is_none()
+        && change.change.after_unknown["credential_digest"] == true
+}
+
+/// Why a registration updates, or a sandbox is replaced, for a credential: the
+/// registration takes another value, and the sandbox attaches it, so its
+/// agent must start again to use it.
+fn credential_reason(plan: &Plan, change: &ResourceChange) -> Option<String> {
+    if takes_credential(change) && change.change.actions == ["update"] {
+        return Some("credential changed".into());
+    }
+    if !change.address.starts_with("openshell_sandbox.")
+        || change.action_reason.as_deref() != Some("replace_by_triggers")
+    {
+        return None;
+    }
+    let attached: Vec<String> =
+        serde_json::from_str(change.change.before["provider_names_json"].as_str()?).ok()?;
+    plan.resource_changes
+        .iter()
+        .filter(|registration| takes_credential(registration))
+        .find(|registration| {
+            registration.change.before["name"]
+                .as_str()
+                .is_some_and(|name| attached.iter().any(|attached| attached == name))
+        })
+        .map(|registration| format!("attached credential changed: {}", registration.address))
 }
 /// Sandboxes to replace so each newly created agent gets a new sandbox.
 ///
@@ -247,7 +289,8 @@ pub(super) fn check_plan(
                             == Some(nemoclaw_fabric::agent::RESOURCE_TYPE)
                             && change.change.before["running"] == "false")
                             .then(|| "agent runtime is not running".to_owned())
-                    });
+                    })
+                    .or_else(|| credential_reason(plan, change));
                 changes.push(Change {
                     resource,
                     actions: change.change.actions.clone(),

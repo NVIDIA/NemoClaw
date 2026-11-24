@@ -163,7 +163,8 @@
             }
           ],
           "replace_triggered_by": [
-            "terraform_data.agent_alice"
+            "terraform_data.agent_alice",
+            "openshell_inference.inference_local-d6ca74ad95e4f1d5f302f50e.credential_digest"
           ]
         },
         "name": "alice",
@@ -219,7 +220,8 @@
             }
           ],
           "replace_triggered_by": [
-            "terraform_data.agent_bob"
+            "terraform_data.agent_bob",
+            "openshell_inference.inference_local-d6ca74ad95e4f1d5f302f50e.credential_digest"
           ]
         },
         "name": "bob",
@@ -275,7 +277,8 @@
             }
           ],
           "replace_triggered_by": [
-            "terraform_data.agent_coding"
+            "terraform_data.agent_coding",
+            "openshell_inference.inference_local-b95da89e857d01251c2f1583.credential_digest"
           ]
         },
         "name": "coding",
@@ -331,7 +334,8 @@
             }
           ],
           "replace_triggered_by": [
-            "terraform_data.agent_research"
+            "terraform_data.agent_research",
+            "openshell_inference.inference_local-3d36801b67957c3bcfa1093b.credential_digest"
           ]
         },
         "name": "research",
@@ -387,7 +391,8 @@
             }
           ],
           "replace_triggered_by": [
-            "terraform_data.agent_review"
+            "terraform_data.agent_review",
+            "openshell_inference.inference_local-3d36801b67957c3bcfa1093b.credential_digest"
           ]
         },
         "name": "review",

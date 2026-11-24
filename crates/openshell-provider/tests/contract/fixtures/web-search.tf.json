@@ -141,7 +141,9 @@
             }
           ],
           "replace_triggered_by": [
-            "terraform_data.agent_researcher"
+            "terraform_data.agent_researcher",
+            "openshell_inference.inference_local-4dcf1b725a48b148ce57287f.credential_digest",
+            "openshell_api.brave_search_8ff3a02278e7_71458798e8e4.credential_digest"
           ]
         },
         "name": "researcher",
@@ -199,7 +201,9 @@
             }
           ],
           "replace_triggered_by": [
-            "terraform_data.agent_writer"
+            "terraform_data.agent_writer",
+            "openshell_inference.inference_local-4dcf1b725a48b148ce57287f.credential_digest",
+            "openshell_api.brave_search_8ff3a02278e7_71458798e8e4.credential_digest"
           ]
         },
         "name": "writer",

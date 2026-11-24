@@ -93,7 +93,8 @@
             }
           ],
           "replace_triggered_by": [
-            "terraform_data.agent_assistant"
+            "terraform_data.agent_assistant",
+            "openshell_inference.inference_local-d6ca74ad95e4f1d5f302f50e.credential_digest"
           ]
         },
         "name": "assistant",
