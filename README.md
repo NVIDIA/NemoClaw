@@ -4,7 +4,9 @@
 # NemoClaw
 
 > [!TIP]
-> This branch documents NemoClaw Agent Configs v0.1.0. [NemoClaw Classic](https://github.com/NVIDIA/NemoClaw/tree/main) remains available. If you already use Classic, [evaluate Agent Configs separately](docs/get-started/migration.md); there is no in-place migration.
+> This branch documents NemoClaw Agent Configs v0.1.0.
+> If you use the [previous version of NemoClaw](https://github.com/NVIDIA/NemoClaw/tree/main), [evaluate Agent Configs separately](docs/get-started/migration.md).
+> There is no in-place migration.
 
 ## NemoClaw Agent Configs
 
@@ -15,7 +17,7 @@ Choose agents, models, tools, and network access, then preview and apply deploym
 
 ### What You Can Do
 
-These outcomes are familiar from NemoClaw Classic, the earlier version:
+Use NemoClaw Agent Configs to configure and operate sandboxed agents:
 
 | Outcome | How |
 |---|---|
@@ -27,12 +29,13 @@ These outcomes are familiar from NemoClaw Classic, the earlier version:
 
 ### What's New in Agent Configs
 
-NemoClaw Classic already runs several sandboxes and restarts, recovers, and rebuilds them with separate commands.
-In Agent Configs, one YAML file declares the whole deployment: `nemoclaw plan` previews the changes, and `nemoclaw apply` makes them.
+NemoClaw Agent Configs replaces separate lifecycle commands with a desired-state workflow.
+One YAML file describes the deployment, so you can review changes before they affect running agents.
+`nemoclaw plan` previews the changes, and `nemoclaw apply` makes them.
 
 | New Workflow | How |
 |---|---|
-| Fix a setting and redeploy from the same YAML | Edit a setting in the file, such as the `targetPort` of a [service exposure](docs/agents-inference/interfaces.md#exposing-a-service-through-the-gateway), then preview, apply, and retry if apply fails. That edit updates the running sandbox in place; [other changes](docs/build-deploy/usage.md#choosing-the-change-path), such as a model or network policy change, replace the sandbox. |
+| Fix a setting and redeploy from the same YAML | Edit a setting in the file, such as the `targetPort` of a [service exposure](docs/agents-inference/interfaces.md#exposing-a-service-through-the-gateway), then preview, apply, and retry if apply fails. That edit updates the running sandbox in place; [other changes](docs/build-deploy/usage.md#choosing-the-change-path), such as changing sandbox CPU or memory limits, replace the sandbox. |
 | Restart a stopped agent in its existing sandbox | When `nemoclaw plan` reports `agent runtime is not running`, apply the same YAML to start the agent again in its sandbox, which keeps its files. Reapplying does not fix an agent that runs but does not answer; refer to [replacing an unusable runtime](docs/build-deploy/usage.md#replacing-workloads-after-an-unusable-runtime). |
 | Retry an interrupted deployment | After fixing the cause, apply again with the original bundle, YAML, and state directory. Read [interrupted-operation recovery](docs/build-deploy/usage.md#recovering-an-interrupted-operation) first: after a failed agent start, the retry creates the agent in a new sandbox and deletes the old sandbox's files. |
 | Deploy different agents together | Declare several agents in one YAML file, each in its own sandbox with its own network policy and model selection, as the [multiple-sandbox example](examples/multiple-sandboxes.yaml) shows. |

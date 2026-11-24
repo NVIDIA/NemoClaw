@@ -51,7 +51,7 @@
           "slug": "onboard"
         },
         {
-          "title": "Evaluating Agent Configs Alongside NemoClaw Classic",
+          "title": "Evaluating NemoClaw Agent Configs Alongside NemoClaw v0",
           "source": "docs/get-started/migration.md",
           "slug": "migration"
         }

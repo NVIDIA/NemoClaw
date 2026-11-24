@@ -50,7 +50,8 @@ These reads do not change the target.
 If a template uses an external Docker or Podman gateway, specify the image inspection engine in `spec.gateway.target.docker.engine` or `spec.gateway.target.podman.engine`.
 Without it, onboarding cannot verify the image on the selected engine.
 
-A confirmed conflict, such as an image that lacks the selected harness, blocks saving.
+If review finds that an automatically selected image cannot run the configuration, onboarding explains why and prompts you for another image.
+If you chose the image yourself, the conflict stays in review and blocks saving until you resolve it.
 An absent image or a read that could not be verified can leave an advisory and allow saving.
 Review is not a deployment plan and does not establish that the configuration will run.
 Refer to [provider discovery](../references/provider.md#engine-and-fabric-discovery) for the read contracts.

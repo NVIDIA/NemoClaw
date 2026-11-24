@@ -85,7 +85,7 @@ docker info --format '{{json .DriverStatus}}'
 ```
 
 The output includes `["driver-type","io.containerd.snapshotter.v1"]` when the daemon uses the containerd store.
-Runtime images require it, and Docker's classic image store is unsupported for them.
+Runtime images require the containerd image store.
 Agent images require a store that retains repository digests for local builds, and containerd is the tested store.
 
 ## Building a Native Bundle

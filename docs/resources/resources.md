@@ -20,7 +20,7 @@ Choose a source by its use:
 | Source | Use |
 |---|---|
 | The `v0.1.0` tag's `docs/README.md` and task guides | Release-specific guidance. Use the [generated field reference](../reference/configuration.md) from the matching worktree and the JSON Schema from the installed archive. |
-| [v1 staging overview](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) | Browser preview. Choose **v1 (Agent Configs)** in the version selector. |
+| [v1 staging overview](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) | Browser preview. Choose **NemoClaw Agent Configs (v1)** in the version selector. |
 | [v1 Markdown index](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/llms.txt) | Discover pages in this version. |
 | [v1 overview as Markdown](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview.md) | Fetch page text. Append `.md` to another v1 page URL for that page. |
 
@@ -40,7 +40,7 @@ Use this prompt with an assistant that can read your checkout, replacing the fin
 Help me use NemoClaw Agent Configs v0.1.0.
 Read docs/README.md, docs/about/overview.md, and the guide for my task from this checkout.
 Use CLI and configuration references from the same source revision as my bundle, starting with docs/reference/configuration.md.
-For hosted documentation, use the v1 (Agent Configs) selector and /nemoclaw/v1/llms.txt.
+For hosted documentation, select NemoClaw Agent Configs (v1) and use /nemoclaw/v1/llms.txt.
 Keep main-version commands and procedures separate from v1 guidance.
 Treat anything listed in docs/resources/limits.md as not yet available or tested.
 Identify the client, sandbox engine, inference host, image digests, and deployment state path before deployment work.
@@ -63,7 +63,7 @@ Review the cited version and task guide in its answer before operational work.
 
 The skill only routes documentation.
 Reading it does not install software or change deployment resources.
-To evaluate Agent Configs in a separate deployment using exported Classic settings, ask the assistant to read `.agents/skills/nemoclaw-v0-migration/SKILL.md`.
+To evaluate Agent Configs in a separate deployment using settings exported from NemoClaw v0, ask the assistant to read `.agents/skills/nemoclaw-v0-migration/SKILL.md`.
 Refer to [migration](../get-started/migration.md#starting-from-the-earlier-export).
 Automatic discovery, packaged installation across assistant clients and a rehearsed installation prompt are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 

@@ -3,8 +3,9 @@
 
 # Overview
 
-NemoClaw Agent Configs manages agent deployments from YAML.
-You can preview and apply deployment changes with its CLI, or integrate the same operations into a Rust application.
+NemoClaw Agent Configs is the desired-state architecture introduced in NemoClaw v1.
+Declare the agents, sandboxes, and inference connections you want in YAML so you can review changes before they affect a deployment.
+Use the CLI to preview and apply the changes, or integrate the same operations into a Rust application.
 It combines NVIDIA OpenShell sandbox isolation and inference routing with agent runtimes managed by NVIDIA NeMo Fabric.
 Deployment state lets you check changes and recover interrupted operations, but it does not back up agent files or conversations.
 
@@ -23,6 +24,6 @@ Refer to [Release Notes](../changelog/overview.md).
 
 ## Where to Start
 
-Coming from Classic, the earlier version of NemoClaw? Use the [migration guide](../get-started/migration.md) to assess your workflows before evaluating a separate deployment.
+If you use NemoClaw v0, start with [Evaluating NemoClaw Agent Configs Alongside NemoClaw v0](../get-started/migration.md).
 
 The [guided OpenClaw deployment](../get-started/first-deployment.md) leads from CLI installation to a verified reply. For a separate deployment of your own, use [interactive YAML authoring](../get-started/onboard.md). For a different environment, [Architecture Overview](architecture-overview.md) explains the deployment flow and ownership, and [Ecosystem](ecosystem.md) distinguishes the adjacent products. Before changing an existing deployment, [review data retention](../build-deploy/state.md#deletion-and-retention) and [recovery](../build-deploy/usage.md#updates-and-recovery).

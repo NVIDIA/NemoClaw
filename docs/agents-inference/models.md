@@ -33,7 +33,7 @@ Replace them with candidate-built digests.
 Use a Linux host with GPU-enabled Docker, an NVIDIA driver compatible with the pinned image, and a kernel that passes NVIDIA OpenShell's sandbox capability checks.
 Match the service's hardware and memory requirements to the selected host.
 The [qualification record in #14556](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) identifies tested source revisions, images, and host configurations.
-Other GGUFs, general tool use, cross-host restoration, and Classic host settings need separate qualification.
+Other GGUFs, general tool use, cross-host restoration, and host settings from NemoClaw v0 need separate qualification.
 
 The first implementation serves one model on one CUDA GPU, with full GPU-layer offload requested, one slot, f16 KV, embedded Jinja, and no multimodal projector.
 `serving.batchTokens` and `microBatchTokens` control batching.

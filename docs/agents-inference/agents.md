@@ -106,12 +106,14 @@ With the [v0.1.0 OpenClaw example](../get-started/first-deployment.md) applied, 
 
    `--agent` selects the deployment's YAML `agent.name`.
 
-4. Check the command exit status.
+4. Verify that the command exited successfully.
+5. Verify that the outer `status` is `succeeded`.
+6. Verify that `result.status` is `succeeded`.
+   If the command failed or either status is missing or not `succeeded`, stop and consult [native diagnostics](../observability/troubleshooting.md#reading-native-service-logs).
+7. Verify that `result.output.response` contains `READY`.
+   If the reply is missing or unexpected, stop and consult [inference and agent readiness](../observability/troubleshooting.md#inference-and-agent-readiness).
+   Other adapters can use different output fields, and one reply does not establish general model compatibility.
 
-5. Check `result.status`. A successful invocation reports `result.status: succeeded`.
-
-6. Inspect `result.output` for the adapter's reply.
-   Don't assume every adapter uses the same output fields or that one reply establishes general model compatibility.
 If later invocations fail with `runtime_unavailable`, plan and apply again: apply starts a new runtime in the same sandbox.
 If the plan shows no change, replace the sandbox using the [CLI replacement procedure](../build-deploy/usage.md#replacing-workloads-after-an-unusable-runtime).
 To reach an agent from the client host, see [agent interfaces](interfaces.md).

@@ -59,7 +59,7 @@ versions:
   - display-name: Latest (main)
     path: ./_main/docs/index.yml
     slug: latest
-  - display-name: v1 (Agent Configs)
+  - display-name: NemoClaw Agent Configs (v1)
     path: ./_generated/navigation.yml
     slug: v1
 

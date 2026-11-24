@@ -29,7 +29,7 @@ Check the prerequisites before following the first deployment; migration is a se
 | Install, upgrade, or uninstall a release's CLI | [Installing the CLI](get-started/install.md) |
 | Deploy OpenClaw with existing services and verify a reply | [First Deployment](get-started/first-deployment.md) |
 | Write YAML for a separate deployment | [Authoring Deployment YAML With Onboarding](get-started/onboard.md) |
-| Evaluate Classic settings without changing the original deployment | [Migration](get-started/migration.md) |
+| Evaluate NemoClaw v0 settings without changing the original deployment | [Evaluate Agent Configs Alongside NemoClaw v0](get-started/migration.md) |
 
 ## Building and Deploying
 

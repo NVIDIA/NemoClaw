@@ -3,7 +3,7 @@
 
 # Compatibility Across Releases
 
-NemoClaw v1 is in alpha, and its configuration is `v1alpha1`.
+NemoClaw Agent Configs is in alpha and uses the `v1alpha1` configuration schema.
 This page says what a release guarantees across releases, and what it does not.
 
 ## Using One Release Together

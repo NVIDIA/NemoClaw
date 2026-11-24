@@ -35,7 +35,7 @@ The profile's endpoint must be the address that plan prints as the **OpenShell g
 Its stored authentication must grant access to the deployment workspace.
 The endpoint override takes precedence over the profile, which is why this example clears it.
 NemoClaw's YAML credential and TLS environment references don't configure the OpenShell CLI's stored profile or credentials.
-To create a profile for an authenticated gateway, including its issuer or mTLS client certificates, follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx).
+To create a profile for an authenticated gateway, including its issuer or mTLS client certificates, follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/authentication.mdx).
 
 For an existing plaintext loopback gateway instead, follow these steps:
 
@@ -79,7 +79,7 @@ JSON results expose the same values as `connection.gatewayEndpoint` and `connect
 A managed Kubernetes or OpenShift gateway without `expose` has no address: the text reports it as `not published`, and JSON omits `gatewayEndpoint`.
 These selectors describe the configured target, including when a plan is incomplete.
 They don't establish access or create an authenticated OpenShell CLI profile.
-The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-cli/src/main.rs).
+The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-cli/src/main.rs).
 The forward or sandbox command below verifies access to the selected workspace.
 Setting an environment variable alone doesn't.
 On an authentication or missing-sandbox error, check the endpoint, workspace, sandbox name, and operator-provided credentials before changing deployment state.
@@ -358,7 +358,7 @@ sandboxes:
 Each entry maps to an OpenShell service exposure: its key is the service name, and it takes `targetPort` and an optional `authorizationMode` (`STRIP` or `BEARER_PASSTHROUGH`).
 OpenShell applies `STRIP` when the mode is omitted, and the empty key `""` is the unnamed endpoint.
 OpenShell checks the names when it creates the sandbox or exposes a service.
-See its [service exposure rules](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/overview.mdx#expose-long-running-services).
+See its [service exposure rules](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/sandboxes/overview.mdx#expose-long-running-services).
 A sandbox takes at most 32 exposures.
 Adding, changing, or removing an exposure updates the running sandbox's endpoints in place, as `openshell service expose` and `openshell service delete` do, so the sandbox keeps its files and conversations.
 Apply also restores a declared endpoint that was changed or deleted on the gateway, and leaves endpoints under other names alone.

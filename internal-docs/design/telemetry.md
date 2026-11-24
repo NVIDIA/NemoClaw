@@ -46,7 +46,7 @@ Telemetry is on by default, and the CLI does not prompt for consent.
 The sender makes one HTTP POST request with a 3-second timeout.
 It ignores every send error and never changes the command's output or exit code.
 It never retries, and in particular never retries after an HTTP 400, because the collector can store a record and still answer 400.
-It posts only to the fixed collector endpoint, `https://events.telemetry.data.nvidia.com/v1.1/events/json`, which is a constant in the sender and the same endpoint NemoClaw Classic uses.
+It posts only to the fixed collector endpoint, `https://events.telemetry.data.nvidia.com/v1.1/events/json`, which is a constant in the sender and the same endpoint NemoClaw v0 uses.
 For tests, `NEMOCLAW_TELEMETRY_ENDPOINT` can point the sender at a local receiver.
 The sender honors it only when it is `http://127.0.0.1:<port>` or `http://[::1]:<port>` and ignores any other value.
 
@@ -108,7 +108,7 @@ The Purpose column names the product question that each field answers.
 - For `models`, the sender sends each name as written, up to 64 characters.
   A name that contains `://` or is longer than 64 characters is sent as `unknown`.
   Only the default route of each sandbox is read.
-- For `testLabel`, a valid label matches `^qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2}$`, the same rule NemoClaw Classic uses.
+- For `testLabel`, a valid label matches `^qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2}$`, the same rule NemoClaw v0 uses.
   `<run>` is 1 to 32 characters and `<case>` is 1 to 40, each made of lowercase letters, digits, and `-`.
   `<n>` is 1 to 999.
   For example, `qa-1120a:onboard-hermes:attempt-2` is valid, and a label that holds a path is not.
@@ -232,8 +232,8 @@ NemoClaw sets `OPENSHELL_TELEMETRY_ENABLED` for Docker and Podman, and `server.t
 NemoClaw leaves an external gateway's telemetry alone.
 The OpenShell library inside the CLI is built without telemetry.
 
-## Classic Schema
+## NemoClaw v0 Schema
 
-NemoClaw Classic sends schema 4.x under the same client ID.
+NemoClaw v0 sends schema 4.x under the same client ID.
 This record is schema 5.0.
 The two schemas run side by side under that client ID.
