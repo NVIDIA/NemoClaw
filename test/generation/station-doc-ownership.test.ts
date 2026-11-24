@@ -275,7 +275,7 @@ describe("DGX Station documentation ownership", () => {
           expect(redirects?.filter((redirect) => redirect.source === source)).toEqual([
             {
               source,
-              destination: `${prefix}/get-started/additional-setup/${page}${destinationSuffix}`,
+              destination: `/nemoclaw/v0/user-guide/:variant/get-started/additional-setup/${page}${destinationSuffix}`,
             },
           ]);
         }
@@ -283,8 +283,8 @@ describe("DGX Station documentation ownership", () => {
     }
 
     for (const [legacyPrefix, destinationPrefix] of [
-      ["/nemoclaw/latest", "/nemoclaw/latest/user-guide/openclaw"],
-      ["/nemoclaw", "/nemoclaw/user-guide/openclaw"],
+      ["/nemoclaw/latest", "/nemoclaw/v0/user-guide/openclaw"],
+      ["/nemoclaw", "/nemoclaw/v0/user-guide/openclaw"],
     ]) {
       for (const page of pages) {
         for (const suffix of ["", ".html", "/index.html", ".md", ".mdx"]) {
