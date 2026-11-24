@@ -109,3 +109,40 @@ fn the_station_example_is_discovered_without_sending_it_to_the_generic_gpu_runne
     assert_eq!(station.runner.name(), "dgx-station");
     assert!(on(root.path(), Runner::Gpu, None).unwrap().is_empty());
 }
+
+#[test]
+fn station_harnesses_are_independently_selectable_only_on_station() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join("crates/nemoclaw-e2e/tests/e2e/hcl/tests")).unwrap();
+    for harness in ["openclaw", "hermes"] {
+        let id = format!("dgx-station-{harness}-nemotron");
+        for (path, contents) in [
+            (
+                format!("examples/platforms/docker/vllm/dgx-station/{harness}-dgx-station.yaml"),
+                document("docker", VLLM),
+            ),
+            (
+                format!("crates/nemoclaw-e2e/tests/e2e/hcl/manual/{id}.tftest.hcl"),
+                "\n".into(),
+            ),
+        ] {
+            let path = root.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        }
+    }
+    let hermes = "dgx-station-hermes-nemotron".to_owned();
+    let openclaw = "dgx-station-openclaw-nemotron".to_owned();
+    for ids in [
+        vec![hermes.clone()],
+        vec![openclaw.clone()],
+        vec![hermes, openclaw],
+    ] {
+        assert_eq!(
+            on(root.path(), Runner::DgxStation, Some(&ids)).unwrap(),
+            ids
+        );
+        assert!(on(root.path(), Runner::Gpu, Some(&ids)).is_err());
+    }
+    assert!(on(root.path(), Runner::DgxStation, Some(&["unknown".into()])).is_err());
+}
