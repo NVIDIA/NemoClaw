@@ -437,7 +437,7 @@ function runTirithFinalizerPathResolution(installed: boolean) {
   }
 }
 
-type HermesStateDir = "sessions" | "gateway" | "runtime";
+type HermesStateDir = "sessions" | "gateway" | "runtime" | "tmp";
 
 function runHermesGatewayRuntimeCleanup(opts: {
   liveGateway?: boolean;
@@ -646,12 +646,12 @@ function runHermesGatewayRuntimeCleanup(opts: {
       return [entry, entryMode];
     };
     const requiredDirs = Object.fromEntries(
-      "sessions gateway runtime cron logs logs/curator hooks image_cache audio_cache"
+      "sessions gateway runtime cron logs logs/curator hooks image_cache audio_cache tmp"
         .split(" ")
         .map((entry) => modeEntry(entry, 0o777)),
     );
     const requiredDirFullModes = Object.fromEntries(
-      ["sessions", "gateway", "runtime", "cron", "logs", "logs/curator"].map((entry) =>
+      ["sessions", "gateway", "runtime", "cron", "logs", "logs/curator", "tmp"].map((entry) =>
         modeEntry(entry, 0o7777),
       ),
     );
@@ -911,6 +911,7 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.envFileContent).toContain(
       'export HERMES_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"',
     );
+    expect(run.envFileContent).toContain(`export SQLITE_TMPDIR="${run.hermesHome}/tmp"`);
     expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
     expect(run.envFileContent).not.toContain("AWS_EC2_METADATA_DISABLED");
     expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
@@ -1255,6 +1256,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       cron: "2770",
       logs: "2770",
       "logs/curator": "2770",
+      tmp: "2770",
     });
     expect(run.agentLogMode).toBe("660");
     expect(run.historyKind).toBe("regular");
@@ -1269,6 +1271,8 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     ["gateway", "file", "is not a directory"],
     ["runtime", "symlink", "is a symlink"],
     ["runtime", "file", "is not a directory"],
+    ["tmp", "symlink", "is a symlink"],
+    ["tmp", "file", "is not a directory"],
   ] as const)("refuses an unsafe %s %s without mutation", (name, kind, message) => {
     const run = runHermesGatewayRuntimeCleanup({ unsafeState: [name, kind] });
     expect(run.result.status).not.toBe(0);
