@@ -3,8 +3,8 @@
 
 # Overview
 
-NemoClaw Agent Configs is the desired-state architecture introduced in NemoClaw v1.
-Declare the agents, sandboxes, and inference connections you want in YAML so you can review changes before they affect a deployment.
+NemoClaw Agent Configs uses a desired-state model to deploy sandboxed agents.
+In YAML, you declare the agents, sandboxes, and inference connections you want so you can review changes before applying them.
 Use the CLI to preview and apply the changes, or integrate the same operations into a Rust application.
 It combines NVIDIA OpenShell sandbox isolation and inference routing with agent runtimes managed by NVIDIA NeMo Fabric.
 Deployment state lets you check changes and recover interrupted operations, but it does not back up agent files or conversations.

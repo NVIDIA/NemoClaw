@@ -12,10 +12,10 @@ description: Find revision-matched NemoClaw guidance for deployment, inference, 
 
 Establish which NemoClaw the user runs before suggesting commands: their stated version, the checkout's README and revision, and the executable's `--help` or `--version`.
 A branch name doesn't identify an installed executable.
-The v1 CLI has `onboard`, `plan`, `apply`, `export`, and `destroy`. `onboard` writes YAML only. npm onboarding, `launch`, `backup-all`, and `inference get` belong to earlier versions.
+The NemoClaw Agent Configs CLI has `onboard`, `plan`, `apply`, `export`, and `destroy`. The `onboard` command writes deployment YAML without applying it. npm onboarding, `launch`, `backup-all`, and `inference get` belong to NemoClaw v0.
 
 Use the documentation in the matching checkout, starting with [the index](../../../docs/README.md).
-Without a checkout, use the [NemoClaw Agent Configs Markdown index](https://docs.nvidia.com/nemoclaw/v1/llms.txt) for v1 tasks or the [parent NemoClaw Markdown index](https://docs.nvidia.com/nemoclaw/llms.txt) for NemoClaw v0 tasks.
+Without a checkout, use the [NemoClaw Agent Configs Markdown index](https://docs.nvidia.com/nemoclaw/v1/llms.txt) for NemoClaw Agent Configs tasks or the [parent NemoClaw Markdown index](https://docs.nvidia.com/nemoclaw/llms.txt) for NemoClaw v0 tasks.
 Use the page URLs listed in the index. Confirm that the guide matches the installed version and source revision before suggesting commands.
 In the combined local preview, **Latest (main)** is the default.
 If the matching documentation isn't available, say so instead of substituting another version's commands.
@@ -23,7 +23,7 @@ If the executable and the documentation disagree, establish which deployment the
 
 ## Route the Task
 
-| Task | Owning source in a v1 checkout |
+| Task | Source in a NemoClaw Agent Configs checkout |
 |---|---|
 | Install and verify a first reply | [Install](../../../docs/get-started/install.md), [prerequisites](../../../docs/get-started/prerequisites.md), [first deployment](../../../docs/get-started/first-deployment.md) |
 | Author a new deployment document | [Onboarding](../../../docs/get-started/onboard.md) |
