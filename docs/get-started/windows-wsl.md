@@ -142,9 +142,11 @@ Retain the YAML, state directory, and unchanged bundle if it fails; follow [oper
 
 For a first reply, copy the gateway and workspace selection commands from apply's output, then run the command after `Invoke:`.
 The Bash sample works inside WSL and sends the JSON string `"Reply with exactly READY."` on stdin.
-It can incur inference charges and returns the adapter's full result.
+It can incur inference charges and saves the adapter's full result in `reply-assistant.json`.
+Check that it exits successfully, then run the printed `Hermes reply (requires jq)` command to show the reply and both statuses.
+Require both `command_status` and `agent_status` to be `succeeded`, with `READY` in `response`.
 
-To save and filter a reply instead, use the following procedure.
+To retrieve the current runtime ID and check both statuses in a script, use the following alternative.
 Use the gateway endpoint, workspace, agent name, and runtime ID from apply's output.
 For this managed loopback gateway, select the endpoint and workspace in the current shell:
 

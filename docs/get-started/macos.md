@@ -149,10 +149,11 @@ If it fails, keep the same bundle, YAML, and state directory and follow [Operati
 ## Verifying a Reply and an Unchanged Plan
 
 Copy the gateway and workspace selection commands from apply's output into this shell, then run its `Invoke:` command.
-The Bash command sends the JSON string `"Reply with exactly READY."` on stdin.
+The Bash command sends the JSON string `"Reply with exactly READY."` on stdin and saves the full response in `reply-assistant.json`.
+After it exits successfully, run the printed `Hermes reply (requires jq)` command to show the reply and both statuses.
 Check both the invocation's exit status and the response's `result.status`: Hermes can report a failed request inside an outer successful command result.
 Expect an actual `READY` reply and successful inner and outer statuses.
-For a filtered Hermes response, follow [Verifying a Reply](windows-wsl.md#verifying-a-reply), substituting `.local/first-macos/state` for the WSL state path.
+For a script that also checks both statuses, follow [Verifying a Reply](windows-wsl.md#verifying-a-reply), substituting `.local/first-macos/state` for the WSL state path.
 
 If inference rejects the key, follow [Authentication Diagnostics](../agents-inference/agents.md#diagnosing-an-authentication-failure) and its linked rotation procedure.
 Replacing an installed credential can replace the attached sandbox and delete its files; read the warning before applying.

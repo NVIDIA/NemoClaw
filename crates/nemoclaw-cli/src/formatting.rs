@@ -740,20 +740,34 @@ fn agent_invocation(
         let name = terminal_text(&agent.agent);
         match &agent.runtime_id {
             Some(runtime) => {
+                let reply = format!("reply-{sandbox}.json");
                 let prompt = match shell {
                     Shell::Bash => "printf '%s\\n' '\"Reply with exactly READY.\"'",
                     Shell::PowerShell => "'\"Reply with exactly READY.\"'",
                 };
                 let command = format!(
-                    "{prompt} | openshell sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input -",
+                    "{prompt} | openshell sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input - > {}",
                     shell.word(sandbox.as_str()),
                     shell.word(name.as_str()),
-                    shell.word(runtime)
+                    shell.word(runtime),
+                    shell.word(&reply)
                 );
+                let inspect = match shell {
+                    Shell::Bash => format!(
+                        "jq '{{command_status: .status, agent_status: .result.status, error: .result.error, response: .result.output.response}}' {}",
+                        shell.word(&reply)
+                    ),
+                    Shell::PowerShell => format!(
+                        "$reply = Get-Content -Raw -LiteralPath {} | ConvertFrom-Json; [pscustomobject]@{{command_status=$reply.status; agent_status=$reply.result.status; error=$reply.result.error; response=$reply.result.output.response}}",
+                        shell.quoted(&reply)
+                    ),
+                };
                 output.push_str(&format!(
-                    "  {sandbox}: agent {name}, runtime {}\n    Invoke:   {}\n",
+                    "  {sandbox}: agent {name}, runtime {}\n    Invoke:   {}\n    Hermes reply{}: {}\n",
                     terminal_text(runtime),
-                    terminal_text(&command)
+                    terminal_text(&command),
+                    if matches!(shell, Shell::Bash) { " (requires jq)" } else { "" },
+                    terminal_text(&inspect)
                 ));
             }
             None => output.push_str(&format!("  {sandbox}: agent {name}, no runtime recorded\n")),
@@ -761,7 +775,7 @@ fn agent_invocation(
     }
     if invocable {
         output.push_str(&format!(
-            "  The sample sends one JSON prompt and can incur inference charges. --input FILE reads a sandbox file; --input - reads it from stdin; see {}.\n",
+            "  Invoke sends one JSON prompt and saves the full JSON reply to the named file; it can incur inference charges. Check that Invoke exits 0 before inspecting the file.\n  For Hermes, run the reply command and require command_status and agent_status to both be succeeded. Other adapters can use different response fields.\n  --input FILE reads a sandbox file; --input - reads it from stdin; see {}.\n",
             documentation_url("docs/agents-inference/agents.md"),
         ));
     }
@@ -1278,7 +1292,7 @@ mod tests {
             "{command}"
         );
         assert!(
-            invocation.ends_with("--agent main --runtime-id rt-1 --input -"),
+            invocation.ends_with("--agent main --runtime-id rt-1 --input - > reply-assistant.json"),
             "{command}"
         );
         assert!(!text.contains("export OPENSHELL_"), "{text}");
@@ -1317,25 +1331,35 @@ mod tests {
         .unwrap();
         let selection: String = text
             .lines()
-            .filter(|line| line.starts_with("    ") && !line.trim().starts_with("Invoke:"))
+            .filter(|line| {
+                line.starts_with("    $env:") || line.starts_with("    Remove-Item Env:")
+            })
             .map(|line| format!("{line}\n"))
             .collect();
         let invoke = text
             .lines()
             .find_map(|line| line.trim().strip_prefix("Invoke:"))
             .unwrap();
+        let inspect = text
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("Hermes reply:"))
+            .unwrap();
         let script = format!(
             r#"
 function openshell {{
     $prompt = ($input | Out-String | ConvertFrom-Json)
-    [pscustomobject]@{{prompt=$prompt; arguments=$args; gateway=$env:OPENSHELL_GATEWAY_ENDPOINT; workspace=$env:OPENSHELL_WORKSPACE; stale=$env:OPENSHELL_GATEWAY}} | ConvertTo-Json -Compress
+    [pscustomobject]@{{prompt=$prompt; arguments=$args; gateway=$env:OPENSHELL_GATEWAY_ENDPOINT; workspace=$env:OPENSHELL_WORKSPACE; stale=$env:OPENSHELL_GATEWAY; status='succeeded'; result=@{{status='succeeded'; output=@{{response='READY'}}}}}} | ConvertTo-Json -Compress -Depth 4
 }}
 $env:OPENSHELL_GATEWAY = 'stale'
 {selection}
 {invoke}
+Get-Content -Raw -LiteralPath reply-assistant.json
+{inspect} | ConvertTo-Json -Compress
 "#
         );
+        let directory = tempfile::tempdir().unwrap();
         let output = std::process::Command::new("powershell.exe")
+            .current_dir(directory.path())
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .output()
             .unwrap();
@@ -1344,11 +1368,18 @@ $env:OPENSHELL_GATEWAY = 'stale'
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let observed: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let values: Vec<Value> = serde_json::Deserializer::from_slice(&output.stdout)
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let observed = &values[0];
         assert_eq!(observed["prompt"], "Reply with exactly READY.");
         assert_eq!(observed["gateway"], "http://127.0.0.1:17671");
         assert_eq!(observed["workspace"], "nc-1234567890abcdef");
         assert!(observed["stale"].is_null());
+        assert_eq!(values[1]["command_status"], "succeeded");
+        assert_eq!(values[1]["agent_status"], "succeeded");
+        assert_eq!(values[1]["response"], "READY");
         // PowerShell consumes `--` when the receiver is a function; the real
         // native executable receives it as an argument.
         assert_eq!(
@@ -1396,7 +1427,7 @@ $env:OPENSHELL_GATEWAY = 'stale'
     /// say which agent has none; JSON carries the same facts under `agents`.
     #[test]
     #[cfg(unix)]
-    fn printed_first_reply_command_sends_a_json_prompt_on_stdin() {
+    fn printed_first_reply_command_sends_json_and_keeps_the_reply_for_inspection() {
         let text = render(
             &["nemoclaw", "apply", "deployment.yaml"],
             json!({"outcome": "succeeded", "changes": [], "agents": agents()}),
@@ -1408,7 +1439,9 @@ $env:OPENSHELL_GATEWAY = 'stale'
         let script = format!(
             "openshell() {{ test \"$*\" = 'sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input -' || return 3; cat; }}\n{command}"
         );
+        let directory = tempfile::tempdir().unwrap();
         let output = std::process::Command::new("sh")
+            .current_dir(directory.path())
             .args(["-c", &script])
             .output()
             .unwrap();
@@ -1416,7 +1449,13 @@ $env:OPENSHELL_GATEWAY = 'stale'
             output.status.success(),
             "the printed command must run: {command}"
         );
-        let prompt: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let reply = std::fs::read(directory.path().join("reply-assistant.json"))
+            .expect("Invoke must save the JSON for the printed inspection command");
+        assert!(
+            output.stdout.is_empty(),
+            "the first reply must not flood the terminal with JSON"
+        );
+        let prompt: Value = serde_json::from_slice(&reply).unwrap();
         assert_eq!(prompt, "Reply with exactly READY.");
     }
 
@@ -1438,7 +1477,7 @@ $env:OPENSHELL_GATEWAY = 'stale'
             for expected in [
                 "export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671",
                 "export OPENSHELL_WORKSPACE=nc-1234567890abcdef",
-                "Invoke: printf '%s\\n' '\"Reply with exactly READY.\"' | openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input -",
+                "Invoke: printf '%s\\n' '\"Reply with exactly READY.\"' | openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input - > reply-assistant.json",
                 "reviewer: agent critic, no runtime recorded",
             ] {
                 assert!(
