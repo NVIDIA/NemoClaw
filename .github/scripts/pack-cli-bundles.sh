@@ -5,13 +5,13 @@
 # Usage: pack-cli-bundles.sh CI SIGNED ARCHIVES
 #
 # Pack each platform's CLI bundle into ARCHIVES/nemoclaw-<tag>-<platform>.tar.gz
-# and list their checksums in ARCHIVES/SHA256SUMS.
+# and list their checksums, and those of any other nemoclaw-* file already in
+# ARCHIVES, such as the macOS installer, in ARCHIVES/SHA256SUMS.
 #
 # CI holds the bundles CI / Bundle uploaded, as CI/bundle-<platform>-*/bundle.tar.
 # SIGNED/<platform>, when a signing job uploaded it, holds that platform's bundle
-# directory with its executables signed. Its files replace the bundle's; artifact
-# transfer drops their modes, so the bundle's modes stay. Signing changes the
-# executables' bytes, so the manifest is resealed with their new hashes.
+# directory with its executables signed; assemble-cli-bundle.sh puts them in
+# the bundle.
 set -euo pipefail
 
 ci=$1
@@ -26,12 +26,7 @@ for platform in linux_arm64 linux_amd64 darwin_arm64 windows_amd64; do
     exit 1
   fi
   mkdir "$work/$platform"
-  tar -xpf "${bundles[0]}" -C "$work/$platform"
-  bundle="$work/$platform/dist/$platform"
-  if [ -d "$signed/$platform" ]; then
-    cp -R "$signed/$platform/." "$bundle/"
-  fi
-  nemoclaw-build reseal "$bundle"
+  bash "$(dirname "$0")/assemble-cli-bundle.sh" "$platform" "${bundles[0]}" "$signed/$platform" "$work/$platform"
   tar -cf - -C "$work/$platform" "dist/$platform" | gzip -n > "$archives/nemoclaw-$GITHUB_REF_NAME-$platform.tar.gz"
 done
 (cd "$archives" && sha256sum -- nemoclaw-* > SHA256SUMS)

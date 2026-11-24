@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<style>{{STYLE}}</style>
+</head>
+<body>
+<h1>NemoClaw Agent Configs {{VERSION}}</h1>
+<p>This installer puts the <code>nemoclaw</code> CLI, with the OpenTofu, providers, and schemas it uses, in <code>{{INSTALL_DIR}}</code>.
+It also adds <code>{{INSTALL_DIR}}/bin</code> to <code>PATH</code> for new Terminal windows.</p>
+<p>It requires a Mac with Apple silicon and macOS {{MINIMUM_MACOS}} or later.</p>
+<h2>Upgrading</h2>
+<p>Installing replaces the version in <code>{{INSTALL_DIR}}</code>.
+A deployment keeps using the release that created it, so before you upgrade, destroy the deployments that the installed version created, or keep that release's archive to destroy them later.</p>
+<p class="note">Deployment YAML and state directories stay where you created them.</p>
+</body>
+</html>

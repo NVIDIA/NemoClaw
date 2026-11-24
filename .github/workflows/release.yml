@@ -436,13 +436,211 @@ jobs:
       - name: Remove the temporary Apple keychain
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/nemoclaw-notary.keychain-db" >/dev/null 2>&1 || true
+  # The macOS installer holds the darwin_arm64 archive's bundle: the one CI
+  # checked, with the executables sign-macos signed, resealed as staging packs
+  # it. This job runs the tag's files and has no signing access.
+  macos-installer:
+    name: Build the macOS installer
+    needs: [bundles, sign-macos]
+    if: >-
+      !cancelled() && needs.bundles.result == 'success' &&
+      (needs.sign-macos.result == 'success' ||
+        (needs.sign-macos.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'darwin_arm64')))
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the bundle CI checked at the tag
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.bundles.outputs.darwin_arm64 }}
+          run-id: ${{ needs.bundles.outputs.run }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/ci
+      - name: Download the signed macOS bundle
+        if: needs.sign-macos.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-cli-darwin_arm64
+          path: ${{ runner.temp }}/signed/darwin_arm64
+      # Resealing hashes the bundle with the SDK, which needs the pinned protoc.
+      - name: Install the pinned build tools
+        run: cargo ci tools
+      - name: Assemble the archive's bundle
+        run: |
+          cargo build --locked -q -p nemoclaw-build
+          PATH="$PWD/target/debug:$PATH" bash .github/scripts/assemble-cli-bundle.sh darwin_arm64 \
+            "$RUNNER_TEMP/ci/bundle.tar" "$RUNNER_TEMP/signed/darwin_arm64" "$RUNNER_TEMP/release"
+      # The pages link the documentation at the tag.
+      - name: Build the installer
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          rustc --edition=2021 tools/release/macos-installer.rs -o "$RUNNER_TEMP/macos-installer"
+          mkdir -p "$RUNNER_TEMP/installer"
+          "$RUNNER_TEMP/macos-installer" build "$RUNNER_TEMP/release/dist/darwin_arm64" "${TAG#v}" "$TAG" \
+            "$RUNNER_TEMP/installer/nemoclaw-$TAG-darwin_arm64.pkg"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-installer
+          path: ${{ runner.temp }}/installer
+          if-no-files-found: error
+          retention-days: 7
+  # The private runner signs package data; only the trusted controller runs
+  # with Vault/SSA access. As for executables, this job stays outside the
+  # environment so its Vault identity remains bound to the release tag.
+  sign-macos-installer-3s:
+    name: Sign the macOS installer with 3S
+    needs: [macos-installer, security-controller]
+    if: >-
+      !cancelled() && needs.macos-installer.result == 'success' &&
+      needs.security-controller.result == 'success' && vars.MACOS_INSTALLER_SIGNING == 'true'
+    runs-on: [self-hosted, linux, x64, nemoclaw-release-signing]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.security-controller.outputs.revision }}
+          persist-credentials: false
+      - name: Compile the trusted signing helper
+        run: rustc --edition=2021 tools/release/macos-signing.rs -o "$RUNNER_TEMP/macos-signing"
+      - name: Download the unsigned installer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-installer
+          path: ${{ runner.temp }}/installer
+      - name: Submit the installer to 3S
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          export PATH="/opt/nemoclaw-signing/nvsec/bin:$PATH"
+          "$RUNNER_TEMP/macos-signing" sign-package "$RUNNER_TEMP/installer/nemoclaw-$TAG-darwin_arm64.pkg"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-installer-3s-intermediate
+          path: ${{ runner.temp }}/installer
+          if-no-files-found: error
+          retention-days: 1
+      - name: Remove private job scratch data
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP"/nemoclaw-3s-* "$RUNNER_TEMP/installer"
+          rm -f "$RUNNER_TEMP/macos-signing"
+  sign-macos-installer:
+    name: Notarize and verify the macOS installer
+    needs: [sign-macos-installer-3s, security-controller]
+    if: >-
+      !cancelled() && needs.sign-macos-installer-3s.result == 'success' &&
+      needs.security-controller.result == 'success'
+    environment: release-signing
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Download the 3S-signed installer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-installer-3s-intermediate
+          path: ${{ runner.temp }}/installer
+      # Refuse another team's package before submitting it to Apple.
+      - name: Check the installer's signing identity
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          : "${APPLE_TEAM_ID:?Missing Apple team ID}"
+          pkgutil --check-signature "$RUNNER_TEMP/installer/nemoclaw-$TAG-darwin_arm64.pkg" > "$RUNNER_TEMP/installer.signature.txt"
+          if ! grep -F 'Developer ID Installer: ' "$RUNNER_TEMP/installer.signature.txt" | grep -qF "($APPLE_TEAM_ID)"; then
+            echo '::error::The installer is not signed by the expected Apple team.'
+            exit 1
+          fi
+      # Gatekeeper opens a downloaded installer only when Apple notarized it.
+      - name: Notarize and staple the installer
+        env:
+          APPLE_NOTARY_ID: ${{ secrets.APPLE_NOTARY_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_NOTARY_PROFILE: nemoclaw-release
+          APPLE_NOTARY_KEYCHAIN: ${{ runner.temp }}/nemoclaw-notary.keychain-db
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          : "${APPLE_NOTARY_ID:?Missing Apple ID}"
+          : "${APPLE_NOTARY_PASSWORD:?Missing app-specific password}"
+          keychain_password=$(openssl rand -hex 32)
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$APPLE_NOTARY_KEYCHAIN"
+          security unlock-keychain -p "$keychain_password" "$APPLE_NOTARY_KEYCHAIN"
+          xcrun notarytool store-credentials "$APPLE_NOTARY_PROFILE" \
+            --keychain "$APPLE_NOTARY_KEYCHAIN" --apple-id "$APPLE_NOTARY_ID" \
+            --team-id "$APPLE_TEAM_ID" --password "$APPLE_NOTARY_PASSWORD"
+          unset APPLE_NOTARY_PASSWORD keychain_password
+          package="$RUNNER_TEMP/installer/nemoclaw-$TAG-darwin_arm64.pkg"
+          xcrun notarytool submit "$package" --keychain-profile "$APPLE_NOTARY_PROFILE" \
+            --keychain "$APPLE_NOTARY_KEYCHAIN" --wait --timeout 20m --output-format json \
+            > "$RUNNER_TEMP/installer.notarization.json"
+          if ! jq -e '.status == "Accepted"' "$RUNNER_TEMP/installer.notarization.json" > /dev/null; then
+            echo '::error::Apple has not accepted the installer notarization submission.'
+            exit 1
+          fi
+          xcrun stapler staple "$package"
+      # The output names the signer and Gatekeeper's verdict; it joins the
+      # release's evidence record.
+      - name: Verify the installer's signature and notarization
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          package="$RUNNER_TEMP/installer/nemoclaw-$TAG-darwin_arm64.pkg"
+          log="$RUNNER_TEMP/installer.verification.txt"
+          pkgutil --check-signature "$package" 2>&1 | tee "$log"
+          spctl --assess --type install --verbose=2 "$package" 2>&1 | tee -a "$log"
+          xcrun stapler validate "$package" 2>&1 | tee -a "$log"
+          if ! grep -F "Developer ID Installer: " "$log" | grep -qF "($APPLE_TEAM_ID)"; then
+            echo "::error::The installer isn't signed by a Developer ID Installer certificate of team $APPLE_TEAM_ID."
+            exit 1
+          fi
+          if ! grep -qF 'source=Notarized Developer ID' "$log"; then
+            echo '::error::Gatekeeper does not accept the installer as notarized.'
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-macos-installer
+          path: ${{ runner.temp }}/installer
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signing-verification-installer
+          path: |
+            ${{ runner.temp }}/installer.verification.txt
+            ${{ runner.temp }}/installer.notarization.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove the temporary notary keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/nemoclaw-notary.keychain-db" > /dev/null 2>&1 || true
   stage:
     name: Stage the release
     outputs:
       inventory_sha256: ${{ steps.draft.outputs.inventory_sha256 }}
       sboms_sha256: ${{ steps.draft.outputs.sboms_sha256 }}
       cli_checksums: ${{ steps.pack.outputs.checksums }}
-    needs: [select, build, runtimes, security-controller, bundles, sign-windows, sign-macos]
+    needs: [select, build, runtimes, security-controller, bundles, sign-windows, sign-macos, macos-installer, sign-macos-installer-3s, sign-macos-installer]
     if: >-
       !cancelled() && needs.security-controller.result == 'success' &&
       needs.select.result == 'success' && needs.runtimes.result == 'success' &&
@@ -451,7 +649,11 @@ jobs:
       (needs.sign-windows.result == 'success' ||
         (needs.sign-windows.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'windows_amd64'))) &&
       (needs.sign-macos.result == 'success' ||
-        (needs.sign-macos.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'darwin_arm64')))
+        (needs.sign-macos.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'darwin_arm64'))) &&
+      needs.macos-installer.result == 'success' &&
+      (needs.sign-macos-installer.result == 'success' ||
+        (needs.sign-macos-installer-3s.result == 'skipped' &&
+          needs.sign-macos-installer.result == 'skipped' && vars.MACOS_INSTALLER_SIGNING != 'true'))
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -510,12 +712,26 @@ jobs:
           name: signed-cli-darwin_arm64
           path: ${{ runner.temp }}/signed/darwin_arm64
       - name: Download the signature checks
-        if: needs.sign-windows.result == 'success' || needs.sign-macos.result == 'success'
+        if: needs.sign-windows.result == 'success' || needs.sign-macos.result == 'success' || needs.sign-macos-installer.result == 'success'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: signing-verification-*
           merge-multiple: true
           path: ${{ runner.temp }}/signed
+      # The signed installer, or without installer signing, the unsigned one,
+      # which only a release candidate's private draft attaches.
+      - name: Download the signed macOS installer
+        if: needs.sign-macos-installer.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-macos-installer
+          path: ${{ runner.temp }}/installer
+      - name: Download the unsigned macOS installer
+        if: needs.sign-macos-installer.result == 'skipped' && contains(github.ref_name, '-')
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-installer
+          path: ${{ runner.temp }}/installer
       # Resealing hashes the bundle with the SDK, which needs the pinned protoc.
       - name: Install the pinned build tools
         run: cargo ci tools
@@ -529,6 +745,11 @@ jobs:
           cargo build --locked -q -p nemoclaw-build
           mkdir -p "$RUNNER_TEMP/signed"
           cli="$RUNNER_TEMP/cli-bundles"
+          # The installer joins SHA256SUMS, the evidence record, and a final release's attestations.
+          if [ -d "$RUNNER_TEMP/installer" ]; then
+            mkdir -p "$cli"
+            cp "$RUNNER_TEMP/installer/nemoclaw-$GITHUB_REF_NAME-darwin_arm64.pkg" "$cli/"
+          fi
           PATH="$PWD/target/debug:$PATH" bash .github/scripts/pack-cli-bundles.sh \
             "$RUNNER_TEMP/ci-bundles" "$RUNNER_TEMP/signed" "$cli"
           bash .github/scripts/record-cli-signing.sh "$RUNNER_TEMP/signed" "$cli" "$RUNNER_TEMP/cli-signing.md"
@@ -563,9 +784,9 @@ jobs:
             echo
             echo '## CLI'
             echo
-            echo "Each archive holds one platform's \`nemoclaw\` CLI with OpenTofu and the providers, as [CI / Bundle]($CLI_SOURCE) built and checked them at \`$GITHUB_SHA\`. \`SHA256SUMS\` lists their SHA-256 checksums."
+            echo "Each archive holds one platform's \`nemoclaw\` CLI with OpenTofu and the providers, as [CI / Bundle]($CLI_SOURCE) built and checked them at \`$GITHUB_SHA\`. \`SHA256SUMS\` lists their SHA-256 checksums, and the macOS installer's when the release has one."
             echo
-            echo '| Archive | SHA-256 |'
+            echo '| File | SHA-256 |'
             echo '|---|---|'
             while read -r sum archive; do
               echo "| \`$archive\` | \`$sum\` |"
@@ -927,7 +1148,8 @@ jobs:
             --pattern 'nemoclaw-*' --pattern SHA256SUMS --pattern release-evidence.json
           cd "$cli"
           sha256sum --check --strict SHA256SUMS
-          for file in nemoclaw-*.tar.gz SHA256SUMS; do
+          shopt -s nullglob
+          for file in nemoclaw-*.tar.gz nemoclaw-*.pkg SHA256SUMS; do
             if ! gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" --format json > "$RUNNER_TEMP/attestation.json"; then
               echo "::error::$file has no valid build provenance attestation from this repository."
               exit 1

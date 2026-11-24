@@ -1,0 +1,58 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Installer shows these pages in its content pane, over its own light or dark
+   background, so the page background stays transparent. */
+:root {
+  color-scheme: light dark;
+  --text: #1d1d1f;
+  --muted: #5b5b60;
+  --accent: #3d7a1c;
+  --code: rgba(0, 0, 0, 0.06);
+  --rule: rgba(0, 0, 0, 0.12);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #f2f2f4;
+    --muted: #a6a6ad;
+    --accent: #9bd35f;
+    --code: rgba(255, 255, 255, 0.09);
+    --rule: rgba(255, 255, 255, 0.16);
+  }
+}
+body {
+  margin: 0 6px;
+  background: transparent;
+  color: var(--text);
+  font: 13px/1.45 -apple-system, "Helvetica Neue", sans-serif;
+}
+h1 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+}
+h2 {
+  margin: 18px 0 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+  font-size: 13px;
+  font-weight: 600;
+}
+p, li {
+  margin: 0 0 8px;
+}
+ul, ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--code);
+  font: 12px ui-monospace, Menlo, monospace;
+}
+a {
+  color: var(--accent);
+}
+.note {
+  color: var(--muted);
+}

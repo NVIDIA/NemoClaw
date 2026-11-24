@@ -5,7 +5,7 @@
 
 Each release attaches a `nemoclaw` archive for each of four platforms and a `SHA256SUMS` file with their SHA-256 checksums.
 Each archive holds the CLI with the OpenTofu, providers, and schemas it uses.
-This page installs a release's archive, upgrades to another release, and uninstalls the CLI.
+This page installs a release's archive, or on macOS its installer, upgrades to another release, and uninstalls the CLI.
 To build the bundle from source instead, see [build local artifacts](../build-deploy/build.md#building-a-native-bundle).
 
 No release is published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
@@ -28,10 +28,67 @@ Windows ARM64 has no native bundle. Use [Linux ARM64 through WSL2](windows-wsl.m
 
 On Windows, the CLI reaches a local Docker Desktop or Podman engine through its named pipe, such as `npipe:////./pipe/docker_engine`, and [deploys](../build-deploy/usage.md) with a managed or an external gateway.
 No Windows host has run a deployment yet ([#14639](https://github.com/NVIDIA/NemoClaw/issues/14639)).
-The executables are neither signed nor notarized.
+Release candidates since `v0.1.0-rc.4` have signed `darwin_arm64` and `windows_amd64` executables, and Apple notarized the `darwin_arm64` ones.
 See [current limits](../resources/limits.md#installation-and-releases).
 Use the CLI with the agent and runtime images that the same release lists by digest.
 [Compatibility](../references/compatibility.md#using-one-release-together) explains why.
+
+## Installing with the macOS Installer
+
+On a Mac with Apple silicon and macOS 15 or later, a release's `nemoclaw-TAG-darwin_arm64.pkg` installs the `darwin_arm64` bundle in `/usr/local/nemoclaw`, unchanged.
+It adds `/etc/paths.d/nemoclaw`, which puts `/usr/local/nemoclaw/bin` on `PATH` in new Terminal windows, and records the files under the package ID `com.nvidia.nemoclaw.cli`.
+It refuses an Intel Mac and older versions of macOS.
+
+A final release attaches the installer only when it's signed and notarized.
+A release candidate's installer isn't signed or notarized until NVIDIA's installer signing is configured ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)), so macOS won't open it from Finder after a browser download; install it from Terminal with the following steps.
+
+1. In an empty directory, download the installer and the checksums, and check the installer's checksum:
+
+   ```sh
+   TAG=v0.1.0-rc.1
+   PKG="nemoclaw-$TAG-darwin_arm64.pkg"
+   curl -fLO "https://github.com/NVIDIA/NemoClaw/releases/download/$TAG/$PKG"
+   curl -fLO "https://github.com/NVIDIA/NemoClaw/releases/download/$TAG/SHA256SUMS"
+   grep -F " $PKG" SHA256SUMS | shasum -a 256 --check
+   ```
+
+   Expect `nemoclaw-TAG-darwin_arm64.pkg: OK`; on any other result, delete the download.
+   For a final release, also check its build provenance with `gh attestation verify "$PKG" --owner NVIDIA`, as for the [archives](#installing-on-linux-or-macos).
+
+2. Install it, entering your password when `sudo` asks:
+
+   ```sh
+   sudo installer -pkg "$PKG" -target /
+   ```
+
+   For a signed installer, you can open the file in Finder instead and follow the installer's pages.
+
+3. Open a new Terminal window and run `nemoclaw --version`, which prints `nemoclaw` and the release's version.
+   Windows that were already open don't have the new `PATH`.
+
+Before your first deployment, install and start Docker Desktop or Podman, then run `nemoclaw onboard` in a directory for your deployment and follow the [first-deployment guide](first-deployment.md).
+As with the archive, keep `/usr/local/nemoclaw` unchanged, don't link `nemoclaw` elsewhere, and run it from your deployment's directory.
+
+### Upgrading with the macOS Installer
+
+Install the new release's installer as above.
+It removes `/usr/local/nemoclaw` before it installs, so only the new release's files remain.
+
+A deployment keeps using the release that created it, as [upgrading](#upgrading) describes, and the installer doesn't keep the old release.
+Before you upgrade, destroy the deployments that the installed release created, or unpack that release's `darwin_arm64` archive into its own directory, as in [installing on Linux or macOS](#installing-on-linux-or-macos), to run its CLI by path later.
+
+### Uninstalling with the macOS Installer
+
+First destroy the deployments that the release created and remove what they retain, as [uninstalling](#uninstalling) describes.
+Then remove the CLI, the `PATH` entry, and the package's record:
+
+```sh
+sudo rm -rf /usr/local/nemoclaw /etc/paths.d/nemoclaw
+sudo pkgutil --forget com.nvidia.nemoclaw.cli
+```
+
+In a new Terminal window, `command -v nemoclaw` then prints nothing.
+Deployment YAML and state directories stay where you created them.
 
 ## Installing on Linux or macOS
 
@@ -148,12 +205,13 @@ For each deployment that the release created, with that release's CLI:
    Reapplying needs both.
 
 Then delete the release's directory, such as `$HOME/.local/opt/nemoclaw/TAG` or `$env:LOCALAPPDATA\nemoclaw\TAG`, and remove its `bin` directory from `PATH`: in your shell's startup file, or on Windows, in **Edit environment variables for your account**.
+If the macOS installer installed the CLI, [uninstall it](#uninstalling-with-the-macos-installer) instead.
 
 NemoClaw keeps its files in these places:
 
 | What | Where | Removed by |
 |---|---|---|
-| The CLI, OpenTofu, providers, and schemas | The release's directory | Deleting the directory |
+| The CLI, OpenTofu, providers, and schemas | The release's directory, or `/usr/local/nemoclaw` from the macOS installer | Deleting the directory, or [uninstalling with the macOS installer's commands](#uninstalling-with-the-macos-installer) |
 | Deployment state, including OpenTofu state and its configuration | Each deployment's state directory: `--state-dir`, by default `.nemoclaw` in the directory you ran `nemoclaw` from; see [deployment state](../build-deploy/state.md#local-deployment-files) | Deleting the directory, after destroy |
 | Deployment YAML | Where you saved it; `nemoclaw onboard` writes `deployment.yaml` in the current directory unless `--output` names another file | Deleting the file |
 | Sandboxes, gateways, model services, and their data | The deployment's Docker or Podman engine, or Kubernetes cluster; see [retained resources](../build-deploy/state.md#understanding-the-retained-resources) | Destroy, then removing retained resources |
