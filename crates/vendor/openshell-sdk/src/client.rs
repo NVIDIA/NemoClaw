@@ -1588,6 +1588,8 @@ fn sandbox_from_response(sandbox: Option<proto::Sandbox>) -> Result<SandboxRef> 
 fn sandbox_from_create_response(response: proto::SandboxResponse) -> Result<SandboxRef> {
     let mut sandbox = sandbox_from_response(response.sandbox)?;
     sandbox.service_urls = response.service_urls;
+    sandbox.application_service_urls = response.application_service_urls;
+    sandbox.gateway_service_urls = response.gateway_service_urls;
     Ok(sandbox)
 }
 

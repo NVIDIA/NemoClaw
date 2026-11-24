@@ -8,11 +8,11 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.94"
 license = "Apache-2.0"
-repository = "https://github.com/NVIDIA/OpenShell"
+repository = "https://github.com/ai-openshell/openshell"
 
 [dependencies]
-openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "ce58cf8e9b953281352d98a637e41616295b1318", default-features = false }
-openshell-crypto = { git = "https://github.com/NVIDIA/OpenShell", rev = "ce58cf8e9b953281352d98a637e41616295b1318", default-features = false, features = ["aws-lc"] }
+openshell-core = { git = "https://github.com/ai-openshell/openshell", rev = "152c59d3178039e3fbb4a5595f9fff7216a6be92", default-features = false }
+openshell-crypto = { git = "https://github.com/ai-openshell/openshell", rev = "152c59d3178039e3fbb4a5595f9fff7216a6be92", default-features = false, features = ["aws-lc"] }
 async-trait = "0.1"
 futures = { version = "0.3" }
 hyper = { version = "1.6", features = ["full"] }
