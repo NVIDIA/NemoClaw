@@ -83,6 +83,11 @@ OpenShell 0.1.10:
 - Sandboxed workloads can set their own CPU affinity, nice value, and resource limits, and signal themselves.
 - A proxy failure before a response starts returns `502 Bad Gateway` with a request ID, and HTTP clients learn promptly when an upstream closes an idle connection.
 
+OpenTofu 1.13.10:
+
+- The bundle's OpenTofu is 1.13.10, built with Go 1.27.4 for GO-2026-6859, an HTTP/1 server crash.
+  `tofu test` overrides resources in indexed modules correctly.
+
 ### Changes in v0.1.0-rc12
 
 These changes reached `v1` between the `v0.1.0-rc11` and `v0.1.0-rc12` tags.
