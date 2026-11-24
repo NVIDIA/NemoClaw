@@ -16,6 +16,13 @@ Choose agents, models, tools, and network access, then preview and apply deploym
 NemoClaw Agent Configs is a release candidate.
 Until its first release, [build it from source](docs/build-deploy/build.md).
 
+<a href="docs/get-started/first-deployment.md">
+  <picture>
+    <source media="(max-width: 700px)" srcset="docs/assets/deployment-workflow-mobile.svg">
+    <img src="docs/assets/deployment-workflow.svg" alt="First deployment tutorial. Build the v1 bundle and matching agent images. Define agents, models, sandbox settings, network access, and volume mounts in deployment.yaml. Run nemoclaw plan, then nemoclaw apply. NeMo Fabric starts each agent in its own OpenShell sandbox.">
+  </picture>
+</a>
+
 ### What You Can Do
 
 These outcomes are familiar from NemoClaw Classic, the earlier version:

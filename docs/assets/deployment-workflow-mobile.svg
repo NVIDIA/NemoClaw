@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="516" viewBox="0 0 360 516" role="img" aria-labelledby="title desc">
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<title id="title">Deploy agents with NemoClaw</title>
+<desc id="desc">Build the v1 bundle and matching agent images. Define agents, models, sandbox settings, network access, and volume mounts in YAML. Preview and apply the deployment. Inside each OpenShell sandbox, NeMo Fabric configures and starts the agent.</desc>
+<style>
+text{font-family:Arial,Helvetica,sans-serif;fill:#f4f7fb}
+.heading{font-weight:700;font-size:23px}
+.step{font-weight:700;font-size:19px}
+.body{font-size:15px;fill:#c8d2e1}
+.code{font-family:Menlo,monospace;font-size:13px;fill:#dce4ee}
+.card{fill:#172033;stroke:#ff973c;stroke-width:2}
+.wire{stroke:#ff973c;stroke-width:2;fill:none}
+.boundary{fill:#111a28;stroke:#68778c;stroke-width:1.3}
+.small{font-size:15px;font-weight:700;fill:#f4f7fb}
+</style>
+<rect width="100%" height="100%" rx="12" fill="#0b1018"/>
+<text x="18" y="39" class="heading">Deploy agents with NemoClaw</text>
+<path class="wire" d="M43 145v22"/>
+<rect x="18" y="62" width="324" height="84" rx="9" class="card"/>
+<text x="34" y="88" class="step">Get NemoClaw</text>
+<text x="34" y="112" class="body">Build the v1 bundle and</text>
+<text x="34" y="132" class="body">matching agent images.</text>
+<path class="wire" d="M43 250v22"/>
+<rect x="18" y="167" width="324" height="84" rx="9" class="card"/>
+<text x="34" y="193" class="step">Define the deployment</text>
+<text x="34" y="217" class="body">Agents, models, sandbox settings,</text>
+<text x="34" y="237" class="body">network access, and volume mounts.</text>
+<rect x="18" y="272" width="324" height="84" rx="9" class="card"/>
+<text x="34" y="298" class="step">Preview and deploy</text>
+<text x="34" y="322" class="code">nemoclaw plan deployment.yaml</text>
+<text x="34" y="342" class="code">nemoclaw apply deployment.yaml</text>
+<path class="wire" d="M43 356v24"/>
+<rect x="18" y="380" width="324" height="116" rx="9" class="boundary"/>
+<text x="34" y="408" class="small">One OpenShell sandbox per agent</text>
+<text x="34" y="443" class="step">NeMo Fabric</text>
+<text x="34" y="470" class="body">Configures and starts the agent.</text>
+</svg>
