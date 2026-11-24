@@ -145,20 +145,20 @@ assert_openshell_version() {
 
 case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
   stable | auto) ;;
-  dev) fail "NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported." ;;
+  dev) fail "NemoClaw requires exact stable OpenShell 0.1.10; the dev channel is not supported." ;;
   *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, auto" ;;
 esac
 if [ -z "$OPENSHELL_VERSION" ]; then
   case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
-    stable | auto) OPENSHELL_VERSION="v0.0.116" ;;
+    stable | auto) OPENSHELL_VERSION="v0.1.10" ;;
   esac
 fi
 assert_openshell_version "$OPENSHELL_VERSION"
 if [[ "$OPENSHELL_VERSION" != v* ]]; then
   OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
 fi
-if [[ "$OPENSHELL_VERSION" != "v0.0.116" ]]; then
-  fail "NemoClaw requires exact stable OpenShell 0.0.116; OPENSHELL_VERSION resolved to '${OPENSHELL_VERSION}'."
+if [[ "$OPENSHELL_VERSION" != "v0.1.10" ]]; then
+  fail "NemoClaw requires exact stable OpenShell 0.1.10; OPENSHELL_VERSION resolved to '${OPENSHELL_VERSION}'."
 fi
 if [ "${1:-}" = "--print-openshell-version" ]; then
   printf '%s\n' "$OPENSHELL_VERSION"
@@ -217,14 +217,14 @@ openshell_cli_asset_for_arch() {
 openshell_cli_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.116:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e"
+    v0.1.10:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "2467a09d839bb9af43bf1d649d72e77e596578cbd8e567b6e55a0c504c222f5f"
       ;;
-    v0.0.116:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43"
+    v0.1.10:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "a6ad4833ca22a077d844e8405eae4092b32c9ae1e53b1b2151d77374117ff4c0"
       ;;
-    v0.0.116:openshell-checksums-sha256.txt)
-      printf '%s\n' "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e"
+    v0.1.10:openshell-checksums-sha256.txt)
+      printf '%s\n' "b3ce5e8c3f7af02d4b9b397c0a48dfecfc2d6839c3da6386fd1aad5f47332fda"
       ;;
     *)
       return 1
@@ -263,7 +263,7 @@ verify_openshell_cli_asset() {
 
   retry 3 10 "download openshell checksum" \
     curl -fsSL -o "$tmpdir/$checksum_file" \
-    "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${checksum_file}"
+    "https://github.com/ai-openshell/openshell/releases/download/${OPENSHELL_VERSION}/${checksum_file}"
   checksum_line="$(openshell_checksum_line "$tmpdir/$checksum_file" "$asset")" \
     || fail "OpenShell checksum file does not list $asset"
   expected_sha="$(openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$asset")" \
@@ -281,7 +281,7 @@ install_openshell_cli_release() {
   tmpdir="$(mktemp -d)"
   retry 3 10 "download openshell" \
     curl -fsSL -o "$tmpdir/$asset" \
-    "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${asset}"
+    "https://github.com/ai-openshell/openshell/releases/download/${OPENSHELL_VERSION}/${asset}"
   verify_openshell_cli_asset "$tmpdir" "$asset"
   validate_openshell_archive "$tmpdir/$asset" openshell
   tar xzf "$tmpdir/$asset" -C "$tmpdir"

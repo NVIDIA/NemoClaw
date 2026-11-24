@@ -296,6 +296,10 @@ _HERMES_TIRITH_MARKER_FINALIZER="/usr/local/lib/nemoclaw/finalize-tirith-marker.
 if [ ! -f "$_HERMES_TIRITH_MARKER_FINALIZER" ]; then
   _HERMES_TIRITH_MARKER_FINALIZER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/finalize-tirith-marker.py"
 fi
+_HERMES_STARTUP_COMPLETION="/usr/local/lib/nemoclaw/hermes-startup-completion.py"
+if [ ! -f "$_HERMES_STARTUP_COMPLETION" ]; then
+  _HERMES_STARTUP_COMPLETION="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/startup-completion.py"
+fi
 _HERMES_GUARD_TIMEOUT=(timeout --signal=TERM --kill-after=5s 12m)
 _HERMES_BOUNDARY_TIMEOUT=(timeout --signal=TERM --kill-after=2s 15s)
 _HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT=(timeout --signal=TERM --kill-after=5s 30m)
@@ -540,6 +544,24 @@ retry_tirith_marker_if_needed() {
 prepare_tirith_marker_retry() {
   TIRITH_RETRY_MARKER_CLEARED=0
   retry_tirith_marker_if_needed
+}
+
+settle_tirith_marker_retry() {
+  local marker="${HERMES_DIR}/.tirith-install-failed"
+  # Preserve unsafe and non-retryable markers. Also settle the first install
+  # when no marker exists, before Hermes can start the same background writer.
+  if [ "$TIRITH_RETRY_MARKER_CLEARED" -ne 1 ] \
+    && { [ -e "$marker" ] || [ -L "$marker" ]; }; then
+    return 0
+  fi
+  local -a retry_command=("$_HERMES_PYTHON" -I "$_HERMES_TIRITH_MARKER_FINALIZER" --prepare-retry)
+  if [ "$(id -u)" -eq 0 ]; then
+    retry_command=("${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox "${retry_command[@]}")
+  fi
+  if ! timeout --signal=TERM --kill-after=5s 60s "${retry_command[@]}"; then
+    echo "[gateway] Hermes Tirith startup retry did not settle; refusing gateway startup" >&2
+    return 1
+  fi
 }
 
 # sourceBoundary: Hermes runtime fallback recreates download_failed when its background Tirith fetch fails.
@@ -2353,17 +2375,10 @@ restore_hermes_config_permissions_after_dashboard_start() {
 # primary process whose exit status is returned).
 # Each code path below sets these before registering the trap.
 
-# ── Proxy environment ────────────────────────────────────────────
-PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
-PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
-_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
-_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
-export HTTP_PROXY="$_PROXY_URL"
-export HTTPS_PROXY="$_PROXY_URL"
-export NO_PROXY="$_NO_PROXY_VAL"
-export http_proxy="$_PROXY_URL"
-export https_proxy="$_PROXY_URL"
-export no_proxy="$_NO_PROXY_VAL"
+# OpenShell 0.1.3 mediates native egress. Clear obsolete application proxy settings.
+unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
+unset ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY
+unset NODE_USE_ENV_PROXY NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 
 # Corporate proxy CA merge (NemoClaw#6210).
 # OpenShell injects SSL_CERT_FILE for its own L7 proxy CA at runtime. When a
@@ -2422,13 +2437,10 @@ _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
 write_runtime_shell_env() {
   {
     cat <<PROXYEOF
-# Proxy configuration (overrides narrow OpenShell defaults on connect)
-export HTTP_PROXY="$_PROXY_URL"
-export HTTPS_PROXY="$_PROXY_URL"
-export NO_PROXY="$_NO_PROXY_VAL"
-export http_proxy="$_PROXY_URL"
-export https_proxy="$_PROXY_URL"
-export no_proxy="$_NO_PROXY_VAL"
+# OpenShell mediates native egress for connect sessions.
+unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
+unset ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY
+unset NODE_USE_ENV_PROXY NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 export HERMES_HOME="${HERMES_DIR}"
 export HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}"
 PROXYEOF
@@ -2938,6 +2950,9 @@ prepare_hermes_nonroot_runtime() {
   refresh_hermes_runtime_config_hashes compat || return 1
   configure_messaging_channels || return 1
   prepare_tirith_marker_retry || return 1
+  if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+    settle_tirith_marker_retry || return 1
+  fi
 }
 
 migrate_legacy_hermes_dashboard_state() {
@@ -3087,6 +3102,9 @@ prepare_hermes_root_runtime() {
   refresh_hermes_provider_placeholders both || return 1
   configure_messaging_channels || return 1
   prepare_tirith_marker_retry || return 1
+  if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+    settle_tirith_marker_retry || return 1
+  fi
 }
 
 launch_hermes_gateway_current_user() {
@@ -3293,6 +3311,11 @@ relaunch_hermes_gateway_current_user() {
   ensure_hermes_supervised_auxiliaries || return $?
   finalize_tirith_marker_retry
   refresh_hermes_supervised_child_pids
+  publish_hermes_startup_completion || return $?
+}
+
+publish_hermes_startup_completion() {
+  "$_HERMES_PYTHON" -I "$_HERMES_STARTUP_COMPLETION" "$GATEWAY_PID"
 }
 
 supervise_hermes_service_restarts_current_user() {
@@ -3390,6 +3413,7 @@ if [ "$(id -u)" -ne 0 ]; then
   wait_for_hermes_gateway_internal "$GATEWAY_PID" || exit 1
   ensure_hermes_supervised_auxiliaries || exit 1
   finalize_tirith_marker_retry
+  publish_hermes_startup_completion || exit 1
   print_dashboard_urls
   supervise_hermes_service_restarts_current_user
   exit $?

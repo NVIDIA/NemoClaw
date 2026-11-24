@@ -6,7 +6,7 @@ import { runInferenceSet } from "./inference-set";
 import { createCompatibleProviderCapture, createDeps } from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet live rollback authority", () => {
-  it("does not reapply or report restoration when the observed route already matches the rejected route", async () => {
+  it("allows an admitted endpoint retry after an ambiguous route result", async () => {
     const captureOpenshell = createCompatibleProviderCapture({
       name: "compatible-endpoint",
       type: "openai",
@@ -55,7 +55,7 @@ describe("runInferenceSet live rollback authority", () => {
         agent: "openclaw",
         provider: "compatible-endpoint",
         model: "old-model",
-        endpointUrl: "http://host.openshell.internal:18767/v1",
+        endpointUrl: "http://8.8.8.8:18767/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
       },
@@ -68,18 +68,19 @@ describe("runInferenceSet live rollback authority", () => {
       provider: "compatible-endpoint",
       model: "mock-model",
       noVerify: true,
-      endpointUrl: "http://host.openshell.internal:18767/v1",
+      endpointUrl: "http://8.8.8.8:18767/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       inferenceApi: "openai-completions" as const,
     };
 
     await expect(runInferenceSet(request, deps)).rejects.toThrow("first route result unknown");
-    await expect(runInferenceSet(request, deps)).rejects.toThrow(
-      /no distinct prior inference selection to restore/u,
-    );
+    await expect(runInferenceSet(request, deps)).resolves.toMatchObject({
+      provider: "compatible-endpoint",
+      model: "mock-model",
+    });
 
     expect(observeInferenceRoute).toHaveBeenCalledTimes(2);
     expect(setInferenceRoute).toHaveBeenCalledTimes(2);
-    expect(probeSandboxRoute).toHaveBeenCalledTimes(3);
+    expect(probeSandboxRoute).not.toHaveBeenCalled();
   });
 });

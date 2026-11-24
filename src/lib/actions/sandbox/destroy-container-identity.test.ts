@@ -8,6 +8,7 @@ import {
   classifyDestroyContainerIdentity,
   type DestroyContainerIdentityVerdict,
   formatAmbiguousDestroyIdentity,
+  isSameDestroyContainerIdentityProof,
 } from "./destroy-presence";
 
 type Row = {
@@ -15,12 +16,15 @@ type Row = {
   managedBy?: string;
   workspace?: string;
   sandboxId?: string;
+  namespace?: string;
+  isolationRole?: string;
 };
 
 function observeRows(rows: Row[], malformedRows = 0) {
   return {
     status: "observed" as const,
     rows: rows.map((row) => ({
+      ...row,
       id: row.id,
       managedBy: row.managedBy ?? "",
       workspace: row.workspace ?? "",
@@ -43,6 +47,14 @@ const FOREIGN = {
   workspace: "foreign",
   sandboxId: "",
 } as const;
+
+const WORKLOAD = { ...MANAGED, namespace: "default", isolationRole: "sandbox" };
+const SUPERVISOR = {
+  ...WORKLOAD,
+  id: "bbbb000000000000",
+  workspace: "",
+  isolationRole: "supervisor",
+};
 
 function expectAmbiguous(
   verdict: DestroyContainerIdentityVerdict,
@@ -69,6 +81,58 @@ describe("classifyDestroyContainerIdentity", () => {
       identity: MANAGED,
     });
   });
+
+  it("qualifies the workload and its supervisor with the workload workspace first", () => {
+    expect(
+      classifyDestroyContainerIdentity("destroytest", observeRows([SUPERVISOR, WORKLOAD])),
+    ).toEqual({ status: "recovery", identities: [WORKLOAD, SUPERVISOR] });
+  });
+
+  it.each([
+    ["another sandbox ID", { ...SUPERVISOR, sandboxId: "other" }],
+    ["another namespace", { ...SUPERVISOR, namespace: "other" }],
+    ["a missing namespace", { ...SUPERVISOR, namespace: "" }],
+    ["a foreign owner", { ...SUPERVISOR, managedBy: "foreign" }],
+    ["a duplicate workload role", { ...SUPERVISOR, isolationRole: "sandbox" }],
+    ["an unknown role", { ...SUPERVISOR, isolationRole: "staging" }],
+    ["a duplicate container ID", { ...SUPERVISOR, id: WORKLOAD.id }],
+    ["an unexpected supervisor workspace", { ...SUPERVISOR, workspace: "default" }],
+  ])("refuses the supervisor with %s", (_label, supervisor) => {
+    expect(
+      classifyDestroyContainerIdentity("destroytest", observeRows([WORKLOAD, supervisor])).status,
+    ).toBe("ambiguous");
+  });
+
+  it("refuses a paired runtime that conflicts with retained recovery authority", () => {
+    expect(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([WORKLOAD, SUPERVISOR]),
+        fingerprintOpenShellSandboxId("other")!,
+      ).status,
+    ).toBe("ambiguous");
+  });
+
+  it("refuses a second supervisor beside a qualified pair", () => {
+    expect(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([WORKLOAD, SUPERVISOR, { ...SUPERVISOR, id: "cccc000000000000" }]),
+      ).status,
+    ).toBe("ambiguous");
+  });
+
+  it.each([{ namespace: "changed" }, { isolationRole: "sandbox" }])(
+    "detects role or namespace changes in a pinned container proof: %j",
+    (change) => {
+      expect(
+        isSameDestroyContainerIdentityProof(
+          { identities: [WORKLOAD, SUPERVISOR] },
+          { identities: [WORKLOAD, { ...SUPERVISOR, ...change }] },
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("does not treat native Podman ownership as Docker compatibility", () => {
     const podmanManaged = { ...MANAGED, managedBy: "true" };

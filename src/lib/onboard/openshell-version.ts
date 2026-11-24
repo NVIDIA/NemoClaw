@@ -8,10 +8,16 @@ import { cliOpenShellInstalledVersionObserver } from "../adapters/openshell/inst
 import { parseOpenShellVersionFromText } from "../adapters/openshell/version-text";
 import { ROOT } from "../runner";
 
-export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.116";
+export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.1.10";
 
 export function usesOpenShellNativeProjection(version: string): boolean {
-  return version === "0.1.3" || version === "0.1.5" || version === "0.1.7" || version === "0.1.9";
+  return (
+    version === "0.1.3" ||
+    version === "0.1.5" ||
+    version === "0.1.7" ||
+    version === "0.1.9" ||
+    version === "0.1.10"
+  );
 }
 
 export function getInstalledOpenshellVersion(versionOutput: string | null = null): string | null {

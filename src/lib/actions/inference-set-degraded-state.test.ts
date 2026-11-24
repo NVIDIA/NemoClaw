@@ -174,9 +174,7 @@ describe("runInferenceSet degraded state handling", () => {
       const options = {
         provider: "compatible-endpoint",
         model: "openai/gpt-5.4-mini",
-        endpointUrl: initiallyPresent
-          ? "https://new.example/v1"
-          : "http://host.openshell.internal:11434/v1",
+        endpointUrl: initiallyPresent ? "https://new.example/v1" : "http://192.168.50.22:11434/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         inferenceApi: "openai-completions",
         noVerify: true,

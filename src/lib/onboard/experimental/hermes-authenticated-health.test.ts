@@ -19,7 +19,7 @@ class Health(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         authorized = self.headers.get("Authorization") == "Bearer " + key
         requests.append({"authorized": authorized, "path": self.path})
-        self.send_response(case["status"] if authorized else 401)
+        self.send_response(404 if self.path != "/health/detailed" else case["status"] if authorized else 401)
         if case["redirect"]:
             self.send_header("Location", "http://127.0.0.1:1/stolen")
         self.end_headers()
@@ -94,7 +94,7 @@ describe.each(PROBES)("Hermes authenticated health $name", ({ name, program }) =
     const output = runProbe(program, `export API_SERVER_KEY=${key}\n`);
     expect(output.code).toBe(0);
     expect(output.stdout).toContain(name === "waiter" ? "result=ready" : "200");
-    expect(output.requests).toEqual([{ authorized: true, path: "/health" }]);
+    expect(output.requests).toEqual([{ authorized: true, path: "/health/detailed" }]);
     expect(output.connections).toEqual([{ host: "127.0.0.1", port: expect.any(Number) }]);
   });
 
@@ -102,7 +102,7 @@ describe.each(PROBES)("Hermes authenticated health $name", ({ name, program }) =
     const output = runProbe(program, `API_SERVER_KEY=${KEY}\n`, 200, true);
     expect(output.code).toBe(0);
     expect(output.stdout).toContain(name === "waiter" ? "result=ready" : "200");
-    expect(output.requests).toEqual([{ authorized: true, path: "/health" }]);
+    expect(output.requests).toEqual([{ authorized: true, path: "/health/detailed" }]);
     expect(output.connections).toHaveLength(1);
   });
 
@@ -130,7 +130,7 @@ describe.each(PROBES)("Hermes authenticated health $name", ({ name, program }) =
       name === "waiter" ? "result=not-ready" : key !== KEY ? "401" : String(status),
     );
     expect(output.requests.length).toBeGreaterThan(0);
-    expect(output.requests.every((request) => request.path === "/health")).toBe(true);
+    expect(output.requests.every((request) => request.path === "/health/detailed")).toBe(true);
   });
 });
 
@@ -144,5 +144,5 @@ it("honors a non-default configured success status", () => {
   );
   expect(output.code).toBe(0);
   expect(output.stdout).toContain("result=ready");
-  expect(output.requests).toEqual([{ authorized: true, path: "/health" }]);
+  expect(output.requests).toEqual([{ authorized: true, path: "/health/detailed" }]);
 });

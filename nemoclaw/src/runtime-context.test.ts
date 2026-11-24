@@ -6,6 +6,7 @@ import {
   localCodeRelationshipPrompts,
   localFilenamePrompts,
   longSetupPrompt,
+  publicFetchPrompts,
   quotedExternalResearchPrompts,
   suppliedUrlListPrompts,
   webTargetPrompts,
@@ -23,11 +24,6 @@ vi.mock("./blueprint/state.js", () => ({
 
 import { loadState } from "./blueprint/state.js";
 import { registerRuntimeContext, suppliedSearchSources } from "./runtime-context.js";
-
-const publicFetchPrompts = [
-  "Use the web_fetch tool to fetch exactly this URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf web_fetch is not a directly callable tool, invoke it through tool_call with id openclaw:core:web_fetch and the URL in args.url.\nYou may use tool_search and tool_describe only to discover web_fetch. Do not call an unexposed tool directly.\nAfter web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
-  "Use web_fetch to fetch exactly this public HTTPS URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.\nDo not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.\nSet web_fetch maxChars to no more than 8000.\nAfter web_fetch returns, reply exactly PERSONAL_PUBLIC_FETCH_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
-];
 
 const localCodeInspectionPrompts = [
   "Find unused imports",
@@ -166,6 +162,7 @@ const localFileContentPrompts = [
 ];
 
 const codingRequests = [
+  'Call the exec tool with exactly this shell command to verify the weather host curl path:\nset -eu; proof=\'/tmp/nemoclaw-weather-proof-1794588914048-2995.json\'; if test -s "$proof"; then python3 -c \'import json,sys,math; d=json.load(open(sys.argv[1])); c=d["current"]; t=c["temperature_2m"]; assert type(t) in (int,float) and math.isfinite(t); assert abs(d["latitude"]-37.7749)<0.1 and abs(d["longitude"]+122.4194)<0.1; assert isinstance(c["time"],str) and len(c["time"])>=16; assert d["current_units"]["temperature_2m"]=="°C"\' "$proof"; printf \'WEATHER_AGENT_OK\\n\'; exit 0; fi; tmp=$(mktemp); trap \'rm -f "$tmp"\' EXIT; curl -fsS --max-time 30 --output "$tmp" \'https://api.open-meteo.com/v1/forecast?latitude=37.7749&longitude=-122.4194&current=temperature_2m\'; test -s "$tmp"; python3 -c \'import json,sys,math; d=json.load(open(sys.argv[1])); c=d["current"]; t=c["temperature_2m"]; assert type(t) in (int,float) and math.isfinite(t); assert abs(d["latitude"]-37.7749)<0.1 and abs(d["longitude"]+122.4194)<0.1; assert isinstance(c["time"],str) and len(c["time"])>=16; assert d["current_units"]["temperature_2m"]=="°C"\' "$tmp"; mv "$tmp" "$proof"; trap - EXIT; printf \'WEATHER_AGENT_OK\\n\'\nUse a structured tool call. Do not print the command or tool-call markup as your answer.\nDo not use web_fetch, web_search, or any other weather provider.\nAfter it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.',
   "Fix the search button.",
   "Implement a binary search algorithm.",
   "Repair the search form.",

@@ -9,20 +9,20 @@ import { expect, it } from "vitest";
 
 const installer = path.join(import.meta.dirname, "../..", "scripts", "install.sh");
 
-it("documents gateway process retirement before accepting prepared upgrade state", async () => {
+it("limits prepared upgrade guidance to eligible gateways and preserves legacy state", async () => {
   const { stderr, stdout } = await promisify(execFile)("bash", [installer, "--help"], {
     encoding: "utf-8",
     env: process.env,
   });
-  const backup =
-    "NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 nemoclaw backup-all --retire-legacy-forwards";
-  const destroy = "openshell gateway destroy -g nemoclaw || openshell gateway destroy";
-
   expect(stderr).toBe("");
-  expect(stdout).toContain(backup);
-  expect(stdout).toContain(destroy);
-  expect(stdout.indexOf(backup)).toBeLessThan(stdout.indexOf(destroy));
   expect(stdout).toContain(
-    "For NEMOCLAW_GATEWAY_PORT=<port>, destroy nemoclaw-<port> with -g and omit the unnamed fallback",
+    "the installed OpenShell version must be verifiable and within the supported range",
   );
+  expect(stdout).toContain(
+    "This flag does not migrate registered sandboxes from an out-of-range OpenShell version",
+  );
+  expect(stdout).toContain("Retained NemoClaw sandbox records still block component replacement");
+  expect(stdout).toContain("Preserve the legacy gateway, registrations, sandbox records, and data");
+  expect(stdout).not.toContain("openshell gateway destroy");
+  expect(stdout).not.toContain("nemoclaw backup-all --retire-legacy-forwards");
 });

@@ -54,6 +54,7 @@ on:
       - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
+      - "src/lib/inference/native-provider/catalog.ts"
       - "src/lib/hermes-switchyard-routing.ts"
       - "src/lib/messaging/**"
       - "src/lib/onboard/**"
@@ -510,7 +511,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
+          # Base resolution fetches exact missing source commits; release comes from publication identity.
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Resolve managed image release identity
@@ -696,7 +698,7 @@ jobs:
       - name: Validate PR managed-image build args
         shell: bash
         env:
-          BASE_REFERENCE: ${{ steps.base.outputs.ref }}
+          BASE_REFERENCE: ${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}
           DOCKERFILE: ${{ matrix.dockerfile }}
         run: |
           set -euo pipefail
@@ -706,70 +708,51 @@ jobs:
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"
 
+      # Use the same BuildKit store and pinned OCI base as publication so
+      # already validated dependency layers do not undergo a second cold build.
       - name: Build PR managed image from local base
         if: steps.base.outputs.local == 'true'
-        shell: bash
-        env:
-          AGENT: ${{ matrix.agent }}
-          BASE_IMAGE: ${{ steps.base.outputs.ref }}
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
-          DOCKERFILE: ${{ matrix.dockerfile }}
-          IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
-          PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
-          RELEASE: ${{ steps.release.outputs.value }}
-          RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
-          RESOLUTION_LABEL: ${{ steps.base.outputs.resolution_label }}
-          MCPORTER_AUDIT_RECEIPT: ${{ steps.mcporter-audit.outputs.receipt }}
-          MCPORTER_AUDIT_RAW_REPORT: ${{ steps.mcporter-audit.outputs.raw }}
-          MCPORTER_AUDIT_POLICY_RESULT: ${{ steps.mcporter-audit.outputs.policy }}
-          MCPORTER_AUDIT_RECEIPT_SHA256: ${{ steps.mcporter-audit.outputs.receipt_sha256 }}
-          MCPORTER_AUDIT_POLICY_RESULT_SHA256: ${{ steps.mcporter-audit.outputs.policy_sha256 }}
-        run: |
-          set -euo pipefail
-          # The base resolver loads a changed base into Docker's local image
-          # store. Keep this consumer on that same store: a Buildx container
-          # builder otherwise treats the local-only reference as Docker Hub.
-          resolution_labels=()
-          audit_options=()
-          if [ "$AGENT" = "openclaw" ]; then
-            audit_options+=(
-              --build-arg "NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${MCPORTER_AUDIT_RECEIPT_SHA256}"
-              --build-arg "NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=${MCPORTER_AUDIT_POLICY_RESULT_SHA256}"
-              --secret "id=nemoclaw-mcporter-audit-receipt,src=${MCPORTER_AUDIT_RECEIPT}"
-              --secret "id=nemoclaw-mcporter-audit-raw-report,src=${MCPORTER_AUDIT_RAW_REPORT}"
-              --secret "id=nemoclaw-mcporter-audit-policy-result,src=${MCPORTER_AUDIT_POLICY_RESULT}"
-            )
-          fi
-          if [ "$AGENT" = "langchain-deepagents-code" ]; then
-            resolution_labels+=(
-              --label "com.nvidia.nemoclaw.base-resolution-key=${RESOLUTION_KEY}"
-              --label "com.nvidia.nemoclaw.base-resolution=${RESOLUTION_LABEL}"
-            )
-          fi
-          docker build \
-            --platform "$PLATFORM" \
-            --file "$DOCKERFILE" \
-            --tag "$IMAGE_REFERENCE" \
-            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
-            --label "org.opencontainers.image.revision=${CANDIDATE_SHA}" \
-            --label "org.opencontainers.image.version=${RELEASE}" \
-            --label "io.nvidia.nemoclaw.agent=${{ matrix.agent }}" \
-            --label "io.nvidia.nemoclaw.managed-image.contract=1" \
-            --label "io.nvidia.nemoclaw.managed-image.platform=${PLATFORM}" \
-            --label "io.nvidia.nemoclaw.managed-image.startup-profile=1" \
-            --label "io.nvidia.nemoclaw.managed-image.capabilities=1" \
-            --label "io.nvidia.nemoclaw.managed-image.cohort=${PUBLICATION_COHORT}" \
-            "${resolution_labels[@]}" \
-            "${audit_options[@]}" \
-            --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox" \
-            .
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          build-contexts: ${{ format('nemoclaw-pr-base=oci-layout://{0}', steps.base.outputs.oci) }}
+          load: true
+          push: false
+          tags: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
+            org.opencontainers.image.version=${{ steps.release.outputs.value }}
+            io.nvidia.nemoclaw.agent=${{ matrix.agent }}
+            io.nvidia.nemoclaw.managed-image.contract=1
+            io.nvidia.nemoclaw.managed-image.platform=linux/${{ matrix.arch }}
+            io.nvidia.nemoclaw.managed-image.startup-profile=1
+            io.nvidia.nemoclaw.managed-image.capabilities=1
+            io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution-key={0}', steps.base.outputs.resolution_key) || '' }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.base.outputs.resolution_label) || '' }}
+          build-args: |
+            BASE_IMAGE=nemoclaw-pr-base
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256={0}', steps.mcporter-audit.outputs.policy_sha256) || '' }}
+          secret-files: |
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', steps.mcporter-audit.outputs.raw) || '' }}
+            ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', steps.mcporter-audit.outputs.policy) || '' }}
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-${{ matrix.arch }}
+          provenance: false
+          sbom: false
 
       - name: Build PR managed image from registry base
         if: steps.base.outputs.local != 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
+          builder: ${{ steps.buildx.outputs.name }}
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/${{ matrix.arch }}
@@ -1025,7 +1008,10 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v gdb >/dev/null; then
-            if ! sudo apt-get update || ! sudo apt-get install -y --no-install-recommends gdb; then
+            # Leave time for the no-capture fallback before this optional step expires.
+            # Run timeout as root so it can terminate privileged apt descendants.
+            if ! sudo timeout --signal=TERM --kill-after=10s 120s apt-get update \
+              || ! sudo timeout --signal=TERM --kill-after=10s 120s apt-get install -y --no-install-recommends gdb; then
               echo '::warning::Debugger installation failed; Hermes qualification will run without crash capture.'
               exit 0
             fi
@@ -1972,7 +1958,7 @@ jobs:
       # correctly. Start the published digest through its declared entrypoint
       # with no command, matching a real launch,
       # and prove PID 1 drops to the sandbox user, hardens its resource limits,
-      # and persists the trusted proxy environment before it holds the sandbox
+      # and persists the TLS environment before it holds the sandbox
       # open.
       - name: Exercise the Pi candidate through its declared entrypoint
         shell: bash
@@ -2069,20 +2055,15 @@ jobs:
             )) process.exit(1);
           ' "$merged_ca"
           docker exec --user 999:999 "$entrypoint_container" /bin/bash -ceu '
-            unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
             unset SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS
             source /tmp/nemoclaw-proxy-env.sh
-            proxy_url=http://10.200.0.1:3128
-            for proxy_variable in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
-              if [ "${!proxy_variable}" != "$proxy_url" ]; then
-                echo "ERROR: an independent Pi shell did not load $proxy_variable from the runtime environment." >&2
-                exit 1
-              fi
-            done
-            no_proxy_value=localhost,127.0.0.1,::1,10.200.0.1
-            for no_proxy_variable in NO_PROXY no_proxy; do
-              if [ "${!no_proxy_variable}" != "$no_proxy_value" ]; then
-                echo "ERROR: an independent Pi shell did not load $no_proxy_variable from the runtime environment." >&2
+            for proxy_variable in \
+              HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy \
+              ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY NODE_USE_ENV_PROXY \
+              NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
+            do
+              if [ "${!proxy_variable+x}" = x ]; then
+                echo "ERROR: an independent Pi shell retained $proxy_variable after loading the runtime environment." >&2
                 exit 1
               fi
             done

@@ -3,6 +3,15 @@
 
 import {
   type HermesSwitchyardRoutingIntent,
+  createHermesSwitchyardRoutingIntent,
+  encodeHermesSwitchyardRoutingIntent,
+  encodeSwitchyardProviderBindings,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+  HERMES_RELAY_PLUGINS_FILE,
+  HERMES_RELAY_PLUGIN_STATE_FILE,
+  HERMES_SWITCHYARD_DEPLOYMENT_FILE,
+  serializeHermesSwitchyardRouting,
   type SwitchyardProviderBindings,
   switchyardClientProfile,
   switchyardJudgeSelection,
@@ -10,7 +19,27 @@ import {
   validateSwitchyardProviderBindings,
 } from "../../src/lib/hermes-switchyard-routing.ts";
 import { NVIDIA_HOSTED_NATIVE_PROFILE_ID } from "../../src/lib/inference/native-nvidia/contract.ts";
-import { hostedNativeProvider } from "../../src/lib/inference/native-provider/agent-config.ts";
+import { fixedHostedNativeProvider } from "../../src/lib/inference/native-provider/agent-config.ts";
+
+/** Apply the native publisher's filesystem result in root-startup fixtures. */
+export function hermesStartupCommandResult(
+  filesystem: { writeFile: (target: string, contents: string | Buffer, mode: number) => void },
+  command: string,
+  args: readonly string[] | undefined,
+  options: { input?: unknown } | undefined,
+) {
+  if (
+    command === "/opt/hermes/.venv/bin/python" &&
+    args?.[1] === "/opt/nemoclaw-hermes-config/switchyard-preflight.py" &&
+    args?.[2] === "publish"
+  ) {
+    const files = JSON.parse(String(options?.input));
+    filesystem.writeFile(HERMES_SWITCHYARD_DEPLOYMENT_FILE, files.switchyardDeploymentToml, 0o444);
+    filesystem.writeFile(HERMES_RELAY_PLUGIN_STATE_FILE, files.relayPluginStateJson, 0o444);
+    filesystem.writeFile(HERMES_RELAY_PLUGINS_FILE, files.relayPluginsToml, 0o444);
+  }
+  return { status: 0, stdout: command === "/usr/bin/id" ? "999" : "", stderr: "" };
+}
 
 /** Synthetic observations for configuration tests; lifecycle tests own actual adapter observation. */
 export function switchyardBindingFixture(
@@ -26,7 +55,7 @@ export function switchyardBindingFixture(
       profileId:
         logicalProvider === "nvidia-prod"
           ? NVIDIA_HOSTED_NATIVE_PROFILE_ID
-          : hostedNativeProvider(logicalProvider)?.profileId,
+          : fixedHostedNativeProvider(logicalProvider)?.profileId,
       profileSha256: "0".repeat(64),
       endpointUrl: client.baseUrl,
       credentialEnv: client.apiKeyEnv,
@@ -53,4 +82,29 @@ export function switchyardBindingFixture(
     },
     routing,
   );
+}
+
+export function switchyardRoutingFixture() {
+  const routing = createHermesSwitchyardRoutingIntent({
+    efficient: { provider: "nvidia-prod", model: "nvidia/efficient-model" },
+    capable: { provider: "openai-api", model: "openai/capable-model" },
+  });
+  return {
+    environment: {
+      [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+      [HERMES_SWITCHYARD_BINDINGS_ENV]: encodeSwitchyardProviderBindings(
+        switchyardBindingFixture(routing),
+        routing,
+      ),
+    },
+    paths: {
+      relayPluginStateSource: "/sandbox/hermes-relay-plugin-state.json",
+      relayPluginStateTarget: "/usr/local/share/.dynamic-plugins.json",
+      relayPluginsSource: "/sandbox/hermes-relay-plugins.toml",
+      relayPluginsTarget: "/usr/local/share/hermes-relay-plugins.toml",
+      switchyardDeploymentSource: "/sandbox/hermes-switchyard-v1.toml",
+      switchyardDeploymentTarget: "/usr/local/share/hermes-switchyard-v1.toml",
+    },
+    serialized: serializeHermesSwitchyardRouting(routing, switchyardBindingFixture(routing)),
+  };
 }

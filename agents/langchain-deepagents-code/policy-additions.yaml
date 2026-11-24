@@ -20,7 +20,7 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
-    - /var/lib/dpkg                  # Allow package-version inspection without package mutation.
+    - /var/lib/dpkg # Allow package-version inspection without package mutation.
   read_write:
     - /sandbox
     - /sandbox/.deepagents
@@ -30,10 +30,10 @@ filesystem_policy:
 
 landlock:
   # Deep Agents Code is a terminal coding harness, so filesystem policy must
-  # fail closed when Landlock cannot be applied. `strict` makes the OpenShell
+  # fail closed when Landlock cannot be applied. `hard_requirement` makes the OpenShell
   # sandbox startup fail instead of silently degrading if the kernel or workspace
   # mount cannot enforce these read-only system paths.
-  compatibility: strict
+  compatibility: hard_requirement
 
 process:
   run_as_user: sandbox

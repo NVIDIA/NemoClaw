@@ -884,7 +884,9 @@ function getOllamaProxyToken(): string | null {
  * callers' own errors do not.
  */
 function isProxyHealthy(): boolean {
-  const health = probeSharedOllamaAuthProxyHealth();
+  const health = probeSharedOllamaAuthProxyHealth({
+    loadOllamaProxyTokenImpl: loadPersistedProxyToken,
+  });
   if (health?.ok) return true;
   console.error(
     `  ${health?.detail ?? "Ollama auth proxy token is missing. Re-run NemoClaw onboarding for the Ollama-local sandbox."}`,

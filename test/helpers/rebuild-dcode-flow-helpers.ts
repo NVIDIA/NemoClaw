@@ -4,9 +4,10 @@
 import { expect } from "vitest";
 
 import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
+import { customProviderRebuildEntry } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import type { RebuildFlowHarness } from "./rebuild-flow-generic-harness";
 
-export function makeDcodeSandboxEntry(): Record<string, unknown> {
+export function makeDcodeSandboxEntry(native = true): Record<string, unknown> {
   return {
     name: "alpha",
     agent: "langchain-deepagents-code",
@@ -25,6 +26,7 @@ export function makeDcodeSandboxEntry(): Record<string, unknown> {
     gpuEnabled: false,
     sandboxGpuEnabled: false,
     sandboxGpuMode: "0",
+    ...(native ? customProviderRebuildEntry() : {}),
   };
 }
 
@@ -59,9 +61,10 @@ export function setGatewayProviderMetadata(harness: RebuildFlowHarness, stdout: 
       };
     }
     if (argv[0] === "provider" && argv[1] === "list") {
-      const output = JSON.stringify([
-        { name: "compatible-endpoint", credential_keys: ["COMPATIBLE_API_KEY"] },
-      ]);
+      const output = JSON.stringify({
+        providers: [{ name: "compatible-endpoint", credential_keys: ["COMPATIBLE_API_KEY"] }],
+        next_page_token: "",
+      });
       return { status: 0, output, stdout: output, stderr: "" };
     }
     return argv[0] === "provider" && argv[1] === "get"

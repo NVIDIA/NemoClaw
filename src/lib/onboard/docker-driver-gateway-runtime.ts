@@ -45,12 +45,18 @@ export type { DockerDriverGatewayPortListenerOptions } from "./docker-driver-gat
 import * as vmDriverProcess from "./vm-driver-process";
 
 const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
+  "0.1.10": "sha256:3bfb2f5a145a9e93495870682bf5fda242df76e0f3017a9279355e7606fbf3f2",
   "0.0.72": "sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
   "0.0.99": "sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6",
   "0.0.101": "sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb",
   "0.0.116": "sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
+  "0.1.2": "sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
+  "0.1.3": "sha256:4ab2b970cdb02c7518ba4ccbbadb4861ae9a8d0b8770e5b160697f0453b0a8e4",
+  "0.1.5": "sha256:fabcd01f656e9d23df4386f82e80b4f48b90f3452d7d5c58889007643a069161",
+  "0.1.7": "sha256:a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06",
+  "0.1.9": "sha256:f1ec231b5dbe5b6a40c33acb2ac847995aabb959a56134ef6d7d7aa4f43199d3",
 };
-const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";
+const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.10";
 
 /** Resolve the canonical gateway name without bypassing the binding owner. */
 export function resolveDockerDriverGatewayName(gatewayPort: number): string {
@@ -245,8 +251,8 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     }
     const manifestDigest = OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS[supportedVersion];
     const qualifiedImage = manifestDigest
-      ? `ghcr.io/nvidia/openshell/supervisor@${manifestDigest}`
-      : `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
+      ? `quay.io/ai-openshell/supervisor@${manifestDigest}`
+      : `quay.io/ai-openshell/supervisor:${supportedVersion}`;
     const configuredImage = process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
     if (configuredImage && configuredImage !== qualifiedImage) {
       throw new Error(

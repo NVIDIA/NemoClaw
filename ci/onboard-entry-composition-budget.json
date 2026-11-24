@@ -16,7 +16,7 @@
     "sandboxCreateIntentResolver.getAgentPolicyPath": 1
   },
   "provider": {
-    "handleNimLocalSelection": 32,
+    "handleNimLocalSelection": 31,
     "handleRemoteProviderSelection": 81,
     "handleRemoteProviderSelection.providerExistsInGateway": 1,
     "handleRemoteProviderSelection.readGatewayProviderMetadata": 1,

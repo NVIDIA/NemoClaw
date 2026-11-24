@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
+import sdk0110Evidence from "../fixtures/openshell-sdk-v0.1.10-lock.json" with { type: "json" };
 import { describe, expect, it } from "vitest";
 import { validateOpenShellFeatureGateSource } from "../../../scripts/checks/extract-installer-pins.mts";
 import {
@@ -116,8 +117,18 @@ describe("protected OpenShell source projection", () => {
 const sdkName = "@nvidia/openshell-sdk";
 const sdkLocation = `node_modules/${sdkName}`;
 function sdkFixture() {
-  const auditSource = read("ci/reviewed-npm-audit.json");
-  const config = JSON.parse(auditSource);
+  const config = JSON.parse(read("ci/reviewed-npm-audit.json"));
+  // Keep legacy graph tests on their reviewed 0.1.9 input as the current SDK advances.
+  config.sourceRegistryPackageReplacement = {
+    artifactName: "nvidia-openshell-sdk-0.1.9.tgz",
+    label: "OpenShell TypeScript SDK 0.1.9",
+    packageSpec: "@nvidia/openshell-sdk@0.1.9",
+    integrity:
+      "sha512-UYv+9YuA+s/JCjg3nzK1EIgxMj/iw1/Unw8J5pGhGYLjO+jXxUqiJdtfiIxS4LOyr1Xhn+3DRUhrf61jXE06yQ==",
+    tarballUrl:
+      "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.9/99882402cf986d8fe061b852b8262ac55622e5a7",
+  };
+  const auditSource = JSON.stringify(config);
   const baseline = config.sourceRegistryPackage;
   const replacement = config.sourceRegistryPackageReplacement;
   const baseVersion = baseline.packageSpec.split("@").at(-1);
@@ -279,5 +290,110 @@ describe("protected OpenShell SDK projection", () => {
     manifest.dependencies[sdkName] = version;
     candidate.packageSource = JSON.stringify(manifest);
     expect(() => projectProtectedOpenShellSdk(candidate, trusted, version)).toThrow(/ambiguous/);
+  });
+});
+
+function sdk0110Fixture() {
+  const f = sdkFixture();
+  const manifest = JSON.parse(f.trusted.packageSource);
+  manifest.bundleDependencies = [sdkName, "unrelated"];
+  const trustedLock = JSON.parse(f.trusted.lockSource);
+  trustedLock.packages[""] = structuredClone(manifest);
+  f.trusted = {
+    ...f.trusted,
+    packageSource: JSON.stringify(manifest),
+    lockSource: JSON.stringify(trustedLock),
+  };
+  const candidateManifest = structuredClone(manifest);
+  candidateManifest.optionalDependencies[sdkName] = "0.1.10";
+  candidateManifest.scripts.build = "unreviewed-build";
+  candidateManifest.dependencies.unrelated = "9.0.0";
+  const candidateLock = structuredClone(trustedLock);
+  Object.assign(candidateLock.packages, structuredClone(sdk0110Evidence.packages));
+  candidateLock.packages[""] = candidateManifest;
+  candidateLock.packages["node_modules/unrelated"].version = "9.0.0";
+  const sdk = sdk0110Evidence.packages[sdkLocation];
+  return {
+    trusted: f.trusted,
+    candidate: {
+      packageSource: JSON.stringify(candidateManifest),
+      lockSource: JSON.stringify(candidateLock),
+    },
+    admitted: {
+      artifactName: "nvidia-openshell-sdk-0.1.10.tgz",
+      label: "OpenShell SDK 0.1.10",
+      packageSpec: "@nvidia/openshell-sdk@0.1.10",
+      tarballUrl: sdk.resolved,
+      integrity: sdk.integrity,
+    },
+  };
+}
+
+describe("protected OpenShell 0.1.10 SDK graph", () => {
+  it("projects the reviewed bridge, public SDK, and peers while retaining trusted host configuration", () => {
+    const { candidate, trusted, admitted } = sdk0110Fixture();
+    const result = projectProtectedOpenShellSdk(candidate, trusted, "0.1.10", admitted);
+    const manifest = JSON.parse(result.files["package.json"]!);
+    const lock = JSON.parse(result.files["package-lock.json"]!);
+    expect(result.sdkVersion).toBe("0.1.10");
+    expect(result.sdkIntegrity).toBe(admitted.integrity);
+    expect(manifest.scripts).toEqual({ build: "trusted-build" });
+    expect(manifest.dependencies).toEqual({ unrelated: "1.0.0" });
+    expect(manifest.bundleDependencies).toEqual(["@ai-openshell/sdk", sdkName, "unrelated"]);
+    expect(lock.packages["node_modules/unrelated"]).toEqual({ version: "1.0.0" });
+    expect(lock.packages[""]).toEqual(manifest);
+    expect(
+      Object.fromEntries(
+        Object.keys(sdk0110Evidence.packages).map((location) => [
+          location,
+          lock.packages[location],
+        ]),
+      ),
+    ).toEqual(sdk0110Evidence.packages);
+    expect(manifest.optionalDependencies).toEqual({
+      "@nvidia/openshell-sdk": "0.1.10",
+      "@ai-openshell/sdk": "0.1.10",
+      "@bufbuild/protobuf": "2.17.0",
+      "@connectrpc/connect": "2.3.0",
+      "@connectrpc/connect-node": "2.3.0",
+    });
+  });
+
+  it("requires an admitted compatibility archive before considering its reviewed graph", () => {
+    const { candidate, trusted } = sdk0110Fixture();
+    expect(() => projectProtectedOpenShellSdk(candidate, trusted, "0.1.10")).toThrow(/not trusted/);
+  });
+
+  it.each(
+    Object.keys(sdk0110Evidence.packages).flatMap((location) =>
+      ["version", "resolved", "integrity"].map((field) => ({ location, field })),
+    ),
+  )("rejects a substituted $location $field", ({ location, field }) => {
+    const { candidate, trusted, admitted } = sdk0110Fixture();
+    const lock = JSON.parse(candidate.lockSource);
+    lock.packages[location][field] = "substituted";
+    candidate.lockSource = JSON.stringify(lock);
+    expect(() => projectProtectedOpenShellSdk(candidate, trusted, "0.1.10", admitted)).toThrow();
+  });
+
+  it("rejects a nested SDK that shadows the reviewed public package", () => {
+    const { candidate, trusted, admitted } = sdk0110Fixture();
+    const lock = JSON.parse(candidate.lockSource);
+    lock.packages[`${sdkLocation}/node_modules/@ai-openshell/sdk`] =
+      lock.packages["node_modules/@ai-openshell/sdk"];
+    candidate.lockSource = JSON.stringify(lock);
+    expect(() => projectProtectedOpenShellSdk(candidate, trusted, "0.1.10", admitted)).toThrow(
+      /base-trusted/,
+    );
+  });
+
+  it("rejects added dependency authority in a reviewed archive record", () => {
+    const { candidate, trusted, admitted } = sdk0110Fixture();
+    const lock = JSON.parse(candidate.lockSource);
+    lock.packages[sdkLocation].dependencies.unrelated = "9.0.0";
+    candidate.lockSource = JSON.stringify(lock);
+    expect(() => projectProtectedOpenShellSdk(candidate, trusted, "0.1.10", admitted)).toThrow(
+      /base-trusted/,
+    );
   });
 });

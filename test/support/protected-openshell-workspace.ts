@@ -160,6 +160,8 @@ export function approvedFixture() {
   ) as Record<keyof typeof CANDIDATE_OPENSHELL_SOURCES, string>;
   const selected = validateInstallerSources(candidate);
   const release = structuredClone(selected.installerReleases[0]!);
+  // Revocations belong to the registry; resolved releases carry a derived copy.
+  delete release.revokedTemplateSha256;
   candidate.installerSource += "\n# Reviewed installer fixture change.\n";
   release.installerTemplateSha256 = [
     ...release.installerTemplateSha256,
@@ -220,13 +222,27 @@ export function admittedSdkFixture() {
   const config = JSON.parse(
     fs.readFileSync(join(input.trustedRoot, "ci/reviewed-npm-audit.json"), "utf8"),
   );
-  const baseline = config.sourceRegistryPackageReplacement;
+  // Keep the trusted baseline distinct from the admitted candidate SDK version.
+  const baseline = config.sourceRegistryPackage;
   config.sourceRegistryPackage = baseline;
   delete config.sourceRegistryPackageReplacement;
   fs.writeFileSync(join(input.trustedRoot, "ci/reviewed-npm-audit.json"), JSON.stringify(config));
   const version = JSON.parse(fs.readFileSync(join(input.candidateRoot, "package.json"), "utf8"))
     .optionalDependencies[name];
-  const selected = JSON.parse(JSON.stringify(sdk.sdk).replaceAll("9.8.7", version));
+  // The reviewed 0.1.10 graph binds the real archive identity. Exercise that
+  // graph with the vendored re-export archive; staging remains mocked.
+  const selected =
+    version === "0.1.10"
+      ? JSON.parse(fs.readFileSync(join(input.candidateRoot, "ci/reviewed-npm-audit.json"), "utf8"))
+          .sourceRegistryPackageReplacement
+      : JSON.parse(JSON.stringify(sdk.sdk).replaceAll("9.8.7", version));
+  if (version === "0.1.10")
+    sdk.bytes = fs.readFileSync(
+      new URL(
+        "../../scripts/vendor/openshell-sdk/nvidia-openshell-sdk-0.1.10.tgz",
+        import.meta.url,
+      ),
+    );
   for (const [root, identity] of [
     [input.trustedRoot, baseline],
     [input.candidateRoot, selected],

@@ -8,6 +8,7 @@ import path from "node:path";
 
 interface ProofOptions {
   dist: string;
+  nativeNetwork?: boolean;
   archivedWorkerDirectory?: string;
   nodeExecutable: string;
   timeoutMs: number;
@@ -87,7 +88,17 @@ networkFetch.mock = {};
 globalThis.fetch = networkFetch;
 ${splitGraph ? `await import(pathToFileURL(${JSON.stringify(path.join(directory, "worker.mjs"))}));` : ""}
 const { createWebFetchTool, assertExplicitProxyAllowed } = await import(pathToFileURL(${JSON.stringify(proofModule)}));
-const cases = [
+const nativeNetwork = ${Boolean(options.nativeNetwork)};
+const cases = nativeNetwork ? [
+  { id: "native-host", sandbox: true, proxy: false, host: "host.openshell.internal", allowed: true },
+  { id: "native-explicit-host", sandbox: true, proxy: false, host: "host.openshell.internal", allowHost: true, allowed: true },
+  { id: "native-public-mapping", sandbox: true, proxy: false, host: "public.example", allowed: true },
+  { id: "native-private-literal", sandbox: true, proxy: false, host: "127.0.0.1", allowed: false },
+  { id: "native-metadata-literal", sandbox: true, proxy: false, host: "169.254.169.254", allowed: false },
+  { id: "native-host-allowlist", sandbox: true, proxy: false, host: "host.openshell.internal", hostnameAllowlist: ["other.example"], allowed: false },
+  { id: "outside-host", sandbox: false, proxy: false, host: "host.openshell.internal", allowed: false },
+  { id: "outside-mapped-public", sandbox: false, proxy: false, host: "public.example", allowed: false },
+] : [
   { id: "sandbox-host", sandbox: true, proxy: true, host: "host.openshell.internal", allowed: false },
   { id: "sandbox-explicit-host", sandbox: true, proxy: true, host: "host.openshell.internal", allowHost: true, allowed: true },
   { id: "sandbox-public", sandbox: true, proxy: true, host: "public.example", allowed: true },
@@ -103,13 +114,14 @@ for (const scenario of cases) {
   globalThis.__nemoclawWorkerGuardObservations = [];
   const allowedHostnames = scenario.allowHost
     ? ["keep.example", "host.openshell.internal"] : ["keep.example"];
-  const policy = { allowedHostnames, allowRfc2544BenchmarkRange: true };
+  const policy = nativeNetwork ? { allowedHostnames, ...(scenario.hostnameAllowlist ? { hostnameAllowlist: scenario.hostnameAllowlist } : {}) } : { allowedHostnames, allowRfc2544BenchmarkRange: true };
+  const originalPolicy = structuredClone(policy);
   const url = "http://" + scenario.host + ":1234/" + scenario.id;
   const tool = createWebFetchTool({
     config: { tools: { web: { fetch: {
       enabled: true, useTrustedEnvProxy: scenario.proxy, cacheTtlMinutes: 0, ssrfPolicy: policy,
     } } } },
-    lookupFn: async () => [{ address: "93.184.216.34", family: 4 }],
+    lookupFn: async () => [{ address: nativeNetwork ? "198.18.0.2" : "93.184.216.34", family: 4 }],
   });
   const invocation = () => tool.execute(scenario.id, { url, extractMode: "text" });
   if (scenario.allowed) {
@@ -127,11 +139,18 @@ for (const scenario of cases) {
   assert.deepEqual(globalThis.__nemoclawWorkerGuardObservations, [{
     // The split module imports the patched strict-mode export, which selects
     // trusted proxy transport while retaining the caller's hostname policy.
-    url, mode: ${splitGraph ? '"trusted_env_proxy"' : 'scenario.proxy ? "trusted_env_proxy" : "strict"'},
-    policy,
+    url, mode: nativeNetwork ? "strict" : ${splitGraph ? '"trusted_env_proxy"' : 'scenario.proxy ? "trusted_env_proxy" : "strict"'},
+    policy: nativeNetwork && scenario.sandbox && scenario.host === "host.openshell.internal" ? { ...originalPolicy, allowedHostnames: [...allowedHostnames, "host.openshell.internal"] } : policy,
   }], scenario.id);
-  assert.deepEqual(policy, { allowedHostnames, allowRfc2544BenchmarkRange: true }, scenario.id);
+  assert.deepEqual(policy, originalPolicy, scenario.id);
 }
+if (nativeNetwork) {
+  process.env.OPENSHELL_SANDBOX = "1";
+  process.env.NEMOCLAW_PROXY_HOST = "attacker.example";
+  for (const proxyUrl of ["http://10.200.0.1:3128", "http://127.0.0.1:3128", "http://169.254.169.254:3128"]) {
+    await assert.rejects(() => assertExplicitProxyAllowed({ mode: "explicit-proxy", proxyUrl }));
+  }
+} else {
 // Supply root-file observations at the filesystem boundary. The real bundled
 // guard, URL parser, ownership checks, and denial path remain in the call.
 // CI runs without uid 0; these observations do not claim image ownership proof.
@@ -176,7 +195,8 @@ try {
 } finally {
   process.getBuiltinModule = getBuiltinModule;
 }
-console.log("real worker web_fetch proxy proof: 7 scenarios passed; 9 explicit-proxy checks passed");
+}
+console.log(nativeNetwork ? "real worker native web_fetch proof: 8 scenarios passed; 3 private-proxy denials passed" : "real worker web_fetch proxy proof: 7 scenarios passed; 9 explicit-proxy checks passed");
 ${options.archivedWorkerDirectory ? "process.exit(0);" : ""}
 `,
     );
@@ -211,7 +231,13 @@ ${options.archivedWorkerDirectory ? "process.exit(0);" : ""}
         `Real worker proxy proof failed: ${result.stderr || result.stdout || result.error}`,
       );
     }
-    if (!result.stdout.includes("real worker web_fetch proxy proof: 7 scenarios passed")) {
+    if (
+      !result.stdout.includes(
+        options.nativeNetwork
+          ? "real worker native web_fetch proof: 8 scenarios passed"
+          : "real worker web_fetch proxy proof: 7 scenarios passed",
+      )
+    ) {
       throw new Error("Real worker proxy proof did not report completion");
     }
   } finally {

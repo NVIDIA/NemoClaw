@@ -7,7 +7,7 @@ export {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
 } from "../../src/lib/inference/native-nvidia/contract.ts";
-export { hostedNativeProvider } from "../../src/lib/inference/native-provider/agent-config.ts";
+export { fixedHostedNativeProvider } from "../../src/lib/inference/native-provider/catalog.ts";
 
 export * from "../../src/lib/onboard/managed-startup/image-runtime";
 

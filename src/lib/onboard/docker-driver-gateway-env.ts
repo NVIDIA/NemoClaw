@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { resolveCorporateCa } from "./corporate-ca";
+import { isCorporateCaImportDisabled } from "./corporate-ca-policy";
+import { NEMOCLAW_GATEWAY_NETWORK_TRUST_SHA256_ENV } from "./gateway/network-trust";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -85,6 +88,7 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS",
   NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+  NEMOCLAW_GATEWAY_NETWORK_TRUST_SHA256_ENV,
   "NETAVARK_FW",
 ] as const;
 
@@ -526,6 +530,9 @@ export function buildDockerDriverGatewayEnv({
     allowOpenShell0044PreAuthDatabase:
       process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1",
     gatewayRuntime: runtime,
+    corporateCa: isCorporateCaImportDisabled(process.env)
+      ? null
+      : (resolveCorporateCa() ?? undefined),
   });
   return env;
 }

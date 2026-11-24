@@ -177,6 +177,8 @@ describe("buildManagedStartupOnboardProfile", () => {
           NEMOCLAW_CONTEXT_WINDOW: "262144",
           NEMOCLAW_MAX_TOKENS: "32000",
           NEMOCLAW_REASONING: "true",
+          NEMOCLAW_PROXY_HOST: "retired-proxy.invalid",
+          NEMOCLAW_PROXY_PORT: "9999",
         },
       }),
     );
@@ -365,6 +367,7 @@ describe("buildManagedStartupOnboardProfile", () => {
       dcodeInput({
         dcodeAutoApprovalMode: "thread-opt-in",
         observabilityEnabled: true,
+        environment: { NEMOCLAW_PROXY_HOST: "retired-proxy.invalid", NEMOCLAW_PROXY_PORT: "9999" },
       }),
     );
 
@@ -506,7 +509,7 @@ describe("buildManagedStartupOnboardProfile", () => {
     expect(serialized).not.toContain("lower.internal");
   });
 
-  it("filters stale semantic env while preserving environment-owned tuning and proxy knobs", () => {
+  it("filters stale semantic env while preserving tuning and host proxy intent", () => {
     const built = buildManagedStartupOnboardProfile(
       openClawInput({
         toolDisclosure: "direct",
@@ -548,8 +551,8 @@ describe("buildManagedStartupOnboardProfile", () => {
       reasoningEffort: "default",
     });
     expect(built.profile.proxy).toMatchObject({
-      managedHost: "host.containers.internal",
-      managedPort: 3129,
+      managedHost: "10.200.0.1",
+      managedPort: 3128,
       hostHttpUrl: "http://proxy.example.test:8080",
     });
   });

@@ -3,10 +3,12 @@
 
 # OpenShell SDK archive
 
-This directory carries the reviewed `@nvidia/openshell-sdk@0.0.116` package under its upstream Apache-2.0 license.
+This directory carries the reviewed `@nvidia/openshell-sdk@0.1.10` compatibility package under its upstream Apache-2.0 license.
 The archive matches the GitHub Packages URL and SHA-512 integrity in the root `package-lock.json`.
-Its source is NVIDIA/OpenShell tag `v0.0.116`, commit `d1155aa70042d3e2ee49dbfa15346b108b7c1d92`.
-The included `LICENSE` is copied from that source.
+Its source is ai-openshell/openshell tag `v0.1.10`, commit `152c59d3178039e3fbb4a5595f9fff7216a6be92`.
+It re-exports the public `@ai-openshell/sdk`, pinned to `0.1.10` in the root manifest and lockfile.
+The public SDK and its pinned protobuf and Connect dependencies are bundled into the NemoClaw package.
+The included `LICENSE.v0.1.10` is copied from that source.
 
 The installer and `npm run dev:setup` verify this archive, seed npm's cache offline, and run the normal dependency installation.
 Users do not need GitHub credentials or an SDK build toolchain.
@@ -32,9 +34,12 @@ Do not substitute a locally repacked archive: its compressed bytes can differ fr
 Run the SDK installation package contract after each update.
 Remove this archive and cache preparation when the pinned SDK is available through the public npm registry.
 
+The `0.0.116`, `0.1.5`, `0.1.7`, and `0.1.9` archives and their license files remain for historical packaging evidence.
+
 ## Trusted E2E Setup
 
-The production SDK remains `0.0.116`; `ci/reviewed-npm-audit.json` also admits `0.1.5` as the reviewed replacement for the OpenShell upgrade.
+The production SDK is `0.1.10`.
+`ci/reviewed-npm-audit.json` admits the `0.0.116` baseline and the reviewed `0.1.10` replacement for the OpenShell upgrade.
 When compiling the candidate CLI and plugin, the E2E planner requires successful SDK packaging, downloads that run's archive bundle, and uses explicit artifact mode.
 Explicit candidate dispatches that select only `llama-cpp-dgx-spark-qualification` or `native-runtime-qualification-producer`, with no target selector, skip SDK packaging and candidate compilation.
 Those dispatches use their trusted producer plans.

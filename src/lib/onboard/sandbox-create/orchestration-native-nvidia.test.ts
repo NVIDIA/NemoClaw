@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
+import { switchyardBindingFixture } from "../../../../test/helpers/hermes-switchyard";
+import { createHermesSwitchyardRoutingIntent } from "../../hermes-switchyard-routing";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
@@ -34,7 +38,12 @@ function providerAdapter(
     Pick<CliOpenShellProviderAdapter, "warnIfVerifiedProfilesChangedAfterSandboxCreate">;
 }
 
-function nativeProviderBoundary(adapter: OpenShellProviderAdapter) {
+function nativeProviderBoundary(
+  adapter: OpenShellProviderAdapter,
+  hermesSwitchyard?: Parameters<
+    typeof createProviderEffectBoundary
+  >[0]["preparationInput"]["hermesSwitchyard"],
+) {
   return createProviderEffectBoundary({
     deferred: false,
     sandboxName: "alpha",
@@ -52,6 +61,7 @@ function nativeProviderBoundary(adapter: OpenShellProviderAdapter) {
       messagingProviderRequests: [],
       extraProviders: [],
       gatewayName: "nemoclaw",
+      hermesSwitchyard,
     },
     preparationDeps: {
       runOpenshell: vi.fn() as never,
@@ -77,6 +87,19 @@ function verifiedCreateContext(revalidateSandboxIdentity = vi.fn()) {
 }
 
 describe("native NVIDIA post-create provider verification", () => {
+  it("rejects a mixed Switchyard effect boundary before provider operations", () => {
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "openai-api", model: "efficient-model" },
+      capable: { provider: "nvidia-prod", model: "capable-model" },
+    });
+    const adapter = providerAdapter(recordedProviderId);
+    expect(() =>
+      nativeProviderBoundary(adapter, { routing, bindings: switchyardBindingFixture(routing) }),
+    ).toThrow("cannot share a recorded native inference attachment");
+    expect(adapter.getProvider).not.toHaveBeenCalled();
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+  });
+
   it("verifies the owned profile before direct create and checks it after verified attachment", async () => {
     const adapter = providerAdapter(recordedProviderId);
     const boundary = nativeProviderBoundary(adapter);
@@ -169,3 +192,45 @@ describe("native NVIDIA post-create provider verification", () => {
     expect(adapter.listProviderAttachments).not.toHaveBeenCalled();
   });
 });
+
+it.each([false, true])(
+  "restores external provider membership without adopting its profile (attached=%s)",
+  async (attached) => {
+    const f = registeredInferenceFixture(attached);
+    const boundary = createProviderEffectBoundary({
+      deferred: false,
+      sandboxName: f.binding.sandboxName,
+      gatewayName: f.binding.gatewayName,
+      expectedRegisteredInferenceProviderAttachment: f.binding,
+      preparationInput: {
+        openshellDriver: "docker",
+        inferenceProvider: f.binding.providerName,
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        extraProviders: [],
+        gatewayName: f.binding.gatewayName,
+      },
+      preparationDeps: {
+        providerAdapter: f.adapter,
+        runOpenshell: vi.fn() as never,
+        cleanupCreateSources: vi.fn(),
+      },
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: null,
+      revalidateSandboxIdentityBeforeCreate: vi.fn(),
+    });
+    await boundary.validateBeforeCreate();
+    await boundary.runAfterVerifiedCreate?.({
+      ...verifiedCreateContext(),
+      gatewayName: f.binding.gatewayName,
+    });
+    expect(f.adapter.attachProvider).toHaveBeenCalledTimes(attached ? 0 : 1);
+    expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(f.adapter.createProvider).not.toHaveBeenCalled();
+    expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+    f.state.id = "replacement";
+    await expect(boundary.validateBeforeCreate()).rejects.toThrow();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+  },
+);

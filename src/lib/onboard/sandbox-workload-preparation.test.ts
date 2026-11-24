@@ -23,6 +23,8 @@ import {
   type ManagedImageContractV1,
   type ManagedImageAgent,
   SHIPPED_MANAGED_IMAGE_AGENTS,
+  managedImagePlatformForNodeArchitecture,
+  parseManagedImageContractV1,
 } from "./managed-image/contract";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import {
@@ -64,6 +66,37 @@ function contract(agent: ManagedImageAgent, index: number): ManagedImageContract
 const CATALOG: ManagedImageContractCatalog = Object.fromEntries(
   SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)]),
 );
+
+it.each(["x64", "amd64"])(
+  "contract parsing accepts the matching %s host architecture",
+  (architecture) => {
+    const platform = managedImagePlatformForNodeArchitecture(architecture);
+    const candidate = { ...contract("openclaw", 0), platform: "linux/amd64" };
+    expect(parseManagedImageContractV1(candidate, "openclaw", platform!).platform).toBe(
+      "linux/amd64",
+    );
+  },
+);
+
+it.each(["arm64", "ppc64"])(
+  "contract parsing rejects an amd64 image on the %s host architecture",
+  (architecture) => {
+    const platform = managedImagePlatformForNodeArchitecture(architecture);
+    const candidate = { ...contract("openclaw", 0), platform: "linux/amd64" };
+    expect(() => parseManagedImageContractV1(candidate, "openclaw", platform!)).toThrow(
+      "contract.platform must be",
+    );
+  },
+);
+
+it("the live catalog loader rejects extra entries outside the shipped agent set", () => {
+  expect(() =>
+    readLiveE2eManagedImageCatalogContracts({
+      catalog: { ...CATALOG, unused: contract("openclaw", 0) },
+      revision: REVISION,
+    }),
+  ).toThrow("must contain only the shipped agent contracts");
+});
 
 function runtime(driverName = "docker"): SandboxWorkloadRuntimeCapabilities {
   return {

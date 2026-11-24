@@ -75,70 +75,11 @@ if ! verify_resource_limits_exact; then
 fi
 unset _NEMOCLAW_SANDBOX_RLIMITS
 
-readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/pi-proxy-host"
-readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/pi-proxy-port"
-readonly MANAGED_PROXY_OWNER_UID=0
-
-read_managed_proxy_value() {
-  local file="$1"
-  local name="$2"
-  local metadata
-  if [ ! -f "$file" ] || [ -L "$file" ] || [ ! -r "$file" ]; then
-    printf 'Missing or unsafe trusted managed proxy %s file.\n' "$name" >&2
-    return 1
-  fi
-  metadata="$(stat -c '%u:%a' "$file" 2>/dev/null)" || {
-    printf 'Cannot inspect trusted managed proxy %s file.\n' "$name" >&2
-    return 1
-  }
-  if [ "$metadata" != "${MANAGED_PROXY_OWNER_UID}:444" ]; then
-    printf 'Unsafe ownership or mode on trusted managed proxy %s file.\n' "$name" >&2
-    return 1
-  fi
-  printf '%s' "$(<"$file")"
-}
-
-# Fail closed if the root-owned image contract is missing. Process-level
-# NEMOCLAW_PROXY_* values are not a trusted runtime routing source.
-PROXY_HOST="$(read_managed_proxy_value "$MANAGED_PROXY_HOST_FILE" "host")"
-PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
-unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
-# Generic proxy fallbacks are outside the managed Pi contract and may carry host
-# credentials even after the scheme-specific proxy values are normalized.
-unset ALL_PROXY all_proxy OPENAI_PROXY
-
-# These two patterns must match isValidProxyHost and isValidProxyPort in
-# src/lib/onboard/dockerfile-patch.ts. They apply only to image-baked values that
-# onboard writes into root-owned files at build time; runtime env is explicitly
-# unset above and never reaches this check.
-is_valid_proxy_host() {
-  local value="$1"
-  [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]
-}
-
-is_valid_proxy_port() {
-  local value="$1"
-  [[ "$value" =~ ^[0-9]{1,5}$ ]] || return 1
-  ((10#$value >= 1 && 10#$value <= 65535))
-}
-
-if ! is_valid_proxy_host "$PROXY_HOST"; then
-  printf '%s\n' 'Invalid NEMOCLAW_PROXY_HOST for the managed runtime proxy.' >&2
-  exit 1
-fi
-if ! is_valid_proxy_port "$PROXY_PORT"; then
-  printf '%s\n' 'Invalid NEMOCLAW_PROXY_PORT for the managed runtime proxy.' >&2
-  exit 1
-fi
-
-_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
-_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
-export HTTP_PROXY="$_PROXY_URL"
-export HTTPS_PROXY="$_PROXY_URL"
-export NO_PROXY="$_NO_PROXY_VAL"
-export http_proxy="$_PROXY_URL"
-export https_proxy="$_PROXY_URL"
-export no_proxy="$_NO_PROXY_VAL"
+# OpenShell 0.1.3 mediates sandbox sockets. Ambient proxy settings must not
+# redirect Pi traffic to the retired application proxy or a host proxy.
+unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy \
+  ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY NODE_USE_ENV_PROXY \
+  NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 
 # Corporate proxy CA merge (NemoClaw#6210).
 # OpenShell injects SSL_CERT_FILE for its own L7 proxy CA at runtime. When a
@@ -322,7 +263,7 @@ write_export_if_set() {
 
 prepare_runtime_env() {
   # This file is intentionally volatile: it holds no state that must survive a
-  # restart, so every start rebuilds it from the root-owned proxy files.
+  # restart, so every start rebuilds it from the sanitized runtime environment.
   local target=/tmp/nemoclaw-proxy-env.sh
   local tmp
   tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"
@@ -332,13 +273,10 @@ prepare_runtime_env() {
     printf '%s\n' 'export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"'
     printf '%s\n' 'export PI_OFFLINE=1'
     printf '%s\n' 'export PI_TELEMETRY=0'
-    printf '%s\n' 'unset ALL_PROXY all_proxy OPENAI_PROXY'
-    write_export_if_set HTTP_PROXY
-    write_export_if_set HTTPS_PROXY
-    write_export_if_set NO_PROXY
-    write_export_if_set http_proxy
-    write_export_if_set https_proxy
-    write_export_if_set no_proxy
+    printf '%s\n' \
+      'unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy' \
+      'unset ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY NODE_USE_ENV_PROXY' \
+      'unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT'
     write_export_if_set SSL_CERT_FILE
     write_export_if_set CURL_CA_BUNDLE
     write_export_if_set REQUESTS_CA_BUNDLE
@@ -347,10 +285,8 @@ prepare_runtime_env() {
     write_export_if_set NEMOCLAW_SANDBOX_NAME
   } >"$tmp"
   # This sandbox-user-owned file is credential-free convenience state for
-  # independent login and exec shells, not an integrity boundary: the entrypoint
-  # re-derives trusted proxy values from the root-owned image files. No Pi scan
-  # currently checks this file's contents; mode 0444 removes write bits so
-  # ordinary accidental writes fail.
+  # independent login and exec shells. Mode 0444 prevents accidental writes;
+  # it does not make sandbox-user-owned content an integrity boundary.
   chmod 444 "$tmp"
   mv -f "$tmp" "$target"
 }

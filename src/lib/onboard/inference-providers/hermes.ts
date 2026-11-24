@@ -7,6 +7,7 @@
 import {
   hostedNativeProvider,
   canonicalHermesNativeEndpoint,
+  canonicalRecordedHermesEndpoint,
   usesNativeHermesEndpoint,
 } from "../../inference/native-provider/hosted";
 import type { HermesInferenceCredentialRegistrar } from "../../hermes-provider-auth";
@@ -42,13 +43,20 @@ export async function setupHermesProviderInference(
   const authority = deps.getNativeProviderAuthority?.();
   const defaultEndpoint = hostedNativeProvider("hermes-provider")!.endpoint;
   const recordedEndpoint = authority?.endpointUrl ?? (authority ? defaultEndpoint : undefined);
+  const selectedEndpoint = endpointUrl ?? recordedEndpoint;
+  const retainedEndpoint = Boolean(
+    selectedEndpoint && selectedEndpoint.replace(/\/+$/, "") !== defaultEndpoint,
+  );
   const usesNative =
     provider === "hermes-provider" && usesNativeHermesEndpoint(endpointUrl, authority);
   if (usesNative && (!deps.prepareNativeProvider || !deps.getNativeProviderAuthority)) {
     throw new Error("Native Hermes setup is missing its ownership and registration dependencies");
   }
   let resolvedEndpointUrl = endpointUrl;
-  if (endpointUrl && !usesNative) {
+  if (
+    endpointUrl &&
+    (!usesNative || (retainedEndpoint && endpointUrl.replace(/\/+$/, "") !== recordedEndpoint))
+  ) {
     let parsedEndpoint: URL;
     try {
       parsedEndpoint = new URL(endpointUrl);
@@ -131,9 +139,15 @@ export async function setupHermesProviderInference(
   let nativePrepared = false;
   const registerInferenceCredential: HermesInferenceCredentialRegistrar | undefined = usesNative
     ? async ({ apiKey, baseUrl }) => {
+        // A login-returned replacement remains HTTPS-only. Only the exact retained
+        // endpoint already validated above may keep its HTTP or runtime alias route.
+        const retainsEndpoint = retainedEndpoint && baseUrl === resolvedEndpointUrl;
         const receipt = await deps.prepareNativeProvider!(
           apiKey,
-          canonicalHermesNativeEndpoint(baseUrl),
+          retainsEndpoint
+            ? canonicalRecordedHermesEndpoint(baseUrl)
+            : canonicalHermesNativeEndpoint(baseUrl),
+          retainsEndpoint,
         );
         resolvedEndpointUrl = receipt.endpointUrl ?? defaultEndpoint;
         nativePrepared = true;
@@ -193,7 +207,11 @@ export async function setupHermesProviderInference(
     if (!nativePrepared) {
       if (shouldPrepareHermesCredentials)
         throw new Error("Hermes login did not publish a native provider credential");
-      const receipt = await deps.prepareNativeProvider!(null, resolvedEndpointUrl!);
+      const receipt = await deps.prepareNativeProvider!(
+        null,
+        resolvedEndpointUrl!,
+        retainedEndpoint,
+      );
       resolvedEndpointUrl = receipt.endpointUrl ?? defaultEndpoint;
     }
     // Gateway-held credentials are verified from the new sandbox after attachment.

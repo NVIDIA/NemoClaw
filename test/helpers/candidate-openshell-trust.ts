@@ -16,7 +16,10 @@ import {
   CANDIDATE_OPENSHELL_SOURCES,
   CANDIDATE_OPENSHELL_TRUST_PATH,
 } from "../../tools/e2e/candidate-openshell-trust.mts";
-import { parseOpenShellTrustRegistry } from "../../scripts/checks/openshell-trust-data.mts";
+import {
+  parseOpenShellTrustRegistry,
+  openShellReleaseOrigins,
+} from "../../scripts/checks/openshell-trust-data.mts";
 import { copyTrustedInstallerVerifier } from "./openshell-installer-template";
 
 export const identity = { prNumber: 123, candidateSha: "a".repeat(40), baseSha: "b".repeat(40) };
@@ -31,9 +34,12 @@ export function fixture(selectedVersion = version) {
   ) as Record<keyof typeof CANDIDATE_OPENSHELL_SOURCES, string>;
   const current = validateInstallerSources(sources);
   const release = structuredClone(current.installerReleases[0]!);
+  // The registry stores revocations globally; resolved releases carry a derived copy.
+  delete release.revokedTemplateSha256;
   const prior = release.version;
   release.version = selectedVersion;
-  release.formula.url = `https://github.com/NVIDIA/OpenShell/releases/download/v${selectedVersion}/openshell.rb`;
+  release.formula.url = `https://github.com/${openShellReleaseOrigins(selectedVersion).repository}/releases/download/v${selectedVersion}/openshell.rb`;
+  release.supervisor!.image = openShellReleaseOrigins(selectedVersion).supervisor;
   release.sandboxBuilds = [{ required: false, sha256: "f".repeat(64) }];
   sources.blueprintSource = sources.blueprintSource.replaceAll(
     `"${prior}"`,
@@ -167,7 +173,11 @@ export function runCoveredRegistry(
     JSON.stringify({
       ...oldRegistry,
       releases: scenario === "absent-untrusted" ? [] : [...oldRegistry.releases, nextRelease],
-      revokedTemplateSha256: scenario.endsWith("revoked") ? f.release.installerTemplateSha256 : [],
+      revokedTemplateSha256: scenario.endsWith("revoked")
+        ? [...new Set([...oldRegistry.revokedTemplateSha256, ...f.release.installerTemplateSha256])]
+        : scenario === "absent-untrusted"
+          ? []
+          : oldRegistry.revokedTemplateSha256,
     }),
   );
   const candidateRegistry = structuredClone(oldRegistry);

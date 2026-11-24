@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
+import { stripVTControlCharacters } from "node:util";
 
 import { DEFAULT_GATEWAY_PORT, parsePort } from "../../../../src/lib/core/ports.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
@@ -163,7 +164,13 @@ export class GatewayClient {
         timeoutMs: 15_000,
       },
     );
-    if (pid.exitCode === 0 && pid.stdout.trim()) {
+    if (
+      pid.exitCode === 0 &&
+      !pid.timedOut &&
+      pid.signal === null &&
+      pid.stderr.trim() === "" &&
+      /^[1-9][0-9]*$/.test(pid.stdout.trim())
+    ) {
       return { kind: "pid", id: pid.stdout.trim() };
     }
 
@@ -182,7 +189,23 @@ export class GatewayClient {
       .filter(([, name]) => name === DEFAULT_GATEWAY_CONTAINER)
       .map(([id]) => id)
       .filter((id): id is string => Boolean(id));
-    if (ids.length > 1) throw new Error("OpenShell gateway runtime identity is ambiguous.");
+    if (
+      pid.exitCode !== 1 ||
+      pid.timedOut ||
+      pid.signal !== null ||
+      pid.stdout.trim() !== "" ||
+      pid.stderr.trim() !== "" ||
+      container.exitCode !== 0 ||
+      container.timedOut ||
+      container.signal !== null ||
+      container.stderr.trim() !== "" ||
+      container.stdout
+        .split(/\r?\n/u)
+        .some((line) => line.trim() !== "" && !/^[a-f0-9]+\s+\S+$/u.test(line.trim())) ||
+      ids.length > 1
+    ) {
+      throw new Error("OpenShell gateway runtime observation failed or its identity is ambiguous.");
+    }
     const [id] = ids;
     return id ? { kind: "container", id } : null;
   }
@@ -214,8 +237,8 @@ export class GatewayClient {
       ...options,
     });
     assertExitZero(result, "openshell status");
-    const text = `${result.stdout}\n${result.stderr}`;
-    if (!/connected/i.test(text) || !new RegExp(gatewayName, "i").test(text)) {
+    const text = stripVTControlCharacters(`${result.stdout}\n${result.stderr}`);
+    if (!/\bconnected\b/i.test(text) || !new RegExp(gatewayName, "i").test(text)) {
       throw new Error(`openshell status did not report connected gateway '${gatewayName}'.`);
     }
     return result;
@@ -236,12 +259,23 @@ export class GatewayClient {
       timeoutMs: options.timeoutMs ?? 30_000,
     });
     const statusText = `${status.stdout}\n${status.stderr}`;
+    // OpenShell 0.1.9 rejects an explicit gateway after its registration is removed.
+    // This proves registration absence only; listener and runtime checks still follow.
+    const registrationRemoved =
+      status.exitCode === 1 &&
+      status.stdout.trim() === "" &&
+      status.stderr.trim() ===
+        `Error:   × Unknown gateway '${gatewayName}'.\n` +
+          `  │ Register it first: openshell gateway add <endpoint> --name ${gatewayName}\n` +
+          "  │ Or list available gateways: openshell gateway select";
     if (
+      (status.exitCode !== 0 && status.exitCode !== 1) ||
       status.timedOut ||
       status.signal !== null ||
-      !/disconnected|no (?:active )?gateway|connection refused|does not exist|not found/iu.test(
-        statusText,
-      )
+      (!registrationRemoved &&
+        !/disconnected|no (?:active )?gateway|connection refused|gateway[^\n]*(?:does not exist|not found)/iu.test(
+          statusText,
+        ))
     ) {
       throw new Error(`openshell status did not prove gateway '${gatewayName}' disconnected.`);
     }
@@ -340,7 +374,10 @@ export class GatewayClient {
    * The PID is accepted only while the process exists and its `/proc` start
    * identity still matches the second field recorded by the supervisor.
    */
-  async resolveGatewayIdentity(instance: NemoClawInstance): Promise<GatewayProcessIdentity | null> {
+  async resolveGatewayIdentity(
+    instance: Pick<NemoClawInstance, "sandboxName">,
+    options: Pick<ShellProbeRunOptions, "env" | "artifactName"> = {},
+  ): Promise<GatewayProcessIdentity | null> {
     const script =
       "set -e; " +
       'record="$(cat /tmp/nemoclaw-gateway.pid 2>/dev/null || true)"; ' +
@@ -357,12 +394,15 @@ export class GatewayClient {
       'printf "%s %s %s %s\\n" "$pid" "$expected_start" "$actual_start" "$state"';
 
     const result = await this.sandbox.exec(instance.sandboxName, ["sh", "-c", script], {
-      artifactName: `gateway-resolve-pid-${instance.sandboxName}`,
-      env: probeEnv(),
+      artifactName: options.artifactName ?? `gateway-resolve-pid-${instance.sandboxName}`,
+      env: { ...probeEnv(), ...options.env },
     });
     const identity = result.stdout.trim().match(/^([0-9]+) ([0-9]+) ([0-9]+) ([A-Za-z])$/);
     if (
       result.exitCode !== 0 ||
+      result.timedOut ||
+      result.signal !== null ||
+      result.stderr.trim() !== "" ||
       !identity ||
       identity[2] !== identity[3] ||
       /^(?:X|Z)$/.test(identity[4])

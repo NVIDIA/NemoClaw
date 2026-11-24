@@ -26,6 +26,38 @@ export function normalizeCertificateBlocks(blocks: readonly string[]): string {
   return `${blocks.map((block) => block.trim()).join("\n")}\n`;
 }
 
+/** Validate already-resolved CA material without accepting keys or other adjacent data. */
+export function validateCorporateCaPem(pem: string): string {
+  const bytes = Buffer.byteLength(pem, "utf8");
+  if (bytes === 0 || bytes > MAX_CORPORATE_CA_BYTES) {
+    throw new Error(
+      `corporate CA material must be between 1 and ${String(MAX_CORPORATE_CA_BYTES)} bytes`,
+    );
+  }
+  const blocks = pem.match(PEM_CERTIFICATE_RE_GLOBAL);
+  if (!blocks || blocks.length === 0 || blocks.length > MAX_CORPORATE_CA_CERTS) {
+    throw new Error(
+      `corporate CA material must contain between 1 and ${String(MAX_CORPORATE_CA_CERTS)} certificates`,
+    );
+  }
+  for (const block of blocks) {
+    let certificate: X509Certificate;
+    try {
+      certificate = new X509Certificate(block);
+    } catch {
+      throw new Error("corporate CA material contains an invalid X.509 certificate");
+    }
+    if (!certificate.ca) {
+      throw new Error("corporate CA material contains a certificate without CA basic constraints");
+    }
+  }
+  const normalized = normalizeCertificateBlocks(blocks);
+  if (pem.trim() !== normalized.trim()) {
+    throw new Error("corporate CA material must contain only normalized PEM certificate blocks");
+  }
+  return normalized;
+}
+
 /**
  * Validate a candidate corporate CA bundle file and return normalized PEM text.
  *

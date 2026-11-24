@@ -43,15 +43,11 @@ export interface ManagedStartupRootOwnedFileMaterial {
     | "NEMOCLAW_DCODE_AUTO_APPROVAL"
     | "NEMOCLAW_INFERENCE_BASE_URL"
     | "NEMOCLAW_INFERENCE_PROVIDER_ID"
-    | "NEMOCLAW_PROXY_HOST"
-    | "NEMOCLAW_PROXY_PORT"
     | "NEMOCLAW_REASONING_EFFORT"
     | "NEMOCLAW_UPSTREAM_PROVIDER";
   readonly path:
     | "/usr/local/share/nemoclaw/dcode-auto-approval"
     | "/usr/local/share/nemoclaw/dcode-inference-base-url"
-    | "/usr/local/share/nemoclaw/dcode-proxy-host"
-    | "/usr/local/share/nemoclaw/dcode-proxy-port"
     | "/usr/local/share/nemoclaw/dcode-reasoning-effort"
     | "/usr/local/share/nemoclaw/dcode-upstream-provider"
     | "/usr/local/share/nemoclaw/dcode-provider-route"
@@ -400,8 +396,6 @@ function mapOpenClawProfile(
     NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: String(profile.agentConfig.otel.sampleRate),
     NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: profile.agentConfig.otel.serviceName,
     NEMOCLAW_PRIMARY_MODEL_REF: profile.inference?.primaryModelRef ?? "",
-    NEMOCLAW_PROXY_HOST: profile.proxy.managedHost,
-    NEMOCLAW_PROXY_PORT: String(profile.proxy.managedPort),
     NEMOCLAW_REASONING: String(profile.tuning.reasoning),
     NEMOCLAW_REASONING_EFFORT: profile.tuning.reasoningEffort,
     NEMOCLAW_SERVING_PRESET: profile.inference?.servingPreset ?? "",
@@ -422,14 +416,7 @@ function mapOpenClawProfile(
     configurationEnvironment: sortedEnvironment(configurationEnvironment),
     runtimeEnvironment: sortedEnvironment(runtimeEnvironment),
     applicationRuntime: applicationRuntimePlan(profile, environment),
-    materials: Object.freeze([
-      corporateCaMaterial(profile),
-      rootOwnedFile(
-        "NEMOCLAW_PROXY_HOST",
-        "/usr/local/share/nemoclaw/openclaw-proxy-url",
-        `http://${profile.proxy.managedHost}:${profile.proxy.managedPort}`,
-      ),
-    ]),
+    materials: Object.freeze([corporateCaMaterial(profile)]),
     actions: applicationActions(profile, "openclaw"),
   });
 }
@@ -503,8 +490,6 @@ function mapHermesProfile(
   runtimeEnvironment.NEMOCLAW_HERMES_DASHBOARD_PORT =
     profile.dashboard.publicPort === null ? "" : String(profile.dashboard.publicPort);
   runtimeEnvironment.NEMOCLAW_HERMES_DASHBOARD_TUI = booleanFlag(profile.dashboard.tuiEnabled);
-  runtimeEnvironment.NEMOCLAW_PROXY_HOST = profile.proxy.managedHost;
-  runtimeEnvironment.NEMOCLAW_PROXY_PORT = String(profile.proxy.managedPort);
   appendHostProxyEnvironment(runtimeEnvironment, profile, { preserveAmbientWhenAbsent: true });
 
   return Object.freeze({
@@ -587,16 +572,6 @@ function mapDcodeProfile(
       profile.inference.routeProvider,
     ),
     rootOwnedFile(
-      "NEMOCLAW_PROXY_HOST",
-      "/usr/local/share/nemoclaw/dcode-proxy-host",
-      profile.proxy.managedHost,
-    ),
-    rootOwnedFile(
-      "NEMOCLAW_PROXY_PORT",
-      "/usr/local/share/nemoclaw/dcode-proxy-port",
-      String(profile.proxy.managedPort),
-    ),
-    rootOwnedFile(
       "NEMOCLAW_REASONING_EFFORT",
       "/usr/local/share/nemoclaw/dcode-reasoning-effort",
       reasoningEffort,
@@ -652,16 +627,6 @@ function mapPiProfile(
   }
   const materials: readonly ManagedStartupAgentMaterial[] = Object.freeze([
     corporateCaMaterial(profile),
-    rootOwnedFile(
-      "NEMOCLAW_PROXY_HOST",
-      "/usr/local/share/nemoclaw/pi-proxy-host",
-      profile.proxy.managedHost,
-    ),
-    rootOwnedFile(
-      "NEMOCLAW_PROXY_PORT",
-      "/usr/local/share/nemoclaw/pi-proxy-port",
-      String(profile.proxy.managedPort),
-    ),
   ]);
 
   return Object.freeze({

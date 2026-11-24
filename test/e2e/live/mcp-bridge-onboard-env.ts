@@ -117,7 +117,7 @@ export function buildMcpBridgeOnboardEnv(options: {
     NEMOCLAW_SANDBOX_NAME: options.sandboxName,
     NEMOCLAW_RECREATE_SANDBOX: "1",
     ...(options.agent === "langchain-deepagents-code"
-      ? { NEMOCLAW_TOOL_DISCLOSURE: "direct" }
+      ? { NEMOCLAW_TOOL_DISCLOSURE: "progressive" }
       : {}),
   };
 }

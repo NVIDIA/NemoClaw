@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { prepareWslNvidiaCdi } from "./wsl-nvidia-cdi/prepare";
 
 import {
   type DockerGpuRoutePlan,
@@ -10,6 +11,62 @@ import {
 } from "./docker-gpu-sandbox-create";
 
 describe("resolveDockerGpuSandboxCreatePlan", () => {
+  it("preserves the compatibility create and rebuild route on x86 WSL", () => {
+    const result = resolveDockerGpuSandboxCreatePlan(
+      { sandboxGpuEnabled: true },
+      {
+        dockerDriverGateway: true,
+        dockerDesktopWsl: true,
+        platform: "linux",
+        env: {},
+        prepareWslNvidiaCdi: () => prepareWslNvidiaCdi({ arch: "x64" }),
+      },
+    );
+    expect(result.gpuRoutePlan).toBe("compatibility-only");
+  });
+  it("uses native creation after WSL NVIDIA CDI preparation", () => {
+    const prepare = vi.fn(() => true);
+    const result = resolveDockerGpuSandboxCreatePlan(
+      { sandboxGpuEnabled: true },
+      {
+        dockerDriverGateway: true,
+        dockerDesktopWsl: true,
+        platform: "linux",
+        env: { NEMOCLAW_DOCKER_GPU_PATCH: "1" },
+        prepareWslNvidiaCdi: prepare,
+      },
+    );
+    expect(result.gpuRoutePlan).toBe("native-only");
+    expect(prepare).toHaveBeenCalledOnce();
+  });
+  it("propagates CDI preparation failure without a compatibility retry", () => {
+    expect(() =>
+      resolveDockerGpuSandboxCreatePlan(
+        { sandboxGpuEnabled: true },
+        {
+          dockerDriverGateway: true,
+          dockerDesktopWsl: true,
+          platform: "linux",
+          prepareWslNvidiaCdi: () => {
+            throw new Error("CDI unavailable");
+          },
+        },
+      ),
+    ).toThrow("CDI unavailable");
+  });
+  it("does not prepare CDI when GPU use is disabled", () => {
+    const prepare = vi.fn(() => true);
+    const result = resolveDockerGpuSandboxCreatePlan(
+      { sandboxGpuEnabled: false },
+      {
+        dockerDriverGateway: true,
+        dockerDesktopWsl: true,
+        prepareWslNvidiaCdi: prepare,
+      },
+    );
+    expect(result.gpuRoutePlan).toBe("none");
+    expect(prepare).not.toHaveBeenCalled();
+  });
   type RouteCase = {
     label: string;
     gpuEnabled?: boolean;
@@ -58,7 +115,7 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
     {
       label: "Docker Desktop WSL default",
       dockerDesktopWsl: true,
-      expected: "compatibility-only",
+      expected: "native-only",
     },
     {
       label: "Jetson default",
@@ -79,6 +136,7 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
     },
   ])("resolves $label to $expected", (testCase) => {
     const log = vi.fn();
+    const prepare = vi.fn(() => true);
     const result = resolveDockerGpuSandboxCreatePlan(
       {
         sandboxGpuEnabled: testCase.gpuEnabled ?? true,
@@ -89,15 +147,18 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
         dockerDesktopWsl: testCase.dockerDesktopWsl ?? false,
         env: { NEMOCLAW_DOCKER_GPU_PATCH: testCase.control },
         platform: testCase.platform ?? "linux",
+        prepareWslNvidiaCdi: prepare,
         log,
       },
     );
 
     expect(result.gpuRoutePlan).toBe(testCase.expected);
+    expect(prepare).toHaveBeenCalledTimes(testCase.dockerDesktopWsl ? 1 : 0);
   });
 
-  it("ignores opt-out on Docker Desktop WSL", () => {
+  it("keeps prepared Desktop CDI on the native route with compatibility opted out", () => {
     const log = vi.fn();
+    const prepare = vi.fn(() => true);
 
     const result = resolveDockerGpuSandboxCreatePlan(
       { sandboxGpuEnabled: true },
@@ -106,12 +167,14 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
         dockerDesktopWsl: true,
         env: { NEMOCLAW_DOCKER_GPU_PATCH: "0" },
         platform: "linux",
+        prepareWslNvidiaCdi: prepare,
         log,
       },
     );
 
-    expect(result.gpuRoutePlan).toBe("compatibility-only");
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("ignored on Docker Desktop WSL"));
+    expect(result.gpuRoutePlan).toBe("native-only");
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("ignored on Docker Desktop WSL"));
   });
 
   it("forwards the legacy nonzero warning through the create-plan boundary", () => {
@@ -135,6 +198,7 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
   it("keeps the portable profile on native GPU lifecycle operations (#9068)", () => {
     const log = vi.fn();
     const detectDockerDesktopWsl = vi.fn(() => true);
+    const prepare = vi.fn(() => true);
 
     const result = resolveDockerGpuSandboxCreatePlan(
       { sandboxGpuEnabled: true },
@@ -142,6 +206,7 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
         dockerDriverGateway: true,
         detectDockerDesktopWsl,
         portableLifecycle: true,
+        prepareWslNvidiaCdi: prepare,
         env: {
           NEMOCLAW_DOCKER_GPU_PATCH: "1",
           NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
@@ -153,6 +218,7 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
 
     expect(result.gpuRoutePlan).toBe("native-only");
     expect(detectDockerDesktopWsl).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalledWith(expect.stringMatching(/compatibility-only/iu));
   });
 

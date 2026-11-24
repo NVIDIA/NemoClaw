@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, expect, it, vi } from "vitest";
-import { resolveHermesLocalSwitchRuntime, resolveLocalSwitchRuntime } from "./local-runtime";
+import * as nim from "../../inference/nim";
+import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
+import {
+  resolveHermesLocalSwitchRuntime,
+  resolveLocalSwitchRuntime,
+  verifyNimSwitchSelection,
+} from "./local-runtime";
 
 const mocks = vi.hoisted(() => ({
   managed: vi.fn(),
@@ -152,5 +158,40 @@ it("rejects an unavailable Hermes endpoint before reading credentials", () => {
   expect(() =>
     resolveHermesLocalSwitchRuntime("compatible-endpoint", null, mocks.credential),
   ).toThrow("local inference endpoint is unavailable");
+  expect(mocks.credential).not.toHaveBeenCalled();
+});
+
+it.each(["authenticated", "sentinel"] as const)(
+  "rejects a recorded %s attachment outside the selected NIM boundary",
+  (authMode) => {
+    const getServed = vi.spyOn(nim, "getServedModelId");
+    const endpointUrl = nim.getNimInferenceEndpoints().baseUrl;
+    const previous = nativeLocalTestReceipt(
+      "vllm-local",
+      authMode === "sentinel" ? "http://host.openshell.internal:18000/v1" : endpointUrl,
+      { agent: "openclaw", authMode },
+    );
+    expect(() =>
+      verifyNimSwitchSelection(
+        "vllm-local",
+        "nim/model",
+        { nimContainer: "owned-nim", endpointUrl },
+        previous,
+      ),
+    ).toThrow("recorded NIM route does not match");
+    expect(getServed).not.toHaveBeenCalled();
+    expect(mocks.managed).not.toHaveBeenCalled();
+  },
+);
+
+it("rejects an explicit credential binding for a verified NIM selection", () => {
+  expect(() =>
+    resolveHermesLocalSwitchRuntime("vllm-local", hermesBinding, mocks.credential, {
+      nimContainer: "owned-nim",
+      endpointUrl: nim.getNimInferenceEndpoints().baseUrl,
+      contextWindow: null,
+    }),
+  ).toThrow("Local NIM cannot use an explicit provider credential binding");
+  expect(mocks.managed).not.toHaveBeenCalled();
   expect(mocks.credential).not.toHaveBeenCalled();
 });

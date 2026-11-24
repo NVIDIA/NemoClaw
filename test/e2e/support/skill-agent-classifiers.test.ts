@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   agentSectionContainsToken,
+  buildVerifySkillFixtureScript,
   isAgentVerificationFailClosed,
   isExternalProviderValidationFailure,
   shouldSkipExternalAgentVerificationFailure,
@@ -23,6 +24,44 @@ const ADD_SKILL_SCRIPT = path.join(
 );
 
 describe("skill-agent live test local classifiers", () => {
+  it.each([
+    ["missing", "missing/SKILL.md", 1, false],
+    ["tokenless", "tokenless/SKILL.md", 1, false],
+    ["matching", "matching/SKILL.md", 0, true],
+  ] as const)(
+    "requires the verification token in a %s fixture",
+    (_name, file, exitCode, present) => {
+      const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-presence-"));
+      try {
+        fs.mkdirSync(path.join(fixtureDir, "tokenless"));
+        fs.mkdirSync(path.join(fixtureDir, "matching"));
+        fs.writeFileSync(
+          path.join(fixtureDir, "tokenless/SKILL.md"),
+          "No verification token here.\n",
+        );
+        fs.writeFileSync(path.join(fixtureDir, "matching/SKILL.md"), `${VERIFY_PHRASE}\n`);
+        const result = spawnSync(
+          "/bin/sh",
+          ["-lc", buildVerifySkillFixtureScript(path.join(fixtureDir, file))],
+          {
+            encoding: "utf8",
+            env: { PATH: "/usr/bin:/bin", HOME: fixtureDir, TMPDIR: fixtureDir },
+          },
+        );
+
+        expect(result.status).toBe(exitCode);
+        expect(result.stdout).toBe(
+          present ? `SKILL_TOKEN_PATH=${path.join(fixtureDir, file)}\n` : "",
+        );
+        expect(
+          shouldSkipExternalAgentVerificationFailure("LLM idle timeout", result.status === 0),
+        ).toBe(present);
+      } finally {
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("does not treat helper fail-closed output as a skippable provider flake", () => {
     const output = `--- agent stdout/stderr\nSsrFBlockedError\n${VERIFY_PHRASE}\n--- end ---`;
 
@@ -71,6 +110,7 @@ describe("skill-agent live test local classifiers", () => {
         encoding: "utf8",
         env: {
           PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+          TMPDIR: fixtureDir,
           SANDBOX_NAME: "test-sandbox",
           SKILL_FILE: skillFile,
           SKILL_ID: "expected-skill",

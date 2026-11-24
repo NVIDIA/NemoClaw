@@ -95,7 +95,7 @@ describe("stopped native-home cleanup", () => {
     ).toEqual({ cleared: false, failure: "runtime-revalidation-failed" });
   });
 
-  it("pulls the pinned cleanup image when a mounted stopped home needs it", () => {
+  it("pulls the pinned cleanup image and mounts the stopped home without copying image data", () => {
     const stateResource = {
       type: "volume" as const,
       source: "openclaw-state",
@@ -135,11 +135,10 @@ describe("stopped native-home cleanup", () => {
       ["pull", "--quiet", expect.stringContaining("node:24.22.1-trixie-slim")],
       120_000,
     );
-    // Podman 6.1 rejects Docker's --mount volume-nocopy option; both engines
-    // accept --volume with nocopy for this exact, validated named resource.
-    expect(capture).toHaveBeenCalledWith(
-      expect.arrayContaining(["--volume", "openclaw-state:/sandbox:nocopy"]),
-    );
+    const createArgs = capture.mock.calls.find(([args]) => args[0] === "create")![0];
+    expect(
+      createArgs.slice(createArgs.indexOf("--volume"), createArgs.indexOf("--volume") + 2),
+    ).toEqual(["--volume", "openclaw-state:/sandbox:nocopy"]);
   });
 
   it("removes complete native state while preserving exact user-managed paths", () => {

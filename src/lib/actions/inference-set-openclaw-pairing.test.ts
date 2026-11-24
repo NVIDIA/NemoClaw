@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { OpenClawPairingQualificationError } from "./sandbox/launch-readiness/openclaw-pairing-qualification";
 
 import {
   completeInferencePostCommit,
@@ -11,6 +10,8 @@ import {
   type InferenceSetOpenClawPairingTarget,
   settleInferenceSetOpenClawPairing,
 } from "./inference-set-gateway-restart";
+
+import { OpenClawPairingQualificationError } from "./sandbox/launch-readiness/openclaw-pairing-qualification";
 
 const TARGET: InferenceSetOpenClawPairingTarget = {
   sandboxName: "alpha",
@@ -108,6 +109,7 @@ describe("settleInferenceSetOpenClawPairing", () => {
     expect(result).toEqual({
       ok: false,
       failureLayer: "initial-state-unavailable",
+      failureCategory: "unclassified",
     });
     expect(JSON.stringify(result)).not.toContain("do-not-report");
     expect(deps.publishScopeRequest).not.toHaveBeenCalled();
@@ -138,6 +140,7 @@ describe("settleInferenceSetOpenClawPairing", () => {
     expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
       ok: false,
       failureLayer: "initial-state-unavailable:client-auth",
+      failureCategory: "input-unavailable",
     });
     expect(deps.publishScopeRequest).not.toHaveBeenCalled();
     expect(deps.approveScopeRequest).not.toHaveBeenCalled();
@@ -185,6 +188,7 @@ describe("settleInferenceSetOpenClawPairing", () => {
     expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
       ok: false,
       failureLayer: "final-state-unavailable",
+      failureCategory: "unclassified",
     });
     expect(deps.approveScopeRequest).toHaveBeenCalledOnce();
   });
@@ -235,5 +239,52 @@ describe("settleInferenceSetOpenClawPairing", () => {
       }),
     );
     expect(JSON.stringify(appendAuditEntry.mock.calls)).not.toContain("credential=");
+  });
+});
+
+it("retains the initial observation category without another approval", () => {
+  const failure = new OpenClawPairingQualificationError("deadline-exceeded");
+  failure.message = "credential=must-not-escape";
+  const observePairing = vi.fn<InferenceSetOpenClawPairingDeps["observePairing"]>(() => {
+    throw failure;
+  });
+  const deps = pairingDeps({ observePairing });
+  expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
+    ok: false,
+    failureLayer: "initial-state-unavailable:timeout",
+    failureCategory: "deadline-exceeded",
+  });
+  expect(deps.approveScopeRequest).toHaveBeenCalledTimes(0);
+});
+
+it("retains the final observation category without another approval", () => {
+  const failure = new OpenClawPairingQualificationError("deadline-exceeded");
+  failure.message = "credential=must-not-escape";
+  const observePairing = vi.fn<InferenceSetOpenClawPairingDeps["observePairing"]>(() => {
+    throw failure;
+  });
+  observePairing.mockReturnValueOnce(observation("pairing-only"));
+  const deps = pairingDeps({ observePairing });
+  expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
+    ok: false,
+    failureLayer: "final-state-unavailable:timeout",
+    failureCategory: "deadline-exceeded",
+  });
+  expect(deps.approveScopeRequest).toHaveBeenCalledTimes(1);
+});
+
+it("rejects arbitrary categories even on typed observer errors", () => {
+  const failure = Object.assign(new OpenClawPairingQualificationError(), {
+    failureCategory: "credential=must-not-escape",
+  });
+  const deps = pairingDeps({
+    observePairing: () => {
+      throw failure;
+    },
+  });
+  expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
+    ok: false,
+    failureLayer: "initial-state-unavailable",
+    failureCategory: "unclassified",
   });
 });

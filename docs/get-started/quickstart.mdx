@@ -297,9 +297,12 @@ Use these details when your first-run path needs more control.
     OpenClaw requires device pairing during onboarding. The managed startup profile still carries `NEMOCLAW_DISABLE_DEVICE_AUTH` and its provenance only as legacy compatibility inputs while managed callers transition. OpenClaw 2026.9.1 retired the bypass, so NemoClaw does not emit a device-auth bypass key and changing this input does not skip pairing.
     </Note>
 
-    If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox before it changes the gateway.
-    After backup, it requires any existing OpenShell executable it will use to report a version and compares that version with the current release's supported range.
-    It retires the running gateway before replacing OpenShell only when that version is outside the supported range; an unknown installed version or an invalid or missing range stops the update without retiring the gateway, while any retirement failure stops the update with the sandbox backups preserved.
+    If registered sandboxes already exist, the installer first checks their names and the installed OpenShell version.
+    This release requires OpenShell `0.1.10` for those sandboxes.
+    An out-of-range, missing, or unreadable installed version stops the installer before backup or gateway retirement, leaving the gateway and sandboxes unchanged.
+    For an eligible upgrade, the installer prepares the current NemoClaw CLI and requires a fresh backup of every registered sandbox before recovery.
+    It keeps an in-range OpenShell gateway; component replacement also requires an empty retained sandbox inventory.
+    Follow the [OpenShell upgrade restrictions](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before changing an existing installation.
     After the host upgrade, it runs `nemoclaw upgrade-sandboxes --auto` before generic host admission.
     Confirmed recovery rebuilds stale sandboxes and restores validated backups for registered sandboxes that are not Ready.
     Recovery also includes confirmed pre-fingerprint OpenClaw sandboxes that report Ready when their live agent-version probe fails.
@@ -396,9 +399,11 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Web Search Messaging and Network Policies">
     After confirmation, NemoClaw registers the selected provider with OpenShell.
-    NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
-    New Ollama, standalone vLLM, and llama.cpp selections also use sandbox-attached providers for their host-local endpoints.
-    Local NVIDIA NIM, custom endpoints, and earlier local selections without a sandbox-attached provider retain the shared `inference.local` route.
+    NVIDIA Endpoints, supported fixed hosted providers, and qualifying custom hosted endpoints use native endpoints through sandbox-attached OpenShell providers.
+    New OpenClaw Ollama, standalone vLLM, and llama.cpp selections also use attached providers.
+    For these new local attachments, `status`, `connect`, and `start` probe the recorded provider endpoint.
+    Remaining custom shared selections retain `inference.local` on OpenShell `0.0.x`.
+    Native local onboarding on `0.1.10` remains unqualified for this upgrade.
     The wizard asks whether to enable web search and offers Brave Search or Tavily Search.
     Provide `BRAVE_API_KEY` for Brave Search or `TAVILY_API_KEY` for Tavily Search when prompted.
     NemoClaw validates the selected key before it creates the sandbox, registers a sandbox-scoped OpenShell provider, and writes only an OpenShell resolver placeholder into the OpenClaw configuration.

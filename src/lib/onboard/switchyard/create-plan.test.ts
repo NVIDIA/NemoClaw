@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { switchyardBindingFixture } from "../../../../test/helpers/hermes-switchyard";
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 import {
   createHermesSwitchyardRoutingIntent,
   type SwitchyardProviderBindings,
@@ -316,7 +317,7 @@ describe("Switchyard sandbox creation", () => {
       };
       const fields = nativeInferenceCreateIntentFields(entry.provider, entry);
       expect(fields.inferenceProvider).toBeNull();
-      const intent = resolveSandboxCreateIntent({
+      const intentInput: Parameters<typeof resolveSandboxCreateIntent>[0] = {
         ...fields,
         basePolicyPath: "/repo/policy.yaml",
         sandboxName: "alpha",
@@ -337,18 +338,35 @@ describe("Switchyard sandbox creation", () => {
         gpuRoutePlan: "none",
         sandboxGpuLogMessage: null,
         agentName: "hermes",
-      });
-      const plan = await materializeSandboxCreatePlan({
+      };
+      const registered = registeredInferenceFixture().binding;
+      expect(() =>
+        resolveSandboxCreateIntent({
+          ...intentInput,
+          registeredInferenceProviderAttachment: registered,
+        }),
+      ).toThrow("cannot share a recorded native inference attachment");
+      const intent = resolveSandboxCreateIntent(intentInput);
+      const planInput: Parameters<typeof materializeSandboxCreatePlan>[0] = {
         intent,
         fromRef: `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"a".repeat(64)}`,
         messagingTokenDefs: [],
         upsertMessagingProviders: vi.fn(() => []),
         getHermesToolGatewayProviderName: () => "unused",
-        prepareInitialSandboxCreatePolicy: () => ({
+        prepareInitialSandboxCreatePolicy: vi.fn(() => ({
           policyPath: "/tmp/test-policy.yaml",
           appliedPresets: [],
+        })),
+      };
+      await expect(
+        materializeSandboxCreatePlan({
+          ...planInput,
+          intent: { ...intent, registeredInferenceProviderAttachment: registered },
         }),
-      });
+      ).rejects.toThrow("cannot share a recorded native inference attachment");
+      expect(planInput.upsertMessagingProviders).not.toHaveBeenCalled();
+      expect(planInput.prepareInitialSandboxCreatePolicy).not.toHaveBeenCalled();
+      const plan = await materializeSandboxCreatePlan(planInput);
       expect(plan.createRequest.providers).toEqual(bindings.providers.map((p) => p.providerName));
       expect(plan.createRequest.providers).toHaveLength(dedicated ? 3 : 2);
       expect(plan.createRequest.providers).not.toContain("nemoclaw-nvidia-prod-v1");

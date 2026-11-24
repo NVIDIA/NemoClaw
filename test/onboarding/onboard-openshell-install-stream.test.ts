@@ -40,6 +40,10 @@ describe("runOpenshellInstall progress streaming (#4431)", () => {
     spawnSyncMock.mockReturnValue({ status: 0 });
     runOpenshellInstall(makeDeps());
     expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    expect(spawnSyncMock.mock.calls[0].slice(0, 2)).toEqual([
+      "bash",
+      ["/fake/scripts/install-openshell.sh"],
+    ]);
     const options = spawnSyncMock.mock.calls[0][2];
     expect(options.stdio).toEqual(["ignore", "inherit", "inherit"]);
   });

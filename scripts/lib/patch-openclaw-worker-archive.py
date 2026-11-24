@@ -99,7 +99,8 @@ def read_archive(data):
     return files
 
 
-def patch_archive(dist, node, patcher):
+def patch_archive(dist, node, patcher, native=False):
+    modules = (MODULES - {"worker-chunk-CMCl78Z0.mjs", "worker-chunk-BS-ufNRt.mjs"} | {"worker-chunk-CimbqAym.mjs", "worker-chunk-A05CVh6v.mjs"}) if native else MODULES
     if json.loads(read_regular(dist.parent / "package.json", 1024 * 1024))["version"] != "2026.10.5":
         raise ValueError("Unreviewed OpenClaw worker archive version")
     directory = dist / "worker-artifacts"
@@ -121,11 +122,11 @@ def patch_archive(dist, node, patcher):
         raise ValueError("Worker archive is not uniquely owned by the postinstall inventory")
     with tempfile.TemporaryDirectory(prefix=".nemoclaw-worker-", dir=dist) as temporary:
         stage = Path(temporary)
-        for name in sorted(MODULES):
+        for name in sorted(modules):
             module_path = stage / name
             module_path.write_bytes(files[name])
             result = subprocess.run(
-                [node, patcher, "--archive-module", name, str(module_path)],
+                [node, patcher, "--archive-module-native" if native else "--archive-module", name, str(module_path)],
                 check=True, capture_output=True, text=True, timeout=30,
             )
             proof = json.loads(result.stdout)
@@ -160,6 +161,6 @@ def patch_archive(dist, node, patcher):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5) or (len(sys.argv) == 5 and sys.argv[4] != "--native"):
         raise SystemExit("Usage: patch-openclaw-worker-archive.py <dist> <node> <patcher>")
-    print(json.dumps({"changed": patch_archive(Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3])}))
+    print(json.dumps({"changed": patch_archive(Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3], len(sys.argv) == 5)}))

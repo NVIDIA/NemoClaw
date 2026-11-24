@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  verifyRegisteredInferenceProviderAttachment,
+  type RegisteredInferenceProviderAttachment,
+} from "./live-export-inference-contract";
+import { createManagedProviderAdapter } from "./live-export-inference-contract";
 import os from "node:os";
 import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/contract";
 import {
@@ -182,6 +187,42 @@ function endpointSourceFor(
   return { kind: "provider-config", key: configKey };
 }
 
+async function readRegisteredProviderEvidence(
+  provider: Provider,
+  gatewayName: string,
+  registeredReceipt: RegisteredInferenceProviderAttachment,
+): Promise<ObservedExportEndpointEvidence> {
+  await verifyRegisteredInferenceProviderAttachment({
+    adapter: createManagedProviderAdapter(),
+    expected: registeredReceipt,
+  });
+  if (
+    provider.id !== registeredReceipt.providerId ||
+    provider.name !== registeredReceipt.providerName ||
+    provider.type !== registeredReceipt.profileId ||
+    !provider.credentialKeys.includes(registeredReceipt.credentialEnv)
+  )
+    throw new Error("The live registered provider identity does not match its selection.");
+  return {
+    provider: providerIdentity(provider, gatewayName, false),
+    endpoint: registeredReceipt.endpointUrl,
+    source: {
+      kind: "registered-provider",
+      profileId: registeredReceipt.profileId,
+      profileDigest: registeredReceipt.profileDigest,
+    },
+  };
+}
+
+function nativeHostedExportRequest(receipt?: NativeInferenceReceipt) {
+  if (!receipt?.endpointUrl || normalizeNativeLocalProviderAttachment(receipt)) return {};
+  return {
+    nativeHostedEndpoint: receipt.endpointUrl,
+    nativeHostedAllowedIps: receipt.allowedIps,
+    nativeHostedCustom: receipt.custom,
+  };
+}
+
 async function readProviderEvidence(
   normalized: ReturnType<typeof normalizeInferenceSelection>,
   routeProvider: string,
@@ -189,6 +230,7 @@ async function readProviderEvidence(
   signal: AbortSignal,
   managedServing?: ObservedManagedVllmRuntime,
   nativeReceipt?: NativeInferenceReceipt,
+  registeredReceipt?: RegisteredInferenceProviderAttachment,
 ): Promise<ObservedExportEndpointEvidence> {
   const { configKey } = providerContract(normalized.preferredInferenceApi);
   const profileContract = profileContractFor(routeProvider, nativeReceipt);
@@ -197,17 +239,14 @@ async function readProviderEvidence(
     workspace: "default",
     name: routeProvider,
     ...(profileContract ? { profileContract } : {}),
-    ...(nativeReceipt?.endpointUrl && !normalizeNativeLocalProviderAttachment(nativeReceipt)
-      ? {
-          nativeHostedEndpoint: nativeReceipt.endpointUrl,
-          nativeHostedAllowedIps: nativeReceipt.allowedIps,
-          nativeHostedCustom: nativeReceipt.custom,
-        }
-      : {}),
-    configKeys: [configKey],
+    ...nativeHostedExportRequest(nativeReceipt),
+    configKeys: registeredReceipt ? [] : [configKey],
     signal,
   });
   if (!provider) throw new Error("The live inference provider is missing.");
+  if (registeredReceipt) {
+    return readRegisteredProviderEvidence(provider, gatewayName, registeredReceipt);
+  }
   const builtin = provider.builtinInferenceEndpoint !== undefined;
   if (
     !matchesProviderMetadata(provider, normalized, routeProvider, !!managedServing, nativeReceipt)
@@ -228,7 +267,7 @@ async function readProviderEvidence(
 async function resolveLiveInference(
   entry: Readonly<SandboxEntry>,
   gatewayName: string,
-  nativeReceipt: NativeInferenceReceipt | undefined,
+  nativeReceipt: NativeInferenceReceipt | RegisteredInferenceProviderAttachment | undefined,
 ): Promise<Readonly<{ provider: string; model: string; logicalProvider: string }>> {
   if (!nativeReceipt) {
     const live = await readInferenceRoute(entry, gatewayName);
@@ -252,12 +291,13 @@ async function inferenceFor(
   sandbox: ObservedExportSandboxIdentity,
   managedServing?: ObservedManagedVllmRuntime,
 ): Promise<ObservedExportInference> {
-  const { normalized, nativeReceipt } = resolveExportInferenceSelection(entry);
+  const { normalized, nativeReceipt, registeredReceipt } = resolveExportInferenceSelection(entry);
+  const selectedReceipt = registeredReceipt ?? nativeReceipt;
   const gateway = resolveGatewayBinding(entry);
-  if (nativeReceipt && !sandbox.providerNames.includes(nativeReceipt.providerName)) {
+  if (selectedReceipt && !sandbox.providerNames.includes(selectedReceipt.providerName)) {
     throw new Error("The native provider is not attached to the sandbox.");
   }
-  const live = await resolveLiveInference(entry, gateway.name, nativeReceipt);
+  const live = await resolveLiveInference(entry, gateway.name, selectedReceipt);
   beforeRead("provider-metadata");
   const endpointEvidence = await readProviderEvidence(
     normalized,
@@ -266,6 +306,7 @@ async function inferenceFor(
     signal,
     managedServing,
     nativeReceipt,
+    registeredReceipt,
   );
   let ollamaServing: ObservedExportInference["ollamaServing"];
   if (entry.provider === "ollama-local") {
@@ -322,6 +363,7 @@ async function effectivePolicy(gateway: ObservedExportGateway, row: Sandbox, sig
     target: namedOpenShellGateway(gateway.name),
     workspace: row.workspace,
     sandboxId: row.id,
+    name: row.name,
     signal,
   });
   if (policy.appliedRevision === null) {

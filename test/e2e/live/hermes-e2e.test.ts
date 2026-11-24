@@ -1,17 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  buildNetworkPolicyRequest,
+  isNetworkPolicyDenial,
+} from "../support/network-policy-probe.ts";
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
+import { normalizeNativeLocalProviderAttachment } from "../../../src/lib/inference/native-local/contract.ts";
 import { recordedNativeProviderAttachment } from "../../../src/lib/inference/native-provider/recorded-selection.ts";
 import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
+import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -22,6 +29,7 @@ import {
 import { scopeGatewayOpenshellArgs } from "../../../src/lib/adapters/openshell/gateway-scope.ts";
 import { parseOpenShellPolicy } from "../../../src/lib/adapters/openshell/policy-boundary.ts";
 import {
+  isSwitchyardCallbackPolicyDenial,
   startSwitchyardBoundaryUpstream,
   switchyardBoundaryProbe,
   SWITCHYARD_BOUNDARY_ANSWER,
@@ -282,12 +290,16 @@ test(
           timeoutMs: 60_000,
         }),
       );
-      await preCleanBestEffort(() =>
-        sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-          artifactName: `${label}-openshell-gateway-destroy`,
-          env: commandEnv(),
-          timeoutMs: 60_000,
-        }),
+      await lifecycle.stopGatewayRuntime({ env: commandEnv(), userServiceMode: "permanent" });
+      await cleanupWhenOpenShellAvailable(
+        host,
+        { artifactName: `${label}-probe-openshell-gateway`, env: commandEnv(), timeoutMs: 30_000 },
+        () =>
+          host.cleanupGatewayRegistration("nemoclaw", {
+            artifactName: `${label}-openshell-gateway`,
+            env: commandEnv(),
+            timeoutMs: 60_000,
+          }),
       );
     };
 
@@ -395,17 +407,15 @@ test(
 
     const deniedEgress = await sandbox.exec(
       SANDBOX_NAME,
-      ["curl", "-fsS", "--connect-timeout", "5", "--max-time", "15", "https://example.com/"],
+      buildNetworkPolicyRequest("https://example.com/"),
       {
         artifactName: "phase-3-unintended-egress-denied",
         env: commandEnv(),
         timeoutMs: 30_000,
       },
     );
-    expect(deniedEgress.exitCode, resultText(deniedEgress)).not.toBe(0);
-    expect(resultText(deniedEgress)).toMatch(
-      /CONNECT tunnel failed, response 403|The requested URL returned error: 403|policy[_ ]denied|not allowed by any policy/i,
-    );
+    expect(deniedEgress.exitCode, resultText(deniedEgress)).toBe(0);
+    expect(isNetworkPolicyDenial(deniedEgress), resultText(deniedEgress)).toBe(true);
 
     // Continue Phase 3 with Hermes health and sandbox state.
     let health: ShellProbeResult | undefined;
@@ -822,7 +832,9 @@ test(
     expectPong(`${inference.mode} direct chat`, directChat);
 
     const chatSelection = registryEntry(SANDBOX_NAME) as unknown as SandboxEntry;
-    const chatAttachment = recordedNativeProviderAttachment(chatSelection);
+    const chatAttachment =
+      normalizeNativeLocalProviderAttachment(chatSelection.nativeLocalProviderAttachment) ??
+      recordedNativeProviderAttachment(chatSelection);
     const sandboxChat = await sandbox.exec(
       SANDBOX_NAME,
       buildSandboxInferenceChatCommand(
@@ -1101,8 +1113,10 @@ test(
       const unmanagedBlocked = await boundaryProbe(boundary.forbiddenUrl, "unmanaged-forbidden", {
         mode: "unmanaged",
       });
-      expect(unmanagedBlocked.passthrough).toBe(true);
-      expect(unmanagedBlocked.callback_status).toBe(403);
+      expect(
+        isSwitchyardCallbackPolicyDenial(unmanagedBlocked),
+        JSON.stringify(unmanagedBlocked),
+      ).toBe(true);
       const beforeWrongCallbackHandle = boundary.evidence.requests;
       const wrongCallbackHandle = await boundaryProbe(boundary.baseUrl, "unmanaged-wrong-handle", {
         mode: "unmanaged",
@@ -1119,13 +1133,19 @@ test(
       const unmatchedBlocked = await boundaryProbe(boundary.forbiddenUrl, "unmatched-forbidden", {
         mode: "unmatched",
       });
-      expect(unmatchedBlocked.passthrough).toBe(true);
-      expect(unmatchedBlocked.callback_status).toBe(403);
+      expect(
+        isSwitchyardCallbackPolicyDenial(unmatchedBlocked),
+        JSON.stringify(unmatchedBlocked),
+      ).toBe(true);
       boundary.respondWithError(true);
       const beforeProviderError = boundary.evidence.errors;
+      const beforeFailedTargets = boundary.evidence.failedTargets.length;
       const providerFailed = await boundaryProbe(boundary.baseUrl, "provider-failure");
       expect(providerFailed.failed).toBe(true);
-      expect(boundary.evidence.errors).toBe(beforeProviderError + 1);
+      // HTTP 500 falls through to the capable target with client retries disabled.
+      expect(boundary.evidence.errors).toBe(beforeProviderError + 2);
+      expect(boundary.evidence.failedTargets[beforeFailedTargets]).toBe("efficient");
+      expect(boundary.evidence.failedTargets[beforeFailedTargets + 1]).toBe("capable");
       boundary.respondWithError(false);
       const afterFailure = await boundaryProbe(boundary.baseUrl, "provider-failure-recovery");
       expect(afterFailure.answer).toBe(SWITCHYARD_BOUNDARY_ANSWER);

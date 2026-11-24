@@ -20,7 +20,7 @@ const result = (exitCode: number, stdout = "", stderr = "") => ({
 });
 
 describe("DGX Spark Express vLLM qualification safety", () => {
-  it("probes both allowed addresses and every unintended IPv4 and IPv6 address (#14083)", () => {
+  it("probes loopback and every unintended IPv4 and IPv6 address (#14083)", () => {
     const ipv4 = (address: string, internal = false) => ({
       address,
       internal,
@@ -39,15 +39,16 @@ describe("DGX Spark Express vLLM qualification safety", () => {
       cidr: null,
     });
     expect(
-      vllmPublicationProbeUrls("172.18.0.1", {
+      vllmPublicationProbeUrls({
         lo: [ipv4("127.0.0.1", true), ipv6("::1")],
         openshell: [ipv4("172.18.0.1")],
         eth0: [ipv4("192.0.2.10"), ipv6("2001:db8::10"), ipv6("fe80::10", 2)],
       }),
     ).toEqual({
-      allowed: ["http://127.0.0.1:8000/health", "http://172.18.0.1:8000/health"],
+      allowed: ["http://127.0.0.1:8000/health"],
       denied: [
         "http://[::1]:8000/health",
+        "http://172.18.0.1:8000/health",
         "http://192.0.2.10:8000/health",
         "http://[2001:db8::10]:8000/health",
         "http://[fe80::10%25eth0]:8000/health",
@@ -65,8 +66,8 @@ describe("DGX Spark Express vLLM qualification safety", () => {
       mac: "",
       cidr: null,
     };
-    expect(vllmPublicationProbeUrls("172.18.0.1", { eth0: [entry] }).ipv6).toBe("unconfigured");
-    expect(() => vllmPublicationProbeUrls("172.18.0.1", {})).toThrow("unintended non-loopback");
+    expect(vllmPublicationProbeUrls({ eth0: [entry] }).ipv6).toBe("unconfigured");
+    expect(() => vllmPublicationProbeUrls({})).toThrow("unintended non-loopback");
   });
 
   it("accepts only local Docker selectors (#8379)", () => {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export {
+  validateSandboxCreateIntentBindings,
   resolvePrimaryMessagingCredentialEnvKeys,
   resolveSandboxCreateIntent,
   resolveSandboxCreateMessagingProviderRequests,
@@ -17,7 +18,6 @@ export type { SandboxCreatePlan } from "./sandbox-create-plan-materialization";
 export {
   materializeSandboxCreatePlan,
   prepareSandboxCreatePolicy,
-  validateSandboxCreateIntentBindings,
 } from "./sandbox-create-plan-materialization";
 
 // Known canonical policy tier names. Kept inline so the create-time path

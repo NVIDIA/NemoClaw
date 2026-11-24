@@ -256,6 +256,52 @@ describe("E2E inference adapter", () => {
     ).toMatchObject({ choices: [{ message: { content: "PONG" } }] });
   });
 
+  it.each([
+    ["test-model", "test-model", false, false],
+    ["changed-model", "changed-model", false, false],
+    ["unadvertised-model", "test-model", false, false],
+    ["changed-model", "changed-model", true, false],
+    ["unadvertised-model", "test-model", true, false],
+    ["changed-model", "changed-model", true, true],
+    ["changed-model", "changed-model", false, true],
+  ])(
+    "returns the advertised response model for request %s: model=%s, stream=%s, tool=%s",
+    async (requested, expected, stream, tool) => {
+      const fake = await startFakeOpenAiCompatibleServer({
+        progress: NOOP_PROGRESS,
+        additionalModels: ["changed-model"],
+        requestCanaryMarker: "MODEL_IDENTITY_CANARY",
+        toolCallOnCanary: { name: "identity_tool", arguments: "{}" },
+      });
+      try {
+        const response = await fetch(`${fake.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: requested,
+            stream,
+            messages: [{ role: "user", content: tool ? "MODEL_IDENTITY_CANARY" : "hello" }],
+            tools: [{ type: "function", function: { name: "identity_tool" } }],
+          }),
+        });
+        expect(response.status).toBe(200);
+        const text = await response.text();
+        const chunks = stream
+          ? text
+              .split("\n")
+              .filter((line) => line.startsWith("data: {"))
+              .map((line) => JSON.parse(line.slice(6)))
+          : [JSON.parse(text)];
+        expect(chunks.map((chunk) => chunk.model)).toEqual(
+          stream ? [expected, expected] : [expected],
+        );
+        expect(chunks.at(-1).choices[0].finish_reason).toBe(tool ? "tool_calls" : "stop");
+      } finally {
+        await fake.close();
+      }
+    },
+  );
+
   it("keeps unrelated ambient secrets out of adapter and fake-server child environments", async () => {
     const secretName = "UNRELATED_E2E_SENTINEL_SECRET";
     const secretValue = "sentinel-value-that-must-not-propagate";

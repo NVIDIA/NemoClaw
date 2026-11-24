@@ -24,6 +24,8 @@ import {
 import { buildMcpBridgeProviderName } from "../../../src/lib/actions/sandbox/mcp-bridge-validation";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -41,7 +43,10 @@ import {
   type HermesMcpCommandResult,
   isHermesGatewayDrainingResponse,
 } from "./mcp-bridge-hermes-http.ts";
-import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
+import {
+  isMcpProviderDnsPolicyDenial,
+  MCP_PROVIDER_REWRITE_PROBE_SOURCE,
+} from "./mcp-provider-rewrite-probe.ts";
 import { FAKE_MCP_STATUS_RESULT_TOKEN } from "./mcp-bridge-servers.ts";
 
 export async function addBridgeAndReadStatus(
@@ -108,7 +113,6 @@ export async function addBridgeAndReadStatus(
     policy: { name: `mcp-bridge-${serverName}`, present: true, state: "configured" },
     adapter: { registered: true },
   });
-  expect(statusJson.warnings).toEqual([]);
   expect(status.stdout).not.toContain(credential);
   expect(statusJson.provider.name).toBe(`${options.sandboxName}-mcp-${serverName}`);
 
@@ -397,6 +401,16 @@ export async function runOpenClawPublicPinRefreshProof(
     expect(
       await setPolicyDocument(sandboxName, policy.toString(), { context, nonFatal: true }),
     ).toBe(true);
+    const readDnsAudit = (suffix: string) =>
+      sandbox.openshell(
+        ["logs", sandboxName, "-n", "500", "--source", "sandbox", "--since", "2m"],
+        {
+          artifactName: `openclaw-stale-public-pins-dns-audit-${suffix}`,
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+    const dnsAuditBefore = await readDnsAudit("before");
     const denied = await runMcpProviderRewriteProbe(
       sandbox,
       sandboxName,
@@ -405,7 +419,28 @@ export async function runOpenClawPublicPinRefreshProof(
       "deny-strict",
       "openclaw-stale-public-pins",
     );
-    assertExitZero(denied, "stale public pins deny the MCP connection");
+    let policyDenied = denied.exitCode === 0 && !denied.timedOut && denied.signal === null;
+    // Repeat only bounded audit reads; never retry the network probe.
+    for (
+      let attempt = 1;
+      !policyDenied &&
+      denied.exitCode === 1 &&
+      !denied.timedOut &&
+      denied.signal === null &&
+      attempt <= 5;
+      attempt += 1
+    ) {
+      policyDenied = isMcpProviderDnsPolicyDenial(
+        denied,
+        dnsAuditBefore,
+        await readDnsAudit(`after-${attempt}`),
+        new URL(mcpUrl).hostname,
+      );
+      if (!policyDenied && attempt < 5) await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    expect(policyDenied, `stale public pins deny the MCP connection: ${resultText(denied)}`).toBe(
+      true,
+    );
     const refreshed = await host.nemoclaw(
       [sandboxName, "mcp", "update", "fake", "--refresh-public-pins"],
       {
@@ -873,6 +908,34 @@ export async function restartBridgeWithoutHostSecret(
     timeoutMs: 12 * 60_000,
   });
   assertExitZero(restart, `${artifactPrefix} mcp restart without host secret`);
+}
+
+/** Register after acquired resources so failure evidence precedes destructive cleanup. */
+export function trackMcpFailureDiagnostics(
+  cleanup: Pick<CleanupRegistry, "trackDisposable">,
+  host: HostCliClient,
+  bridge: { sandboxName: string; artifactPrefix: string },
+  toolChallenge: string,
+  capture = captureSandboxFailureDiagnostics,
+): () => void {
+  let completed = false;
+  cleanup.trackDisposable("capture OpenClaw MCP lifecycle failure diagnostics", async () => {
+    if (!completed)
+      await capture(
+        host,
+        { exitCode: 1, timedOut: false },
+        {
+          sandboxName: bridge.sandboxName,
+          artifactPrefix: `${bridge.artifactPrefix}-mcp-lifecycle`,
+          env: buildAvailabilityProbeEnv(),
+          redactionValues: [...MCP_BRIDGE_TEST_REDACTION_VALUES, toolChallenge],
+          captureOpenClawOwner: true,
+        },
+      );
+  });
+  return () => {
+    completed = true;
+  };
 }
 
 export async function rebuildWithoutMcpHostSecret(

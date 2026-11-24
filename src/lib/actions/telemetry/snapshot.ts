@@ -15,6 +15,7 @@ import {
   parseRuntimeRoster,
   projectRuntimeAgents,
   projectCurrentInferenceRoute,
+  projectRecordedNativeInferenceRoute,
   unknownModel,
 } from "../../domain/telemetry/dimensions";
 import type {
@@ -28,8 +29,6 @@ import type {
 } from "../../domain/telemetry/event";
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
 import { readAppliedPolicySelection } from "../../domain/telemetry/provenance";
-import { authorizedNativeLocalAttachment } from "../../inference/native-local/recorded-selection";
-import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { DCODE_OBSERVABILITY_FEATURE } from "../../onboard/observability-policy-presets";
 import {
   readManagedRoutedBaseUrl,
@@ -223,34 +222,6 @@ function projectConfiguration(
   };
 }
 
-/**
- * Native providers are attached to the sandbox and leave the shared gateway route unset, so the
- * recorded selection is the current route, as in `inference get`. Undefined means no attachment.
- */
-function recordedNativeRoute(
-  entry: SandboxEntry,
-  gatewayName: string,
-): OpenShellInferenceRouteResult | undefined {
-  const local = entry.nativeLocalProviderAttachment;
-  let valid = false;
-  try {
-    if (local === undefined && !recordedNativeProviderAttachment(entry)) return undefined;
-    // The same validation as `inference get`, so both report one route authority.
-    valid = local === undefined || !!authorizedNativeLocalAttachment(entry, gatewayName);
-  } catch {
-    /* An invalid recorded attachment is reported as a route collection error. */
-  }
-  return valid && entry.provider && entry.model
-    ? {
-        ok: true,
-        value: { state: "configured", route: { provider: entry.provider, model: entry.model } },
-      }
-    : {
-        ok: false,
-        error: { kind: "validation", message: "Invalid recorded native inference selection." },
-      };
-}
-
 async function collectRuntime(
   entry: SandboxEntry,
   row: TelemetryConfiguration,
@@ -289,7 +260,7 @@ async function collectRuntime(
     });
     const gatewayName = resolveSandboxGatewayName(entry);
     const routeKey = JSON.stringify([gatewayName, runtimeSelection]);
-    const nativeRoute = recordedNativeRoute(entry, gatewayName);
+    const nativeRoute = projectRecordedNativeInferenceRoute(entry, gatewayName);
     let route = nativeRoute ? Promise.resolve(nativeRoute) : options.routes.get(routeKey);
     if (!route) {
       const remaining = options.deadlineAt - Date.now();

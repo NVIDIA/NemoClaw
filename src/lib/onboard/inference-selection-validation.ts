@@ -74,7 +74,7 @@ export interface OpenAiSelectionValidationOptions {
   requireChatCompletionsToolCalling?: boolean;
   retryChatCompletionsToolReadiness?: boolean;
   useNvidiaEndpointProbePayload?: boolean;
-  /** Provider identity used only for safe, provider-specific diagnostics. */
+  /** Provider identity used for bounded HTTP retries and provider-specific diagnostics. */
   provider?: string;
   /** Provider-owned default model used only for safe, provider-specific diagnostics. */
   providerDefaultModel?: string;

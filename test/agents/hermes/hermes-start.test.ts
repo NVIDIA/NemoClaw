@@ -1121,9 +1121,10 @@ describe("agents/hermes/start.sh env secret boundary", () => {
           'refresh_hermes_runtime_config_hashes() { trace "hashes:$1:${2:-preserve}"; hash_state=current; }',
           "configure_messaging_channels() { trace channels; }",
           "retry_tirith_marker_if_needed() { trace tirith; }",
+          "settle_tirith_marker_retry() { trace tirith-settled; }",
           extractShellFunctionFromSource(source, "prepare_tirith_marker_retry"),
           extractShellFunctionFromSource(source, "prepare_hermes_nonroot_runtime"),
-          "HERMES_DIR=/sandbox/.hermes; prepare_hermes_nonroot_runtime",
+          "HERMES_DIR=/sandbox/.hermes; NEMOCLAW_CMD=(); prepare_hermes_nonroot_runtime",
         ].join("\n"),
       ],
       { encoding: "utf-8" },
@@ -1142,6 +1143,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
       "hashes:compat:preserve",
       "channels",
       "tirith",
+      "tirith-settled",
     ]);
   });
   it("rejects bare API-named raw values without printing the value", () => {

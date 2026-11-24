@@ -351,6 +351,7 @@ describe("generated MCP policy", () => {
       allowed_ips: ["2606:4700:4700::1111", "8.8.8.8"],
       credential_binding: { provider: "alpha-mcp-bound-provider" },
       mcp: {
+        versions: ["2025-11-25"],
         max_body_bytes: MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
         strict_tool_names: true,
         allow_all_known_mcp_methods: false,

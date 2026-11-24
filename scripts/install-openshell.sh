@@ -109,7 +109,7 @@ user_local_executable_directory_safe() {
       [[ -d "$current" ]] || return 1
       if metadata="$(stat -c '%u %a' -- "$current" 2>/dev/null)"; then
         :
-      elif metadata="$(stat -f '%u %Lp' "$current" 2>/dev/null)"; then
+      elif metadata="$(stat -f '%u %Mp%03Lp' "$current" 2>/dev/null)"; then
         :
       else
         return 1
@@ -209,10 +209,10 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 # round-trippable base policies: WebSocket text frames, provider-shaped
 # aliases, REST request bodies, MCP/JSON-RPC L7 enforcement, and
 # `policy get --base` for MCP/JSON-RPC-safe read-modify-write operations.
-MIN_VERSION="0.0.116"
+MIN_VERSION="0.1.10"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.116"
+MAX_VERSION="0.1.10"
 # Pin fresh installs to this version. The TS installer normally overrides this
 # via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
 # OpenShell release that satisfies the blueprint's max_openshell_version
@@ -220,7 +220,7 @@ MAX_VERSION="0.0.116"
 PIN_VERSION="$MAX_VERSION"
 # Keep the base-trusted template selector aligned with the immutable release;
 # the dev channel is rejected below and cannot consume it.
-DEV_MIN_VERSION="0.0.116"
+DEV_MIN_VERSION="0.1.10"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
@@ -295,6 +295,233 @@ fi
 
 RELEASE_TAG="v${PIN_VERSION}"
 
+# Prove absence through searchable parents; an inaccessible or dangling path
+# cannot establish that gateway state is absent.
+gateway_registration_path_is_absent() {
+  local current="$1"
+  [[ "$current" = /* ]] || return 1
+  [ ! -e "$current" ] && [ ! -L "$current" ] || return 1
+  while [ "$current" != "/" ]; do
+    current="${current%/*}"
+    current="${current:-/}"
+    if [ -e "$current" ] || [ -L "$current" ]; then
+      [ -d "$current" ] && [ -r "$current" ] && [ -x "$current" ] || return 1
+    fi
+  done
+}
+
+legacy_openshell_state_is_absent() {
+  local config="${XDG_CONFIG_HOME:-${HOME:+$HOME/.config}}"
+  local system="${OPENSHELL_SYSTEM_GATEWAY_DIR-/etc/openshell}"
+  ! command -v openshell >/dev/null 2>&1 || return 1
+  [[ "$config" = /* && "$system" = /* && "${HOME:-}" = /* ]] || return 1
+  gateway_registration_path_is_absent "$config/openshell/gateways" \
+    && gateway_registration_path_is_absent "/etc/openshell/gateways" \
+    && gateway_registration_path_is_absent "$system/gateways" \
+    && gateway_registration_path_is_absent "$HOME/.nemoclaw/sandboxes.json" \
+    && gateway_registration_path_is_absent "$HOME/.nemoclaw/gateways"
+}
+
+# Every installation entrypoint must verify legacy state before downloading or
+# replacing components. The Homebrew service-control operation above remains
+# available so the installed legacy gateway can still be stopped and retired.
+verify_legacy_openshell_state() {
+  if legacy_openshell_state_is_absent; then
+    return
+  fi
+  command -v node >/dev/null 2>&1 || fail "Node.js is required to verify legacy OpenShell state."
+  # Keep this guard in the installer: protected execution projects this file alone.
+  # shellcheck disable=SC2016 # JavaScript template literals are evaluated by Node.js.
+  node --input-type=module -e '
+import { spawnSync } from "node:child_process";
+import { closeSync, constants, fstatSync, openSync, readSync, readdirSync, lstatSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+
+function deny(reason) {
+  throw new Error(
+    `Cannot replace OpenShell: ${reason}. Keep the existing gateway and sandboxes intact until an approved migration path is available. Existing components and gateway data were not changed.`,
+  );
+}
+
+function query(binary, args) {
+  const result = spawnSync(binary, args, {
+    encoding: "utf8",
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.error || result.status !== 0 || result.stderr.trim()) {
+    deny("the installed CLI could not verify legacy gateway state");
+  }
+  return result.stdout.trim();
+}
+
+function missing(error) {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function readRetainedJson(descriptor, label) {
+  const limit = 16 * 1024 * 1024;
+  const stat = fstatSync(descriptor);
+  if (!stat.isFile()) deny(`${label} is not a regular file`);
+  if (stat.size > limit) deny(`${label} exceeds the ${limit} byte limit`);
+  // Keep allocation bounded even if the opened file grows after fstat.
+  const bytes = Buffer.alloc(limit + 1);
+  let length = 0;
+  while (length < bytes.length) {
+    const count = readSync(descriptor, bytes, length, bytes.length - length, null);
+    if (count === 0) break;
+    length += count;
+  }
+  if (length > limit) deny(`${label} exceeds the ${limit} byte limit`);
+  return JSON.parse(bytes.toString("utf8", 0, length));
+}
+
+function gatewayNames() {
+  const config = process.env.XDG_CONFIG_HOME || join(process.env.HOME || "", ".config");
+  const system = process.env.OPENSHELL_SYSTEM_GATEWAY_DIR ?? "/etc/openshell";
+  if (!isAbsolute(config) || !isAbsolute(system))
+    deny("gateway configuration paths are not absolute");
+  const names = new Map();
+  // An alternate root does not prove that default system registrations were retired.
+  for (const root of new Set([join(config, "openshell", "gateways"), "/etc/openshell/gateways", join(system, "gateways")])) {
+    let entries;
+    try {
+      entries = readdirSync(root, { withFileTypes: true });
+    } catch (error) {
+      if (missing(error)) continue;
+      deny("legacy gateway registrations could not be read");
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) deny("a legacy gateway registration is a symbolic link");
+      if (!entry.isDirectory()) deny("a legacy gateway registration is not a directory");
+      const metadataPath = join(root, entry.name, "metadata.json");
+      // An absent record cannot prove retirement. Check and read the opened
+      // file, without following a substituted symlink or blocking on a FIFO.
+      const descriptor = openSync(
+        metadataPath,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      let metadata;
+      try {
+        metadata = readRetainedJson(descriptor, "legacy gateway metadata");
+      } finally {
+        closeSync(descriptor);
+      }
+      if (
+        !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(entry.name) ||
+        metadata?.name !== entry.name ||
+        typeof metadata.gateway_endpoint !== "string" ||
+        !metadata.gateway_endpoint.trim()
+      ) {
+        deny("legacy gateway metadata is invalid");
+      }
+      if (names.has(entry.name) && names.get(entry.name) !== metadata.gateway_endpoint) {
+        deny("user and system legacy gateway registrations disagree");
+      }
+      names.set(entry.name, metadata.gateway_endpoint);
+    }
+  }
+  return [...names.keys()];
+}
+
+function verifyRetainedNemoClawRegistry() {
+  if (!isAbsolute(process.env.HOME || "")) deny("the NemoClaw state path is not absolute");
+  const root = join(process.env.HOME, ".nemoclaw");
+  const roots = [root];
+  // Component replacement affects every gateway, including non-default ports.
+  for (const directory of [root, join(root, "gateways")]) {
+    try {
+      if (!lstatSync(directory).isDirectory()) deny("the NemoClaw state path is not a directory");
+      if (directory !== root) {
+        for (const entry of readdirSync(directory, { withFileTypes: true })) {
+          if (!/^\d{1,5}$/.test(entry.name) || Number(entry.name) < 1 ||
+              Number(entry.name) > 65535 || Number(entry.name) === 8080) continue;
+          if (!entry.isDirectory()) deny("a NemoClaw gateway state path is not a directory");
+          roots.push(join(directory, entry.name));
+        }
+      }
+    } catch (error) {
+      if (!missing(error)) throw error;
+    }
+  }
+  for (const directory of roots) {
+    let descriptor;
+    try {
+      descriptor = openSync(join(directory, "sandboxes.json"),
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    } catch (error) {
+      if (missing(error)) continue;
+      throw error;
+    }
+    try {
+      const registry = readRetainedJson(descriptor, "the NemoClaw sandbox registry");
+      if (!registry || typeof registry !== "object" || Array.isArray(registry) ||
+          !registry.sandboxes || typeof registry.sandboxes !== "object" || Array.isArray(registry.sandboxes)) {
+        deny("the NemoClaw sandbox registry is invalid");
+      }
+      const names = Object.keys(registry.sandboxes);
+      if (names.some((name) => !name.trim() || name.length > 512 ||
+          !registry.sandboxes[name] || typeof registry.sandboxes[name] !== "object" ||
+          Array.isArray(registry.sandboxes[name]) || registry.sandboxes[name].name !== name)) {
+        deny("the NemoClaw sandbox registry has invalid sandbox identities");
+      }
+      if (names.length) {
+        deny(`retained NemoClaw sandbox records at ${JSON.stringify(join(directory, "sandboxes.json"))}: ${names.map((name) => JSON.stringify(name)).join(", ")} do not prove that legacy state was retired`);
+      }
+    } finally {
+      closeSync(descriptor);
+    }
+  }
+}
+
+function verify() {
+  verifyRetainedNemoClawRegistry();
+  // Match the component installer PATH selection, not a different CLI override.
+  const binary = query("bash", ["-c", "command -v openshell || true"]);
+  if (binary) {
+    const version = /^openshell (\d+)\.(\d+)\.(\d+)(?:[.+-][A-Za-z0-9.+-]+)?$/.exec(
+      query(binary, ["--version"]),
+    );
+    if (!version) deny("the installed CLI version is unknown");
+  }
+  // Native gateway list silently omits corrupt metadata. Inspect registrations
+  // before querying each gateway, rather than trusting an empty gateway list.
+  const names = gatewayNames();
+  if (names.length && (!binary || process.env.OPENSHELL_GATEWAY_ENDPOINT?.trim())) {
+    deny("legacy gateway inventory requires its installed CLI and recorded endpoint");
+  }
+  for (const name of names) {
+    const inventory = JSON.parse(query(binary, ["sandbox", "list", "-g", name, "-o", "json"]));
+    const sandboxes = Array.isArray(inventory)
+      ? inventory
+      : inventory !== null &&
+        Array.isArray(inventory.sandboxes) &&
+        inventory.next_page_token === ""
+        ? inventory.sandboxes
+        : null;
+    if (!sandboxes || sandboxes.some((sandbox) =>
+      typeof sandbox?.name !== "string" || !sandbox.name.trim() || sandbox.name.length > 512
+    )) deny(`legacy gateway ${JSON.stringify(name)} has an invalid or incomplete sandbox inventory`);
+    if (sandboxes.length) {
+      deny(`legacy gateway ${JSON.stringify(name)} has sandboxes: ${sandboxes.map((sandbox) => JSON.stringify(sandbox.name)).join(", ")}`);
+    }
+  }
+}
+
+try {
+  verify();
+} catch (error) {
+  console.error(
+    error instanceof Error && error.message.startsWith("Cannot replace OpenShell:")
+      ? error.message
+      : "Cannot replace OpenShell: legacy gateway or NemoClaw registry state is unreadable. Preserve the installed CLI and recorded state before retrying.",
+  );
+  process.exitCode = 1;
+}
+'
+}
+
 # invalidState: a consumed OpenShell release asset differs from the digest
 # published for the selected immutable release, or a mutable registry tag moves.
 # sourceBoundary: NVIDIA/OpenShell owns the release workflow, GitHub release
@@ -309,41 +536,41 @@ RELEASE_TAG="v${PIN_VERSION}"
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.116:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e"
+    v0.1.10:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "2467a09d839bb9af43bf1d649d72e77e596578cbd8e567b6e55a0c504c222f5f"
       ;;
-    v0.0.116:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43"
+    v0.1.10:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "a6ad4833ca22a077d844e8405eae4092b32c9ae1e53b1b2151d77374117ff4c0"
       ;;
-    v0.0.116:openshell-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "e582f2374053bebac8e6aaeb4a369931b7d4bb97bd55055e2c02e85502627e22"
+    v0.1.10:openshell-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "52ec0b11a183e69086d048c1dfd921a424e2c23617647d9df3e5938df3bf3caa"
       ;;
-    v0.0.116:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "59c6da724eae7a00c28826f9191efbdf4fbaa5c768afdc8dea6a80a949ebcc89"
+    v0.1.10:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "2d609a3fa586aacdd29834f66379bb6ec565549a6dc572285115d2c129d078ac"
       ;;
-    v0.0.116:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "292c379193a339220234ffea585350901468bb8f4076e2076bc074e8ed18974b"
+    v0.1.10:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "d8ec5fd2646e482856d64fdac36940c7345314ada1ffd752b67aed3e440b2c5d"
       ;;
-    v0.0.116:openshell-gateway-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "f192d3d737c125264e13ef73458541df2ca6a9eb2fa599736a7f2587d5d2ce8d"
+    v0.1.10:openshell-gateway-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "57b40e9b9cdbf609aa209a0fdc2a5bf8a9c8116437bc1e6a288835b6d435e66b"
       ;;
-    v0.0.116:openshell-sandbox-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "0bb160f73e5007338b94e3c868f66f50c71cd65c27c932ed9a4fa67c49e6d423"
+    v0.1.10:openshell-sandbox-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "4ee38fbf38a9d3f383f958f868f1eefabb31f1e095d4e08f44a1394ab0a0b95c"
       ;;
-    v0.0.116:openshell-sandbox-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "959d9a88270e0336f04342560df750591da603424d0a9bfb481ee29670342557"
+    v0.1.10:openshell-sandbox-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "dcdded7d582ac004e552196958c39dbb8360b802ae3b062e6325c1b90ac83ebe"
       ;;
-    v0.0.116:openshell-checksums-sha256.txt)
-      printf '%s\n' "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e"
+    v0.1.10:openshell-checksums-sha256.txt)
+      printf '%s\n' "b3ce5e8c3f7af02d4b9b397c0a48dfecfc2d6839c3da6386fd1aad5f47332fda"
       ;;
-    v0.0.116:openshell-gateway-checksums-sha256.txt)
-      printf '%s\n' "572d80ded99fab0c2cf75f8108c62ab3e8455356b3c3b38de1be98806a2440e9"
+    v0.1.10:openshell-gateway-checksums-sha256.txt)
+      printf '%s\n' "44bfaeed7b58ed3f27d0b0696b6d982241ad7f20ca55a1f934211144901ecb7d"
       ;;
-    v0.0.116:openshell-sandbox-checksums-sha256.txt)
-      printf '%s\n' "0cb63b3b4436214224872c1ba245bda0d92d904822aa4f28015081269f398f93"
+    v0.1.10:openshell-sandbox-checksums-sha256.txt)
+      printf '%s\n' "7175a15606b4b7f06b10901a7fa7457737a8a0bfdf1c1e706942c5a9a90897da"
       ;;
-    v0.0.116:openshell.rb)
-      printf '%s\n' "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558"
+    v0.1.10:openshell.rb)
+      printf '%s\n' "149316257bdddcc381c1cdc7373472324a478929fb22dad02c113622052aeb7a"
       ;;
     *)
       return 1
@@ -454,6 +681,10 @@ file_sha256() {
 pinned_sandbox_build_version() {
   local digest="$1"
   case "$digest" in
+    # OpenShell v0.1.10 standalone sandbox binaries.
+    31c58b2d4acadd1fd9b13033522e77b55bd80e00fe51e786579b00d9597a4900 | ccb9ad59659888333bcf9e54aeeaae129ec3d6bacc2850a8036d6ba09e060cdc)
+      printf '%s\n' "0.1.10"
+      ;;
     # OpenShell v0.0.72 standalone sandbox binaries. These are bind-mounted
     # into the supervisor container and can require a newer glibc than the
     # host that runs the CLI/gateway, so `--version` is not always runnable.
@@ -485,6 +716,31 @@ pinned_sandbox_build_version() {
     326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40 | \
       7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d)
       printf '%s\n' "0.0.116"
+      ;;
+    # OpenShell v0.1.2 standalone sandbox binaries.
+    5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1 | \
+      9b527c257e7917d11cee34075369cdfb69a57764198da6e72cc0847cb9b427aa)
+      printf '%s\n' "0.1.2"
+      ;;
+    # OpenShell v0.1.3 standalone sandbox binaries.
+    38fe063f19c72680a1bc4b0c343a3ec5b7a5cb087a627faab5b2aefd9d50d094 | \
+      23147b42d31bd0b13e1a9ed7b3834b8e6075836cba0872fffa9e7d481f6dd281)
+      printf '%s\n' "0.1.3"
+      ;;
+    # OpenShell v0.1.7 standalone sandbox binaries.
+    b4ae1d60b238c84e290bcd08a962997e5c36ed04237fa59b09b5799b11363feb | \
+      d13966b032b07d75c917d3fbb7471e608edfdf1f25e9d922e5aa7c779cf6ad21)
+      printf '%s\n' "0.1.7"
+      ;;
+    # OpenShell v0.1.9 standalone sandbox binaries.
+    6c3afd40f40922c9c84be19460779c951b61c6c542aaa95e4c2c8a4b0e7f48c4 | \
+      72b5e97099eda1c46f5b0d9a3e2b8d1d922c5a50a7108fb89950bc9d5c3d380f)
+      printf '%s\n' "0.1.9"
+      ;;
+    # OpenShell v0.1.5 standalone sandbox binaries.
+    a048b1fd2acd78f44f50a4cf0e02cdefec691656f3941e92c5ec0e09a69990e2 | \
+      65aa2a2afb96e7d1351c1d197ded7a966e20bcad68e18a58a94621a8f23769bc)
+      printf '%s\n' "0.1.5"
       ;;
     *)
       return 1
@@ -694,9 +950,9 @@ openshell_has_required_messaging_features() {
     return 1
   fi
 
-  # MCP policy enforcement and credential replacement execute in
-  # openshell-sandbox. When that host artifact is present, require the native
-  # MCP policy marker from that exact binary.
+  # OpenShell 0.1.2, 0.1.3, 0.1.5, 0.1.7, 0.1.9, and 0.1.10 enforce MCP policy in their supervisor images.
+  # Require a pinned sandbox digest matching the CLI, not version text alone.
+  # Runtime policy verification still precedes credential/provider changes.
   if [ -z "$sandbox_bin" ] || [ ! -f "$sandbox_bin" ]; then
     # VM drivers embed a compressed supervisor, so scanning the host driver is
     # not authoritative. Docker/VM packaging can also keep the supervisor out
@@ -708,6 +964,15 @@ openshell_has_required_messaging_features() {
   fi
   sandbox_strings="$(strings "$sandbox_bin" 2>/dev/null || true)"
   if [[ "$sandbox_strings" != *"$OPENSHELL_SANDBOX_MCP_FEATURE"* ]]; then
+    local sandbox_digest sandbox_version openshell_version
+    sandbox_digest="$(file_sha256 "$sandbox_bin")" || return 1
+    sandbox_version="$(pinned_sandbox_build_version "$sandbox_digest")" || return 1
+    openshell_version="$(component_build_version "$openshell_bin" cli)" || return 1
+    case "$sandbox_version" in
+      0.1.2 | 0.1.3 | 0.1.5 | 0.1.7 | 0.1.9 | 0.1.10)
+        [ "$sandbox_version" = "$openshell_version" ] && return 0
+        ;;
+    esac
     OPENSHELL_FEATURE_CHECK_ERROR="OpenShell sandbox runtime is missing MCP/JSON-RPC L7 policy support."
     return 1
   fi
@@ -829,7 +1094,7 @@ download_openshell_formula() {
   local release_tag="$1" output="$2" output_dir
   output_dir="$(dirname "$output")"
   if command -v gh >/dev/null 2>&1; then
-    if GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download "$release_tag" --repo NVIDIA/OpenShell \
+    if GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download "$release_tag" --repo ai-openshell/openshell \
       --pattern "openshell.rb" --dir "$output_dir" --clobber 2>/dev/null; then
       [ -f "$output" ] && return 0
     fi
@@ -838,7 +1103,7 @@ download_openshell_formula() {
   fi
   curl --proto '=https' --tlsv1.2 -fL -sS \
     --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 1 --retry-all-errors \
-    "https://github.com/NVIDIA/OpenShell/releases/download/${release_tag}/openshell.rb" \
+    "https://github.com/ai-openshell/openshell/releases/download/${release_tag}/openshell.rb" \
     -o "$output"
 }
 
@@ -892,6 +1157,8 @@ install_macos_homebrew_formula() {
     || fail "OpenShell Homebrew formula checksum does not match NemoClaw-pinned $RELEASE_TAG digest"
   formula_operation_pin="$expected_sha"
 
+  # Downloads can outlive the initial absence proof. Recheck before changing the tap.
+  verify_legacy_openshell_state
   formula_ref="${HOMEBREW_TAP}/${HOMEBREW_FORMULA_NAME}"
   tap_formula_file="$(homebrew_formula_path "$HOMEBREW_TAP" "$HOMEBREW_FORMULA_NAME")"
   info "staging Homebrew formula in tap ${HOMEBREW_TAP}..."
@@ -911,6 +1178,8 @@ install_macos_homebrew_formula() {
   else
     fail "OpenShell Homebrew formula verification or temporary trust setup failed (status ${homebrew_operation_status}); rerun the pinned NemoClaw installer."
   fi
+  # Formula inspection can also overlap new sandbox creation.
+  verify_legacy_openshell_state
   homebrew_operation_status=0
   run_trusted_openshell_homebrew_operation "$formula_operation_pin" -- \
     brew "$install_action" --formula "$formula_ref" \
@@ -963,6 +1232,8 @@ if command -v openshell >/dev/null 2>&1; then
     warn "openshell $INSTALLED_VERSION is below minimum $MIN_VERSION — upgrading..."
   fi
 fi
+
+verify_legacy_openshell_state
 
 info "Installing OpenShell from release '$RELEASE_TAG'..."
 
@@ -1046,7 +1317,7 @@ download_with_curl() {
   for name in "${ASSETS[@]}" "${CHECKSUM_FILES[@]}"; do
     curl -fL "${curl_progress[@]}" --connect-timeout 10 --retry 3 --retry-delay 2 \
       --speed-limit 1024 --speed-time 60 \
-      "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \
+      "https://github.com/ai-openshell/openshell/releases/download/${RELEASE_TAG}/$name" \
       -o "$tmpdir/$name"
   done
 }
@@ -1055,7 +1326,7 @@ info "Downloading OpenShell release assets (this may take a minute)..."
 if command -v gh >/dev/null 2>&1; then
   gh_ok=1
   for name in "${ASSETS[@]}" "${CHECKSUM_FILES[@]}"; do
-    if ! GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download "$RELEASE_TAG" --repo NVIDIA/OpenShell \
+    if ! GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download "$RELEASE_TAG" --repo ai-openshell/openshell \
       --pattern "$name" --dir "$tmpdir" --clobber 2>/dev/null; then
       gh_ok=0
       break
@@ -1121,6 +1392,8 @@ install_bins() {
 if ! target_dir="$(prepare_openshell_install_directory)"; then
   exit 1
 fi
+# Revalidate after downloads and destination preparation, before replacing any binary.
+verify_legacy_openshell_state
 if [ -w "$target_dir" ]; then
   install_bins "$target_dir"
   if [[ "$target_dir" == "${XDG_BIN_HOME:-$HOME/.local/bin}" ]]; then

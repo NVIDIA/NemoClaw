@@ -23,7 +23,7 @@ const exactCreateQuery = [
   selector,
   "--output",
   "json",
-  "--limit",
+  "--page-size",
   "2",
 ] as const;
 const exactCreateCommand = ["openshell", "sandbox", "create", "--label", selector] as const;
@@ -51,7 +51,17 @@ describe("created sandbox fixture selector observations", () => {
   it.each([
     [
       "an unscoped query",
-      ["openshell", "sandbox", "list", "--selector", selector, "--output", "json", "--limit", "2"],
+      [
+        "openshell",
+        "sandbox",
+        "list",
+        "--selector",
+        selector,
+        "--output",
+        "json",
+        "--page-size",
+        "2",
+      ],
     ],
     [
       "a different gateway",
@@ -67,7 +77,11 @@ describe("created sandbox fixture selector observations", () => {
     ],
     [
       "missing the two-row bound",
-      exactCreateQuery.filter((part) => part !== "--limit" && part !== "2"),
+      exactCreateQuery.filter((part) => part !== "--page-size" && part !== "2"),
+    ],
+    [
+      "the unsupported legacy row-bound flag",
+      exactCreateQuery.map((part) => (part === "--page-size" ? "--limit" : part)),
     ],
     ["a different row bound", exactCreateQuery.map((part) => (part === "2" ? "3" : part))],
     [

@@ -40,7 +40,6 @@ import {
 import {
   createDockerFixture,
   dockerCommandPrefixes,
-  hostNetworkRuns,
   type DockerFixture,
 } from "./docker-llama-cpp-managed-lifecycle-engine.test-support";
 import type { HostLocalCreateJournalRecord } from "./host-local-create-journal";
@@ -299,17 +298,46 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(lifecycle.runtime.destroy(receipt).status).toBe("already-absent");
   });
 
-  it("accepts managed reachability through the authoritative OpenShell bridge (#8712)", () => {
+  it("accepts managed reachability through the native supervisor network (#8712)", () => {
     const fixture = dockerFixture();
-    createLifecycle(options(fixture)).start(receiptWriter());
+    const bridge = privateBridgeFixture();
+    createLifecycle(options(fixture), {}, bridge).start(receiptWriter());
+    expect(bridge.start).toHaveBeenCalledWith(
+      expect.objectContaining({ bindAddresses: ["127.0.0.1"] }),
+    );
 
     expect(fixture.capture.mock.calls.map((call) => call[0])).toContainEqual(
       expect.arrayContaining([
         "--network",
-        "openshell-docker",
+        "host",
         "--add-host",
-        "host.openshell.internal:172.29.0.1",
+        "host.openshell.internal:127.0.0.1",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--read-only",
         "http://host.openshell.internal:8081/health",
+      ]),
+    );
+  });
+
+  it("keeps the Desktop host-gateway probe and loopback proxy binding", () => {
+    const fixture = dockerFixture();
+    const bridge = privateBridgeFixture();
+    const lifecycle = createLifecycle(
+      options(fixture, journalStore(), { ...bindings(), bridgeLoopbackOnly: true }),
+      {},
+      bridge,
+    );
+    lifecycle.start(receiptWriter());
+    expect(bridge.start).toHaveBeenCalledWith(
+      expect.objectContaining({ bindAddresses: ["127.0.0.1"] }),
+    );
+    expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
+      expect.arrayContaining([
+        "--network",
+        "bridge",
+        "--add-host",
+        "host.openshell.internal:host-gateway",
       ]),
     );
   });
@@ -329,12 +357,8 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       failure = error instanceof Error ? error : new Error(String(error));
     }
 
-    expect(failure?.message).toContain(
-      "host-loopback health check passed, but the OpenShell Docker bridge health check failed",
-    );
-    expect(failure?.message).toContain("sudo ufw");
-    expect(failure?.message).toContain("172.29.0.0/16");
-    expect(failure?.message).toContain("172.29.0.1");
+    expect(failure?.message).toContain(`private supervisor endpoint probe failed (exit ${status})`);
+    expect(failure?.message).not.toContain("sudo ufw");
     expect(failure?.message).not.toContain("test-only-secret");
     expect(store.list()).toEqual([]);
     expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
@@ -353,28 +377,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     }
 
     expect(failure?.message).toBe(
-      "Docker llama.cpp private sandbox bridge probe failed (exit 125).",
+      "Docker llama.cpp private supervisor endpoint probe failed (exit 125).",
     );
     expect(failure?.message).not.toContain("sudo ufw");
-  });
-
-  it("does not print unvalidated bridge topology in UFW remediation (#8712)", () => {
-    const fixture = dockerFixture();
-    fixture.setOpenShellBridgeSubnet("0.0.0.0/0");
-    fixture.failSandboxBridgeProbe({ status: 28, stderr: "curl: (28) timed out" });
-
-    let failure: Error | undefined;
-    try {
-      createLifecycle(options(fixture)).start(receiptWriter());
-    } catch (error) {
-      failure = error instanceof Error ? error : new Error(String(error));
-    }
-
-    expect(failure?.message).toBe(
-      "Docker llama.cpp private sandbox bridge probe failed (exit 28).",
-    );
-    expect(failure?.message).not.toContain("sudo ufw");
-    expect(failure?.message).not.toContain("0.0.0.0/0");
   });
 
   it("probes the private bridge endpoint through the default host curl boundary", () => {
@@ -393,13 +398,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       { timeoutMs: 86_415_000, pinnedAddresses: [] },
     );
     expect(fixture.capture.mock.calls.map(([argv]) => argv[0])).not.toContain("curl");
-    expect(hostNetworkRuns(fixture)).toEqual([]);
+
     expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
-      expect.arrayContaining([
-        "--network",
-        "openshell-docker",
-        "http://host.openshell.internal:8081/health",
-      ]),
+      expect.arrayContaining(["--network", "host", "http://host.openshell.internal:8081/health"]),
     );
     probe.mockReturnValue({
       ok: false,
@@ -467,9 +468,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
         "http://127.0.0.1:8081/health",
         1_800,
       );
-      expect(hostNetworkRuns(fixture)).toEqual([]);
+
       expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
-        expect.arrayContaining(["--network", "openshell-docker"]),
+        expect.arrayContaining(["--network", "host"]),
       );
     },
   );
@@ -516,7 +517,6 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       "http://127.0.0.1:8081/health",
       1_800,
     );
-    expect(hostNetworkRuns(fixture)).toEqual([]);
   });
 
   it.each([true, false] as const)(
@@ -561,9 +561,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       failure = error instanceof Error ? error : new Error(String(error));
     }
 
-    expect(failure?.message).toContain(
-      "host-loopback health check passed, but the OpenShell Docker bridge health check failed",
-    );
+    expect(failure?.message).toContain("private supervisor endpoint probe failed (exit 7)");
     expect(store.load(TRANSACTION_ID)).toMatchObject({
       phase: "finalized",
       runtimeId: RUNTIME_ID,
