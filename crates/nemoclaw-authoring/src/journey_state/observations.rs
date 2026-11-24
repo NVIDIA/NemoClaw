@@ -182,6 +182,7 @@ impl JourneyState {
         questions: &mut [JourneyQuestion],
         observations: &DiscoveryObservations,
     ) {
+        let build_guide = nemoclaw_sdk::documentation_url(BUILD_AGENT_IMAGES);
         for question in questions {
             let Some(request) = self.agent_images_request(&question.id) else {
                 continue;
@@ -202,11 +203,11 @@ impl JourneyState {
                 question.note = Some(observed.reason.as_ref().map_or_else(
                     || {
                         format!(
-                            "No image on this engine installs {}; see {BUILD_AGENT_IMAGES}.",
+                            "No image on this engine installs {}; see {build_guide}.",
                             request.adapter_id
                         )
                     },
-                    |reason| format!("{reason} See {BUILD_AGENT_IMAGES}."),
+                    |reason| format!("{reason} See {build_guide}."),
                 ));
                 continue;
             }
@@ -217,7 +218,7 @@ impl JourneyState {
             });
             if let Some((reference, reason)) = rejected {
                 question.note = Some(format!(
-                    "{reference} can't run this configuration: {reason}. Enter another image, or see {BUILD_AGENT_IMAGES} to build one."
+                    "{reference} can't run this configuration: {reason}. Enter another image, or see {build_guide} to build one."
                 ));
             }
             if !question

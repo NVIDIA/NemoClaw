@@ -3,6 +3,7 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
+    documentation_revision();
     validate_fabric_catalog();
     let path =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../../versions.json");
@@ -30,6 +31,48 @@ fn main() {
         source,
     )
     .unwrap();
+}
+
+// Keep installed clients' guidance tied to their source, including worktrees
+// and source archives whose builder supplies the original commit explicitly.
+fn documentation_revision() {
+    let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
+    let git = |args: &[&str]| {
+        if !root.join(".git").exists() {
+            return None;
+        }
+        let output = std::process::Command::new("git")
+            .current_dir(&root)
+            .args(args)
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    };
+    for name in [
+        Some("HEAD".to_owned()),
+        Some("packed-refs".to_owned()),
+        git(&["symbolic-ref", "--quiet", "HEAD"]),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(path) = git(&["rev-parse", "--git-path", &name]) {
+            println!("cargo:rerun-if-changed={}", root.join(path).display());
+        }
+    }
+    println!("cargo:rerun-if-env-changed=NEMOCLAW_DOCS_REVISION");
+    let revision = git(&["rev-parse", "HEAD"])
+        .or_else(|| env::var("NEMOCLAW_DOCS_REVISION").ok())
+        .unwrap_or_default();
+    assert!(
+        revision.is_empty()
+            || (revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())),
+        "NEMOCLAW_DOCS_REVISION must be the full source Git commit"
+    );
+    println!("cargo:rustc-env=NEMOCLAW_DOCS_REVISION={revision}");
 }
 
 // Keep offline discovery tied to the image recipe even when building without Docker.

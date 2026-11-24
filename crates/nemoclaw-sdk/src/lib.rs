@@ -43,6 +43,17 @@ pub use nemoclaw_backend::{Binding, Bound, Observation, ObservationError, refres
 pub mod backend;
 pub mod compile;
 pub mod config;
+
+/// A reachable guide at this build's source revision. Git-less builds without
+/// recorded provenance direct the reader to their original source instead.
+pub fn documentation_url(path: &str) -> String {
+    let revision = env!("NEMOCLAW_DOCS_REVISION");
+    if revision.is_empty() {
+        format!("{path} in this build's original source (documentation revision unavailable)")
+    } else {
+        format!("https://github.com/NVIDIA/NemoClaw/blob/{revision}/{path}")
+    }
+}
 pub use nemoclaw_backend::{EnvironmentSecrets, Secrets};
 pub use nemoclaw_tofu::shape as hcl_schema;
 mod gateway_observation;
