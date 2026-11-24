@@ -134,6 +134,7 @@ jobs:
       platform: windows_amd64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
+      installer: ${{ needs.plan.outputs.installer == 'true' }}
       # One 4-vCPU Windows runner takes about 7 minutes to compile the bundle,
       # longer than the unit job, so three runners compile its parts.
       split-bundle: true

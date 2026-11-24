@@ -506,10 +506,12 @@ fn documentation_changes_skip_bundle_lifecycle_images_and_live_work() {
 }
 
 #[test]
-fn installer_inputs_select_the_macos_installer_check_and_a_fresh_bundle() {
+fn installer_inputs_select_the_installer_checks_and_a_fresh_bundle() {
     for path in [
         "tools/release/macos-installer.rs",
         "tools/release/macos-installer/welcome.html",
+        "tools/release/windows-installer.rs",
+        "tools/release/windows-installer/NemoClaw.wxs",
         "crates/nemoclaw-cli/src/deployment.rs",
     ] {
         let repo = Repo::new();

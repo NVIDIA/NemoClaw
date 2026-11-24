@@ -168,6 +168,24 @@ impl Github {
         self.root.path().join("runner-temp/signed")
     }
 
+    /// An installer the stage step put beside the archives before packing
+    /// them, and when its signing job passed, that job's signature check.
+    fn attach_installer(&self, platform: &str, extension: &str, signed: bool) -> String {
+        let file = format!("nemoclaw-{}-{platform}.{extension}", self.tag);
+        fs::create_dir_all(self.archives()).unwrap();
+        fs::write(self.archives().join(&file), format!("{platform} installer")).unwrap();
+        if signed {
+            fs::create_dir_all(self.signed()).unwrap();
+            fs::write(
+                self.signed()
+                    .join(format!("installer-{platform}.verification.txt")),
+                format!("Successfully verified: {file}\n"),
+            )
+            .unwrap();
+        }
+        file
+    }
+
     fn script(&self, name: &str, arguments: &[&Path]) -> Output {
         let bin = self.root.path().join("bin");
         let build = Path::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
@@ -760,6 +778,84 @@ fn the_evidence_records_each_archive_its_signed_executables_and_their_checks() {
     assert!(
         notes.contains("release-evidence.json"),
         "the notes point to the evidence: {notes}"
+    );
+}
+
+#[test]
+fn the_evidence_records_each_installer_and_its_signature_check() {
+    let github = final_release();
+    github.sign("windows_amd64", &cli(), "signed windows_amd64");
+    github.sign("darwin_arm64", &cli(), "signed darwin_arm64");
+    let package = github.attach_installer("darwin_arm64", "pkg", true);
+    let msi = github.attach_installer("windows_amd64", "msi", true);
+
+    let output = github.stage();
+    assert!(output.status.success(), "{}", report(&output));
+
+    let archives = github.archives();
+    let evidence = github.evidence();
+    let expected: Vec<_> = [("darwin_arm64", &package), ("windows_amd64", &msi)]
+        .into_iter()
+        .map(|(platform, file)| {
+            json!({
+                "platform": platform,
+                "file": file,
+                "sha256": sha256(&archives.join(file)),
+                "signed": true,
+                "signature_verification": format!("Successfully verified: {file}\n"),
+            })
+        })
+        .collect();
+    assert_eq!(evidence["installers"], json!(expected), "{evidence:#}");
+    let checks = evidence["verification"][0]["output"].as_str().unwrap();
+    for file in [&package, &msi] {
+        assert!(
+            checks.contains(&format!("{file}: OK")),
+            "SHA256SUMS lists {file}: {checks}"
+        );
+    }
+    let notes = github.notes();
+    assert!(
+        notes.contains(&format!(
+            "`{package}` installs the `darwin_arm64` CLI on macOS"
+        )) && notes.contains(&format!(
+            "`{msi}` installs the `windows_amd64` CLI on Windows"
+        )),
+        "the notes name both installers: {notes}"
+    );
+}
+
+#[test]
+fn a_final_release_refuses_an_unsigned_installer() {
+    let github = final_release();
+    github.sign("windows_amd64", &cli(), "signed windows_amd64");
+    github.sign("darwin_arm64", &cli(), "signed darwin_arm64");
+    github.attach_installer("windows_amd64", "msi", false);
+
+    let output = github.stage();
+    let report = report(&output);
+    assert!(!output.status.success(), "staging fails: {report}");
+    assert!(
+        errors(&report)
+            .iter()
+            .any(|line| line.contains("windows_amd64 installer")),
+        "the error names the unsigned installer: {report}"
+    );
+}
+
+#[test]
+fn a_release_without_installers_records_none_and_the_notes_say_so() {
+    let mut github = Github::new();
+    github.run(13, "push", VERSION, "success", &bundles("checked", 1));
+
+    let output = github.stage();
+    assert!(output.status.success(), "{}", report(&output));
+
+    assert_eq!(github.evidence()["installers"], json!([]));
+    let notes = github.notes();
+    assert!(
+        notes.contains("no macOS installer") && notes.contains("no Windows installer"),
+        "the notes say neither installer is attached: {notes}"
     );
 }
 
