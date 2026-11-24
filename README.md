@@ -61,6 +61,12 @@ Images are cached; no inference requests are sent, and only the plan-review paus
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).
 
+## Roadmap
+
+The [GitHub milestones](https://github.com/NVIDIA/NemoClaw/milestones) track planned work, including [GTC DC 2026](https://github.com/NVIDIA/NemoClaw/milestone/12), [agreed Classic features coming to v1](https://github.com/NVIDIA/NemoClaw/milestone/14), and [GTC SJC 2027](https://github.com/NVIDIA/NemoClaw/milestone/13).
+Milestone placement alone does not promise a delivery date.
+For current support, check the [migration guide](docs/get-started/migration.md) and [current limits](docs/resources/limits.md).
+
 ## Contributing
 
 Read the [accepted scope](internal-docs/design/scope.md) and follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
