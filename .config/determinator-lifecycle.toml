@@ -1,12 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The Windows installer's sources, build helper, and check;
-# the lifecycle tests run the bundle, not the installer.
-[[path-rule]]
-globs = ["packaging/windows/**", "tools/release/windows-installer.rs", "tools/ci/windows-installer-e2e.rs"]
-mark-changed = []
-
 # Runtime inputs and build/test environment outside the lifecycle packages.
 # Unclassified inputs run all checks, including shared fixtures outside packages.
 [[path-rule]]

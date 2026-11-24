@@ -161,7 +161,10 @@ fn fixture(mut document: Document) -> Option<String> {
 fn openshell_contract_fixtures_match_what_the_sdk_compiles() {
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
     let mut expected = BTreeMap::new();
-    for entry in fs::read_dir(examples).unwrap() {
+    for entry in ["agents", "features"]
+        .into_iter()
+        .flat_map(|directory| fs::read_dir(examples.join(directory)).unwrap())
+    {
         let path = entry.unwrap().path();
         if path.extension().is_none_or(|extension| extension != "yaml") {
             continue;

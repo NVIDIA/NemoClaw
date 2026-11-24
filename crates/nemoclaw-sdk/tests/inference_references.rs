@@ -7,7 +7,7 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 
 fn input() -> Value {
-    crate::support::example("fabric-openclaw.yaml")
+    crate::support::example("agents/fabric-openclaw.yaml")
 }
 fn shared(mut value: Value, sandbox: bool) -> Value {
     let inference = value["spec"]["sandboxes"]["assistant"]["agent"]
@@ -128,7 +128,7 @@ fn shared_inline_provider_is_one_instance_and_edits_stay_in_its_definition() {
 #[test]
 fn shared_pi_metadata_accepts_opaque_nulls_only_inside_the_model() {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric-pi.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/fabric-pi.yaml")).unwrap();
     value["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]["settings"]
         ["model_metadata"]["custom"] = Value::Null;
     let mut value = shared(value, false);

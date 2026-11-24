@@ -38,18 +38,22 @@ fn docker_model_updates_preserve_running_containers_unless_recreation_is_explici
             "inference_service",
         ),
         (
-            include_str!("../../../../../examples/station/vllm.yaml"),
+            include_str!("../../../../../examples/platforms/docker/vllm/dgx-station/vllm.yaml"),
             "qwen",
             "inference_service",
         ),
         (
-            include_str!("../../../../../examples/managed-ollama.yaml"),
+            include_str!(
+                "../../../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"
+            ),
             "ollama-server",
             "ollama_service",
         ),
         // A Podman gateway with a model placed on a Docker engine over SSH.
         (
-            include_str!("../../../../../examples/spark/remote-vllm.yaml"),
+            include_str!(
+                "../../../../../examples/platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml"
+            ),
             "qwen",
             "inference_service",
         ),
@@ -345,9 +349,10 @@ fn docker_gateway_requires_durable_identity() {
 
 #[test]
 fn podman_gateway_replacement_depends_on_protected_storage_in_the_compiled_graph() {
-    let document =
-        Document::parse(include_bytes!("../../../../../examples/managed-podman.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../../examples/platforms/podman/managed-podman.yaml").as_slice(),
+    )
+    .unwrap();
     let generations = Record::new(document.clone()).unwrap().generations;
     let graph = compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
     let process = &graph["resource"]["openshell_podman_gateway"]["runtime"];
@@ -405,9 +410,11 @@ fn kubernetes_helm_binding_requires_auth_and_the_same_release() {
 }
 
 fn context() -> (Document, crate::compile::Generations) {
-    let document =
-        Document::parse(include_bytes!("../../../../../examples/spark/vllm.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml")
+            .as_slice(),
+    )
+    .unwrap();
     let generations = Record::new(document.clone()).unwrap().generations;
     (document, generations)
 }

@@ -7,12 +7,16 @@ on:
       - .github/workflows/macos-signing-checks.yml
       - .github/workflows/release.yml
       - tools/release/macos-signing.rs
+      - tools/release/macos-installer.rs
+      - tools/release/macos-installer/**
   push:
     branches: [v1]
     paths:
       - .github/workflows/macos-signing-checks.yml
       - .github/workflows/release.yml
       - tools/release/macos-signing.rs
+      - tools/release/macos-installer.rs
+      - tools/release/macos-installer/**
 permissions:
   contents: read
 jobs:
@@ -33,3 +37,10 @@ jobs:
           rustc --edition=2021 -D warnings tools/release/macos-signing.rs -o "$RUNNER_TEMP/macos-signing"
           rustc --edition=2021 -D warnings --test tools/release/macos-signing.rs -o "$RUNNER_TEMP/signing-tests"
           "$RUNNER_TEMP/signing-tests"
+      # The installer's tests that change the Mac run in CI / Bundle's Installer jobs.
+      - name: Check the installer tool
+        run: |
+          rustfmt --edition 2021 --check tools/release/macos-installer.rs
+          rustc --edition=2021 -D warnings tools/release/macos-installer.rs -o "$RUNNER_TEMP/macos-installer"
+          rustc --edition=2021 -D warnings --test tools/release/macos-installer.rs -o "$RUNNER_TEMP/installer-tests"
+          "$RUNNER_TEMP/installer-tests"

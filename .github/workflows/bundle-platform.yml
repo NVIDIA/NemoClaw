@@ -90,8 +90,9 @@ on:
         default: false
       installer:
         description: >-
-          On Windows, build the installer from the bundle, then install, upgrade,
-          downgrade, and uninstall it for the runner's user.
+          Test the platform's installer: build it from the bundle, then install,
+          upgrade, and uninstall it. On darwin_arm64, also check that unsupported
+          Macs refuse it; on windows_amd64, that an older installer doesn't replace it.
         type: boolean
         default: false
     # The caller reports the macOS and Windows suites' timings from these.
@@ -122,10 +123,10 @@ env:
 # other Build bundle jobs compile the bundle's executables in parallel, and
 # Build bundle assembles them. Artifact names carry the run attempt, and consumers
 # read them from the producers' outputs, so rerunning a failed shard reuses an
-# earlier attempt's artifacts. With installer, E2E installer starts when Build
-# bundle finishes, beside the contract and integration tests. The caller's
-# Test / PLATFORM check requires every job here that runs; a job the plan does
-# not select is skipped.
+# earlier attempt's artifacts. With installer, the platform's installer jobs
+# start when Build bundle finishes, beside the contract and integration tests.
+# The caller's Test / PLATFORM check requires every job here that runs; a job
+# the plan does not select is skipped.
 jobs:
   build:
     name: Unit build and test
@@ -456,15 +457,68 @@ jobs:
           retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
           if-no-files-found: error
 
+  # The macOS installer tests in tools/release/macos-installer.rs: its unit
+  # tests, then a build from this run's bundle that is installed, upgraded with
+  # a second build, and uninstalled, as root on this disposable runner. They
+  # run beside the contract and integration tests.
+  installer:
+    name: Installer
+    needs: bundle
+    if: ${{ !cancelled() && inputs.installer && inputs.platform == 'darwin_arm64' && needs.bundle.result == 'success' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.bundle.outputs.artifact }}
+          path: .build/ci
+      - name: Extract the bundle
+        run: tar -xf .build/ci/bundle.tar
+      - name: Build, install, upgrade, and uninstall the installer
+        env:
+          NEMOCLAW_INSTALLER_BUNDLE: ${{ github.workspace }}/dist/darwin_arm64
+        run: |
+          rustc --edition=2021 -D warnings --test tools/release/macos-installer.rs -o "$RUNNER_TEMP/installer-tests"
+          "$RUNNER_TEMP/installer-tests" --include-ignored --test-threads 1 --skip an_unsupported_mac --nocapture
+
+  # An Intel Mac and a Mac older than the installer's minimum macOS must refuse
+  # it with its reason. Hosted runners with Apple silicon start at macOS 15, so
+  # there the test raises the minimum above the runner's macOS. It builds the
+  # installer from a stand-in bundle, so these jobs start at once.
+  installer-refusal:
+    name: Installer refusal on ${{ matrix.mac }}
+    if: inputs.installer && inputs.platform == 'darwin_arm64'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mac: Intel
+            runner: macos-15-intel
+          - mac: an older macOS
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the installer on an unsupported Mac
+        run: |
+          rustc --edition=2021 -D warnings --test tools/release/macos-installer.rs -o "$RUNNER_TEMP/installer-tests"
+          "$RUNNER_TEMP/installer-tests" --ignored --exact tests::an_unsupported_mac_refuses_the_installer_and_says_why --nocapture
+
   # Builds the Windows installer from this run's bundle with WiX Toolset, as
   # Release / Stage does from the signed bundle, and installs it for the
   # runner's user: first an older build with a file the bundle lacks, then this
   # one over it, then the older one again, which it must refuse; then it
-  # uninstalls. See packaging/windows/README.md.
-  installer:
+  # uninstalls. See tools/release/windows-installer/README.md.
+  windows-installer:
     name: E2E installer
     needs: bundle
-    if: ${{ !cancelled() && inputs.installer && needs.bundle.result == 'success' }}
+    if: ${{ !cancelled() && inputs.installer && inputs.platform == 'windows_amd64' && needs.bundle.result == 'success' }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 20
     defaults:
@@ -490,12 +544,12 @@ jobs:
       - name: Check and compile the installer tools
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          rustfmt --edition 2021 --check tools/release/windows-installer.rs tools/ci/windows-installer-e2e.rs
-          foreach ($tool in 'release/windows-installer', 'ci/windows-installer-e2e') {
-            $name = Split-Path $tool -Leaf
-            rustc --edition=2021 -D warnings --test "tools/$tool.rs" -o "$env:RUNNER_TEMP/$name-tests.exe"
+          rustfmt --edition 2021 --check tools/release/windows-installer.rs tools/release/windows-installer/e2e.rs
+          $tools = @{ 'windows-installer' = 'tools/release/windows-installer.rs'; 'windows-installer-e2e' = 'tools/release/windows-installer/e2e.rs' }
+          foreach ($name in $tools.Keys) {
+            rustc --edition=2021 -D warnings --test $tools[$name] -o "$env:RUNNER_TEMP/$name-tests.exe"
             & "$env:RUNNER_TEMP/$name-tests.exe"
-            rustc --edition=2021 -D warnings "tools/$tool.rs" -o "$env:RUNNER_TEMP/$name.exe"
+            rustc --edition=2021 -D warnings $tools[$name] -o "$env:RUNNER_TEMP/$name.exe"
           }
       - name: Build the installer and an older one
         run: |

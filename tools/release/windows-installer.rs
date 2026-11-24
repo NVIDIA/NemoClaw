@@ -15,7 +15,7 @@ use std::{
 type Result<T> = std::result::Result<T, String>;
 
 /// The installer's WiX source, relative to the repository root.
-const SOURCE: &str = "packaging/windows/NemoClaw.wxs";
+const SOURCE: &str = "tools/release/windows-installer/NemoClaw.wxs";
 /// The heading of the bundle's own license on the license page.
 const PRODUCT: &str = "NVIDIA NemoClaw Agent Configs";
 

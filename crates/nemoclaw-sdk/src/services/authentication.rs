@@ -53,7 +53,10 @@ mod durable_source_tests {
     #[test]
     fn remote_source_retains_published_endpoint_without_compute_configuration() {
         let mut document = crate::config::Document::parse(
-            include_bytes!("../../../../examples/spark/remote-vllm.yaml").as_slice(),
+            include_bytes!(
+                "../../../../examples/platforms/podman/vllm/remote/dgx-spark/remote-vllm.yaml"
+            )
+            .as_slice(),
         )
         .unwrap();
         let crate::services::ServiceDefinition::Vllm(service) =

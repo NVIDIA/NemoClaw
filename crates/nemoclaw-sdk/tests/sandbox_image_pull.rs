@@ -38,10 +38,14 @@ fn example(text: &str) -> Value {
 
 /// Docker and Podman gateways whose engine holds the sandbox images.
 fn local_gateways() -> Vec<Value> {
-    let mut external = example(include_str!("../../../examples/fabric-openclaw.yaml"));
+    let mut external = example(include_str!(
+        "../../../examples/agents/fabric-openclaw.yaml"
+    ));
     external["spec"]["gateway"]["target"]["docker"]["engine"] =
         "unix:///var/run/docker.sock".into();
-    let mut managed = example(include_str!("../../../examples/fabric-openclaw.yaml"));
+    let mut managed = example(include_str!(
+        "../../../examples/agents/fabric-openclaw.yaml"
+    ));
     managed["spec"]["gateway"] = serde_json::json!({
         "management": "managed",
         "target": {"docker": {
@@ -50,7 +54,9 @@ fn local_gateways() -> Vec<Value> {
             "networkCIDR": "172.30.250.0/24",
         }},
     });
-    let podman = example(include_str!("../../../examples/managed-podman.yaml"));
+    let podman = example(include_str!(
+        "../../../examples/platforms/podman/managed-podman.yaml"
+    ));
     vec![external, managed, podman]
 }
 
@@ -179,7 +185,7 @@ fn nothing_but_image_pulls_is_created_before_every_sandbox_image_is_read() {
 #[test]
 fn a_kubernetes_sandbox_reads_its_metadata_bundle_without_a_pull() {
     let (_, graph) = graph(&example(include_str!(
-        "../../../examples/kubernetes/managed-development.yaml"
+        "../../../examples/platforms/kubernetes/managed-development.yaml"
     )));
     assert!(graph["resource"].get("docker_image").is_none());
     let reads = &graph["data"]["fabric_harnesses"];

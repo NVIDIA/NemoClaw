@@ -81,6 +81,10 @@ pub struct Plan {
     pub lifecycle: Decision,
     pub images: Decision,
     pub live: Decision,
+    /// The installer checks, which build the macOS and Windows installers from
+    /// the darwin_arm64 and windows_amd64 bundles and install, upgrade, and
+    /// uninstall them on macOS and Windows runners.
+    pub installer: Decision,
 }
 impl Plan {
     pub fn full(reason: &str) -> Self {
@@ -92,8 +96,45 @@ impl Plan {
             bundle: decision.clone(),
             lifecycle: decision.clone(),
             images: decision.clone(),
-            live: decision,
+            live: decision.clone(),
+            installer: decision,
         }
+    }
+}
+
+/// Files that build or test the installers apart from the bundles they hold:
+/// each installer's tool and its sources and artwork, the code that finds the bundle
+/// from the installed CLI, and the workflows that run the installer check. A
+/// path ending in `/` names a directory. v1 pushes run the check regardless.
+pub const INSTALLER_INPUTS: [&str; 8] = [
+    "tools/release/macos-installer.rs",
+    "tools/release/macos-installer/",
+    "tools/release/windows-installer.rs",
+    "tools/release/windows-installer/",
+    "crates/nemoclaw-cli/src/deployment.rs",
+    ".github/workflows/bundle-platform.yml",
+    ".github/workflows/rust.yml",
+    ".github/workflows/validation-plan.yml",
+];
+
+fn installer(base: &str, paths: &Utf8Paths0) -> Decision {
+    let input = |path: &str| {
+        INSTALLER_INPUTS
+            .iter()
+            .any(|input| match input.strip_suffix('/') {
+                Some(directory) => path.starts_with(&format!("{directory}/")),
+                None => path == *input,
+            })
+    };
+    match paths.into_iter().find(|path| input(path.as_str())) {
+        Some(path) => Decision {
+            run: true,
+            reason: format!("{path} changed, an input of the installers"),
+        },
+        None => Decision {
+            run: false,
+            reason: format!("no installer inputs changed since {base}"),
+        },
     }
 }
 
@@ -106,8 +147,15 @@ pub fn plan(root: &Path, base: &str, worktree: bool) -> Plan {
         Workflow::Images,
         Workflow::Live,
     ];
-    match analyze_many(root, base, worktree, &workflows) {
-        Ok(decisions) => {
+    let analyzed = analyze(root, base, worktree, |base, paths, old, new| {
+        let decisions = workflows
+            .iter()
+            .map(|workflow| decide_build(root, *workflow, &[], base, paths, old, new))
+            .collect::<Result<Vec<_>>>()?;
+        Ok((decisions, installer(base, paths)))
+    });
+    match analyzed {
+        Ok((decisions, installer)) => {
             let mut decisions = decisions.into_iter();
             let mut bundle = decisions.next().unwrap();
             let lifecycle = decisions.next().unwrap();
@@ -118,12 +166,18 @@ pub fn plan(root: &Path, base: &str, worktree: bool) -> Plan {
                     run: true,
                     reason: "selected lifecycle or live checks need a fresh bundle".into(),
                 };
+            } else if !bundle.run && installer.run {
+                bundle = Decision {
+                    run: true,
+                    reason: "the selected installer checks need a fresh bundle".into(),
+                };
             }
             Plan {
                 bundle,
                 lifecycle,
                 images,
                 live,
+                installer,
             }
         }
         Err(error) => Plan::full(&format!(

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# examples/station/vllm.yaml: a managed vLLM service with bearer
+# examples/platforms/docker/vllm/dgx-station/vllm.yaml: a managed vLLM service with bearer
 # authentication on the Docker gateway network serving one OpenClaw agent.
 # The integration runner points the gateway and engine at its fixtures.
 apiVersion: nemoclaw.nvidia.com/v1alpha1

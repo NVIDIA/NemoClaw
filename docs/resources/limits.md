@@ -24,15 +24,16 @@ A row marked **not verified** names the run that would check it.
 ## Installation and Releases
 
 Release archives exist only on draft releases.
-There is no published package, and only a release with signed Windows programs has an installer.
+The [macOS](../get-started/install.md#installing-with-the-macos-installer) and [Windows](../get-started/install.md#installing-with-the-windows-installer) installers are on draft releases too.
+There is no published package.
 Keep the matching bundle for an existing deployment.
 The following installation and release limits apply:
 
 | Limit | Issue | Last Verified |
 |---|---|---|
 | No published final release: the [release archives](../get-started/install.md) are on draft releases, which only maintainers see. Others [build the bundle from source](../build-deploy/build.md#building-a-native-bundle). | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`291723b`][v1-291723b]: issue, and only draft releases exist |
-| The release executables are neither signed nor notarized for macOS or Windows. | [#14621](https://github.com/NVIDIA/NemoClaw/issues/14621) | [`291723b`][v1-291723b]: code, issue |
-| The [Windows installer](../get-started/install.md#installing-with-the-windows-installer) comes only with a release whose Windows programs are signed: without Windows signing, staging builds none. Its artwork and icon are placeholders pending NVIDIA brand and trademark review. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | **not verified**: the first staging run that signs Windows programs |
+| The macOS installer isn't signed or notarized: release candidates attach it unsigned, and a final release leaves it out, until a Developer ID Installer certificate signs it. Its pages and artwork are placeholders pending NVIDIA brand review. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | **not verified**: the first release candidate staged with the installer |
+| The Windows installer comes only with a release whose Windows executables are signed: without Windows signing, staging builds none. Its artwork and icon are placeholders pending NVIDIA brand review. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | **not verified**: the first release candidate staged with the installer |
 | Releases don't include a `claude` agent image: it bundles Anthropic's proprietary Claude Code CLI, which NVIDIA can't redistribute. Build it locally as [Building Agent Images](../build-deploy/build.md#building-agent-images) describes. | [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) | [`43c9dc9`][v1-43c9dc9]: issue |
 | The SDK and provider packages are not published. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | No support policy or enterprise deployment qualification. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue |

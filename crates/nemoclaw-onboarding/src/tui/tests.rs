@@ -1019,7 +1019,7 @@ fn template_values_kept_by_omission_are_listed_at_review() {
 #[test]
 fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/spark/local-and-hosted.yaml");
+        .join("../../examples/platforms/docker/vllm/dgx-spark/local-and-hosted.yaml");
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Template(&path), &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
@@ -1062,7 +1062,7 @@ fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
 #[test]
 fn a_template_with_several_routes_gets_a_model_row_for_each() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/spark/local-and-hosted.yaml");
+        .join("../../examples/platforms/docker/vllm/dgx-spark/local-and-hosted.yaml");
     let wizard = reviewing_template(&path);
     let text = flat(&screen(&wizard, 160, 60));
     for row in [
@@ -1147,9 +1147,13 @@ fn an_unchanged_journey_resolves_once_until_an_answer_or_observation_changes_it(
     assert_eq!(wizard.question().unwrap().unwrap().id(), first.id());
     assert_eq!(wizard.resolutions(), 3);
 
-    let document =
-        Document::parse(include_bytes!("../../../../examples/managed-ollama.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!(
+            "../../../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"
+        )
+        .as_slice(),
+    )
+    .unwrap();
     let engine = discovery_queries(&document, None)
         .unwrap()
         .into_iter()
@@ -2931,7 +2935,7 @@ fn another_model_entry_starts_empty_because_enter_needs_a_typed_identifier() {
 #[test]
 fn an_explicit_policy_is_not_summarized_as_isolated() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/explicit-policy.yaml");
+        .join("../../examples/features/explicit-policy.yaml");
     let wizard = reviewing_template(&path);
     let text = flat(&screen(&wizard, 160, 60));
     assert!(

@@ -11,7 +11,7 @@ use nemoclaw_sdk::{
 };
 use serde_json::{Value, json};
 
-const EXAMPLE: &str = "application-container.yaml";
+const EXAMPLE: &str = "features/application-container.yaml";
 
 fn example() -> Value {
     crate::support::example(EXAMPLE)

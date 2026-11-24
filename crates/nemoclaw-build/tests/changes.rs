@@ -95,7 +95,7 @@ fn fixture_files() -> Vec<(String, String)> {
             ".github/workflows/bundle-platform.yml",
             "name: native\n".into(),
         ),
-        ("examples/local.yaml", "kind: Deployment\n".into()),
+        ("examples/agents/local.yaml", "kind: Deployment\n".into()),
         ("versions.json", "{}\n".into()),
         (".dockerignore", "*\n".into()),
         (".github/workflows/images.yml", "name: images\n".into()),
@@ -454,7 +454,7 @@ fn live_build_packages_and_their_inputs_run_live_suites() {
             "crates/openshell-provider/src/lib.rs",
             "image/vllm/Dockerfile",
             "image/fabric/Dockerfile",
-            "examples/local.yaml",
+            "examples/agents/local.yaml",
             "versions.json",
             ".config/nextest.toml",
             ".github/workflows/bundle-platform.yml",
@@ -494,7 +494,7 @@ fn documentation_changes_skip_bundle_lifecycle_images_and_live_work() {
     let base = repo.base();
     repo.decide(&[("docs/guide.md", Some("# Changed\n"))], None);
     let plan = repo.plan(&base, false);
-    for step in ["bundle", "lifecycle", "images", "live"] {
+    for step in ["bundle", "lifecycle", "images", "live", "installer"] {
         assert_eq!(plan[step]["run"], false, "{step}: {plan}");
         assert!(
             !plan[step]["reason"]
@@ -503,6 +503,38 @@ fn documentation_changes_skip_bundle_lifecycle_images_and_live_work() {
                 .contains("could not analyze")
         );
     }
+}
+
+#[test]
+fn installer_inputs_select_the_installer_checks_and_a_fresh_bundle() {
+    for path in [
+        "tools/release/macos-installer.rs",
+        "tools/release/macos-installer/welcome.html",
+        "tools/release/windows-installer.rs",
+        "tools/release/windows-installer/NemoClaw.wxs",
+        "crates/nemoclaw-cli/src/deployment.rs",
+    ] {
+        let repo = Repo::new();
+        write(repo.0.path(), path, "// changed\n");
+        let plan = repo.plan("HEAD", true);
+        no_fallback(&plan);
+        assert_eq!(plan["installer"]["run"], true, "{path}: {plan}");
+        assert_eq!(plan["bundle"]["run"], true, "{path}: {plan}");
+    }
+}
+
+#[test]
+fn bundle_changes_outside_the_installer_inputs_skip_the_installer_check() {
+    let repo = Repo::new();
+    write(
+        repo.0.path(),
+        "crates/nemoclaw-sdk/src/lib.rs",
+        "pub fn changed() {}\n",
+    );
+    let plan = repo.plan("HEAD", true);
+    no_fallback(&plan);
+    assert_eq!(plan["bundle"]["run"], true, "{plan}");
+    assert_eq!(plan["installer"]["run"], false, "{plan}");
 }
 
 #[test]
@@ -579,26 +611,6 @@ fn packages_outside_lifecycle_still_rebuild_the_bundled_source_archive() {
     no_fallback(&plan);
     assert_eq!(plan["bundle"]["run"], true, "{plan}");
     assert_eq!(plan["lifecycle"]["run"], false, "{plan}");
-}
-
-/// The Windows installer packs the bundle, and its check runs where the
-/// bundle is built; its inputs reach no other suite.
-#[test]
-fn windows_installer_inputs_build_the_bundle_only() {
-    for path in [
-        "packaging/windows/NemoClaw.wxs",
-        "tools/release/windows-installer.rs",
-        "tools/ci/windows-installer-e2e.rs",
-    ] {
-        let repo = Repo::new();
-        write(repo.0.path(), path, "changed\n");
-        let plan = repo.plan("HEAD", true);
-        no_fallback(&plan);
-        assert_eq!(plan["bundle"]["run"], true, "{path}: {plan}");
-        for step in ["lifecycle", "images", "live"] {
-            assert_eq!(plan[step]["run"], false, "{path} {step}: {plan}");
-        }
-    }
 }
 
 #[test]
@@ -1466,7 +1478,7 @@ fn changing_the_station_example_selects_only_its_qualified_hardware_case() {
             .join("crates/nemoclaw-e2e/cases/docker-one.yaml"),
     )
     .unwrap();
-    let example = "examples/gtc-dc/openclaw-dgx-station.yaml";
+    let example = "examples/platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml";
     let base = repo.commit(&[
         (example, Some(&document)),
         (
