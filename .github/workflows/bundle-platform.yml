@@ -90,8 +90,8 @@ on:
         default: false
       installer:
         description: >-
-          On Windows, build the installer from the bundle, then install, upgrade,
-          downgrade, and uninstall it for the runner's user.
+          On Windows, build the installer from the bundle, then install, recover from
+          a failed upgrade, upgrade, refuse a downgrade, and uninstall it for the runner's user.
         type: boolean
         default: false
     # The caller reports the macOS and Windows suites' timings from these.
@@ -458,8 +458,9 @@ jobs:
 
   # Builds the Windows installer from this run's bundle with WiX Toolset, as
   # Release / Stage does from the signed bundle, and installs it for the
-  # runner's user: first an older build with a file the bundle lacks, then this
-  # one over it, then the older one again, which it must refuse; then it
+  # runner's user: first an older build with a file the bundle lacks, then
+  # a failing upgrade, whose rollback must restore the older build, then this
+  # one successfully, then the older one again, which it must refuse; then it
   # uninstalls. See packaging/windows/README.md.
   installer:
     name: E2E installer

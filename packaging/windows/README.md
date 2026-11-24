@@ -19,7 +19,7 @@ Users install it as [Installing With the Windows Installer](../../docs/get-start
 - It installs the bundle unchanged into `%LOCALAPPDATA%\Programs\NemoClaw`. The CLI finds its bundle from `bin\nemoclaw.exe`'s location and checks every file against `manifest.json`.
 - It adds `%LOCALAPPDATA%\Programs\NemoClaw\bin` to the end of the user `Path`, and removes that entry when uninstalled.
 - It lists **NVIDIA NemoClaw Agent Configs** with its version in **Settings** > **Apps** > **Installed apps**, with NVIDIA Corporation as the publisher, the icon, and links to the installation guide, issues, and releases.
-- Its fixed UpgradeCode makes each package replace the installed one. The package removes the installed version before it installs, so no file that only the old bundle had remains. Packages with the same Windows Installer version, such as two CI builds after one release candidate, also replace each other.
+- Its fixed UpgradeCode makes each package replace the installed one. The package removes the installed version before it installs, so no file that only the old bundle had remains. If the upgrade fails, Windows Installer restores the previous installation. Packages with the same Windows Installer version, such as two CI builds after one release candidate, also replace each other.
 - A package older than the installed one stops with a message that a newer version is already installed.
 - Its pages are WiX's minimal set: the welcome page with the license, then progress, then a finish page with the next steps. The license page holds the bundle's `LICENSE` and each notice in its `licenses` directory, which `windows-installer.rs` converts to RTF.
 
@@ -45,7 +45,10 @@ The helper reads the bundle and never runs it, so the release job can build from
 ## Testing the Package
 
 When CI / Bundle builds the Windows bundle, `E2E installer` builds a package from it and an older one, `0.0.1`, whose bundle has an extra file.
-On the runner, it installs the older package, installs the current one over it, and checks that the extra file is gone.
+On the runner, it installs the older package, then attempts an upgrade with a test-only copy of the current package that fails after `InstallFiles`.
+It checks that rollback restores the previous registered product, executable bytes, extra file, and user `Path` entry.
+The test leaves the original current package and its signature unchanged.
+It then installs the current package successfully and checks that the extra file is gone.
 From a new `cmd.exe` with the `Path` that a new terminal reads from the registry, it runs `nemoclaw --version` and `nemoclaw plan --destroy`, which verifies the bundle before it reports that the empty directory has no deployment state.
 It then checks that the older package refuses to replace the current one, uninstalls, and checks that the directory, the `Path` entry, and the product are gone.
 

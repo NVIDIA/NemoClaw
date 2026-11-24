@@ -26,7 +26,7 @@ The archive for release `TAG`, such as `v0.1.0-rc.1`, is `nemoclaw-TAG-PLATFORM.
 
 On Windows, the CLI reaches a local Docker Desktop or Podman engine through its named pipe, such as `npipe:////./pipe/docker_engine`, and [deploys](../build-deploy/usage.md) with a managed or an external gateway.
 No Windows host has run a deployment yet ([#14639](https://github.com/NVIDIA/NemoClaw/issues/14639)).
-The executables are neither signed nor notarized.
+See the release's `release-evidence.json` for signing and notarization results.
 See [current limits](../resources/limits.md#installation-and-releases).
 Use the CLI with the agent and runtime images that the same release lists by digest.
 [Compatibility](../references/compatibility.md#using-one-release-together) explains why.
@@ -159,6 +159,23 @@ Open a new terminal, which reads the new `Path`, and check the CLI:
 nemoclaw --version
 ```
 
+If the version differs from the release you installed, check which executable Windows finds first:
+
+```powershell
+where.exe nemoclaw
+```
+
+An existing archive or system-wide installation can appear before the installer's directory on `Path`.
+For an older archive, remove its `bin` entry from your user `Path` in **Edit environment variables for your account**, then open a new terminal.
+Keep the archive itself if an existing deployment still needs that release.
+If a system-wide installation takes precedence, ask its administrator about removing that installation or invoke this installer's CLI by its full path:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\NemoClaw\bin\nemoclaw.exe" --version
+```
+
+The installer changes only your user `Path`; it does not remove other installations or edit the machine `Path`.
+
 As with the archive, keep the installed directory unchanged, and run `nemoclaw` from your deployment's directory.
 Before your first deployment, install Docker Desktop or Podman, and then run `nemoclaw onboard` to write your deployment file.
 The [first-deployment guide](first-deployment.md) walks through a deployment.
@@ -167,6 +184,7 @@ The [first-deployment guide](first-deployment.md) walks through a deployment.
 
 Run a newer release's installer as above.
 It removes the installed version, including files that the newer version doesn't ship, and then installs the newer version in the same directory, with the same `Path` entry.
+If the upgrade fails, Windows Installer restores the previous version and its `Path` entry.
 
 The installer keeps one version for your Windows account, but a deployment keeps using the release that created it, as [Upgrading](#upgrading) explains.
 Before you upgrade, destroy the deployments that the installed version created, or unpack that version's archive into its own directory as in [Installing on Windows](#installing-on-windows) to keep running it by path.

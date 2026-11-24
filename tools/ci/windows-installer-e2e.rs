@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Installs, upgrades, downgrades, and uninstalls the Windows installer for
+//! Installs, rolls back a failed upgrade, upgrades, refuses downgrades, and
+//! uninstalls the Windows installer for
 //! the current user, as a user would, and checks each result. It changes the
 //! machine it runs on, so CI / Bundle runs it on a fresh runner only.
 //! Compile with rustc; no crates.
@@ -239,6 +240,31 @@ $s.GetType().InvokeMember('Property', 'GetProperty', $null, $s, @(15))"#;
         .map_err(|_| format!("unexpected Word Count {text}"))
 }
 
+/// A test-only copy of the current package that fails after installing files.
+/// Editing the copy leaves the release package and its signature untouched.
+fn failing_upgrade(package: &Path, logs: &Path) -> Result<PathBuf> {
+    let copy = logs.join("failing-upgrade.msi");
+    fs::copy(package, &copy).map_err(|e| format!("cannot copy the upgrade fixture: {e}"))?;
+    let script = r#"$ErrorActionPreference = 'Stop'
+$i = New-Object -ComObject WindowsInstaller.Installer
+function Get($o, $name, $arguments) { $o.GetType().InvokeMember($name, 'GetProperty', $null, $o, $arguments) }
+function Call($o, $name, $arguments) { $o.GetType().InvokeMember($name, 'InvokeMethod', $null, $o, $arguments) }
+$db = Call $i 'OpenDatabase' @($env:PACKAGE, 1)
+function Execute($sql) {
+  $view = Call $db 'OpenView' @($sql)
+  Call $view 'Execute' @() | Out-Null
+  return $view
+}
+$view = Execute "SELECT ``Sequence`` FROM ``InstallExecuteSequence`` WHERE ``Action`` = 'InstallFiles'"
+$record = Call $view 'Fetch' @()
+$sequence = (Get $record 'IntegerData' @(1)) + 1
+Execute "INSERT INTO ``CustomAction`` (``Action``, ``Type``, ``Target``) VALUES ('NemoClawTestUpgradeFailure', 19, 'Intentional upgrade failure after installing files')" | Out-Null
+Execute "INSERT INTO ``InstallExecuteSequence`` (``Action``, ``Condition``, ``Sequence``) VALUES ('NemoClawTestUpgradeFailure', 'WIX_UPGRADE_DETECTED', $sequence)" | Out-Null
+Call $db 'Commit' @() | Out-Null"#;
+    powershell(script, Some(&copy))?;
+    Ok(copy)
+}
+
 struct Installer {
     logs: PathBuf,
     step: usize,
@@ -347,6 +373,31 @@ fn run() -> Result<()> {
     })?;
     installed_once("after installing")?;
 
+    eprintln!("== Restore the older build after a failed upgrade");
+    let previous_products = installed()?;
+    let previous_executable = fs::read(&executable).map_err(|e| e.to_string())?;
+    let broken = failing_upgrade(&options.current, &options.logs)?;
+    let (code, log) = installer.msiexec("/i", &broken, "failed-upgrade")?;
+    check(
+        code == INSTALL_FAILURE
+            && log.contains("Intentional upgrade failure after installing files"),
+        || format!("the upgrade fixture didn't reach its intentional failure: exited {code}"),
+    )?;
+    check(executable.is_file(), || {
+        "the failed upgrade removed the previous CLI instead of restoring it".into()
+    })?;
+    check(
+        fs::read(&executable).map_err(|e| e.to_string())? == previous_executable,
+        || "the failed upgrade changed the previous CLI".into(),
+    )?;
+    check(stale.is_file(), || {
+        "the failed upgrade didn't restore the older build's extra file".into()
+    })?;
+    check(installed()? == previous_products, || {
+        "the failed upgrade didn't restore the previous registered product".into()
+    })?;
+    installed_once("after rolling back the failed upgrade")?;
+
     eprintln!("== Install the current build over it");
     installer.succeed("/i", &options.current, "upgrade")?;
     check(executable.is_file(), || {
@@ -443,7 +494,7 @@ fn run() -> Result<()> {
     check(listed.is_empty(), || {
         format!("products remain installed: {listed:?}")
     })?;
-    eprintln!("The installer installed, upgraded, refused a downgrade, and uninstalled cleanly.");
+    eprintln!("The installer installed, recovered from a failed upgrade, upgraded, refused a downgrade, and uninstalled cleanly.");
     Ok(())
 }
 
