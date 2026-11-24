@@ -16,6 +16,13 @@ Choose agents, models, tools, and network access, then preview and apply deploym
 NemoClaw Agent Configs is a release candidate.
 Until its first release, [build it from source](docs/build-deploy/build.md).
 
+<a href="docs/get-started/first-deployment.md">
+  <picture>
+    <source media="(max-width: 700px)" srcset="docs/assets/deployment-workflow-mobile.svg">
+    <img src="docs/assets/deployment-workflow.svg" alt="Define, plan, and apply a NemoClaw deployment. Open the first-deployment tutorial.">
+  </picture>
+</a>
+
 ### What You Can Do
 
 These outcomes are familiar from NemoClaw Classic, the earlier version:
