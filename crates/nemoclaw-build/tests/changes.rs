@@ -494,7 +494,7 @@ fn documentation_changes_skip_bundle_lifecycle_images_and_live_work() {
     let base = repo.base();
     repo.decide(&[("docs/guide.md", Some("# Changed\n"))], None);
     let plan = repo.plan(&base, false);
-    for step in ["bundle", "lifecycle", "images", "live"] {
+    for step in ["bundle", "lifecycle", "images", "live", "installer"] {
         assert_eq!(plan[step]["run"], false, "{step}: {plan}");
         assert!(
             !plan[step]["reason"]
@@ -503,6 +503,36 @@ fn documentation_changes_skip_bundle_lifecycle_images_and_live_work() {
                 .contains("could not analyze")
         );
     }
+}
+
+#[test]
+fn installer_inputs_select_the_macos_installer_check_and_a_fresh_bundle() {
+    for path in [
+        "tools/release/macos-installer.rs",
+        "tools/release/macos-installer/welcome.html",
+        "crates/nemoclaw-cli/src/deployment.rs",
+    ] {
+        let repo = Repo::new();
+        write(repo.0.path(), path, "// changed\n");
+        let plan = repo.plan("HEAD", true);
+        no_fallback(&plan);
+        assert_eq!(plan["installer"]["run"], true, "{path}: {plan}");
+        assert_eq!(plan["bundle"]["run"], true, "{path}: {plan}");
+    }
+}
+
+#[test]
+fn bundle_changes_outside_the_installer_inputs_skip_the_installer_check() {
+    let repo = Repo::new();
+    write(
+        repo.0.path(),
+        "crates/nemoclaw-sdk/src/lib.rs",
+        "pub fn changed() {}\n",
+    );
+    let plan = repo.plan("HEAD", true);
+    no_fallback(&plan);
+    assert_eq!(plan["bundle"]["run"], true, "{plan}");
+    assert_eq!(plan["installer"]["run"], false, "{plan}");
 }
 
 #[test]

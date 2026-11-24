@@ -16,6 +16,11 @@
 # one without them is the RELEASE_UNSIGNED_EXCEPTION repository variable set to
 # `<tag>:<reason>` for exactly this tag. Linux has no OS code signing; a final
 # release's attestations authenticate its archives.
+#
+# ARCHIVES/nemoclaw-<tag>-darwin_arm64.pkg, when staging attached the macOS
+# installer, is signed and notarized when SIGNED/installer.verification.txt
+# holds its signing job's checks. Only a release candidate may attach it
+# unsigned.
 set -euo pipefail
 
 signed=$1
@@ -58,16 +63,33 @@ for platform in linux_arm64 linux_amd64 darwin_arm64 windows_amd64; do
     --argjson signed "$files" --argjson verification "$verification" \
     '{platform: $platform, archive: $archive, sha256: $sha256, signed: $signed, signature_verification: $verification}')")
 done
+installer=null
+package="nemoclaw-$tag-darwin_arm64.pkg"
+if [ -f "$archives/$package" ]; then
+  verification=null
+  if [ -f "$signed/installer.verification.txt" ]; then
+    verification=$(jq -Rs . < "$signed/installer.verification.txt")
+  elif [ "$required" = true ]; then
+    echo "::error::$tag is a final release, so its macOS installer must be signed and notarized."
+    exit 1
+  fi
+  installer=$(jq -n --arg file "$package" \
+    --arg sha256 "$(awk -v name="$package" '$2 == name { print $1 }' "$archives/SHA256SUMS")" \
+    --argjson verification "$verification" \
+    '{file: $file, sha256: $sha256, signed: ($verification != null), signature_verification: $verification}')
+fi
 printf '%s\n' "${entries[@]}" | jq -s --arg version "$tag" --arg commit "$GITHUB_SHA" \
   --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" \
   --argjson required "$required" --arg reason "$reason" \
   --argjson unsigned "$(jq -cn '$ARGS.positional' --args "${unsigned[@]}")" --arg checksums "$checksums" \
+  --argjson installer "$installer" \
   '{
     version: $version,
     commit: $commit,
     run: $run,
     signing: {required: $required, unsigned: $unsigned, exception: (if $reason == "" then null else $reason end)},
     archives: .,
+    installer: $installer,
     verification: [{command: "sha256sum --check --strict SHA256SUMS", output: $checksums}]
   }' > "$archives/release-evidence.json"
 
@@ -80,6 +102,14 @@ platforms=${platforms% and }
     echo "**Unsigned final release:** the $platforms executables aren't signed, under an exception for this release: $reason"
   else
     echo "The $platforms executables aren't signed: release candidates may stay unsigned."
+  fi
+  echo
+  if [ "$installer" = null ]; then
+    echo "This release has no macOS installer: a final release attaches it only when it's signed and notarized."
+  elif [ "$(jq -r .signed <<< "$installer")" = true ]; then
+    echo "\`$package\` installs the \`darwin_arm64\` CLI on macOS. It is signed and notarized."
+  else
+    echo "\`$package\` installs the \`darwin_arm64\` CLI on macOS. It isn't signed or notarized: release candidates may stay unsigned."
   fi
   echo
   echo "\`release-evidence.json\` records the signing decision, each signed executable with its SHA-256, and the output of the signature and checksum checks."
