@@ -111,16 +111,12 @@ Retain the earlier deployment until the required continuity has been verified.
 
 ## Finding Earlier Documentation
 
-The [combined staging site](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) has a version selector:
+The staging site has separate guides for the two products:
 
-- **NemoClaw Agent Configs (v1)** describes the desired-state architecture and workflows.
-- **Latest (main)** preserves the imported main guides and their release history.
-  Start at its [OpenClaw home](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/user-guide/openclaw/home).
+- [NemoClaw Agent Configs](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/overview) covers the desired-state architecture and workflows.
+- [NemoClaw v0](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v0/user-guide/openclaw/home) covers the previous version and its release history.
 
-The main snapshot is pinned by the [documentation build](../../internal-docs/contributing/documentation-build.md#sources-and-outputs).
-Its label doesn't qualify those procedures for v1.
 Use the earlier deployment's actual version when selecting commands or assessing historical qualification.
-Publishing the combined site and checking its legacy routes are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
 If you ran llama.cpp with NemoClaw v0, [the managed GGUF contract](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) carries repository/revision/file/SHA-256 identity into v1.
 Revalidate each model, host, and required agent task against the [qualified configuration and its limits](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp).

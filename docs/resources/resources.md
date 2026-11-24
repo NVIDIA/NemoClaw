@@ -20,11 +20,11 @@ Choose a source by its use:
 | Source | Use |
 |---|---|
 | The `v0.1.0` tag's `docs/README.md` and task guides | Release-specific guidance. Use the [generated field reference](../reference/configuration.md) from the matching worktree and the JSON Schema from the installed archive. |
-| [v1 staging overview](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) | Browser preview. Choose **NemoClaw Agent Configs (v1)** in the version selector. |
-| [v1 Markdown index](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/llms.txt) | Discover pages in this version. |
-| [v1 overview as Markdown](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview.md) | Fetch page text. Append `.md` to another v1 page URL for that page. |
+| [NemoClaw Agent Configs staging overview](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/overview) | Preview the v1 guide on the staging site. |
+| [v1 Markdown index](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/llms.txt) | Discover pages in the v1 guide. |
+| [v1 overview as Markdown](https://nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw/v1/overview.md) | Fetch the overview as text. Append `.md` to another v1 page URL for that page. |
 
-The staging preview moves after successful pushes.
+Staging updates after successful pushes to `v1`.
 Inspect its revision-pinned source links when matching it to a bundle.
 The site's unversioned `llms.txt` describes the default main version.
 Use the `/nemoclaw/v1/` index for v1 tasks and keep that prefix when following published task-guide links.
@@ -40,8 +40,8 @@ Use this prompt with an assistant that can read your checkout, replacing the fin
 Help me use NemoClaw Agent Configs v0.1.0.
 Read docs/README.md, docs/about/overview.md, and the guide for my task from this checkout.
 Use CLI and configuration references from the same source revision as my bundle, starting with docs/reference/configuration.md.
-For hosted documentation, select NemoClaw Agent Configs (v1) and use /nemoclaw/v1/llms.txt.
-Keep main-version commands and procedures separate from v1 guidance.
+For hosted NemoClaw Agent Configs documentation, use the index at /nemoclaw/v1/llms.txt.
+Keep NemoClaw v0 commands and procedures separate from v1 guidance.
 Treat anything listed in docs/resources/limits.md as not yet available or tested.
 Identify the client, sandbox engine, inference host, image digests, and deployment state path before deployment work.
 Describe which resources an operation changes or retains and how to verify its result.

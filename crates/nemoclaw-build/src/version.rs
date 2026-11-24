@@ -162,7 +162,7 @@ fn tag(name: &str) -> Option<Tag> {
     })
 }
 
-fn core(version: &str) -> Option<Core> {
+pub(super) fn core(version: &str) -> Option<Core> {
     let mut parts = version.split('.');
     let core = (
         number(parts.next()?)?,

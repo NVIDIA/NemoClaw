@@ -69,6 +69,14 @@ The independent review of `da0852d7e11a30180b06ec43804c9122af87e935` requested c
 - Fern passed both its standalone v1 and combined-site checks with zero errors and one warning per pass (`/tmp/nc-r5-fern-final.log`). Generated documentation and schema freshness checks and `git diff --check` passed. All 11 focused CLI parser tests passed (`/tmp/nc-r5-parser.log`). Local navigation keeps the `migration`, `latest`, and `v1` slugs, with Latest first. The authenticated redirect check and live deployment checks were not run.
 - The PR bot reported a Fern preview. Direct probes of its v1 overview and migration routes failed with connection resets. The exact final tag and release were still not found. No release rehearsal or site publication was performed.
 
+## Resolving the PR Conflicts With the v1 Publishing Update
+
+PR #14801 was open and conflicting at remote head `a6a6ea490a357d5f9e681425c39d17471d65e04c`. Merged `origin/v1` at `bd95ea3f4c1e3e105d2b8848ad20e45c8ba69b23` without rewriting branch history. Resolved conflicts in the migration guide, resources page, and maintainer build guide using `fern/product.yml`, `crates/nemoclaw-build/src/fern.rs`, and `.github/workflows/docs.yml`. The official hosted products now publish independently. The local combined build retains its Latest default. The v1 product selector uses the public name NemoClaw Agent Configs without changing routes.
+
+- `cargo run --locked -p nemoclaw-build -- fern check` exited 0 with zero errors and one warning in each of its three passes (`/tmp/nc-r6-final.log`). The imported layout revision was `4649634639d2ddcb26b84cb34db63b2d4176a8a1`.
+- `cargo test --locked -p nemoclaw-build --test integration fern::` passed all seven selected tests (`/tmp/nc-r6-integration.log`). Generated docs, schema freshness, and whitespace checks passed.
+- Requests to the staging v1 home and Markdown index failed with connection resets; public v1 overview and v0 home probes returned HTTP 404. The final `v0.1.0` tag and release were still not found. No live release rehearsal or site publication was performed.
+
 ## Release Evidence Still Needed
 
 `git ls-remote --tags origin refs/tags/v0.1.0` returned no match. The final release page returned HTTP 404. The v1 hosted overview first returned 404 and later failed to connect. The API request was rate-limited. These observations do not establish the contents of a private release. No draft RC assets were substituted and nothing was published.

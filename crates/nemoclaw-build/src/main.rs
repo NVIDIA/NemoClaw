@@ -265,7 +265,9 @@ enum FernAction {
         #[arg(long)]
         url: String,
     },
-    /// Publish main and v1 from a tagged v1 release; needs FERN_TOKEN.
+    /// Publish only the v1 Product to official staging; needs FERN_TOKEN.
+    Staging,
+    /// Publish only the v1 Product from a final v1 release tag; needs FERN_TOKEN.
     Public,
 }
 #[derive(Subcommand)]
@@ -746,6 +748,7 @@ async fn main() -> Result<()> {
                 pull_request,
                 url,
             } => fern::comment(&repository, pull_request, &url),
+            FernAction::Staging => fern::staging(root),
             FernAction::Public => fern::public(root, &fern::Release::from_environment()),
         }
         .map_err(Into::into);
