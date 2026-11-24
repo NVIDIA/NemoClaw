@@ -123,6 +123,7 @@ raise SystemExit(0)
     expect(run.realArgs).toBe("gateway run");
     expect(run.realEnv.HERMES_SKIP_CHMOD).toBe("1");
     expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe("/sandbox/.hermes/lazy-packages");
+    expect(run.realEnv.SQLITE_TMPDIR).toBe("/sandbox/.hermes/tmp");
   });
 
   it("preserves native plugin and package-manager controls for gateway execution (#11766)", () => {
@@ -135,6 +136,7 @@ raise SystemExit(0)
       PIP_CONFIG_FILE: "/sandbox/pip.conf",
       PIP_INDEX_URL: "file:///sandbox/wheels",
       PYTHONPATH: "/sandbox/python",
+      SQLITE_TMPDIR: "/sandbox/custom-tmp",
     });
 
     expect(run.status, run.stderr).toBe(0);
@@ -143,6 +145,7 @@ raise SystemExit(0)
     expect(run.realEnv.HERMES_BUNDLED_PLUGINS).toBe("/sandbox/custom-plugins");
     expect(run.realEnv.HERMES_ENABLE_PROJECT_PLUGINS).toBe("1");
     expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe("/sandbox/custom-lazy-packages");
+    expect(run.realEnv.SQLITE_TMPDIR).toBe("/sandbox/custom-tmp");
     expect(run.realEnv.HOME).toBe("/sandbox");
     expect(run.realEnv.UV_CONFIG_FILE).toBe("/sandbox/uv.toml");
     expect(run.realEnv.PIP_CONFIG_FILE).toBe("/sandbox/pip.conf");

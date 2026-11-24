@@ -270,6 +270,7 @@ HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 HERMES_DIR="/sandbox/.hermes"
 readonly HERMES_SANDBOX_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"
 export HERMES_LAZY_INSTALL_TARGET="$HERMES_SANDBOX_LAZY_INSTALL_TARGET"
+export SQLITE_TMPDIR="${HERMES_DIR}/tmp"
 HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 
 # Resolve the standalone secret-boundary validator. The container ships it at
@@ -1778,7 +1779,7 @@ repair_hermes_startup_layout() {
   # The gateway writes state below sessions, gateway, and runtime. Sandbox
   # backup and restore also access these directories. Keep them group-writable;
   # the cron directory contains cron job definitions and remains separate.
-  for state_dir in sessions gateway runtime; do
+  for state_dir in sessions gateway runtime tmp; do
     if ! ensure_hermes_cross_uid_state_dir "$state_dir"; then
       fail_hermes_startup_layout_repair "${state_dir} state directory"
       return 1
@@ -1814,6 +1815,10 @@ repair_hermes_startup_layout() {
 cleanup_stale_hermes_gateway_runtime() {
   if has_live_hermes_gateway; then
     echo "[gateway] Existing Hermes gateway process detected; preserving runtime lock state" >&2
+    if ! ensure_hermes_cross_uid_state_dir tmp; then
+      fail_hermes_startup_layout_repair "tmp state directory"
+      return "$HERMES_LAYOUT_REPAIR_REFUSED_STATUS"
+    fi
     return 0
   fi
 
@@ -2243,8 +2248,9 @@ launch_hermes_dashboard_process() {
   local GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}"
   local NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env"
   local _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST="${HERMES_DASHBOARD_EXTERNAL_HOST}"
+  local SQLITE_TMPDIR="${HERMES_DIR}/tmp"
   export HERMES_HOME GATEWAY_HEALTH_URL NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV \
-    _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST
+    _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST SQLITE_TMPDIR
 
   case "$service_user" in
     current)
@@ -2431,6 +2437,7 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
 export HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}"
+export SQLITE_TMPDIR="${HERMES_DIR}/tmp"
 PROXYEOF
     cat <<'TUIENVEOF'
 if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
@@ -2817,6 +2824,7 @@ launch_hermes_gateway() {
   HERMES_HOME="${HERMES_DIR}" \
     HOME=/sandbox \
     HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}" \
+    SQLITE_TMPDIR="${HERMES_DIR}/tmp" \
     nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" sh -c \
     'umask 0007; exec "$@" >>/tmp/gateway.log 2>&1' sh "$HERMES" gateway run &
   GATEWAY_PID=$!
@@ -3102,6 +3110,7 @@ launch_hermes_gateway_current_user() {
   HERMES_HOME="${HERMES_DIR}" \
     HOME=/sandbox \
     HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}" \
+    SQLITE_TMPDIR="${HERMES_DIR}/tmp" \
     nohup "$HERMES" gateway run --external-supervisor >>/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   if ! hermes_capture_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT"; then

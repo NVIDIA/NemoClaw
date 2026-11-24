@@ -786,6 +786,8 @@ def _report_cli_adapter_error(exc: _CliAdapterError) -> int:
 
 def main(argv: list[str]) -> int:
     os.environ["HERMES_SKIP_CHMOD"] = "1"
+    if "SQLITE_TMPDIR" not in os.environ:
+        os.environ["SQLITE_TMPDIR"] = f"{_MANAGED_HERMES_HOME}/tmp"
     real_hermes = _resolve_real_hermes()
     guard_path = _resolve_guard()
     if argv[:1] == ["dashboard"] and not _load_dashboard_api_server_key():
