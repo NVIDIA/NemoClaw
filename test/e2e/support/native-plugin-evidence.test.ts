@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { classifySearchTurn } from "../../../nemoclaw/src/runtime-context.ts";
 import {
   completedAgentRunId,
   nativePluginAgentInvocationOutcome,
   nativePluginPresent,
+  nativePluginAgentPrompt,
   nativeToolCallOutcome,
 } from "../fixtures/native-plugin-evidence.ts";
 
@@ -23,6 +25,16 @@ const event = (action: string, status: string, extra: Record<string, unknown> = 
 const started = event("tool.action.started", "started");
 const finished = event("tool.action.finished", "succeeded");
 const page = (events: unknown[]) => JSON.stringify({ events });
+
+it.each(["v1", "v2"] as const)(
+  "keeps the %s fixture request local and names its native dispatcher",
+  (version) => {
+    const prompt = nativePluginAgentPrompt(version);
+    expect(prompt).toContain(`Use tool_call with id nemoclaw_e2e_check_${version} and args {}`);
+    expect(prompt).toContain("otherwise use the directly exposed tool");
+    expect(classifySearchTurn(prompt).scope).toBe("ordinary");
+  },
+);
 
 describe("native plugin execution evidence", () => {
   it("accepts a matched successful execution without reading the tool payload", () => {
@@ -184,7 +196,7 @@ describe("native plugin agent invocation", () => {
     ]);
     expect(await nativePluginAgentInvocationOutcome(fake.sandbox, options)).toBe("succeeded");
     expect(fake.calls.map((argv) => argv[1])).toEqual(["agent", "audit", "audit"]);
-    expect(fake.calls[0]).toContain(`Run the local ${pluginTool} tool once with no arguments.`);
+    expect(fake.calls[0]).toContain(nativePluginAgentPrompt("v1"));
     expect(fake.calls[1]).toEqual(
       expect.arrayContaining(["--run", runId, "--kind", "tool_action"]),
     );

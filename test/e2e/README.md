@@ -740,6 +740,16 @@ The weather lifecycle and sandbox survival fixtures invoke native plugins throug
 They verify the actual paired tool result in that session's native store; the model's reply alone cannot establish execution.
 A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
+Full E2E's versioned local plugin request names `tool_call` when that dispatcher is exposed,
+and uses the native tool directly otherwise. Both versions still require matched tool-start and
+successful tool-completion audit records from the admitted run. A failed invocation collects
+metadata-only audit counts and readiness within one ten-second diagnostic budget, without replaying
+the turn. The collector accepts only a validated gateway-envelope run ID and emits fixed categories
+and bounded counts. It omits audit identities, arguments, reply text and arbitrary error messages.
+The `NEMOCLAW_NATIVE_PLUGIN_FAILURE` record is retained in the existing Launchable `full-e2e.log`,
+even when guest artifact files disappear with workspace cleanup. Missing or invalid diagnostics
+remain unknown and cannot turn the failed invocation into success.
+
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
 `managed-candidate-contract-*` artifact bound to the pull-request head. Pi remains outside the

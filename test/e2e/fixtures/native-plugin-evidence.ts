@@ -18,6 +18,12 @@ export type NativePluginVersion = "v1" | "v2";
 export const NATIVE_PLUGIN_ID = "nemoclaw-e2e-tool";
 export const nativeToolName = (version: NativePluginVersion) => `nemoclaw_e2e_check_${version}`;
 
+/** Name the native dispatcher without changing the run's tool disclosure policy. */
+export function nativePluginAgentPrompt(version: NativePluginVersion): string {
+  const tool = nativeToolName(version);
+  return `Run the local fixture tool ${tool} exactly once with arguments {}. Use tool_call with id ${tool} and args {} when tool_call is available; otherwise use the directly exposed tool. After the tool succeeds, reply DONE.`;
+}
+
 export function nativePluginWriteScript(version: NativePluginVersion): string {
   const toolName = nativeToolName(version);
   const packageJson = JSON.stringify({
@@ -182,11 +188,18 @@ export async function nativePluginAgentInvocationOutcome(
       "--session-id",
       `e2e-plugin-${randomUUID()}`,
       "-m",
-      `Run the local ${toolName} tool once with no arguments.`,
+      nativePluginAgentPrompt(options.version),
     ],
     { artifactName, env, timeoutMs: options.turnTimeoutMs },
   );
-  await captureNativePluginFailureReadiness(sandbox, turn, sandboxName, artifactName, env);
+  await captureNativePluginFailureReadiness(
+    sandbox,
+    turn,
+    sandboxName,
+    artifactName,
+    env,
+    toolName,
+  );
   if (turn.exitCode !== 0) return "failed";
   const runId = completedAgentRunId(turn.stdout);
   // Audit persistence is asynchronous. Poll only the read-only page, never replay the agent turn.

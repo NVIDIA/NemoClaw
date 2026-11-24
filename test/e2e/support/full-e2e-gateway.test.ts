@@ -273,7 +273,7 @@ describe("full E2E gateway ownership", () => {
 it("captures bounded readiness status after a failed plugin invocation without retrying it", async () => {
   const execShell = vi.fn().mockResolvedValue({ exitCode: 0 });
   await captureNativePluginFailureReadiness(
-    { execShell },
+    { exec: vi.fn(), execShell },
     { exitCode: 22 },
     "owned-sandbox",
     "plugin",
@@ -283,19 +283,166 @@ it("captures bounded readiness status after a failed plugin invocation without r
     artifactName: "plugin-readiness-after-failure",
     env: {},
     captureLimitBytes: 1024,
-    timeoutMs: 10_000,
+    timeoutMs: expect.any(Number),
   });
 });
 
 it("skips successful plugin calls and preserves a failed result when diagnostics are unavailable", async () => {
   const execShell = vi.fn().mockRejectedValue(new Error("sandbox unavailable"));
   const args = ["owned-sandbox", "plugin", {}] as const;
-  await captureNativePluginFailureReadiness({ execShell }, { exitCode: 0 }, ...args);
+  await captureNativePluginFailureReadiness({ exec: vi.fn(), execShell }, { exitCode: 0 }, ...args);
   expect(execShell).not.toHaveBeenCalled();
   await expect(
-    captureNativePluginFailureReadiness({ execShell }, { exitCode: 22 }, ...args),
+    captureNativePluginFailureReadiness({ exec: vi.fn(), execShell }, { exitCode: 22 }, ...args),
   ).resolves.toBeUndefined();
   expect(execShell).toHaveBeenCalledTimes(1);
+});
+
+describe("native plugin failure evidence", () => {
+  const runId = "28f72920-2f1a-4f5b-9683-e51dedfddb1e";
+  const toolName = "nemoclaw_e2e_check_v2";
+  const envelope = {
+    runId,
+    status: "timeout",
+    result: {
+      payloads: [{ text: "private reply" }],
+      meta: {
+        timeoutPhase: "provider",
+        agentMeta: { bridgeCalls: { search: 1, describe: 0, call: 0 } },
+        systemPromptReport: { tools: { entries: [{ name: "tool_call" }] } },
+      },
+    },
+  };
+  const event = {
+    kind: "tool_action",
+    runId,
+    toolName,
+    action: "tool.action.finished",
+    status: "blocked",
+    sessionKey: "private identity",
+    error: "private error",
+    arguments: { token: "private token" },
+  };
+  const readRecord = (log: ReturnType<typeof vi.spyOn>) =>
+    JSON.parse(String(log.mock.calls.at(-1)?.[0]).replace("NEMOCLAW_NATIVE_PLUGIN_FAILURE ", ""));
+
+  it("retains only run-correlated closed audit outcomes and readiness in the staging log", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exec = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      stdout: JSON.stringify({
+        events: [event, { ...event, runId: "unrelated", status: "succeeded" }],
+      }),
+    });
+    const execShell = vi
+      .fn()
+      .mockResolvedValue({ exitCode: 0, stdout: "healthz=200\nreadyz=503\nprivate token" });
+    const result = { exitCode: 1, stdout: JSON.stringify(envelope) };
+    await captureNativePluginFailureReadiness(
+      { exec, execShell },
+      result,
+      "owned",
+      "invoke",
+      {},
+      toolName,
+    );
+    expect(exec).toHaveBeenCalledExactlyOnceWith(
+      "owned",
+      ["openclaw", "audit", "--run", runId, "--kind", "tool_action", "--limit", "100", "--json"],
+      expect.objectContaining({ persistArtifacts: false, timeoutMs: 3_000 }),
+    );
+    expect(readRecord(log)).toEqual({
+      identifiedRun: true,
+      timeoutPhase: "provider",
+      targetAdvertised: false,
+      bridgeCalls: { search: 1, describe: 0, call: 0 },
+      audit: {
+        status: "available",
+        counts: {
+          started: 0,
+          succeeded: 0,
+          blocked: 1,
+          failed: 0,
+          cancelled: 0,
+          timed_out: 0,
+          unknown: 0,
+        },
+      },
+      readiness: { healthz: 200, readyz: 503 },
+    });
+    expect(JSON.stringify(log.mock.calls)).not.toMatch(/private|28f72920/u);
+    expect(result.exitCode).toBe(1);
+  });
+
+  it.each([
+    "not JSON",
+    JSON.stringify({ result: { payloads: [{ text: JSON.stringify(envelope) }], meta: {} } }),
+    JSON.stringify({ ...envelope, runId: "--untrusted" }),
+    JSON.stringify([envelope, envelope]),
+    " ".repeat(128 * 1024 + 1),
+  ])("never queries an unidentifiable or ambiguous gateway run", async (stdout) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exec = vi.fn();
+    const execShell = vi.fn().mockResolvedValue({ stdout: "" });
+    await captureNativePluginFailureReadiness(
+      { exec, execShell },
+      { exitCode: 1, stdout },
+      "owned",
+      "invoke",
+      {},
+      toolName,
+    );
+    expect(exec).not.toHaveBeenCalled();
+    expect(readRecord(log).audit.status).toBe("unavailable");
+  });
+
+  it.each([
+    { stdout: "not JSON" },
+    { stdout: JSON.stringify({ events: [null] }) },
+    { stdout: JSON.stringify({ events: [event], nextCursor: "more" }) },
+    { stdout: JSON.stringify({ events: [{ ...event, status: "private token" }] }) },
+    { stdout: JSON.stringify({ events: Array.from({ length: 101 }, () => event) }) },
+    { stdout: JSON.stringify({ events: [event] }), timedOut: true },
+    { stdout: JSON.stringify({ events: [event] }), signal: "SIGTERM" },
+    { stdout: JSON.stringify({ events: [event] }), exitCode: 1 },
+  ])("keeps failed or incomplete diagnostic reads inconclusive", async (audit) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exec = vi.fn().mockResolvedValue({ exitCode: 0, ...audit });
+    const execShell = vi.fn().mockRejectedValue(new Error("private transport error"));
+    const result = { exitCode: 1, stdout: JSON.stringify(envelope) };
+    await expect(
+      captureNativePluginFailureReadiness(
+        { exec, execShell },
+        result,
+        "owned",
+        "invoke",
+        {},
+        toolName,
+      ),
+    ).resolves.toBeUndefined();
+    expect(readRecord(log).audit.status).not.toBe("available");
+    expect(JSON.stringify(log.mock.calls)).not.toMatch(/private/u);
+    expect(result.exitCode).toBe(1);
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares the existing ten-second budget and starts no reads after it expires", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(10_000);
+    const exec = vi.fn();
+    const execShell = vi.fn();
+    await captureNativePluginFailureReadiness(
+      { exec, execShell },
+      { exitCode: 1, stdout: JSON.stringify(envelope) },
+      "owned",
+      "invoke",
+      {},
+      toolName,
+    );
+    expect(exec).not.toHaveBeenCalled();
+    expect(execShell).not.toHaveBeenCalled();
+    expect(readRecord(log).audit.status).toBe("unavailable");
+  });
 });
 
 it.each([

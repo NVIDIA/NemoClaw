@@ -67,6 +67,7 @@ import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-f
 import {
   completedAgentRunId,
   nativePluginPresent,
+  nativePluginAgentPrompt,
   nativeToolCallOutcome,
   NATIVE_PLUGIN_ID,
   nativeToolName,
@@ -251,11 +252,18 @@ async function invokeNativePlugin(
       "--session-id",
       `e2e-plugin-${randomUUID()}`,
       "-m",
-      `Run the local ${toolName} tool once with no arguments.`,
+      nativePluginAgentPrompt(version),
     ],
     { artifactName, env: env(), timeoutMs: 60_000 },
   );
-  await captureNativePluginFailureReadiness(sandbox, result, SANDBOX_NAME, artifactName, env());
+  await captureNativePluginFailureReadiness(
+    sandbox,
+    result,
+    SANDBOX_NAME,
+    artifactName,
+    env(),
+    toolName,
+  );
   expect(result.exitCode, resultText(result)).toBe(0);
   const runId = completedAgentRunId(result.stdout);
   // Audit persistence is asynchronous. Poll only the read-only page, never replay the agent turn.
