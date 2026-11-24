@@ -278,6 +278,7 @@ it("captures bounded readiness status after a failed plugin invocation without r
     "owned-sandbox",
     "plugin",
     {},
+    "nemoclaw_e2e_check_v2",
   );
   expect(execShell).toHaveBeenCalledExactlyOnceWith("owned-sandbox", expect.anything(), {
     artifactName: "plugin-readiness-after-failure",
@@ -289,7 +290,7 @@ it("captures bounded readiness status after a failed plugin invocation without r
 
 it("skips successful plugin calls and preserves a failed result when diagnostics are unavailable", async () => {
   const execShell = vi.fn().mockRejectedValue(new Error("sandbox unavailable"));
-  const args = ["owned-sandbox", "plugin", {}] as const;
+  const args = ["owned-sandbox", "plugin", {}, "nemoclaw_e2e_check_v2"] as const;
   await captureNativePluginFailureReadiness({ exec: vi.fn(), execShell }, { exitCode: 0 }, ...args);
   expect(execShell).not.toHaveBeenCalled();
   await expect(
@@ -325,6 +326,25 @@ describe("native plugin failure evidence", () => {
   };
   const readRecord = (log: ReturnType<typeof vi.spyOn>) =>
     JSON.parse(String(log.mock.calls.at(-1)?.[0]).replace("NEMOCLAW_NATIVE_PLUGIN_FAILURE ", ""));
+
+  it("keeps failed gateway restart diagnostics readiness-only", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exec = vi.fn();
+    const execShell = vi
+      .fn()
+      .mockResolvedValue({ exitCode: 0, stdout: "healthz=200\nreadyz=503\n" });
+    const restart = { exitCode: 1, stdout: JSON.stringify(envelope) };
+    await captureNativePluginFailureReadiness({ exec, execShell }, restart, "owned", "restart", {});
+    expect(execShell).toHaveBeenCalledExactlyOnceWith("owned", expect.anything(), {
+      artifactName: "restart-readiness-after-failure",
+      env: {},
+      captureLimitBytes: 1024,
+      timeoutMs: expect.any(Number),
+    });
+    expect(exec).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    expect(restart.exitCode).toBe(1);
+  });
 
   it("retains only run-correlated closed audit outcomes and readiness in the staging log", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);

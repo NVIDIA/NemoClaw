@@ -749,6 +749,7 @@ and bounded counts. It omits audit identities, arguments, reply text and arbitra
 The `NEMOCLAW_NATIVE_PLUGIN_FAILURE` record is retained in the existing Launchable `full-e2e.log`,
 even when guest artifact files disappear with workspace cleanup. Missing or invalid diagnostics
 remain unknown and cannot turn the failed invocation into success.
+Gateway restart failures retain readiness artifacts without emitting an invocation-failure record.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a

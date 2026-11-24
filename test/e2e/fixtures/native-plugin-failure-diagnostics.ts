@@ -91,7 +91,7 @@ function auditEvidence(raw: string, runId: string, toolName: string) {
   return { status: "available", counts };
 }
 
-/** Record bounded failure evidence without replaying a failed agent turn. */
+/** Probe failed lifecycle steps; record invocation evidence only for a named fixture tool. */
 export async function captureNativePluginFailureReadiness(
   sandbox: Pick<SandboxClient, "exec" | "execShell">,
   result: { exitCode: number | null; stdout?: string },
@@ -104,7 +104,7 @@ export async function captureNativePluginFailureReadiness(
   const deadline = performance.now() + DIAGNOSTIC_BUDGET_MS;
   const remaining = () => Math.max(0, Math.ceil(deadline - performance.now()));
   const toolName = expectedTool && FIXTURE_TOOL.test(expectedTool) ? expectedTool : undefined;
-  const final = failedRun(result.stdout ?? "");
+  const final = toolName ? failedRun(result.stdout ?? "") : null;
   let audit: ReturnType<typeof auditEvidence> = { status: "unavailable" };
   const auditBudget = Math.min(3_000, remaining());
   if (final && toolName && auditBudget > 0) {
@@ -164,6 +164,8 @@ export async function captureNativePluginFailureReadiness(
       // Readiness is best effort within the same ten-second diagnostic reserve.
     }
   }
+  // Restart callers have no agent turn. Preserve their readiness artifact without an invocation record.
+  if (!toolName) return;
   // Launchable retains this bounded projection in full-e2e.log; guest artifact files are ephemeral.
   console.error(
     "NEMOCLAW_NATIVE_PLUGIN_FAILURE " +
