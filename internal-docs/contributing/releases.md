@@ -95,20 +95,28 @@ Staging also attaches `nemoclaw-<tag>-darwin_arm64.pkg`, which installs the `dar
 The `macos-installer` job assembles that bundle on `macos-15` as staging does, from the bundle CI checked and the executables `sign-macos` signed, and builds the installer with [`macos-installer.rs`](../../tools/release/macos-installer.rs).
 `SHA256SUMS` lists the installer, the [evidence record](#evidence-record) describes it, and a final release attests it with the archives.
 
-Signing the installer needs a Developer ID Installer certificate, which is separate from the certificate that signs the executables.
-A repository administrator turns installer signing on by adding these secrets to the `release-signing` environment and then setting the `MACOS_INSTALLER_SIGNING` repository variable to `true`:
+The `sign-macos-installer-3s` job submits the installer to NVIDIA 3S through the same Vault-issued SSA identity and `SIGNING_MACOS` scope as executable signing.
+The ZIP preserves the `.pkg` filename so the service selects package signing with a Developer ID Installer certificate.
+No Installer certificate or private key is stored in GitHub.
+The job runs outside the `release-signing` environment so its Vault identity remains bound to the protected release tag.
+Only the trusted security controller's helper runs with SSA access; the installer is treated as data.
+The helper uses private job scratch storage, revokes the Vault token after fetching the SSA credentials, and removes scratch data when the job ends.
 
-| Secret | Value |
-|---|---|
-| `MACOS_INSTALLER_CERTIFICATE` | The Developer ID Installer certificate of the team in `APPLE_TEAM_ID` with its private key, as a base64-encoded PKCS #12 file |
-| `MACOS_INSTALLER_CERTIFICATE_PASSWORD` | The PKCS #12 file's password |
+Before setting the `MACOS_INSTALLER_SIGNING` repository variable to `true`, the runner administrator must update both admission checks on the dedicated signing host:
 
-The `sign-macos-installer` job then signs the installer with `productsign`, notarizes it with the `APPLE_NOTARY_ID` and `APPLE_NOTARY_PASSWORD` secrets and staples the ticket, and checks it with `pkgutil --check-signature`, `spctl --assess --type install`, and `xcrun stapler validate`.
-It imports the certificate into a keychain it creates for the job and deletes when the job ends, and deletes the decoded file once imported.
-Whether 3S signs the installer instead, as it signs the executables, is undecided ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
+- Compile the merged `tools/release/macos-signing.rs` as the root-owned `/opt/nemoclaw-signing/bin/macos-signing` admission helper.
+- Add `sign-macos-installer-3s` alongside `sign-macos-3s` in the root-owned `runner-admission.py` job allowlist. Preserve its Worker termination on denial and the Vault authorization check.
 
-While `MACOS_INSTALLER_SIGNING` isn't `true`, the signing job is skipped: a release candidate's private draft attaches the unsigned installer, and a final release attaches none.
-To stop signing, set the variable to anything else; to revoke access, delete the two secrets.
+Keep the existing protected-tag Vault claims and read-only SSA policy.
+A PR job must not be admitted to validate signing.
+The release controller revision must include the package-signing helper before the first signed installer run.
+
+The hosted-Mac `sign-macos-installer` job checks the returned Developer ID Installer identity against `APPLE_TEAM_ID`, notarizes with the existing `release-signing` environment's `APPLE_NOTARY_ID` and `APPLE_NOTARY_PASSWORD` secrets, and staples the ticket.
+It checks the final package with `pkgutil --check-signature`, `spctl --assess --type install`, and `xcrun stapler validate` before staging accepts it.
+Its temporary notary keychain is deleted when the job ends.
+
+While `MACOS_INSTALLER_SIGNING` is not `true`, both jobs are skipped: a release candidate's private draft attaches the unsigned installer, and a final release attaches none.
+To stop installer signing, set the variable to anything else.
 
 
 ### Final Releases Require Signing
