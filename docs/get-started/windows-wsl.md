@@ -109,6 +109,19 @@ Plan and review the changes, then apply with a separate state directory:
 
 If another deployment uses the default gateway port or network range, set `spec.gateway.target.docker.port` and `spec.gateway.target.docker.networkCIDR` to unused values before the first successful plan.
 A failed first plan binds neither setting; preserve the other deployment.
+For example, if port `17683` and range `10.203.0.0/24` are unused, add them beside `engine` in the generated file:
+
+```yaml
+spec:
+  gateway:
+    target:
+      docker:
+        engine: unix:///var/run/docker.sock
+        port: 17683
+        networkCIDR: 10.203.0.0/24
+```
+
+This is a fragment; retain the rest of the generated configuration.
 
 ```sh
 nemoclaw plan --state-dir .local/first-wsl/state deployment.yaml

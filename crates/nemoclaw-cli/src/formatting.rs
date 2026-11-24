@@ -25,6 +25,7 @@ pub(crate) struct RenderContext {
     mutation_started: Arc<AtomicBool>,
     warnings: Arc<Mutex<BTreeSet<String>>>,
     state_dir: PathBuf,
+    bundle_dir: Option<PathBuf>,
     input: Option<PathBuf>,
     verbose: bool,
     started: Instant,
@@ -48,6 +49,7 @@ impl RenderContext {
             warnings: Arc::new(Mutex::new(BTreeSet::new())),
             input,
             state_dir: cli.state_dir.clone(),
+            bundle_dir: cli.bundle_dir.clone(),
             verbose: cli.verbose,
             started: Instant::now(),
             output_palette: Palette::detect(
@@ -121,6 +123,25 @@ impl RenderContext {
             terminal_text(&self.state_dir.display().to_string())
         )
     }
+
+    fn follow_up_command(&self, operation: &str, path: &std::path::Path) -> String {
+        let mut command = format!("nemoclaw {operation}");
+        if self.state_dir != std::path::Path::new(".nemoclaw") {
+            command.push_str(&format!(
+                " --state-dir {}",
+                shell_word(&self.state_dir.display().to_string())
+            ));
+        }
+        if let Some(bundle) = &self.bundle_dir {
+            command.push_str(&format!(
+                " --bundle {}",
+                shell_word(&bundle.display().to_string())
+            ));
+        }
+        command.push(' ');
+        command.push_str(&shell_word(&path.display().to_string()));
+        terminal_text(&command)
+    }
 }
 
 pub(crate) fn render(
@@ -131,7 +152,7 @@ pub(crate) fn render(
     match result {
         CommandResult::Export(document) => Ok(document.yaml()?),
         CommandResult::Authored(path) => Ok(path
-            .map(|path| authored(&path, context.output_palette))
+            .map(|path| authored(&path, context))
             .unwrap_or_default()),
         CommandResult::Operation(result) => match format {
             OutputFormat::Text => {
@@ -152,15 +173,15 @@ pub(crate) fn render(
 }
 
 /// The save confirmation, with commands that run as printed.
-fn authored(path: &std::path::Path, palette: Palette) -> String {
-    let file = terminal_text(&shell_word(&path.display().to_string()));
+fn authored(path: &std::path::Path, context: &RenderContext) -> String {
+    let palette = context.output_palette;
     let heading = format!(
         "{} {}",
         "Authored desired state:",
         palette.paint(&terminal_text(&path.display().to_string()), Tone::Success)
     );
-    let plan = palette.paint(&format!("nemoclaw plan {file}"), Tone::Accent);
-    let apply = palette.paint(&format!("nemoclaw apply {file}"), Tone::Accent);
+    let plan = palette.paint(&context.follow_up_command("plan", path), Tone::Accent);
+    let apply = palette.paint(&context.follow_up_command("apply", path), Tone::Accent);
     let note = palette.paint("Apply pulls images and starts containers.", Tone::Muted);
     format!(
         "{heading}\n\nPreview the changes with plan, then apply them:\n\n  {plan}\n  {apply}\n\n{note}\n"
@@ -563,8 +584,8 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             && let Some(input) = &context.input
         {
             output.push_str(&format!(
-                "Next: nemoclaw apply {}\n",
-                terminal_text(&shell_word(&input.display().to_string()))
+                "Next: {}\n",
+                context.follow_up_command("apply", input)
             ));
         }
     }
@@ -1430,6 +1451,55 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(output["complete"], false);
+    }
+
+    #[test]
+    fn follow_up_commands_keep_the_selected_state_and_bundle() {
+        for operation in ["plan", "onboard"] {
+            let cli = Cli::try_parse_from([
+                "nemoclaw",
+                "--state-dir",
+                "my state",
+                "--bundle",
+                "my bundle",
+                operation,
+                "spark.yaml",
+            ])
+            .unwrap();
+            let result = if operation == "onboard" {
+                CommandResult::Authored(Some("deployment.yaml".into()))
+            } else {
+                CommandResult::Operation(Box::new(
+                    serde_json::from_value(json!({
+                        "outcome": "planned",
+                        "changes": [],
+                        "deferred": ["Gateway inventory unavailable"]
+                    }))
+                    .unwrap(),
+                ))
+            };
+            let text =
+                super::render(result, OutputFormat::Text, &RenderContext::new(&cli)).unwrap();
+            let file = if operation == "onboard" {
+                "deployment.yaml"
+            } else {
+                "spark.yaml"
+            };
+            assert!(
+                text.contains(&format!(
+                    "nemoclaw apply --state-dir 'my state' --bundle 'my bundle' {file}"
+                )),
+                "the apply hint must retain the deployment's state and bundle: {text}"
+            );
+            if operation == "onboard" {
+                assert!(
+                    text.contains(
+                        "nemoclaw plan --state-dir 'my state' --bundle 'my bundle' deployment.yaml"
+                    ),
+                    "the plan hint must retain the deployment's state and bundle: {text}"
+                );
+            }
+        }
     }
 
     #[test]

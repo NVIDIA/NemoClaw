@@ -1051,7 +1051,7 @@
           "description": "Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead."
         },
         "ref": {
-          "description": "Immutable image reference, pinned by SHA-256 digest. Required on every gateway target; build one as described in the agent image build instructions.",
+          "description": "Immutable image reference, pinned by SHA-256 digest. Required on every gateway target; build one using docs/build-deploy/build.md#building-agent-images.",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
           "type": "string",
           "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"
