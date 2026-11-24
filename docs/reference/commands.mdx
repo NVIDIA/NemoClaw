@@ -734,6 +734,14 @@ Keep the recovery record and retry `destroy` only after resolving the identity d
 
 If OpenShell did not return a durable identity fingerprint, `destroy` cannot authorize deletion of a live sandbox.
 
+When `destroy` refuses, it also prints where the latest backup record points, if it can read one.
+Treat that location as unverified.
+NemoClaw has not checked that the record is current or that the archive is intact.
+A missing or unreadable record does not prove that no backup exists, so look in the `rebuild-backups/` directory yourself.
+Before you extract a backup or do any manual cleanup, copy the backup directory somewhere safe.
+Then read `rebuild-manifest.json` in it, compute the SHA-256 digest of `native-home.tar`, and confirm that it matches the `nativeState.sha256` value in the manifest.
+Do not extract an archive whose digest does not match.
+
 For normal recovery, `destroy` can clear local recovery metadata on native Linux with default Docker when no lifecycle identity was published.
 It requires exactly one matching retained record, a recorded Docker ownership marker, and sandbox absence confirmed by the owning gateway.
 Docker must report no matching containers or managed state volumes.

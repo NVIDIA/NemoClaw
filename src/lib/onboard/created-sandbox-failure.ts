@@ -36,6 +36,7 @@ export function formatRetainedSandboxRecoveryMessage(input: {
 }
 
 const CREATE_OUTPUT_TAIL_LINES = 12;
+const CREATE_OUTPUT_LINE_MAX_CHARS = 500;
 
 /**
  * Redacted tail of the OpenShell create stream, for failures that happen after
@@ -55,7 +56,13 @@ export function formatCreateOutputTail(output: string | null | undefined): strin
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0);
   if (lines.length === 0) return null;
-  return lines.slice(-CREATE_OUTPUT_TAIL_LINES).join("\n");
+  return lines.slice(-CREATE_OUTPUT_TAIL_LINES).map(boundCreateOutputLine).join("\n");
+}
+
+/** Keep the newest end of an overlong line, which is where a failure reason usually sits. */
+function boundCreateOutputLine(line: string): string {
+  if (line.length <= CREATE_OUTPUT_LINE_MAX_CHARS) return line;
+  return `[truncated] ...${line.slice(-CREATE_OUTPUT_LINE_MAX_CHARS)}`;
 }
 
 export function unconfirmedCreateMessage(sandboxName: string, diagnostic: string | null): string {
