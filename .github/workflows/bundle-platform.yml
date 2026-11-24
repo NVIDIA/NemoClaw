@@ -511,7 +511,7 @@ jobs:
       - name: Install, upgrade, downgrade, and uninstall
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          $version = (Get-Content -Raw "dist/$env:TEST_PLATFORM/manifest.json" | ConvertFrom-Json).version
+          $version = (Get-Content -Raw "dist/$env:TEST_PLATFORM/manifest.json" | ConvertFrom-Json).Version
           $msiVersion = & "$env:RUNNER_TEMP/windows-installer.exe" version $version
           & "$env:RUNNER_TEMP/windows-installer-e2e.exe" --older "$env:RUNNER_TEMP/msi/older.msi" `
             --current "$env:RUNNER_TEMP/msi/nemoclaw.msi" --version $version --msi-version $msiVersion `

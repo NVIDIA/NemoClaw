@@ -372,7 +372,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          $version = (Get-Content -Raw "$env:RUNNER_TEMP/windows_amd64/manifest.json" | ConvertFrom-Json).version
+          $version = (Get-Content -Raw "$env:RUNNER_TEMP/windows_amd64/manifest.json" | ConvertFrom-Json).Version
           if ("v$version" -ne $env:TAG) {
             Write-Output "::error::The Windows bundle reports $version, not $env:TAG."
             exit 1

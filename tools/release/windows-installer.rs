@@ -70,12 +70,12 @@ fn msi_version(version: &str) -> Result<String> {
     Ok(format!("{major}.{minor}.{}", patch * 1000 + rank))
 }
 
-/// The top-level "version" string of a bundle's manifest.json.
+/// The top-level "Version" string of a bundle's manifest.json.
 fn manifest_version(manifest: &str) -> Result<String> {
     let missing = || "the bundle manifest names no version".to_owned();
     // Values are names, digests, and versions, none with quotes or escapes,
-    // so the first "version" key is the top-level one.
-    let after = manifest.split_once("\"version\"").ok_or_else(missing)?.1;
+    // so the first "Version" key is the top-level one.
+    let after = manifest.split_once("\"Version\"").ok_or_else(missing)?.1;
     let value = after.trim_start().strip_prefix(':').ok_or_else(missing)?;
     let value = value.trim_start().strip_prefix('"').ok_or_else(missing)?;
     let (version, _) = value.split_once('"').ok_or_else(missing)?;
@@ -375,10 +375,10 @@ mod tests {
 
     #[test]
     fn the_manifest_names_the_version() {
-        let manifest = "{\n  \"version\": \"0.1.0-rc.12\",\n  \"rust\": \"1.100.0\",\n  \"files\": {\n    \"bin/nemoclaw.exe\": \"abc\"\n  }\n}";
+        let manifest = "{\n  \"Version\": \"0.1.0-rc.12\",\n  \"Rust\": \"1.100.0\",\n  \"Files\": {\n    \"bin/nemoclaw.exe\": \"abc\"\n  }\n}";
         assert_eq!(manifest_version(manifest).unwrap(), "0.1.0-rc.12");
-        assert!(manifest_version("{\"files\": {}}").is_err());
-        assert!(manifest_version("{\"version\": 1}").is_err());
+        assert!(manifest_version("{\"Files\": {}}").is_err());
+        assert!(manifest_version("{\"Version\": 1}").is_err());
     }
 
     #[test]
