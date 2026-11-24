@@ -191,7 +191,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         assert_eq!(saved_intent(directory.path()), None);
         let document =
-            Document::parse(include_bytes!("../../../examples/agents/openclaw.yaml").as_slice()).unwrap();
+            Document::parse(include_bytes!("../../../examples/agents/openclaw.yaml").as_slice())
+                .unwrap();
         let intent = serde_json::json!({"version": 1, "document": document});
         std::fs::write(directory.path().join("intent.json"), intent.to_string()).unwrap();
         assert_eq!(saved_intent(directory.path()), Some(document));

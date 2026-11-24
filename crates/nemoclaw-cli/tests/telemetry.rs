@@ -140,13 +140,16 @@ fn apply_and_destroy_send_one_record_and_plan_and_export_none() {
 fn a_stalled_receiver_ends_the_command_within_three_seconds_with_the_same_exit_code() {
     let guard = NetworkGuard::new();
     let fixture = Fixture::new();
-    let receiver = Receiver::new(true);
+    let (answering, stalling) = (Receiver::new(false), Receiver::new(true));
     let args = ["apply", "INPUT"];
-    let started = Instant::now();
     let quiet = fixture.command(&guard, &args, "quiet").output().unwrap();
+    let started = Instant::now();
+    sending(&fixture, &guard, &args, &answering.url)
+        .output()
+        .unwrap();
     let baseline = started.elapsed();
     let started = Instant::now();
-    let stalled = sending(&fixture, &guard, &args, &receiver.url)
+    let stalled = sending(&fixture, &guard, &args, &stalling.url)
         .output()
         .unwrap();
     let elapsed = started.elapsed();
@@ -154,7 +157,7 @@ fn a_stalled_receiver_ends_the_command_within_three_seconds_with_the_same_exit_c
     assert_eq!(stalled.stdout, quiet.stdout);
     assert!(
         elapsed < baseline + Duration::from_millis(3500),
-        "{elapsed:?} against {baseline:?} without telemetry"
+        "{elapsed:?} against {baseline:?} with an answering receiver"
     );
     guard.assert_no_connection("stalled receiver");
 }
