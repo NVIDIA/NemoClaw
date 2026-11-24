@@ -216,9 +216,8 @@ fn installed() -> Result<Vec<Product>> {
         r#"$ErrorActionPreference = 'Stop'
 $i = New-Object -ComObject WindowsInstaller.Installer
 function Get($o, $name, $arguments) {{ $o.GetType().InvokeMember($name, 'GetProperty', $null, $o, $arguments) }}
-$list = Get $i 'RelatedProducts' @('{UPGRADE_CODE}')
-for ($k = 0; $k -lt (Get $list 'Count' @()); $k++) {{
-  $p = Get $list 'Item' @($k)
+# A function's output enumerates the returned list into its product codes.
+foreach ($p in @(Get $i 'RelatedProducts' @('{UPGRADE_CODE}'))) {{
   foreach ($n in 'InstalledProductName', 'VersionString', 'Publisher', 'HelpLink', 'URLInfoAbout', 'URLUpdateInfo', 'AssignmentType') {{
     "$p`t$n`t$(Get $i 'ProductInfo' @($p, $n))"
   }}
