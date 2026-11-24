@@ -15,9 +15,9 @@ A branch name doesn't identify an installed executable.
 The v1 CLI has `onboard`, `plan`, `apply`, `export`, and `destroy`. `onboard` writes YAML only. npm onboarding, `launch`, `backup-all`, and `inference get` belong to earlier versions.
 
 Use the documentation in the matching checkout, starting with [the index](../../../docs/README.md).
-Without a checkout, use the hosted Markdown index for [NemoClaw Agent Configs](https://docs.nvidia.com/nemoclaw/v1/llms.txt) or [NemoClaw v0](https://docs.nvidia.com/nemoclaw/v0/llms.txt).
-Keep the product's version prefix in hosted page URLs and append `.md` to fetch a page as Markdown.
-**Latest (main)** is the default in the combined local preview, not a hosted product label.
+Without a checkout, use the [NemoClaw Agent Configs Markdown index](https://docs.nvidia.com/nemoclaw/v1/llms.txt) for v1 tasks or the [parent NemoClaw Markdown index](https://docs.nvidia.com/nemoclaw/llms.txt) for NemoClaw v0 tasks.
+Use the page URLs listed in the index. Confirm that the guide matches the installed version and source revision before suggesting commands.
+In the combined local preview, **Latest (main)** is the default.
 If the matching documentation isn't available, say so instead of substituting another version's commands.
 If the executable and the documentation disagree, establish which deployment the user means before changing anything.
 

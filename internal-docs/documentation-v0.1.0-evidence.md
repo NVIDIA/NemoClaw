@@ -86,6 +86,12 @@ The review of `2743e5b7dddea184d4426bae679366b21adbad05` covered naming and dire
 - The seven v1 aliases in `fern/docs.yml` have matching destinations in the assembled standalone product. A local check compared both configurations and inspected the assembled home and generated guide routes. The home check failed against the old builder and passed after the change. These are local assembly checks, not hosted redirect tests.
 - Fern validation passed with zero errors and one warning per pass (`/tmp/nc-home-final.log`). The seven targeted Fern integration tests passed (`/tmp/nc-home-tests.log`), as did generated docs, schema freshness, and whitespace checks. No runtime examples or schema inputs changed.
 
+## NemoClaw v0 Markdown Discovery Correction
+
+The review of `972f4bfc50edb00c6c21301a70a61c57ff9c29f9` found that `/nemoclaw/v0/llms.txt` did not serve a Markdown index. A follow-up request confirmed that it redirected to `/nemoclaw/v0.md` and returned a not-found body despite HTTP 200. The parent `/nemoclaw/llms.txt` returned the Markdown index with a **Latest** entry. The owning user-guide skill on main at `4649634639d2ddcb26b84cb34db63b2d4176a8a1` directs readers to that parent index.
+
+The resources page and skill now use the parent index for NemoClaw v0 discovery, keep Agent Configs discovery separate, and require revision matching before using commands. **Latest (main)** describes the combined local preview's default. The fetched PR and base heads were already ancestors. Fern validation passed with zero errors and one warning per pass (`/tmp/nc-v0-index-fern.log`); generated docs, schema freshness, and whitespace checks passed. This does not verify hosted v1 behavior.
+
 ## Release Evidence Still Needed
 
 `git ls-remote --tags origin refs/tags/v0.1.0` returned no match. The final release page returned HTTP 404. The v1 hosted overview first returned 404 and later failed to connect. The API request was rate-limited. These observations do not establish the contents of a private release. No draft RC assets were substituted and nothing was published.
