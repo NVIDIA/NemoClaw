@@ -119,7 +119,7 @@ impl ProviderPreset {
     /// observation of access, adapter compatibility, or inference support.
     /// Generic endpoints have no vendor catalog.
     pub fn recommended_models(self) -> &'static [&'static str] {
-        // Adapted from classic main at 32c42bbad69dca3bb3f4e11ea439c8ce4898d4ff,
+        // Adapted from the NemoClaw v0 main branch at 32c42bbad69dca3bb3f4e11ea439c8ce4898d4ff,
         // src/lib/inference/{config,model-prompts}.ts. Keep the v1 preset
         // defaults first. Onboarding offers these alone, narrowed to the ones
         // the endpoint lists; catalog updates belong to source review.
@@ -150,7 +150,7 @@ impl ProviderPreset {
                 "gemini-2.5-pro",
                 "gemini-2.5-flash-lite",
             ],
-            // The first ten of classic's Hermes provider list, which is what
+            // The first ten of the NemoClaw v0 Hermes provider list, which is what
             // its menu shows before "Other".
             Self::Nous => &[
                 "moonshotai/kimi-k2.6",
@@ -169,7 +169,7 @@ impl ProviderPreset {
     }
 }
 
-// Key URLs are adapted from classic NemoClaw main at
+// Key URLs are adapted from the NemoClaw v0 main branch at
 // 32c42bbad69dca3bb3f4e11ea439c8ce4898d4ff: the `helpUrl` of each
 // `REMOTE_PROVIDER_CONFIG` entry in src/lib/onboard/providers.ts,
 // OPENROUTER_HELP_URL in src/lib/inference/openrouter.ts, and

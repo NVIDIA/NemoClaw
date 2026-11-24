@@ -9,7 +9,7 @@ use reqwest::Url;
 use serde_json::{Value, json};
 use std::time::Duration;
 
-/// The collector, the same one NemoClaw Classic uses.
+/// The collector, the same one NemoClaw v0 uses.
 pub const ENDPOINT: &str = "https://events.telemetry.data.nvidia.com/v1.1/events/json";
 const TIMEOUT: Duration = Duration::from_secs(3);
 const EVENT: &str = "nemoclaw_deployment_finished";
@@ -72,7 +72,7 @@ async fn post(endpoint: Url, body: Value) -> Result<(), reqwest::Error> {
     Ok(())
 }
 
-/// The collector's envelope around one record, with the same keys NemoClaw Classic sends.
+/// The collector's envelope around one record, with the same keys NemoClaw v0 sends.
 fn envelope(record: &Record, now: &str) -> Value {
     json!({
         "browserType": PLACEHOLDER,

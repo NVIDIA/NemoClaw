@@ -57,7 +57,7 @@ Destroy removes both with the gateway release.
 
 A cluster sandbox names its image's metadata bundle in `image.metadata`, because no local engine can inspect the image there.
 
-For a published release, take both from the release: use an agent image's index reference from its notes in `image.ref`, and download the matching `<image>.metadata.json` it attaches.
+For v0.1.0, pair the release's agent image index digest in `image.ref` with the matching `<image>.metadata.json` attachment. Set `image.metadata.env` to an environment variable name and set that variable to the metadata file path. Use the same pair for plan and apply. Do not mix metadata from another image or replace the digest with a tag.
 One bundle covers every Linux platform the index lists, so it serves ARM64 and AMD64 nodes.
 
 An image you build must match the architecture of the nodes that run the sandboxes.

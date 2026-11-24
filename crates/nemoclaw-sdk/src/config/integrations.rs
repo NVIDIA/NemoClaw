@@ -25,7 +25,7 @@ pub struct Api {
     pub credential: SecretRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String")]
-    /// Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to NEMOCLAW_API_<registration>_KEY.
+    /// Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to `NEMOCLAW_API_<registration>_KEY`.
     pub sandbox_env: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ApiAuthStyle")]

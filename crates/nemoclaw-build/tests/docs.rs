@@ -121,6 +121,23 @@ fn check_rejects_missing_changed_and_obsolete_outputs_without_writing() {
 }
 
 #[test]
+fn preserves_links_to_named_anchors_after_a_heading_rename() {
+    let root = fixture();
+    fs::write(
+        root.path().join("docs/state.md"),
+        "# State\n\n<a name=\"keep-data\"></a>\n\n## Retain Deployment Data\n\nKeep it.\n",
+    )
+    .unwrap();
+    assert_success(generate(root.path(), false));
+    let pages = root.path().join("fern/_generated/pages");
+    let start = fs::read_to_string(pages.join("start.mdx")).unwrap();
+    let state = fs::read_to_string(pages.join("state.mdx")).unwrap();
+    assert!(start.contains("/nemoclaw/v1/state#keep-data"));
+    assert!(state.contains("<a name=\"keep-data\"></a>"));
+    assert!(state.contains("## Retain Deployment Data"));
+}
+
+#[test]
 fn missing_files_and_anchors_fail_before_replacing_the_previous_output() {
     for destination in ["absent.md", "state.md#missing", "#missing"] {
         let root = fixture();
