@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" role="img">
+<title>NemoClaw Quiet Orbit icon</title>
+<defs>
+<linearGradient id="i4bg" x2="1" y2="1">
+<stop stop-color="#111611"/>
+<stop offset="1" stop-color="#080c09"/>
+</linearGradient>
+<radialGradient id="i4halo">
+<stop stop-color="#76b900" stop-opacity=".24"/>
+<stop offset="1" stop-color="#76b900" stop-opacity="0"/>
+</radialGradient>
+<linearGradient id="i4gold" x2=".8" y2="1">
+<stop stop-color="#e0d5b6"/>
+<stop offset=".5" stop-color="#827351"/>
+<stop offset="1" stop-color="#cabc91"/>
+</linearGradient>
+<linearGradient id="i4top" x2=".7" y2="1">
+<stop stop-color="#d4ff95"/>
+<stop offset=".5" stop-color="#a5e34c"/>
+<stop offset="1" stop-color="#76b900"/>
+</linearGradient>
+<linearGradient id="i4side">
+<stop stop-color="#659d05"/>
+<stop offset="1" stop-color="#294706"/>
+</linearGradient>
+<linearGradient id="i4frame" x2="1" y2="1">
+<stop stop-color="#303b27"/>
+<stop offset="1" stop-color="#101810"/>
+</linearGradient>
+</defs>
+<svg width="16" height="16" viewBox="0 0 32 32">
+<rect width="32" height="32" rx="7" fill="#10160e"/>
+<path d="m16 5 10 6v12l-10 6-10-6V11Z" stroke="#bbaa80" fill="none" stroke-width="1"/>
+<path d="m16 11 5 3v6l-5 3-5-3v-6Z" fill="#76b900"/>
+</svg>
+</svg>

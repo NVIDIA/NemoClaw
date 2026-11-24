@@ -57,14 +57,17 @@ Run `windows-installer-e2e.rs` only on a disposable Windows machine without Nemo
 
 ## Artwork
 
-The artwork is a placeholder, pending NVIDIA brand and trademark review.
-It uses NVIDIA green, `#76B900`, on black, and no NVIDIA logo.
+The Quiet Orbit artwork uses NVIDIA green, `#76B900`, and fine gold geometry around a cube.
+The artwork awaits NVIDIA brand and trademark review under [#14836](https://github.com/NVIDIA/NemoClaw/issues/14836); it uses no NVIDIA logo.
 
 | File | Size | Where it appears |
 |---|---|---|
-| `banner.bmp` | 493 × 58 | The top of the progress page; WiX draws the title on its white left part |
-| `dialog.bmp` | 493 × 312 | The welcome and finish pages; WiX draws their text right of the black panel |
+| `banner.bmp` | 493 × 58 | The top of the progress page; WiX draws the title on its light left part |
+| `dialog.bmp` | 493 × 312 | The welcome and finish pages; WiX draws their text right of the dark sidebar |
 | `nemoclaw.ico` | 16, 24, 32, 48, and 256 pixels | **Settings** > **Apps** |
+
+The 16, 24, and 32 px icons use simpler geometry to remain legible.
+`icon-48.svg` and `icon.svg` retain the detailed motif, with `icon.svg` supplying the 256 px image.
 
 Edit the SVG files, then render them with librsvg and ImageMagick, in the Alpine image that rendered the committed files, from the repository root:
 
@@ -78,7 +81,11 @@ docker run --rm -v "$PWD/packaging/windows/artwork:/art" -w /art \
   }
   render banner 493 58
   render dialog 493 312
-  for size in 16 24 32 48 256; do rsvg-convert -w $size -h $size icon.svg -o /tmp/icon-$size.png; done
+  for size in 16 24 32 48 256; do
+    source=icon-$size.svg
+    if [ "$size" = 256 ]; then source=icon.svg; fi
+    rsvg-convert -w "$size" -h "$size" "$source" -o /tmp/icon-$size.png
+  done
   magick /tmp/icon-16.png /tmp/icon-24.png /tmp/icon-32.png /tmp/icon-48.png /tmp/icon-256.png nemoclaw.ico
   chown "$(stat -c %u:%g icon.svg)" banner.bmp dialog.bmp nemoclaw.ico'
 ```
