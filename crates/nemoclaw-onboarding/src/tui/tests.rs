@@ -1602,6 +1602,45 @@ const OPENCLAW_IMAGE: &str =
 const IMAGE_QUESTION: &str = "/spec/sandboxes/assistant/image/ref";
 
 #[test]
+fn a_discovered_image_is_named_when_its_question_is_skipped() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[HERMES_IMAGE]));
+    assert_ne!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+    let text = flat(&screen(&wizard, 160, 40));
+    assert!(text.contains("Automatically selected image"), "{text}");
+    assert!(text.contains(HERMES_IMAGE), "{text}");
+    assert!(text.contains("back to change"), "{text}");
+}
+
+#[test]
+fn a_matching_image_without_a_digest_explains_how_to_rebuild_it() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, DiscoveryObservation::AgentImages(AgentImagesObservation {
+        status: ObservationStatus::Available,
+        reason: Some("Matching images have no repository digest. Enable the containerd image store and rebuild.".into()),
+        references: vec![],
+    }));
+    let text = flat(&screen(&wizard, 160, 40));
+    assert!(text.contains("no repository digest"), "{text}");
+    assert!(text.contains("containerd"), "{text}");
+    assert!(!text.contains("No image on this engine installs"), "{text}");
+}
+
+#[test]
+fn an_image_tag_is_rejected_with_the_required_reference_format() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let error = wizard
+        .submit(Some(serde_json::json!("hermes:latest")))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("NAME@sha256:"), "{error}");
+    assert!(error.contains("repository digest"), "{error}");
+    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+}
+
+#[test]
 fn the_image_question_suggests_the_newest_of_the_local_images_that_install_the_chosen_harness() {
     let mut wizard = at_the_image_question("nvidia.fabric.hermes");
     let query = agent_images_probe(&wizard).expect("the image question reads the engine's images");
@@ -2099,12 +2138,16 @@ async fn credentials_are_checked_when_review_opens_and_only_once() {
     assert!(credential_probe(&wizard).is_empty(), "each is checked once");
     let text = flat(&screen(&wizard, 100, 40));
     assert!(
-        text.contains("API key NVIDIA_API_KEY · could not be read (plan will ask for it)"),
+        text.contains("API key NVIDIA_API_KEY · could not be read (apply will ask for it)"),
         "{text}"
     );
     // The key may be set but unreadable here, so getting a new one is no fix.
     assert!(
-        text.contains("Run export NVIDIA_API_KEY=... before nemoclaw plan"),
+        text.contains(if cfg!(windows) {
+            "Run $env:NVIDIA_API_KEY = '...' before deployment"
+        } else {
+            "Run export NVIDIA_API_KEY=... before deployment"
+        }),
         "{text}"
     );
     assert!(!text.contains("Get a key at"), "{text}");
@@ -2224,7 +2267,7 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
         (ObservationStatus::Available, "API key NVIDIA_API_KEY · set"),
         (
             ObservationStatus::Unavailable,
-            "API key NVIDIA_API_KEY · not set (plan will ask for it)",
+            "API key NVIDIA_API_KEY · not set (apply will ask for it)",
         ),
     ] {
         let capabilities = Capabilities::available();
@@ -2260,7 +2303,11 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
             // The command may wrap on a narrow screen; the URL is one word.
             let mut hints = vec!["https://build.nvidia.com/settings/api-keys"];
             if width >= 100 {
-                hints.push("export NVIDIA_API_KEY=...");
+                hints.push(if cfg!(windows) {
+                    "$env:NVIDIA_API_KEY = '...'"
+                } else {
+                    "export NVIDIA_API_KEY=..."
+                });
             }
             for hint in hints {
                 assert_eq!(

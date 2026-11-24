@@ -47,6 +47,10 @@ Build the artifacts in the following order:
 
 Run every command in this guide from the repository root.
 
+On Windows ARM64, follow [onboarding through WSL2](../get-started/windows-wsl.md) before running Cargo.
+Native Windows ARM64 bundles are unavailable; use the Linux ARM64 toolchain inside WSL2.
+The first `cargo ci tools` command compiles its runner before installing tools, which can take several minutes.
+
 | Artifact | Requirements |
 |---|---|
 | Native bundle | Rust 1.100.0, pinned in [rust-toolchain.toml](../../rust-toolchain.toml); Protocol Buffers compiler (`protoc`) 36.2; a C toolchain for the TLS dependencies |
@@ -83,6 +87,10 @@ Another `protoc` 36.2 also works.
 
 ### Checking the Docker Image Store
 
+Start Docker Desktop, or your Docker daemon, before onboarding or building images.
+Run `docker version` and confirm that it reports both a client and a server.
+An installed Docker CLI without a running engine cannot discover images or deploy a sandbox.
+
 To check that a Docker daemon uses the containerd image store, run the following command against that daemon:
 
 ```sh
@@ -92,6 +100,10 @@ docker info --format '{{json .DriverStatus}}'
 The output includes `["driver-type","io.containerd.snapshotter.v1"]` when the daemon uses the containerd store.
 Runtime images require it, and Docker's classic image store is unsupported for them.
 Agent images require a store that retains repository digests for local builds, and containerd is the tested store.
+On Docker Desktop, enable **Settings > General > Use containerd for pulling and storing images**, then apply the change and restart if prompted.
+The stores are separate: existing images and containers remain on disk but are hidden while their store is inactive.
+Refer to [Docker's image-store instructions](https://docs.docker.com/desktop/features/containerd/).
+Check this before building; an image loaded into the classic store can have an empty `RepoDigests` list even when its build succeeds.
 
 ## Building a Native Bundle
 
@@ -145,6 +157,9 @@ To build a bundle for the host's platform and check its CLI, perform the followi
    ```
 
    `nemoclaw --version` prints the version from step 1, and `nemoclaw --help` lists `plan`, `apply`, and `destroy`.
+
+   If Classic is also installed, check which executable runs with `type -a nemoclaw` in Bash or `Get-Command nemoclaw -All` in PowerShell.
+   The first result must be the new bundle's executable.
 
 Next, [build an agent image](#building-agent-images).
 

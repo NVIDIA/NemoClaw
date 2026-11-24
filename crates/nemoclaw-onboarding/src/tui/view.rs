@@ -177,6 +177,16 @@ impl JourneyWizard {
             ),
         ]);
         let mut lines = vec![Line::from(title)];
+        if let Some(image) = &self.automatic_image {
+            lines.push(Line::from(Span::styled(
+                format!("Automatically selected image: {}", terminal_text(image)),
+                Style::new().fg(MUTED),
+            )));
+            lines.push(Line::from(Span::styled(
+                "Press ← back to change it.",
+                Style::new().fg(MUTED),
+            )));
+        }
         if let Some(service) = labels::service(question) {
             lines.push(Line::from(Span::styled(
                 format!("Service: {}", terminal_text(service)),

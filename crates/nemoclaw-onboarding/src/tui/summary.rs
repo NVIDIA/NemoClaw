@@ -183,8 +183,13 @@ fn credential_row(
     reference: &str,
     observations: &DiscoveryObservations,
 ) -> Row {
-    let export = format!("export {reference}=...");
-    let run = || format!("Run {export} before nemoclaw plan, or plan asks for it.");
+    let export = if cfg!(windows) {
+        format!("$env:{reference} = '...'")
+    } else {
+        format!("export {reference}=...")
+    };
+    let run =
+        || format!("Run {export} before deployment; interactive apply asks for missing values.");
     let observed = observations.get(&CredentialRequest {
         reference: reference.into(),
     });
@@ -193,7 +198,7 @@ fn credential_row(
         Some(ObservationStatus::Available) => (Some(Status::fine("set")), None),
         // Only an unset key points at where to get a new one.
         Some(ObservationStatus::Unavailable) => (
-            Some(Status::attention("not set (plan will ask for it)")),
+            Some(Status::attention("not set (apply will ask for it)")),
             Some(
                 ProviderPreset::for_credential_reference(reference)
                     .and_then(ProviderPreset::key_url)
@@ -204,7 +209,7 @@ fn credential_row(
         ),
         Some(ObservationStatus::Unknown) => (
             Some(Status::attention(
-                "could not be read (plan will ask for it)",
+                "could not be read (apply will ask for it)",
             )),
             Some(run()),
         ),

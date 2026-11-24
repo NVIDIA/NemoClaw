@@ -212,6 +212,29 @@ async fn agent_images_install_the_adapter_and_have_a_digest_newest_first() {
 }
 
 #[tokio::test]
+async fn matching_images_without_repository_digests_are_not_reported_as_missing_harnesses() {
+    use nemoclaw_sdk::fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
+    let mut catalog = FabricCatalog::bundled().for_adapter("nvidia.fabric.hermes");
+    let mut runtime: serde_json::Value =
+        serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
+    runtime["binaries"] = json!({"nvidia.fabric.hermes": ["/usr/local/bin/python3.99"]});
+    catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
+    let images = json!([{
+        "Id": "sha256:local", "ParentId": "", "RepoTags": ["hermes:local"], "RepoDigests": [],
+        "Created": 1, "Size": 1, "SharedSize": -1, "Containers": -1,
+        "Labels": {IMAGE_CATALOG_LABEL: serde_json::to_string(&catalog).unwrap()}
+    }]);
+    let fixture =
+        transport::Fixture::start(move |_| Some((200, serde_json::to_vec(&images).unwrap()))).await;
+    let observed = observe_agent_images(&Direct, &fixture.endpoint, "nvidia.fabric.hermes").await;
+    assert_eq!(observed.status, ObservationStatus::Available);
+    assert!(observed.references.is_empty());
+    let reason = observed.reason.unwrap_or_default();
+    assert!(reason.contains("repository digest"), "{reason}");
+    assert!(reason.contains("containerd"), "{reason}");
+}
+
+#[tokio::test]
 async fn image_platform_and_digest_survive_missing_adapter_metadata() {
     let fixture = transport::Fixture::start(|request| {
         assert_eq!(request.method, "GET");

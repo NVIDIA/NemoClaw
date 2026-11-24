@@ -77,6 +77,21 @@ Don't assume a universal result shape.
 Check `result.status` as well as the outer `status`: the outer one only reports that `fabric-agent-ctl` completed the call, while a failed run reports `result.status: failed` with Fabric's error in `result.error`.
 `result.artifacts` names the files Fabric kept for that request, such as the adapter's output.
 
+### Reading a Hermes Reply
+
+Save a Hermes invocation's stdout to `reply.json` and check the command's exit status.
+To show its reply and status without printing the full adapter result, run:
+
+```sh
+jq '{status: .result.status, error: .result.error, response: .result.output.response, adapter_stdout: .result.output.adapter_stdout}' reply.json
+```
+
+This filter uses the Hermes adapter's output fields; other adapters can return another shape.
+Keep `reply.json` for the full result and artifacts.
+Adapter stdout can include an auxiliary title-generation warning even when `result.status` is `succeeded` and the agent replies.
+That warning does not by itself establish an invocation failure.
+Follow the adapter's configuration documentation before changing a managed harness in response to a `hermes setup` suggestion.
+
 ### Running One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.

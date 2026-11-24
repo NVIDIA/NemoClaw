@@ -219,7 +219,9 @@ pub fn platform() -> Result<String, Error> {
         _ => return Err(Error::Bundle("unsupported bundle architecture")),
     };
     if os == "windows" && arch != "amd64" {
-        return Err(Error::Bundle("unsupported Windows architecture"));
+        return Err(Error::Bundle(
+            "native Windows ARM64 is unavailable; use Linux ARM64 inside WSL2 (docs/get-started/windows-wsl.md)",
+        ));
     }
     Ok(format!("{os}_{arch}"))
 }

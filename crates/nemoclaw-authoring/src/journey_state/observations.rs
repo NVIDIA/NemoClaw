@@ -199,9 +199,14 @@ impl JourneyState {
                 .map(Value::String)
                 .collect();
             if references.is_empty() {
-                question.note = Some(format!(
-                    "No image on this engine installs {}; see {BUILD_AGENT_IMAGES}.",
-                    request.adapter_id
+                question.note = Some(observed.reason.as_ref().map_or_else(
+                    || {
+                        format!(
+                            "No image on this engine installs {}; see {BUILD_AGENT_IMAGES}.",
+                            request.adapter_id
+                        )
+                    },
+                    |reason| format!("{reason} See {BUILD_AGENT_IMAGES}."),
                 ));
                 continue;
             }

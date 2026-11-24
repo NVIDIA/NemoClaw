@@ -26,6 +26,7 @@ Check the prerequisites before following the first deployment; migration is a se
 |---|---|
 | Check client, runtime, and model-host requirements | [Prerequisites](get-started/prerequisites.md) |
 | Install, upgrade, or uninstall a release's CLI | [Installing the CLI](get-started/install.md) |
+| Build and onboard on Windows ARM64 through WSL2 | [Windows through WSL2](get-started/windows-wsl.md) |
 | Deploy OpenClaw with existing gateway and inference services | [First deployment](get-started/first-deployment.md) |
 | Assess a move from an earlier version | [Migration](get-started/migration.md) |
 

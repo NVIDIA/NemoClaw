@@ -16,6 +16,10 @@ Choose agents, models, tools, and network access, then preview and apply deploym
 NemoClaw Agent Configs is a release candidate.
 Until its first release, [build it from source](docs/build-deploy/build.md).
 
+On Windows ARM64, use [the WSL2 onboarding guide](docs/get-started/windows-wsl.md).
+Native Windows bundles support AMD64 only.
+The WSL2 guide builds the current checkout and creates a managed local gateway; the first-deployment tutorial uses a pinned revision and an existing gateway.
+
 <a href="docs/get-started/first-deployment.md#gh-light-mode-only">
   <picture>
     <source media="(max-width: 700px)" srcset="docs/assets/deployment-workflow-mobile-light.svg">

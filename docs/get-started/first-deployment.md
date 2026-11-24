@@ -3,6 +3,9 @@
 
 # Deploying Your First OpenClaw Agent
 
+For Windows ARM64, use [onboarding through WSL2](windows-wsl.md), which builds the current checkout and creates a managed gateway.
+This tutorial instead pins an implementation revision and requires an existing gateway; its command examples use a Linux Bash client.
+
 In this tutorial, you configure one OpenClaw sandbox with an existing NVIDIA OpenShell gateway and inference endpoint.
 You then plan the deployment, apply it, and send one request to the agent.
 The commands use the v1 source-built tools and the [OpenClaw example at implementation revision `1636069b91`](https://github.com/NVIDIA/NemoClaw/blob/1636069b91f402242a35714fde1011042c3f1f70/examples/openclaw.yaml).

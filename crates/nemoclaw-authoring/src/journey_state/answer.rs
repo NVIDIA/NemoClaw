@@ -51,6 +51,12 @@ impl JourneyState {
         if let Some(value) = &value
             && schema_accepts(&question.schema, value) != Some(true)
         {
+            if id.starts_with("/spec/sandboxes/") && id.ends_with("/image/ref") {
+                return Err(diagnostic(
+                    "journey",
+                    "Use an immutable repository digest: NAME@sha256: followed by 64 hexadecimal digits. A tag or image config ID cannot replace a repository digest; inspect RepoDigests on the selected engine.",
+                ));
+            }
             return Err(diagnostic(
                 "journey",
                 "The answer does not satisfy its field schema.",

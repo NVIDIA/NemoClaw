@@ -60,6 +60,7 @@ Don't combine the two toolchains.
 Keep the bundle unchanged while an operation uses it.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
+Windows ARM64 clients use [Linux ARM64 through WSL2](windows-wsl.md), with the Linux toolchain and Docker Desktop integration enabled for that distribution.
 `CI / Bundle` builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64.
 These builds and tests don't qualify GPU deployment on every platform.
 

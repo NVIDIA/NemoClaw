@@ -41,6 +41,11 @@
           "slug": "install"
         },
         {
+          "title": "Onboarding on Windows Through WSL2",
+          "source": "docs/get-started/windows-wsl.md",
+          "slug": "windows-wsl"
+        },
+        {
           "title": "Deploying Your First OpenClaw Agent",
           "source": "docs/get-started/first-deployment.md",
           "slug": "get-started"

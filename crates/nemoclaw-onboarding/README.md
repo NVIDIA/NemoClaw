@@ -62,7 +62,7 @@ The [provider reference](../../docs/references/provider.md#engine-and-fabric-dis
 ## After Onboarding
 
 1. Review the saved YAML; the template's comments and formatting are not kept.
-2. Set the environment variables the YAML references, for example `export NVIDIA_API_KEY=...`. An interactive `nemoclaw plan` prompts for missing values; `--non-interactive` fails instead. Review reports an unset variable and, for a hosted provider, the page that issues its key.
+2. Set the environment variables the YAML references: `export NVIDIA_API_KEY=...` in Bash, or `$env:NVIDIA_API_KEY = '...'` in PowerShell. Plan prompts only for credentials it needs to read the target; it can defer a missing inference key. Interactive apply prompts for all required missing values; `apply --non-interactive` fails instead. Review reports an unset variable and, for a hosted provider, the page that issues its key.
 3. Plan and apply with a [verified native bundle and the CLI on `PATH`](../../docs/build-deploy/build.md#building-a-native-bundle), following the [deployment guide](../../docs/build-deploy/usage.md):
 
    ```sh
