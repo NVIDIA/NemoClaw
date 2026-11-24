@@ -214,8 +214,11 @@ fn parse_build(args: &[String]) -> Result<Build> {
 }
 
 fn build(build: Build) -> Result<()> {
-    let bundle = fs::canonicalize(&build.bundle)
-        .map_err(|e| format!("cannot open the bundle {}: {e}", build.bundle.display()))?;
+    // WiX can't read Windows' verbatim \\?\ paths, which canonicalize returns.
+    let bundle = std::path::absolute(&build.bundle).map_err(|e| e.to_string())?;
+    if !bundle.is_dir() {
+        return Err(format!("cannot open the bundle {}", bundle.display()));
+    }
     if !bundle.join("bin").join("nemoclaw.exe").is_file() {
         return Err(format!(
             "{} isn't a windows_amd64 bundle: it has no bin\\nemoclaw.exe",
@@ -235,8 +238,10 @@ fn build(build: Build) -> Result<()> {
         return Err(format!("{version} has characters a bundle version can't"));
     }
     let product_version = msi_version(&version)?;
-    let source = fs::canonicalize(&build.source)
-        .map_err(|e| format!("cannot open {}: {e}", build.source.display()))?;
+    let source = std::path::absolute(&build.source).map_err(|e| e.to_string())?;
+    if !source.is_file() {
+        return Err(format!("cannot open {}", source.display()));
+    }
     let artwork = source
         .parent()
         .ok_or("the WiX source has no directory")?
