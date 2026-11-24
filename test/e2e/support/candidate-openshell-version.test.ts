@@ -47,6 +47,7 @@ function expectedRuntimeFromEvidence(
     },
   };
 }
+const expected017Runtime = expectedRuntimeFromEvidence(evidence);
 const expected0110Runtime = expectedRuntimeFromEvidence(evidence0110);
 function sourceResponse(url: string) {
   const parsed = new URL(url, "https://api.github.com");
@@ -77,6 +78,7 @@ describe("candidate OpenShell selection", () => {
       upgradeVersion: undefined,
       expectedVersion: pinnedVersion,
     },
+    { scenario: "reviewed 0.1.7", upgradeVersion: "0.1.7", expectedVersion: "0.1.7" },
     { scenario: "reviewed 0.1.10", upgradeVersion: "0.1.10", expectedVersion: "0.1.10" },
     {
       scenario: "already selected release",
@@ -88,9 +90,11 @@ describe("candidate OpenShell selection", () => {
     async ({ upgradeVersion, expectedVersion }) => {
       const actual = await runCandidateOpenShellCli({ upgradeVersion });
       const expected =
-        expectedVersion === "0.1.10"
-          ? expected0110Runtime
-          : reviewedOpenShellMcpRuntime(expectedVersion);
+        expectedVersion === "0.1.7"
+          ? expected017Runtime
+          : expectedVersion === "0.1.10"
+            ? expected0110Runtime
+            : reviewedOpenShellMcpRuntime(expectedVersion);
       expect(actual.selected).toBe(expectedVersion);
       expect(actual.status, actual.diagnostic).toBe(0);
       expect(actual.emitted.version).toBe(expectedVersion);

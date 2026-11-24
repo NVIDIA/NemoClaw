@@ -38,6 +38,54 @@ export const PINNED_OPEN_SHELL_V0110_SHA256 = {
   sandboxLinuxX64: "4ee38fbf38a9d3f383f958f868f1eefabb31f1e095d4e08f44a1394ab0a0b95c",
 } as const;
 
+export const V017_ASSET_DIGESTS = new Map([
+  [
+    "openshell-x86_64-unknown-linux-musl.tar.gz",
+    "5c1adfcae797eac9b2e8b9280c66c1f75e4e84d9e31ce6938c5b994314ef6098",
+  ],
+  [
+    "openshell-aarch64-unknown-linux-musl.tar.gz",
+    "696b523c263895b69eaa7c7e6afbb19b8af6c65cd79c7ffac7b685b6e3aa23da",
+  ],
+  [
+    "openshell-aarch64-apple-darwin.tar.gz",
+    "c5899a2fe6b40c371e7d660bd8983cefb766d04658bd9193b12a80525b12c742",
+  ],
+  [
+    "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+    "e1714dcfd85c949e2f53260bcfbf04b203f6f5cbd3a61e61c11c38cbc91cb102",
+  ],
+  [
+    "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
+    "eb0ba91efebbcc61e4cfae5fb18934c5fe308ece1a09ba16c999d00c452109dc",
+  ],
+  [
+    "openshell-gateway-aarch64-apple-darwin.tar.gz",
+    "fe47a385c16c10cde8905bf1bf627e4a9fbf4a81bcf44b388dec4d22618fbb48",
+  ],
+  [
+    "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+    "c1b3166d1c232948293ff84b0fac2d0419a24e4b694d354ba6aeb100efa2f039",
+  ],
+  [
+    "openshell-sandbox-aarch64-unknown-linux-musl.tar.gz",
+    "ed60eab7612f372a0f669186ac2637fe3223fe90a1c20ad51d747e1a87ca5c6d",
+  ],
+  [
+    "openshell-checksums-sha256.txt",
+    "a53cd40267d57969f2a1c917ad93a1b7c280dc13826211e95b276f9bd2c62f7e",
+  ],
+  [
+    "openshell-gateway-checksums-sha256.txt",
+    "20fb91f0d63581d911ea98b41d0e07175eb859950bd5f032159c168fcdf7dc1a",
+  ],
+  [
+    "openshell-sandbox-checksums-sha256.txt",
+    "f5070d63a49da60e801813ccadadc08e88cfecb5e781a7eef149d933ce144a9b",
+  ],
+  ["openshell.rb", "daa268c73d627cc72fb5c36b041e0e8625b1125cc83706f76772d52b5da081d7"],
+]);
+
 export const ZERO_SHA256 = "0000000000000000000000000000000000000000000000000000000000000000";
 export const OPENSHELL_REWRITE_FEATURE_MARKERS =
   "request-body-credential-rewrite websocket-credential-rewrite";

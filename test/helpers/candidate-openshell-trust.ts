@@ -20,6 +20,7 @@ import {
   parseOpenShellTrustRegistry,
   openShellReleaseOrigins,
 } from "../../scripts/checks/openshell-trust-data.mts";
+import { V017_ASSET_DIGESTS } from "./openshell-release-fixtures";
 import { copyTrustedInstallerVerifier } from "./openshell-installer-template";
 
 export const identity = { prNumber: 123, candidateSha: "a".repeat(40), baseSha: "b".repeat(40) };
@@ -33,14 +34,19 @@ export function fixture(selectedVersion = version) {
     ]),
   ) as Record<keyof typeof CANDIDATE_OPENSHELL_SOURCES, string>;
   const current = validateInstallerSources(sources);
-  const release = structuredClone(current.installerReleases[0]!);
+  const registry = readOpenShellTrustRegistry();
+  const historical =
+    selectedVersion === "0.1.7"
+      ? registry.releases.find((entry) => entry.version === selectedVersion)
+      : undefined;
+  const release = structuredClone(historical ?? current.installerReleases[0]!);
   // The registry stores revocations globally; resolved releases carry a derived copy.
   delete release.revokedTemplateSha256;
-  const prior = release.version;
+  const prior = current.releaseVersion;
   release.version = selectedVersion;
   release.formula.url = `https://github.com/${openShellReleaseOrigins(selectedVersion).repository}/releases/download/v${selectedVersion}/openshell.rb`;
   release.supervisor!.image = openShellReleaseOrigins(selectedVersion).supervisor;
-  release.sandboxBuilds = [{ required: false, sha256: "f".repeat(64) }];
+  if (!historical) release.sandboxBuilds = [{ required: false, sha256: "f".repeat(64) }];
   sources.blueprintSource = sources.blueprintSource.replaceAll(
     `"${prior}"`,
     `"${selectedVersion}"`,
@@ -51,7 +57,9 @@ export function fixture(selectedVersion = version) {
     .replaceAll(`MAX_VERSION="${prior}"`, `MAX_VERSION="${selectedVersion}"`)
     .replace(
       '  case "$digest" in',
-      `  case "$digest" in\n    ${"f".repeat(64)})\n      printf '%s\\n' "${selectedVersion}"\n      ;;`,
+      historical
+        ? '  case "$digest" in'
+        : `  case "$digest" in\n    ${"f".repeat(64)})\n      printf '%s\\n' "${selectedVersion}"\n      ;;`,
     );
   sources.brevInstallerSource = sources.brevInstallerSource
     .replaceAll(`v${prior}:`, `v${selectedVersion}:`)
@@ -61,17 +69,39 @@ export function fixture(selectedVersion = version) {
   sources.supervisorRuntimeSource = sources.supervisorRuntimeSource
     .replace(
       supervisorHeader,
-      `${supervisorHeader}  "${selectedVersion}": "${release.supervisor!.manifestDigest}",\n`,
+      historical
+        ? supervisorHeader
+        : `${supervisorHeader}  "${selectedVersion}": "${release.supervisor!.manifestDigest}",\n`,
     )
     .replace(
       `QUALIFIED_STABLE_OPENSHELL_VERSION = "${prior}"`,
       `QUALIFIED_STABLE_OPENSHELL_VERSION = "${selectedVersion}"`,
     );
+  if (historical) {
+    // Keep immutable historical artifacts; admit only this synthetic source template.
+    const currentPins = [...current.pins, ...current.installerReleases[0]!.manifests];
+    for (const pin of currentPins) {
+      const digest = V017_ASSET_DIGESTS.get(pin.asset);
+      if (!digest) throw new Error(`Missing historical fixture digest: ${pin.asset}`);
+      sources.installerSource = sources.installerSource.replaceAll(pin.sha256, digest);
+      sources.brevInstallerSource = sources.brevInstallerSource.replaceAll(pin.sha256, digest);
+    }
+    release.installerTemplateSha256 = [
+      ...new Set([...release.installerTemplateSha256, current.installerTemplateSha256]),
+    ];
+    release.brevTemplateSha256 = [
+      ...new Set([
+        ...release.brevTemplateSha256,
+        ...current.installerReleases[0]!.brevTemplateSha256,
+      ]),
+    ];
+  }
   const normalizedSupervisor = sources.supervisorRuntimeSource.replace(
     /(?<=const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{\n)[\s\S]*?(?=\n\};)/u,
     "<normalized-supervisor-manifest-pins>",
   );
   release.supervisor!.runtimeTemplateSha256 = [
+    ...release.supervisor!.runtimeTemplateSha256,
     createHash("sha256").update(normalizedSupervisor).digest("hex"),
   ];
   const files: Record<string, string> = Object.fromEntries(
@@ -80,10 +110,12 @@ export function fixture(selectedVersion = version) {
       sources[key as keyof typeof sources],
     ]),
   );
-  const registry = readOpenShellTrustRegistry();
   files[CANDIDATE_OPENSHELL_TRUST_PATH] = JSON.stringify({
     ...registry,
-    releases: [...registry.releases, release],
+    releases: [
+      ...registry.releases.filter((entry) => !historical || entry.version !== selectedVersion),
+      release,
+    ],
   });
   const repository = { full_name: "NVIDIA/NemoClaw" };
   const approvals = [
