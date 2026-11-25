@@ -6,11 +6,12 @@
 # chosen StorageClass. NemoClaw passes the sandbox's driverConfig to OpenShell's
 # Kubernetes driver unchanged; OpenShell checks it when it creates the sandbox,
 # not at plan. Changing driverConfig later replaces the sandbox and its files;
-# see "Keep Agent Files on Mounted Volumes" in docs/build-deploy/state.md.
+# see "Keeping Agent Files on Mounted Volumes" in docs/build-deploy/state.md.
 # Replace the deployment UID, the context, the StorageClass, the node label,
 # the taint, and the image digest before applying.
-# Write the image's metadata bundle with `cargo images export-metadata` and set
-# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build-deploy/build.md.
+# Download the image's `<image>.metadata.json` from the release, or write it
+# with `cargo images export-metadata`, and set NEMOCLAW_AGENT_IMAGE_METADATA to
+# its absolute path; see docs/build-deploy/kubernetes.md#preparing-agent-images.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:

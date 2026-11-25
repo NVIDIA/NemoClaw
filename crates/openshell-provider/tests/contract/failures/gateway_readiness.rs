@@ -34,7 +34,7 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
     let root = directory.path();
     let mut graph = json!({
         "terraform":{"required_providers":{
-            "openshell":{"source":"registry.opentofu.org/nvidia/openshell"}
+            "openshell":{"source":"nvidia.github.io/nemoclaw/openshell"}
         }},
         "provider":{"openshell":{}},
         "resource":{"terraform_data":{"bootstrap":{"input":"bound"}}},

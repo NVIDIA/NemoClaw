@@ -48,12 +48,12 @@ impl Bundle {
         tofu
     }
 
-    /// The bundle's `registry.opentofu.org/nvidia/{name}` provider, such as
-    /// `nemoclaw`, `openshell`, or `fabric`, or another namespace's, such as
-    /// `kreuzwerker/docker`.
+    /// The bundle's `nvidia.github.io/nemoclaw/{name}` provider, such as
+    /// `nemoclaw`, `openshell`, or `fabric`, or a `registry.opentofu.org` namespace's,
+    /// such as `kreuzwerker/docker`.
     #[must_use]
     pub fn provider(&self, name: &str) -> PathBuf {
-        // providers/registry.opentofu.org/NAMESPACE/TYPE/VERSION/PLATFORM/terraform-provider-TYPE_vVERSION
+        // providers/HOSTNAME/NAMESPACE/TYPE/VERSION/PLATFORM/terraform-provider-TYPE_vVERSION
         let address = crate::tofu::provider_address(name);
         let source = std::iter::once("providers")
             .chain(address.split('/'))
@@ -117,8 +117,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let files = [
             "libexec/tofu".to_owned(),
-            "providers/registry.opentofu.org/nvidia/openshell/0.1.0-dev.abc/linux_arm64/terraform-provider-openshell_v0.1.0-dev.abc".to_owned(),
-            "providers/registry.opentofu.org/nvidia/fabric/0.1.0-dev.abc/linux_arm64/terraform-provider-fabric_v0.1.0-dev.abc".to_owned(),
+            "providers/nvidia.github.io/nemoclaw/openshell/0.1.0-dev.abc/linux_arm64/terraform-provider-openshell_v0.1.0-dev.abc".to_owned(),
+            "providers/nvidia.github.io/nemoclaw/fabric/0.1.0-dev.abc/linux_arm64/terraform-provider-fabric_v0.1.0-dev.abc".to_owned(),
         ];
         for file in files {
             let path = root.path().join(crate::executable(&file));
@@ -139,7 +139,10 @@ mod tests {
         for name in ["openshell", "fabric"] {
             let provider = bundle.provider(name);
             let contents = fs::read_to_string(&provider).unwrap();
-            assert!(contents.contains(&format!("nvidia/{name}/")), "{contents}");
+            assert!(
+                contents.contains(&format!("nemoclaw/{name}/")),
+                "{contents}"
+            );
         }
     }
 
@@ -156,7 +159,7 @@ mod tests {
         let (root, bundle) = bundle();
         fs::create_dir_all(
             root.path()
-                .join("providers/registry.opentofu.org/nvidia/fabric/0.1.0-dev.def"),
+                .join("providers/nvidia.github.io/nemoclaw/fabric/0.1.0-dev.def"),
         )
         .unwrap();
         let _ = bundle.provider("fabric");

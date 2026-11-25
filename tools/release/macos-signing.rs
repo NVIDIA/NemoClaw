@@ -642,7 +642,7 @@ mod tests {
             ("bin/nemoclaw", "com.nvidia.nemoclaw.nemoclaw"),
             ("libexec/tofu", "com.nvidia.nemoclaw.tofu"),
             (
-                "providers/registry.opentofu.org/nvidia/fabric/0.1.0-rc.1/darwin_arm64/terraform-provider-fabric_v0.1.0-rc.1",
+                "providers/nvidia.github.io/nemoclaw/fabric/0.1.0-rc.1/darwin_arm64/terraform-provider-fabric_v0.1.0-rc.1",
                 "com.nvidia.nemoclaw.terraform-provider-fabric",
             ),
             (

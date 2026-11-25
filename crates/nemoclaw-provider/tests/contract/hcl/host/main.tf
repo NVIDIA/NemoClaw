@@ -5,8 +5,8 @@
 # file, and a model server's readiness by endpoint. Every check only reads.
 terraform {
   required_providers {
-    host = { source = "registry.opentofu.org/nvidia/host" }
-    vllm = { source = "registry.opentofu.org/nvidia/vllm" }
+    host = { source = "nvidia.github.io/nemoclaw/host" }
+    vllm = { source = "nvidia.github.io/nemoclaw/vllm" }
   }
 }
 variable "engine" { type = string }
