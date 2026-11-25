@@ -64,18 +64,43 @@ is_running() {
   return 1
 }
 
+# Start a service in the background if not already running with matching flags.
 start_service() {
   local name="$1"
   shift
   if is_running "$name"; then
-    info "$name already running (PID $(cat "$PIDDIR/$name.pid"))"
-    return 0
+    local pid
+    pid="$(cat "$PIDDIR/$name.pid")"
+    if [ "$name" = "cloudflared" ]; then
+      local comm
+      comm="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+      local base_comm
+      base_comm="$(basename "$comm" 2>/dev/null || true)"
+      if [ "$base_comm" != "cloudflared" ] && [ "$base_comm" != "cloudflared.exe" ]; then
+        warn "PID $pid does not belong to $name; refusing to terminate unverified process"
+        return 1
+      fi
+      local cmdline
+      cmdline="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+      if echo "$cmdline" | grep -q -E -- '--http-host-header(=|[[:space:]]+)localhost([[:space:]]|$)'; then
+        info "$name already running (PID $pid)"
+        return 0
+      fi
+      info "$name is running without --http-host-header localhost; restarting to apply updated options..."
+      if ! stop_service "$name"; then
+        return 1
+      fi
+    else
+      info "$name already running (PID $pid)"
+      return 0
+    fi
   fi
   nohup "$@" >"$PIDDIR/$name.log" 2>&1 &
   echo $! >"$PIDDIR/$name.pid"
   info "$name started (PID $!)"
 }
 
+# Stop a running service, waiting for termination before removing the PID file.
 stop_service() {
   local name="$1"
   local pidfile="$PIDDIR/$name.pid"
@@ -84,13 +109,36 @@ stop_service() {
     pid="$(cat "$pidfile")"
     if kill -0 "$pid" 2>/dev/null; then
       kill "$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+      for _ in $(seq 1 20); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+          break
+        fi
+        sleep 0.1
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+        for _ in $(seq 1 10); do
+          if ! kill -0 "$pid" 2>/dev/null; then
+            break
+          fi
+          sleep 0.1
+        done
+      fi
+      if kill -0 "$pid" 2>/dev/null; then
+        warn "Failed to stop $name process (PID $pid); retaining PID file"
+        return 1
+      fi
       info "$name stopped (PID $pid)"
+      rm -f "$pidfile"
+      return 0
     else
       info "$name was not running"
+      rm -f "$pidfile"
+      return 0
     fi
-    rm -f "$pidfile"
   else
     info "$name was not running"
+    return 0
   fi
 }
 
@@ -176,13 +224,14 @@ do_stop() {
   info "All services stopped."
 }
 
+# Start auxiliary services, launching or replacing cloudflared as needed.
 do_start() {
   mkdir -p "$PIDDIR"
 
   # cloudflared tunnel
   if command -v cloudflared >/dev/null 2>&1; then
     start_service cloudflared \
-      cloudflared tunnel --url "http://localhost:$DASHBOARD_PORT"
+      cloudflared tunnel --url "http://localhost:$DASHBOARD_PORT" --http-host-header localhost
   else
     warn "cloudflared not found — no public URL. Install it separately if you need a public tunnel."
   fi
