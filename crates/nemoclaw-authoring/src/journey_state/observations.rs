@@ -283,13 +283,13 @@ impl JourneyState {
         }
         let mut answered = false;
         for question in resolution.questions() {
-            let Some(_observed) = self
+            if !self
                 .agent_images_request(question.id())
                 .and_then(|request| observations.get(&request))
-                .filter(|observed| observed.status == ObservationStatus::Available)
-            else {
+                .is_some_and(|observed| observed.status == ObservationStatus::Available)
+            {
                 continue;
-            };
+            }
             let mut usable = question
                 .choices()
                 .iter()

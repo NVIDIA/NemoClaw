@@ -22,17 +22,8 @@ pub enum Source<'a> {
 /// With `discover`, the target's engines, image, gateway, model catalog, and
 /// credential references are read; without it, they remain explicitly
 /// unverified. Reads never create deployment state or apply resources.
+/// A release `version` adds its release's agent images as suggestions.
 pub async fn author(
-    source: Source<'_>,
-    output: &Path,
-    discover: bool,
-    cancel: &CancellationToken,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    author_with_release(source, output, discover, cancel, None).await
-}
-
-/// Author with image suggestions from this CLI's exact release tag.
-pub async fn author_with_release(
     source: Source<'_>,
     output: &Path,
     discover: bool,

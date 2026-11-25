@@ -68,7 +68,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             nemoclaw_onboarding::Source::Defaults,
             nemoclaw_onboarding::Source::Template,
         );
-        let saved = nemoclaw_onboarding::author_with_release(
+        let saved = nemoclaw_onboarding::author(
             source,
             output,
             true,
