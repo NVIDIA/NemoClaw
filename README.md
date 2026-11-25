@@ -69,6 +69,7 @@ The [43-second lifecycle recording](docs/assets/terminal-lifecycle-verbose.mp4) 
 - [Get started with NemoClaw Agent Configs](docs/get-started/first-deployment.md).
 - [Author deployment YAML with onboarding](docs/get-started/onboard.md).
 - [Browse shipped examples by use case and environment](examples/README.md).
+- [Browse community examples](https://github.com/NVIDIA/nemoclaw-community) and check each example's NemoClaw version and prerequisites.
 - [Build NemoClaw from source](docs/build-deploy/build.md) for a custom revision or build-only target.
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
 - [Use the SDK](docs/references/sdk.md).
