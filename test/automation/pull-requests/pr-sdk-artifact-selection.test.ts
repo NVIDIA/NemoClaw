@@ -54,6 +54,7 @@ type SdkPackageLocatorFixture = Readonly<{
   baseRef?: string;
   parents?: unknown;
   parentDecision?: unknown;
+  policyChanged?: boolean;
   runSequence?: readonly unknown[];
   inspectorOutput?: string;
   inspectorRequired?: unknown;
@@ -108,7 +109,12 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
     mkdirSync(join(tempRoot, "ci"));
     writeFileSync(
       join(tempRoot, "ci/reviewed-npm-audit.json"),
-      JSON.stringify({ sourceRegistryPackage: reviewedSdk }),
+      JSON.stringify({
+        sourceRegistryPackage: {
+          ...reviewedSdk,
+          integrity: fixture.policyChanged ? "sha512-changed" : reviewedSdk.integrity,
+        },
+      }),
     );
     const sleepLog = join(tempRoot, "sleeps");
     writeFileSync(sleepLog, "");
@@ -153,10 +159,70 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
     rmSync(tempRoot, { recursive: true, force: true });
   }
 }
+
+function runSdkArchiveVerification(
+  step: WorkflowStep,
+  selectedDecision: unknown,
+  currentDecision: unknown,
+): Readonly<{
+  result: ReturnType<typeof runWorkflowShellStep>;
+  requests: string;
+  copied: boolean;
+}> {
+  const tempRoot = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-archive-verification-"));
+  try {
+    const inspectorDirectory = join(tempRoot, ".trusted-sdk-package-decision/scripts/checks");
+    const bundleDirectory = join(tempRoot, "openshell-sdk-bundle");
+    const destination = join(tempRoot, "verified-sdk");
+    const requestLog = join(tempRoot, "requests");
+    mkdirSync(inspectorDirectory, { recursive: true });
+    mkdirSync(bundleDirectory);
+    writeFileSync(requestLog, "");
+    writeFileSync(join(bundleDirectory, "reviewed-sdk.tgz"), "inert SDK fixture");
+    writeFileSync(
+      join(inspectorDirectory, "prepare-ci-npm-install.mts"),
+      `import { appendFileSync } from "node:fs";
+      if (process.env.NEMOCLAW_CI_NPM_PACKAGE_MODE === "inspect") {
+        appendFileSync(process.env.REQUEST_LOG, "reinspect " + JSON.stringify([process.env.UPGRADE_PR_NUMBER, process.env.CANDIDATE_SHA, process.env.UPGRADE_BASE_SHA]) + "\\n");
+        process.stdout.write(${JSON.stringify(JSON.stringify(currentDecision))});
+      } else {
+        appendFileSync(process.env.REQUEST_LOG, "archive-verification\\n");
+      }`,
+    );
+    const result = runWorkflowShellStep(
+      step,
+      {
+        STACK_PR: "321",
+        STACK_HEAD: "b".repeat(40),
+        STACK_BASE: "c".repeat(40),
+        STACK_DECISION: JSON.stringify(selectedDecision),
+        ARTIFACT_NAME: "reviewed-sdk.tgz",
+        REQUEST_LOG: requestLog,
+        RUNNER_TEMP: tempRoot,
+        NEMOCLAW_CI_NPM_PACKAGE_MODE: "artifact",
+        NEMOCLAW_CI_TARGET_ROOT: tempRoot,
+        NEMOCLAW_CI_NPM_CACHE: join(tempRoot, "cache"),
+        NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY: destination,
+      },
+      tempRoot,
+    );
+    return {
+      result,
+      requests: readFileSync(requestLog, "utf8"),
+      copied: existsSync(join(destination, "reviewed-sdk.tgz")),
+    };
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
 describe("reviewed SDK artifact selection", () => {
   const workflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(".github/workflows/pr.yaml");
   const locateSdk = workflow.jobs["openshell-sdk-package"].steps!.find(
     (step) => step.name === "Locate approved SDK artifact",
+  )!;
+  const verifySdk = workflow.jobs["openshell-sdk-package"].steps!.find(
+    (step) => step.name === "Verify selected SDK archive against base policy and PR locks",
   )!;
 
   it("reuses a main SDK artifact without a package run for the PR commit", () => {
@@ -269,6 +335,52 @@ describe("reviewed SDK artifact selection", () => {
     );
     expect(requests).toContain(`actions/artifacts?name=${parentBundle}`);
   });
+
+  it("rejects changed stack-child audit policy before inspecting the parent admission", () => {
+    const { result, githubOutput, requests } = runSdkPackageLocator({
+      step: locateSdk,
+      baseRef: "stack-parent",
+      parents: [[parent]],
+      parentDecision,
+      policyChanged: true,
+      artifacts: [{ ...mainSdkArtifact, name: parentBundle }],
+      run: parentRun,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("cannot change the reviewed npm audit policy");
+    expect(githubOutput).not.toContain("artifact_id=");
+    expect(requests).not.toContain("parent-inspection");
+    expect(requests).not.toContain("actions/runs/");
+  });
+
+  it.each([
+    { currentDecision: parentDecision, status: 0, copied: true, verified: true },
+    {
+      currentDecision: { ...parentDecision, bundleName: parentBundle.replace(/-99$/u, "-100") },
+      status: 1,
+      copied: false,
+      verified: false,
+    },
+    {
+      currentDecision: { ...parentDecision, candidate: false },
+      status: 1,
+      copied: false,
+      verified: false,
+    },
+  ])(
+    "revalidates the selected stack admission before archive use %#",
+    ({ currentDecision, status, copied, verified }) => {
+      const observation = runSdkArchiveVerification(verifySdk, parentDecision, currentDecision);
+      expect(observation.result.status, observation.result.stdout + observation.result.stderr).toBe(
+        status,
+      );
+      expect(observation.copied).toBe(copied);
+      expect(observation.requests).toContain(
+        `reinspect ${JSON.stringify(["321", stackHead, stackBase])}`,
+      );
+      expect(observation.requests.includes("archive-verification")).toBe(verified);
+    },
+  );
 
   it("waits for the approved candidate producer to become successful", () => {
     const bundleName = `candidate-openshell-sdk-123-${candidateSha}-${stackHead}-99`;

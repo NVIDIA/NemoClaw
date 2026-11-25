@@ -61,11 +61,14 @@ Run the maintained installer to update the host CLI and reconcile registered san
 
 <Warning>
 When installing OpenShell `0.1.x` with registered sandboxes, the installed OpenShell version must already be within the target release's supported range.
-This release requires `0.1.10`; any other installed OpenShell version stops the installer.
-After sandbox-name validation passes, the installer lists the registered sandbox names and exits before backup or gateway retirement.
-It leaves the existing gateway and sandboxes unchanged.
-Keep the existing installation available until you can recreate those sandboxes through an approved migration path.
-`NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` and `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` do not bypass this stop.
+The installer validates sandbox names first, then checks the installed OpenShell version.
+This release requires `0.1.10`.
+A missing or unreadable version stops the installer before backup or gateway retirement.
+If the version is outside the supported range, the installer lists the registered sandbox names and stops at the same boundary.
+These refusals leave the existing gateway and sandboxes unchanged.
+Keep an out-of-range installation available until you can recreate its sandboxes through an approved migration path.
+`NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` and `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` do not bypass these checks.
+When the version check passes, the installer continues to the backup and reconciliation checks below.
 </Warning>
 
 <Warning>
