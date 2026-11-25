@@ -43,6 +43,13 @@ pub(crate) struct Cli {
 }
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// Run the bundled OpenShell CLI against this deployment (plaintext or mTLS).
+    #[command(name = "openshell", visible_alias = "osh")]
+    OpenShell {
+        /// Arguments passed unchanged to OpenShell; use -- before its options.
+        #[arg(value_name = "ARGS", num_args = 0.., allow_hyphen_values = true, last = true)]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Author deployment YAML using a template's choices as questionnaire defaults.
     Onboard {
         /// Complete YAML supported by guided authoring; omission uses built-in defaults.
@@ -104,7 +111,9 @@ impl Command {
             Self::Plan { output, .. } | Self::Apply { output, .. } | Self::Destroy { output } => {
                 *output
             }
-            Self::Export { .. } | Self::Onboard { .. } => OutputFormat::Text,
+            Self::Export { .. } | Self::Onboard { .. } | Self::OpenShell { .. } => {
+                OutputFormat::Text
+            }
         }
     }
 }
@@ -112,6 +121,30 @@ impl Command {
 mod tests {
     use super::*;
     use clap::{CommandFactory, error::ErrorKind};
+
+    #[test]
+    fn openshell_accepts_both_names_and_preserves_arguments_after_the_separator() {
+        for name in ["openshell", "osh"] {
+            assert!(
+                Cli::try_parse_from([
+                    "nemoclaw",
+                    name,
+                    "--state-dir",
+                    "my state",
+                    "--",
+                    "sandbox",
+                    "exec",
+                    "--verbose",
+                    "--",
+                    "sh",
+                    "-c",
+                    "printf '%s' 'hello world'",
+                ])
+                .is_ok(),
+                "{name} must accept OpenShell arguments without parsing them"
+            );
+        }
+    }
 
     #[test]
     fn first_deployment_example_supplies_the_image_inspection_engine() {

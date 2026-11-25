@@ -232,7 +232,7 @@ pub fn required_files(version: &str) -> Result<Vec<String>, Error> {
     {
         return Err(Error::Bundle("invalid provider version"));
     }
-    Ok(vec![
+    let mut files = vec![
         format!("bin/{}", executable("nemoclaw")),
         format!("libexec/{}", executable("tofu")),
         format!(
@@ -273,7 +273,23 @@ pub fn required_files(version: &str) -> Result<Vec<String>, Error> {
         helm_provider_path(&platform()?)?,
         "licenses/helm-provider-LICENSE".into(),
         crate::config::schema::SCHEMA_PATH.into(),
-    ])
+    ];
+    if openshell_available() {
+        files.extend([
+            "libexec/openshell".into(),
+            "licenses/openshell-LICENSE".into(),
+            "licenses/openshell-THIRD-PARTY-NOTICES".into(),
+        ]);
+    }
+    Ok(files)
+}
+
+/// Platforms for which the pinned OpenShell release publishes its CLI.
+pub fn openshell_available() -> bool {
+    cfg!(any(
+        target_os = "linux",
+        all(target_os = "macos", target_arch = "aarch64")
+    ))
 }
 
 pub fn helm_provider_path(platform: &str) -> Result<String, Error> {

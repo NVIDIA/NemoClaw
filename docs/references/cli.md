@@ -22,6 +22,33 @@ Each command takes the following input and has the following result:
 | `nemoclaw apply FILE` | YAML path or `-` for stdin | Text result. Computes a checked plan and applies it. |
 | `nemoclaw export` | Retained state, without YAML | Observed YAML after configuration and ownership checks. |
 | `nemoclaw destroy` | Retained state, without YAML | Text result. Removes owned workloads under the retention rules. |
+| `nemoclaw openshell -- ARGS` (alias `osh`) | Retained state and any referenced TLS files | Runs the bundle's pinned OpenShell CLI against the saved gateway and workspace. Supports plaintext and mTLS gateways. |
+
+### Running OpenShell Against a Deployment
+
+On Linux amd64, Linux arm64, and macOS Apple silicon, the bundle includes the OpenShell CLI pinned to its gateway version.
+Use the same state directory as apply; no OpenShell profile or gateway selection is needed:
+
+```sh
+nemoclaw osh --state-dir .nemoclaw -- sandbox list
+nemoclaw osh --state-dir .nemoclaw -- sandbox exec -n assistant --tty -- sh
+```
+
+Put NemoClaw options before `--`; arguments after it pass to OpenShell unchanged.
+Input, output, and the child's exit status pass through without lifecycle progress or result formatting.
+Commands can change gateway resources according to their OpenShell semantics.
+
+For mTLS, keep the environment variables and certificate files referenced by `spec.gateway.tls` available.
+NemoClaw copies the CA, client certificate, and key into a temporary OpenShell configuration under `<state-dir>/openshell/`.
+On Unix, its configuration directory is accessible only to its owner and copied credential files use mode `0600`.
+The configuration is removed when the command exits normally or handles an interrupt or termination signal; a forced kill can leave the temporary directory for manual removal after its processes stop.
+The caller's original files are retained.
+The process uses isolated XDG configuration, state, and data directories and overrides the system gateway directory, preserving the user's OpenShell profiles.
+Profile changes made through this command last only for that invocation.
+
+Bearer-token authentication, including managed Kubernetes gateways, remains outside this command's scope ([#14855](https://github.com/NVIDIA/NemoClaw/issues/14855)).
+Those deployments still use a separately configured OpenShell CLI and its authentication flow.
+The pinned release publishes no Windows or Intel macOS CLI; use WSL2 on Windows or a supported Linux or Apple silicon client.
 
 Apply can download models and check readiness.
 It does not request model or agent responses.

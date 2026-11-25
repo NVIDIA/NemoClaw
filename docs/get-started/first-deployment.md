@@ -80,10 +80,11 @@ Plan previews resource changes without invoking inference or pulling images. App
 
 ## Sending a Verification Request
 
-The OpenShell CLI authenticates separately from NemoClaw. This request can incur inference charges and add to the agent's conversation history.
+The bundled CLI reuses the deployment's plaintext or mTLS connection settings; a standalone CLI authenticates separately for bearer-token gateways.
+This request can incur inference charges and add to the agent's conversation history.
 
-1. [Select the reported gateway](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace) using its OpenShell profile, or the plaintext loopback procedure only if the gateway uses plaintext on loopback.
-2. Select the reported workspace in the same shell.
+1. For a plaintext or mTLS gateway, use `nemoclaw osh --state-dir .nemoclaw-first --` to select the saved deployment automatically. For a bearer-token gateway, [select the reported gateway and workspace](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways) in a separately configured CLI and replace that prefix with `openshell` below.
+2. If using the standalone CLI, select the reported workspace in the same shell. The bundled CLI selects it automatically.
 
    ```sh
    export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
@@ -104,7 +105,7 @@ The OpenShell CLI authenticates separately from NemoClaw. This request can incur
 5. Invoke `main` through Fabric inside the sandbox.
 
    ```sh
-   openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id "$RUNTIME_ID" --input - <<'JSON'
+   nemoclaw osh --state-dir .nemoclaw-first -- sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id "$RUNTIME_ID" --input - <<'JSON'
    "Reply with a short greeting."
    JSON
    ```

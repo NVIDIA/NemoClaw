@@ -8,6 +8,10 @@ NVIDIA NeMo Fabric owns adapter identifiers, descriptors, native configuration s
 Use the descriptor installed in the selected image to establish what that adapter accepts.
 An SDK parser accepting a field doesn't establish native support.
 
+The sandbox commands below use the [bundled CLI](interfaces.md#selecting-the-gateway-and-workspace) for plaintext and mTLS gateways.
+For bearer-token gateways, select a standalone OpenShell CLI and replace `nemoclaw osh --` with `openshell`.
+If apply used a custom state directory, pass it with `nemoclaw osh --state-dir DIR --`.
+
 ## Configuring the Agent and the Harness
 
 Set `harness.kind` to the exact Fabric adapter identifier and select an image containing that adapter.
@@ -81,7 +85,7 @@ To send a prompt from the client host and keep the full result, pipe a JSON stri
 
 ```sh
 printf '%s\n' '"Reply with exactly READY."' |
-  openshell sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent NAME --runtime-id ID --input - > reply.json
+  nemoclaw osh -- sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent NAME --runtime-id ID --input - > reply.json
 jq '{status, result_status: .result.status, error: .result.error}' reply.json
 ```
 
@@ -127,7 +131,7 @@ With the [v0.1.0 OpenClaw example](../get-started/first-deployment.md) applied, 
 3. Send one JSON prompt string to the agent.
 
    ```sh
-   openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id "$RUNTIME_ID" --input - <<'JSON'
+   nemoclaw osh -- sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id "$RUNTIME_ID" --input - <<'JSON'
    "Reply with exactly READY."
    JSON
    ```

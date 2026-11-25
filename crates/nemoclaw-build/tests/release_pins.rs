@@ -102,7 +102,12 @@ fn a_release_pins_what_its_deployments_use_and_no_build_tools() {
             "{name}"
         );
     }
-    // Rust, protoc, nextest, kind, and the OpenShell CLI only build and test NemoClaw.
+    assert_eq!(components["openshellCli"]["version"], versions["openshell"]);
+    assert_eq!(
+        components["openshellCli"]["archives"]["darwin_arm64"],
+        versions["platforms"]["darwin_arm64"]["openshell"]
+    );
+    // Rust, protoc, nextest, and kind only build and test NemoClaw.
     assert_eq!(
         components.keys().collect::<Vec<_>>(),
         [
@@ -113,6 +118,7 @@ fn a_release_pins_what_its_deployments_use_and_no_build_tools() {
             "gatewayChart",
             "helmProvider",
             "hermes",
+            "openshellCli",
             "opentofu",
             "sandboxRuntime",
             "supervisor",

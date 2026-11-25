@@ -42,6 +42,7 @@ impl RenderContext {
             Command::Destroy { .. } => ("Destroy", None),
             Command::Export { .. } => ("Export", None),
             Command::Onboard { file, .. } => ("Onboard", file.clone()),
+            Command::OpenShell { .. } => ("OpenShell", None),
         };
         Self {
             operation,
@@ -125,6 +126,14 @@ impl RenderContext {
     }
 
     fn follow_up_command(&self, operation: &str, path: &std::path::Path) -> String {
+        let command = self.deployment_command(operation);
+        format!(
+            "{command} {}",
+            terminal_text(&shell_word(&path.display().to_string()))
+        )
+    }
+
+    fn deployment_command(&self, operation: &str) -> String {
         let mut command = format!("nemoclaw {operation}");
         if self.state_dir != std::path::Path::new(".nemoclaw") {
             command.push_str(&format!(
@@ -138,8 +147,6 @@ impl RenderContext {
                 shell_word(&bundle.display().to_string())
             ));
         }
-        command.push(' ');
-        command.push_str(&shell_word(&path.display().to_string()));
         terminal_text(&command)
     }
 }
@@ -588,7 +595,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     }
     let mut selected = false;
     if !result.agents.is_empty() {
-        output.push_str(&agent_invocation(result, planned, &mut selected));
+        output.push_str(&agent_invocation(result, planned, &mut selected, context));
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
@@ -603,7 +610,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         }
     }
     if result.outcome == Outcome::Succeeded && !result.interfaces.is_empty() {
-        output.push_str(&interface_access(result, selected));
+        output.push_str(&interface_access(result, selected, context));
     }
     if result.outcome == Outcome::Succeeded {
         output.push_str("\nModel and agent responses were not tested.\n");
@@ -614,6 +621,9 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
 /// The commands that select this deployment's gateway and workspace, as the
 /// interface guide describes.
 fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String {
+    if connection.bundled_cli {
+        return String::new();
+    }
     let mut output =
         String::from("  In each terminal, select this deployment's gateway and workspace:\n");
     let endpoint = connection
@@ -640,7 +650,13 @@ fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String 
 /// the gateway and workspace selection, which `selected` records printing. A
 /// plan lists the runtimes the last apply left, which its changes may replace,
 /// and prints nothing when the state records none, such as before any apply.
-fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool) -> String {
+fn agent_invocation(
+    result: &OperationResult,
+    planned: bool,
+    selected: &mut bool,
+    context: &RenderContext,
+) -> String {
+    let openshell = openshell_command(result, context);
     let invocable = result
         .agents
         .values()
@@ -664,7 +680,7 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
             Some(runtime) => {
                 let runtime = terminal_text(runtime);
                 output.push_str(&format!(
-                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   openshell sandbox exec -n {sandbox} --no-tty -- fabric-agent-ctl invoke --agent {name} --runtime-id {runtime} --input FILE\n"
+                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   {openshell} sandbox exec -n {sandbox} --no-tty -- fabric-agent-ctl invoke --agent {name} --runtime-id {runtime} --input FILE\n"
                 ));
             }
             None => output.push_str(&format!("  {sandbox}: agent {name}, no runtime recorded\n")),
@@ -682,7 +698,8 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
 /// How to reach each enabled interface: the commands a person runs, under the
 /// gateway and workspace selection, unless the agents' section printed it.
 /// Only the person's own retrieval command discloses a token.
-fn interface_access(result: &OperationResult, selected: bool) -> String {
+fn interface_access(result: &OperationResult, selected: bool, context: &RenderContext) -> String {
+    let openshell = openshell_command(result, context);
     use nemoclaw_sdk::SignIn;
     let mut output = String::from("\nAgent interfaces:\n");
     if !selected && let Some(connection) = &result.connection {
@@ -695,7 +712,7 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
             Some(port) => {
                 output.push_str(&format!("  {sandbox}/{interface} on port {port}\n"));
                 output.push_str(&format!(
-                    "    Forward:  openshell forward service {sandbox} --target-port {port} --local 127.0.0.1:{port}\n"
+                    "    Forward:  {openshell} forward service {sandbox} --target-port {port} --local 127.0.0.1:{port}\n"
                 ));
             }
             None => output.push_str(&format!("  {sandbox}/{interface}\n")),
@@ -706,7 +723,7 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
         );
         match &access.token_path {
             Some(path) => output.push_str(&format!(
-                "    Token:    openshell sandbox exec -n {sandbox} --no-tty -- cat {}\n",
+                "    Token:    {openshell} sandbox exec -n {sandbox} --no-tty -- cat {}\n",
                 terminal_text(path)
             )),
             None if token => output.push_str(
@@ -733,7 +750,7 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
                 ", replacing TOKEN with the token"
             };
             output.push_str(&format!(
-                "    Terminal: openshell sandbox exec -n {sandbox} --tty -- {}{token}\n",
+                "    Terminal: {openshell} sandbox exec -n {sandbox} --tty -- {}{token}\n",
                 terminal_text(command)
             ));
         }
@@ -745,6 +762,18 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
         ));
     }
     output
+}
+
+fn openshell_command(result: &OperationResult, context: &RenderContext) -> String {
+    if result
+        .connection
+        .as_ref()
+        .is_some_and(|connection| connection.bundled_cli)
+    {
+        format!("{} --", context.deployment_command("osh"))
+    } else {
+        "openshell".into()
+    }
 }
 
 fn error_in_chain<'a, T: std::error::Error + 'static>(
@@ -1083,6 +1112,36 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(machine["interfaces"], interfaces());
+    }
+
+    #[test]
+    fn supported_gateways_print_bundled_commands_with_the_selected_state_directory() {
+        let result = json!({
+            "outcome":"succeeded", "changes":[], "agents":agents(), "interfaces":interfaces(),
+            "connection":{"gatewayEndpoint":"https://gateway.example.com", "workspace":"nc-1234567890abcdef", "bundledCli":true}
+        });
+        let text = render(
+            &[
+                "nemoclaw",
+                "apply",
+                "deployment.yaml",
+                "--state-dir",
+                "my state",
+            ],
+            result,
+        );
+        assert!(
+            text.contains("nemoclaw osh --state-dir 'my state' -- sandbox exec"),
+            "{text}"
+        );
+        assert!(
+            text.contains("nemoclaw osh --state-dir 'my state' -- forward service"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("REPLACE_WITH_PROFILE_NAME"),
+            "the wrapper selects the gateway itself: {text}"
+        );
     }
 
     /// A gateway the client can't reach as plaintext loopback is selected by

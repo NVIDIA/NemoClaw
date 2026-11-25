@@ -9,6 +9,10 @@ Do not rerun authoring and replace the deployment identity.
 Do not delete bindings or substitute a fresh state directory to bypass an ownership error.
 Refer to [state locations](../build-deploy/state.md) and the [recovery procedure](../build-deploy/usage.md#updates-and-recovery).
 
+For plaintext and mTLS deployments, use `nemoclaw osh --state-dir DIR --` in place of `openshell` in the diagnostic commands below.
+It selects the saved gateway, workspace, and referenced TLS files without a user profile.
+Bearer-token deployments still need a separately configured OpenShell CLI; refer to [gateway selection](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace).
+
 ## Capturing the Failing Operation
 
 Record the command, exit status, stderr, source revision or bundle, state path, and the step at which the operation stopped.

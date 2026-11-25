@@ -109,6 +109,7 @@ fn macos_verification_requires_notarized_nvidia_signatures_and_hashicorps_on_the
     let signed = darwin_bundle(&[
         ("bin/nemoclaw", &nvidia("nemoclaw")),
         ("libexec/tofu", &nvidia("tofu")),
+        ("libexec/openshell", &nvidia("openshell")),
         (&openshell, &nvidia("terraform-provider-openshell")),
         (&helm, "notarized D38WU7D763"),
     ]);

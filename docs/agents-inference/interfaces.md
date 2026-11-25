@@ -9,6 +9,21 @@ You reach them through OpenShell commands, not published host ports.
 
 ## Selecting the Gateway and Workspace
 
+For plaintext or mTLS gateways on Linux and macOS Apple silicon, use the bundled CLI:
+
+```sh
+nemoclaw osh --state-dir .nemoclaw -- sandbox list
+```
+
+It selects the gateway and workspace from the saved deployment and supplies the referenced mTLS files without changing your OpenShell profiles.
+Use the same state directory and TLS environment as apply.
+The commands below use this form; [`nemoclaw openshell`](../references/cli.md#running-openshell-against-a-deployment) describes credential storage and cleanup.
+
+### Selecting a Standalone CLI for Bearer-Token Gateways
+
+For bearer-token gateways, including managed Kubernetes or OpenShift, use a separately configured OpenShell CLI instead.
+In the commands below, replace `nemoclaw osh --` with `openshell` after selecting the gateway and workspace as follows.
+
 Use an OpenShell CLI matching the deployment implementation revision on the client host.
 For the [first-deployment tutorial](../get-started/first-deployment.md), use the OpenShell version its [prerequisites](../get-started/prerequisites.md#before-the-first-deployment) name.
 These selectors choose an existing OpenShell gateway and deployment.
@@ -86,7 +101,7 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 
 ## Invoking an Agent
 
-After [selecting the gateway and workspace](#selecting-the-gateway-and-workspace), send requests through `openshell sandbox exec`.
+After [selecting the gateway and workspace](#selecting-the-gateway-and-workspace), send requests through `nemoclaw osh -- sandbox exec`.
 Plan and apply print a command for each agent with a recorded runtime ID, as in this illustrative output:
 
 ```text
@@ -96,7 +111,7 @@ Agents:
     export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
     export OPENSHELL_WORKSPACE=nc-1234567890abcdef
   claw: agent main, runtime RUNTIME_ID
-    Invoke:   openshell sandbox exec -n claw --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id RUNTIME_ID --input FILE
+    Invoke:   nemoclaw osh -- sandbox exec -n claw --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id RUNTIME_ID --input FILE
   FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents-inference/agents.md.
 ```
 
@@ -118,7 +133,7 @@ Reach it from a private terminal on the client host:
 2. Forward the sandbox's loopback service, bound to client loopback.
 
    ```sh
-   openshell forward service REPLACE_WITH_SANDBOX --target-port REPLACE_WITH_PORT --local 127.0.0.1:REPLACE_WITH_PORT
+   nemoclaw osh -- forward service REPLACE_WITH_SANDBOX --target-port REPLACE_WITH_PORT --local 127.0.0.1:REPLACE_WITH_PORT
    ```
 
    The command stays in the foreground and forwards through the authenticated OpenShell connection.
@@ -193,10 +208,10 @@ Agent interfaces:
     export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
     export OPENSHELL_WORKSPACE=nc-1234567890abcdef
   claw/dashboard on port 18789
-    Forward:  openshell forward service claw --target-port 18789 --local 127.0.0.1:18789
-    Token:    openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token
+    Forward:  nemoclaw osh -- forward service claw --target-port 18789 --local 127.0.0.1:18789
+    Token:    nemoclaw osh -- sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token
     Sign in:  open http://127.0.0.1:18789/#token=TOKEN, replacing TOKEN with the token
-    Terminal: openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN, replacing TOKEN with the token
+    Terminal: nemoclaw osh -- sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN, replacing TOKEN with the token
 ```
 
 JSON results carry the same facts under `interfaces`.
@@ -254,13 +269,13 @@ Keep the token out of shell history:
 1. Read the token into a variable with the `Token` command.
 
    ```sh
-   TOKEN=$(openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token)
+   TOKEN=$(nemoclaw osh -- sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token)
    ```
 
 2. Open the terminal UI.
 
    ```sh
-   openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
+   nemoclaw osh -- sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
    ```
 
 3. Press Ctrl+D to quit when finished.
@@ -306,7 +321,7 @@ Apply prints the command that opens the terminal UI on the interface's `Terminal
 ```text
   hermes/terminal
     Sign in:  the Terminal command reads the runtime's credential itself
-    Terminal: openshell sandbox exec -n hermes --tty -- /opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/AGENT/interfaces/tui.json
+    Terminal: nemoclaw osh -- sandbox exec -n hermes --tty -- /opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/AGENT/interfaces/tui.json
 ```
 
 Run it from a terminal on the client host with the gateway and workspace selected.

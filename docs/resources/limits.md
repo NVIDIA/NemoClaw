@@ -37,6 +37,10 @@ The following installation and release limits apply:
 
 ## Platforms, Models, and Placement
 
+`nemoclaw openshell` (`osh`) supports plaintext and mTLS deployments on Linux amd64, Linux arm64, and macOS Apple silicon.
+Bearer-token authentication and managed Kubernetes gateway access remain tracked in [#14855](https://github.com/NVIDIA/NemoClaw/issues/14855).
+The pinned OpenShell release publishes no CLI archive for Windows or Intel macOS; those clients need a supported Linux or Apple silicon host, or WSL2 on Windows.
+
 Accepted platform and model declarations are not a tested matrix.
 Verify the exact host and runtime combination before relying on a reply.
 The following platform, model, and placement limits apply:

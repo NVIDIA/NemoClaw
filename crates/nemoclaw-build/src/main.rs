@@ -331,6 +331,9 @@ struct Pins {
     #[cfg(feature = "sdk")]
     #[serde(rename = "helmProvider")]
     helm_provider: String,
+    #[cfg(feature = "sdk")]
+    #[serde(rename = "openshellNotices")]
+    openshell_notices: BTreeMap<String, Artifact>,
     platforms: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Artifact>>,
     /// Pinned OpenShell images; the Docker live tests pull these.
     #[serde(default)]
@@ -578,6 +581,31 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
         .files
         .insert(tofu.clone(), bundle::hash_file(&root.join(tofu))?);
     fs::create_dir_all(root.join("licenses"))?;
+    if matches!(platform, "linux_arm64" | "linux_amd64" | "darwin_arm64") {
+        let archive = download(
+            pins.platforms
+                .get(platform)
+                .and_then(|p| p.get("openshell"))
+                .ok_or("missing OpenShell CLI platform pin")?,
+        )
+        .await?;
+        // The existing installer validates that the archive holds only its
+        // executable; extract separately so it cannot replace libexec/tofu.
+        let unpacked = tempfile::tempdir()?;
+        let binary = nemoclaw_build::ci::install_openshell(&archive, &unpacked.path().join("cli"))?;
+        let name = "libexec/openshell";
+        fs::copy(binary, root.join(name))?;
+        manifest
+            .files
+            .insert(name.into(), bundle::hash_file(&root.join(name))?);
+        for (name, pin) in &pins.openshell_notices {
+            let path = format!("licenses/{name}");
+            fs::write(root.join(&path), download(pin).await?)?;
+            manifest
+                .files
+                .insert(path.clone(), bundle::hash_file(&root.join(path))?);
+        }
+    }
     let license = "licenses/OpenTofu-LICENSE";
     fs::write(
         root.join(license),
