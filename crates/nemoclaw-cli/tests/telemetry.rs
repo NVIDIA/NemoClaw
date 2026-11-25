@@ -78,7 +78,18 @@ fn read_body(stream: &mut TcpStream) -> Option<Value> {
 /// The fixture's command with telemetry on and pointed at `receiver`, its
 /// install ID file under the fixture, and no CI variable or test label.
 fn sending(fixture: &Fixture, guard: &NetworkGuard, args: &[&str], url: &str) -> Command {
-    let mut command = fixture.command(guard, args, "state");
+    sending_in(fixture, guard, args, url, "state")
+}
+
+/// [`sending`] with the state directory `state` under the fixture.
+fn sending_in(
+    fixture: &Fixture,
+    guard: &NetworkGuard,
+    args: &[&str],
+    url: &str,
+    state: &str,
+) -> Command {
+    let mut command = fixture.command(guard, args, state);
     command
         .env_remove("NEMOCLAW_DISABLE_TELEMETRY")
         .env_remove("NEMOCLAW_TELEMETRY_TEST_LABEL")
@@ -134,6 +145,148 @@ fn apply_and_destroy_send_one_record_and_plan_and_export_none() {
     );
     assert_ne!(apply["installId"], "unknown");
     assert_eq!(destroy["installId"], apply["installId"]);
+}
+
+/// Planted in every input the sender can see; the posted body must not hold it.
+const SENTINEL: &str = "zqxleak";
+
+/// A deployment that names the sentinel everywhere it can: names, image
+/// references, credential and MCP server names, endpoints, and a path-shaped
+/// and an address-shaped model.
+const LEAKY: &str = r#"
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: zqxleak-config
+  uid: d55b73c4-cdd7-48b4-b883-dd7d0e8d37da
+spec:
+  gateway:
+    management: external
+    target:
+      docker:
+        engine: unix:///var/run/zqxleak/docker.sock
+    endpoint: https://zqxleak-gateway.example.com:17671
+  inferenceProviders:
+    zqxleak-provider:
+      provider: openai
+      endpoint: https://zqxleak.example.com/v1
+      credential:
+        env: ZQXLEAK_API_KEY
+  sandboxes:
+    zqxleak-path:
+      image:
+        ref: registry.zqxleak.example.com/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: zqxleak-agent
+        mcp:
+          servers:
+            zqxleak-docs:
+              url: https://mcp.zqxleak.example.com
+        inference:
+          routes:
+            - name: zqxleak-route
+              providerRef: zqxleak-provider
+              overrides:
+                model: 10.0.0.5/zqxleak/llama-3-8b
+    zqxleak-address:
+      image:
+        ref: zqxleak-image@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: zqxleak-agent-two
+        inference:
+          routes:
+            - name: primary
+              providerRef: zqxleak-provider
+              overrides:
+                model: 10.0.0.5:8000/zqxleak
+"#;
+
+#[test]
+fn no_input_the_sender_sees_reaches_the_posted_body() {
+    let guard = NetworkGuard::new();
+    let fixture = Fixture::new();
+    let receiver = Receiver::new(false);
+    let input = fixture.root.join(format!("{SENTINEL}-input.yaml"));
+    std::fs::write(&input, LEAKY).unwrap();
+    let (home, config) = (
+        fixture.root.join(format!("home-{SENTINEL}")),
+        fixture.root.join(format!("config-{SENTINEL}")),
+    );
+    // A stored last version that is not a version.
+    let directory = if cfg!(target_os = "macos") {
+        home.join("Library/Application Support/nemoclaw")
+    } else {
+        config.join("nemoclaw")
+    };
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("telemetry.json"),
+        format!(
+            r#"{{"installId":"0f8fad5b-d9cb-469f-a165-70867728950e","lastVersion":"/home/{SENTINEL}/notes"}}"#
+        ),
+    )
+    .unwrap();
+    let args = ["apply", input.to_str().unwrap()];
+    let state = format!("{SENTINEL}-state");
+    let output = sending_in(&fixture, &guard, &args, &receiver.url, &state)
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    // The command's own error text named the sentinel, so the sender saw it.
+    assert!(String::from_utf8_lossy(&output.stderr).contains(SENTINEL));
+    guard.assert_no_connection("leak");
+    let records = receiver.take();
+    assert_eq!(records.len(), 1);
+    let body = serde_json::to_string(&records[0]).unwrap();
+    assert!(
+        !body.to_ascii_lowercase().contains(SENTINEL),
+        "the posted body holds {SENTINEL}: {body}"
+    );
+    let record = &records[0]["events"][0]["parameters"];
+    assert_eq!(record["computeDriver"], "docker", "the input was read");
+    assert_eq!(record["previousVersion"], "unknown");
+}
+
+#[test]
+fn an_apply_stopped_by_sigterm_records_cancelled() {
+    let guard = NetworkGuard::new();
+    let fixture = Fixture::new();
+    let receiver = Receiver::new(false);
+    // `-` reads the configuration from standard input, which stays open, so
+    // the command waits until the signal stops it. A signal that comes before
+    // the command handles signals ends it at once; then wait longer and retry.
+    let status = [500, 2000, 8000]
+        .into_iter()
+        .map(|wait| {
+            let mut child = sending(&fixture, &guard, &["apply", "-"], &receiver.url)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(wait));
+            let killed = Command::new("kill")
+                .args(["-TERM", &child.id().to_string()])
+                .status()
+                .unwrap();
+            assert!(killed.success());
+            child.wait().unwrap()
+        })
+        .find(|status| status.code().is_some())
+        .expect("the command never handled SIGTERM");
+    assert_ne!(status.code(), Some(0));
+    guard.assert_no_connection("sigterm");
+    let records = receiver.take();
+    assert_eq!(records.len(), 1, "{status:?}");
+    let record = &records[0]["events"][0]["parameters"];
+    assert_eq!(record["operation"], "apply");
+    assert_eq!(record["outcome"], "cancelled");
 }
 
 #[test]

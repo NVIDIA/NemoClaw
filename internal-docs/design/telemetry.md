@@ -82,7 +82,7 @@ The Purpose column names the product question that each field answers.
 | `testLabel` | String | Empty, or `qa-<run>:<case>:attempt-<n>` | `NEMOCLAW_TELEMETRY_TEST_LABEL` | Is the record from a QA run rather than other use? |
 | `buildKind` | String | `release`, `dev`, or `other` | Bundle version stamp; a build from a commit that is not exactly a release tag, or that has local changes, is stamped and sent as `dev` | Is the record from a release or a source build? |
 | `version` | String | For example, `1.0.0-412`; up to 128 characters | Bundle version stamp (`NEMOCLAW_BUNDLE_VERSION` at build time) | Which versions are in use? |
-| `previousVersion` | String | A version, or `none`; up to 128 characters | Install ID file: the version of the last run that sent a record if it differs from `version`, otherwise `none` | Which upgrade paths do users take? |
+| `previousVersion` | String | A version, `none`, or `unknown`; up to 128 characters; refer to [Field Rules](#field-rules) | Install ID file: the version of the last run that sent a record if it differs from `version`, otherwise `none` | Which upgrade paths do users take? |
 | `operation` | String | `onboard`, `apply`, `destroy`, or `other` | The command | Which commands run, and how often? |
 | `outcome` | String | `succeeded`, `failed`, `cancelled`, or `other` | The command result | Do commands succeed? |
 | `effect` | String | `initial`, `update`, `none`, `teardown`, `authored`, or `other` | `OperationResult.changes`; `authored` for `onboard` | Does a run create, update, or tear down a deployment? |
@@ -95,7 +95,7 @@ The Purpose column names the product question that each field answers.
 | `cloud` | String | `gcp`, `azure`, `aws`, `none`, `other`, or `unknown` | DMI vendor string; refer to [Field Rules](#field-rules) | Which cloud does NemoClaw run on? |
 | `hardware` | String | `dgx-spark`, `dgx-station`, `rtx-spark`, `jetson`, `mac`, `nvidia-gpu`, `other`, or `unknown` | DMI product name and devicetree | Which machines run NemoClaw? |
 | `harnesses` | List of strings | Fabric catalog harness IDs, else `other`; each up to 64 characters | Configuration | Which agent harnesses are used? |
-| `models` | List of strings | Model names as written; refer to [Field Rules](#field-rules) | Configuration, default route of each sandbox | Which model families are used? |
+| `models` | List of strings | Model names as written, or `unknown`; refer to [Field Rules](#field-rules) | Configuration, default route of each sandbox | Which model families are used? |
 | `inferenceHosts` | List of strings | `local`, `build.nvidia.com`, `inference.nvidia.com`, `openai`, `anthropic`, or `other` | Configuration endpoint host, matched on the machine | Is inference local or hosted, and from which provider? |
 | `computeDriver` | String | `docker`, `podman`, `kubernetes`, `openshift`, `other`, or `unknown` | Configuration | Which runtime runs the sandboxes? |
 | `sandboxCount` | Integer | 0 or more | Configuration | How large are deployments? |
@@ -106,15 +106,17 @@ The Purpose column names the product question that each field answers.
 ## Field Rules
 
 - For `models`, the sender sends each name as written, up to 64 characters.
-  A name that contains `://` or is longer than 64 characters is sent as `unknown`.
+  A name that could hold a path or an address is sent as `unknown`: one that contains `://`, `\`, or `@`, starts with `/`, `~`, or `.`, or whose part before the first `/` is an IP address or a `host:port`, or one longer than 64 characters.
+  For example, `/home/alice/llama-3-8b` and `10.0.0.5:8000/llama` are `unknown`, and `meta/llama-3.1-8b-instruct` and `llama3.1:8b` are sent as written.
   Only the default route of each sandbox is read.
+- For `previousVersion`, a stored version that does not look like a version (digits and dots, with an optional part after `-` or `+` made of letters, digits, `.`, `-`, and `+`) is sent as `unknown`.
 - For `testLabel`, a valid label matches `^qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2}$`, the same rule NemoClaw v0 uses.
   `<run>` is 1 to 32 characters and `<case>` is 1 to 40, each made of lowercase letters, digits, and `-`.
   `<n>` is 1 to 999.
   For example, `qa-1120a:onboard-hermes:attempt-2` is valid, and a label that holds a path is not.
 - For `harnesses`, the sender sends an ID in the bundled Fabric catalog as written and sends any other ID as `other`.
   An ID is up to 64 characters.
-- Harness IDs, model names, and versions have no format rule beyond their length.
+- Harness IDs have no format rule beyond their length.
 - For `inferenceHosts`, the sender matches the endpoint host on the machine and sends the matched word, never the address.
   An unmatched host is `other`.
 - For `effect`, the sender reads the OpenTofu actions in `OperationResult.changes` (`create`, `update`, `delete`, `read`, or `no-op`).
