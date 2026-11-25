@@ -295,7 +295,7 @@ Each image authenticates through whatever pulls it, and the configuration names 
 | Managed gateway and service images on Docker | NemoClaw, through the Docker provider | Logins in the Docker configuration file on the machine running OpenTofu, for each registry listed in `spec.registries` |
 | Agent images on a Docker or Podman gateway's engine | NemoClaw, through the Docker provider, before reading their catalog label | The same logins, for each registry listed in `spec.registries` |
 | Podman gateway image | Podman | Podman's own login on the engine's host |
-| Images on Kubernetes or OpenShift | The cluster | Image-pull Secrets; see [Kubernetes and OpenShift](kubernetes.md) |
+| Images on Kubernetes or OpenShift | The cluster | Image-pull Secrets; see [Referencing Registry Credentials](kubernetes.md#referencing-registry-credentials) |
 
 When the engine doesn't hold an agent image yet, plan reports the image as not on the engine and that sandbox's compatibility as deferred.
 For Docker or Podman with an inspection engine, apply acquires each agent image and checks its catalog before creating the gateway, its storage and network, or any agent configuration. A failed pull or incompatible catalog does not create those deployment resources. An image that was successfully acquired can remain cached.
@@ -447,7 +447,7 @@ To run the same sandboxes on another target, create a new deployment: copy the d
     See [Preparing Agent Images](kubernetes.md#preparing-agent-images).
   - Remove `spec.services`, which these targets don't run, and replace each inference provider's `serviceRef` with the `endpoint` of a server the sandboxes reach, such as [a model server in the cluster](kubernetes.md#using-a-model-server-in-the-cluster).
   - A document holds at most 256 sandboxes.
-  - Only `openshift` takes `expose.route`.
+  - Only `openshift` takes `expose.route`, as [Publishing the Gateway Through a Route](openshift.md#publishing-the-gateway-through-a-route) describes.
     On `kubernetes`, publish through `expose.service` or remove `expose`.
 - For `docker` or `podman`:
   - Remove each sandbox's `image.metadata`, and list private registries in [`spec.registries`](#pulling-from-private-registries).
@@ -685,6 +685,41 @@ Recovery doesn't infer ownership or adopt an existing release.
 Don't edit OpenTofu state, import the release, delete the checkpoint, or replace the current state with an older copy.
 After destroy succeeds, the namespace, encryption key, and persistent volumes remain subject to the existing [retention rules](state.md#deletion-and-retention).
 
+### Recovering When Destroy Refuses
+
+This procedure applies to managed Kubernetes and OpenShift deployments.
+
+Destroy refuses, and leaves everything in place, when an object it recorded is missing or was replaced, and the message names the object.
+Find out who changed the object first: a replacement can hold someone else's work.
+The following procedure, which no test covers ([current limits](../resources/limits.md#data-and-cleanup)), removes the deployment with the cluster's own tools:
+
+1. Set the kubeconfig file, context, namespace, and release the deployment uses, then delete the gateway's [cluster-wide objects](kubernetes.md#preparing-the-cluster), omitting `--kubeconfig` and `--context` in the pod that runs NemoClaw:
+
+   ```sh
+   deployment_kubeconfig="$NEMOCLAW_CLUSTER_KUBECONFIG"
+   deployment_context=my-cluster
+   deployment_namespace=nemoclaw-development
+   deployment_release=REPLACE_WITH_WORKSPACE-gateway # REPLACE_WITH_WORKSPACE: the workspace that plan and apply print, such as nc-0123456789abcdef; the result is also the gateway StatefulSet's name
+   kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+     delete clusterrolebinding,clusterrole \
+     "$deployment_release-node-reader-$deployment_namespace"
+   ```
+
+2. If the namespace existed before the first apply, delete the deployment's objects in it, because the removal procedure keeps such a namespace:
+
+   - The gateway's objects, labeled `app.kubernetes.io/instance` with the release name
+   - The gateway's Helm release records, labeled `owner=helm` and `name` with the release name
+   - The issuer's objects, labeled `nemoclaw.nvidia.com/uid` with the deployment's UID
+   - The deployment's Sandboxes
+
+   Then wait until the namespace's pod list shows none of them.
+
+3. Follow [Removing Retained Resources on Kubernetes or OpenShift](#on-kubernetes-or-openshift), without its destroy check.
+   If NemoClaw created the namespace, that procedure deletes it, which stops this deployment's gateway, issuer, and sandboxes that its pod list still shows.
+   Continue only if nothing else uses the namespace.
+
+4. Keep the state directory until the namespace, or the deployment's objects in a kept namespace, the volumes, and both cluster-wide objects are gone.
+
 ## Destroying
 
 Destroy removes all bound sandboxes, provider registrations and profiles, the OpenShell workspace, and managed process containers.
@@ -721,7 +756,7 @@ OpenShell deletes by name without an ID or version condition, so this client can
 ### Removing Retained Resources
 
 NemoClaw has no purge command: you remove what destroy retains with each platform's own commands, below.
-Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` must print `No resource changes planned.`, then the entries to remove under `Retained resources:`.
+Finish destroy first: `nemoclaw plan --destroy --state-dir STATE_DIR`, with the state directory the deployment used, such as `.local/kubernetes` on Kubernetes, must print `No resource changes planned.`, then the entries to remove under `Retained resources:`.
 
 **Removal permanently deletes the managed gateway's database, workspace, and keys, plus model downloads, prepared data, and managed vLLM and Ollama proxy credentials.**
 It doesn't revoke upstream keys or remove images, external gateways, engines, or clusters.
@@ -778,14 +813,17 @@ Destroy keeps the deployment's namespace, the gateway's key Secret, and its pers
 It deletes each sandbox's workspace claim, but under the `Retain` reclaim policy the claim's volume stays `Released` with the workspace files on it.
 Deleting the namespace removes the objects in it.
 Volumes are cluster-wide, so you check them separately.
-Use the kubeconfig and context the deployment uses, and set `deployment_namespace` to the `namespace` of its `kubernetes` or `openshift` target:
+Set `deployment_kubeconfig` and `deployment_context` to the kubeconfig file and context the deployment uses, and `deployment_namespace` to the `namespace` of its `kubernetes` or `openshift` target.
+In the pod that runs NemoClaw, omit `--kubeconfig` and `--context` from the commands below:
 
 ```sh
+deployment_kubeconfig="$NEMOCLAW_CLUSTER_KUBECONFIG"
 deployment_context=my-cluster
 deployment_namespace=nemoclaw-development
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
-  get pods,secrets,persistentvolumeclaims
-kubectl --context "$deployment_context" get persistentvolumes \
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  --namespace "$deployment_namespace" get pods,secrets,persistentvolumeclaims
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  get persistentvolumes \
   -o custom-columns=NAME:.metadata.name,NAMESPACE:.spec.claimRef.namespace,STATUS:.status.phase,RECLAIM:.spec.persistentVolumeReclaimPolicy \
   | awk -v ns="$deployment_namespace" 'NR == 1 || $2 == ns'
 ```
@@ -802,7 +840,8 @@ For each listed volume with `Retain` that a provisioner created, set its reclaim
 
 ```sh
 deployment_volume=REPLACE_WITH_VOLUME_NAME
-kubectl --context "$deployment_context" patch persistentvolume "$deployment_volume" \
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  patch persistentvolume "$deployment_volume" \
   --patch '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
 ```
 
@@ -813,23 +852,27 @@ Set `deployment_release` to the gateway's release name, the prefix of the Secret
 
 ```sh
 deployment_release=REPLACE_WITH_RELEASE_NAME
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" delete secret \
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  --namespace "$deployment_namespace" delete secret \
   "$deployment_release-kek" "$deployment_release-server-tls" \
   "$deployment_release-client-tls" "$deployment_release-jwt-keys"
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  --namespace "$deployment_namespace" \
   delete serviceaccount,role,rolebinding "$deployment_release-certgen"
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  --namespace "$deployment_namespace" \
   delete persistentvolumeclaim "openshell-data-$deployment_release-0"
 ```
 
 Otherwise, delete the namespace and wait for it to go:
 
 ```sh
-kubectl --context "$deployment_context" delete namespace "$deployment_namespace" --wait=true
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  delete namespace "$deployment_namespace" --wait=true
 ```
 
 On OpenShift, `oc delete project` does the same as deleting the namespace.
-If `kubectl get namespace "$deployment_namespace"` reports it not found, the namespace and its objects are gone.
+If `kubectl get namespace "$deployment_namespace"`, with the same `--kubeconfig` and `--context`, reports it not found, the namespace and its objects are gone.
 Run the volume list again.
 Once the volumes are gone, it prints only its header.
 When the namespace, or in a kept namespace those objects, and the volumes are gone, remove the state directory, which holds the cluster receipt and any development issuer keys.

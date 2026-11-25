@@ -5,8 +5,9 @@
 # Requires explicit access to an existing Kubernetes cluster with Agent Sandbox
 # and one default StorageClass installed.
 # Replace the deployment UID and every image digest before applying.
-# Write each image's metadata bundle with `cargo images export-metadata` and set
-# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build-deploy/build.md.
+# Download each image's `<image>.metadata.json` from the release, or write it
+# with `cargo images export-metadata`, and set NEMOCLAW_AGENT_IMAGE_METADATA to
+# its absolute path; see docs/build-deploy/kubernetes.md#preparing-agent-images.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:

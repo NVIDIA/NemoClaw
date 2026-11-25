@@ -265,7 +265,7 @@ NemoClaw passes them through unchecked.
 OpenShell validates them when the gateway starts.
 
 A Kubernetes or OpenShift gateway reads proxy credentials from a Secret in the deployment's namespace, whose key holds `user:pass`.
-Create the Secret there, before the first apply or after NemoClaw creates the namespace, as for [registry Secrets](../build-deploy/kubernetes.md#referencing-registry-credentials), and name it:
+Create the namespace and the Secret before the first apply, as for [registry Secrets](../build-deploy/kubernetes.md#referencing-registry-credentials), and name it:
 
 ```yaml
 spec:

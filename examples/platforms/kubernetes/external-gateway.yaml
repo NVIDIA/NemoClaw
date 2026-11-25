@@ -3,8 +3,9 @@
 # yaml-language-server: $schema=../../../schemas/nemoclaw-v1alpha1.schema.json
 # Supply a unique deployment UID, an accessible digest-selected image for every agent,
 # and an inference endpoint reachable from inside each Kubernetes sandbox.
-# Write each image's metadata bundle with `cargo images export-metadata` and set
-# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build-deploy/build.md.
+# Download each image's `<image>.metadata.json` from the release, or write it
+# with `cargo images export-metadata`, and set NEMOCLAW_AGENT_IMAGE_METADATA to
+# its absolute path; see docs/build-deploy/kubernetes.md#preparing-agent-images.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -32,7 +33,7 @@ spec:
   # Each sandbox runs one independent agent using the shared inference profile.
   sandboxes:
     assistant:
-      # Replace this example digest with an image adapted for the gateway's UID/GID 10001.
+      # Replace this example digest with an image that runs as UID/GID 10001, as NemoClaw's images do.
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000

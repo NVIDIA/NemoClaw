@@ -4,9 +4,9 @@
 # An agent on a managed Kubernetes gateway that a NodePort Service publishes at
 # expose.endpoint, so that the OpenShell CLI dials a node instead of a port
 # forward. The oidc profile lets you sign in there with your own token; see
-# "Publish the Gateway Outside the Cluster" and "Reach the Gateway from the
-# OpenShell CLI" in docs/build-deploy/kubernetes.md. NemoClaw's own commands
-# still forward a port to the gateway pod.
+# "Publishing the Gateway Outside the Cluster" and "Reaching the Gateway From
+# the OpenShell CLI" in docs/build-deploy/kubernetes.md. NemoClaw's own
+# commands still forward a port to the gateway pod.
 # Before the first plan, replace the endpoint's host with a node's address or
 # a DNS name for the nodes, and its port with a free node port: plan fixes
 # both, and the gateway certificate names the host. Every node listens on the
@@ -17,8 +17,9 @@
 # digest. Where you run nemoclaw, set NVIDIA_INFERENCE_API_KEY, and before
 # each plan, apply or destroy set NEMOCLAW_GATEWAY_TOKEN to a fresh token for
 # the audience that carries the admin role.
-# Write the image's metadata bundle with `cargo images export-metadata` and set
-# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build-deploy/build.md.
+# Download the image's `<image>.metadata.json` from the release, or write it
+# with `cargo images export-metadata`, and set NEMOCLAW_AGENT_IMAGE_METADATA to
+# its absolute path; see docs/build-deploy/kubernetes.md#preparing-agent-images.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
