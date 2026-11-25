@@ -114,14 +114,16 @@ changes. The current branch name becomes the preview ID. The default instance is
 GitHub Actions publishes Fern docs from the same source files that `npm run docs` validates locally.
 
 Docs PRs get Fern previews when they change `docs/`, `fern/`, or docs build inputs.
-The preview workflow publishes to the staging Fern instance with a `pr-<number>` preview ID and posts the preview URL on the PR when `FERN_TOKEN` is available.
+The workflow renders the guides from the `v1` branch and validates them together with the PR’s v0 guides. Both products use the PR’s home page and installation prompt. When `FERN_TOKEN` is available, the workflow publishes the combined `pr-<number>` preview and posts links to both homes and the v1 source commit. Each run uses the tip of `v1` at checkout.
 
-After a docs PR merges, pushes to `main` publish the affected docs to the staging Fern instance.
+Pushes to `main` publish the affected docs to staging until the remote `v0` branch exists. Once it exists, only pushes to `v0` publish the v0 docs to staging.
 The staging publish job regenerates agent variants, validates Fern docs, publishes staging, and deletes the merged PR preview when it can map the merge commit back to a PR.
 
+The v0 project keeps the `/nemoclaw` mount to redirect existing unversioned and `/latest/` links. Its product pages live under `/nemoclaw/v0/`. Selecting **v1** opens the independent v1 project. The v1 branch owns the nested `/nemoclaw/v1/` mount. Each branch publishes only its own content and retains its own release history.
+
 Public docs publish automatically when a `v*.*.*` release tag is pushed.
-The public publish job runs in the `docs-public` environment, verifies that the tag commit is reachable from `origin/main`, regenerates agent variants, validates Fern docs, and publishes to the public Fern instance.
-If the tag does not point to a commit on `main`, the job stops before installing dependencies or running Fern.
+The public publish job runs in the `docs-public` environment, verifies that the tag commit is reachable from `origin/v0` when that branch exists, or from `origin/main` until then, regenerates agent variants, validates Fern docs, and publishes to the public Fern instance.
+If the tag does not point to a commit on the v0 release branch, the job stops before installing dependencies or running Fern.
 
 ## Starter Prompt Generation
 

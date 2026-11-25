@@ -5,7 +5,7 @@ name: Docs / Check Changed Markdown Links
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, v0]
     types: [opened, reopened, synchronize]
     paths:
       - "**/*.md"

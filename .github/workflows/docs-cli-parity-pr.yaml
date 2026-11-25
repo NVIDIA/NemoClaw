@@ -9,7 +9,7 @@ name: Docs / Verify CLI and Installer Reference Parity
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, v0]
     types: [opened, reopened, synchronize]
     paths:
       - "src/**"

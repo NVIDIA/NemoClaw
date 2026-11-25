@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import {
   parseOpenShellTrustRegistry,
+  openShellReleaseOrigins,
   type OpenShellTrustRegistry,
 } from "./openshell-trust-data.mts";
 
@@ -700,7 +701,7 @@ function validateTrustedRelease(release: OpenShellReleaseTrust): void {
     !release.formula ||
     release.formula.asset !== "openshell.rb" ||
     release.formula.url !==
-      `https://github.com/NVIDIA/OpenShell/releases/download/v${release.version}/openshell.rb` ||
+      `https://github.com/${openShellReleaseOrigins(release.version).repository}/releases/download/v${release.version}/openshell.rb` ||
     !SHA256_PATTERN.test(release.formula.sha256)
   ) {
     fail(`trusted OpenShell v${release.version} formula record is invalid`);
@@ -719,7 +720,7 @@ function validateTrustedRelease(release: OpenShellReleaseTrust): void {
   }
   if (
     release.supervisor &&
-    (release.supervisor.image !== "ghcr.io/nvidia/openshell/supervisor" ||
+    (release.supervisor.image !== openShellReleaseOrigins(release.version).supervisor ||
       !/^sha256:[a-f0-9]{64}$/u.test(release.supervisor.manifestDigest) ||
       release.supervisor.runtimeTemplateSha256.length === 0 ||
       release.supervisor.runtimeTemplateSha256.some((sha256) => !SHA256_PATTERN.test(sha256)))
@@ -1511,7 +1512,7 @@ function extractSupervisorManifestPins(
       const match = /^  "([0-9]+\.[0-9]+\.[0-9]+)": "(sha256:[a-f0-9]{64})",$/u.exec(line);
       if (!match) fail("supervisor runtime manifest digest map must contain only literal pins");
       return {
-        image: trustedSupervisor.image,
+        image: openShellReleaseOrigins(match[1] ?? "").supervisor,
         manifestDigest: match[2] ?? "",
         version: match[1] ?? "",
       };
