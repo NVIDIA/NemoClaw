@@ -33,6 +33,8 @@ import { resolveRecordedDashboardUrlForPort } from "../../dashboard/url";
 //   - NEMOCLAW_SANDBOX_GPU / NEMOCLAW_SANDBOX_GPU_DEVICE
 //                           → src/lib/onboard/sandbox-gpu-mode.ts
 //   - NEMOCLAW_TOOL_DISCLOSURE → src/lib/tool-disclosure.ts
+//   - NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64 → src/lib/onboard/switchyard/setup.ts
+//   - NEMOCLAW_HERMES_SWITCHYARD_BINDINGS_B64 → src/lib/onboard/managed-startup/profile-builder.ts
 // This list MUST stay in sync with those reads; a contract test in
 // rebuild-env-isolation.test.ts pins the exact set so adding a new
 // onboard-selection env var forces a conscious update here.
@@ -61,6 +63,8 @@ export const AMBIENT_RECREATE_ENV_VARS = [
   "NEMOCLAW_SANDBOX_GPU",
   "NEMOCLAW_SANDBOX_GPU_DEVICE",
   "NEMOCLAW_TOOL_DISCLOSURE",
+  "NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64",
+  "NEMOCLAW_HERMES_SWITCHYARD_BINDINGS_B64",
 ] as const;
 
 /**

@@ -5,10 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { switchyardBindingFixture } from "../../../../test/helpers/hermes-switchyard";
 
 import {
   decodeHermesSwitchyardRoutingIntent,
+  createHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
   HERMES_SWITCHYARD_ROUTING_ENV,
 } from "../../hermes-switchyard-routing";
 import { resolveOnboardOptions, runOnboardCommand } from "../command";
@@ -203,5 +206,83 @@ describe("Switchyard onboarding command", () => {
       },
     });
     expect(env[HERMES_SWITCHYARD_ROUTING_ENV]).toBe("ambient-value");
+  });
+
+  it("preserves published bindings when plain resume retries an incomplete sandbox step (#13863)", async () => {
+    vi.stubEnv("HOME", root);
+    vi.resetModules();
+    try {
+      const registry = await import("../../state/registry");
+      const { createSession } = await import("../../state/onboard-session");
+      const { handleProviderInferenceState } =
+        await import("../machine/handlers/provider-inference");
+      const { baseOptions, createDeps } =
+        await import("../machine/handlers/provider-inference.test-support");
+      const routing = createHermesSwitchyardRoutingIntent({
+        efficient: { provider: "nvidia-prod", model: "nvidia/nano" },
+        capable: { provider: "openai-api", model: "gpt-5" },
+      });
+      const selection = {
+        provider: routing.capable.provider,
+        model: routing.capable.model,
+        endpointUrl: "https://api.openai.com/v1",
+        credentialEnv: "OPENAI_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      };
+      const session = createSession({ sandboxName: "routed", ...selection });
+      session.steps.provider_selection.status = "complete";
+      session.steps.inference.status = "complete";
+      session.steps.sandbox.status = "pending";
+      registry.registerSandbox({
+        name: "routed",
+        agent: "hermes",
+        ...selection,
+        endpointSource: "onboard",
+        gatewayName: "test-gateway",
+        hermesSwitchyard: { routing, bindings: switchyardBindingFixture(routing) },
+      });
+      const before = fs.readFileSync(registry.REGISTRY_FILE, "utf8");
+      const { deps, calls } = createDeps({
+        isInferenceRouteReady: () => true,
+        reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
+        recordStepComplete: async () => session,
+        recordStateSkipped: async () => session,
+      });
+      const env: NodeJS.ProcessEnv = {
+        NEMOCLAW_AGENT: "hermes",
+        [HERMES_SWITCHYARD_ROUTING_ENV]: "ambient-routing",
+        [HERMES_SWITCHYARD_BINDINGS_ENV]: "ambient-bindings",
+      };
+      await expect(
+        runOnboardCommand({
+          flags: { resume: true },
+          env,
+          listAgents: () => ["openclaw", "hermes"],
+          loadSession: () => session,
+          error: () => {},
+          exit: exitWithCode,
+          runOnboard: async (options) => {
+            expect(options.switchyardRouting).toBeUndefined();
+            expect(env[HERMES_SWITCHYARD_ROUTING_ENV]).toBeUndefined();
+            expect(env[HERMES_SWITCHYARD_BINDINGS_ENV]).toBeUndefined();
+            await handleProviderInferenceState({
+              ...baseOptions(deps, session),
+              gatewayName: "test-gateway",
+              agent: { name: "hermes" },
+              resume: options.resume,
+              sandboxName: "routed",
+              requestedSandboxName: "routed",
+              env,
+            });
+          },
+        }),
+      ).rejects.toThrow("recorded Switchyard provider bindings");
+      expect(calls.setupInference).not.toHaveBeenCalled();
+      expect(fs.readFileSync(registry.REGISTRY_FILE, "utf8")).toBe(before);
+      expect(env[HERMES_SWITCHYARD_ROUTING_ENV]).toBe("ambient-routing");
+      expect(env[HERMES_SWITCHYARD_BINDINGS_ENV]).toBe("ambient-bindings");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

@@ -12,6 +12,7 @@ import { HostCliClient } from "../fixtures/clients/host.ts";
 import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
 import { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
+  captureProtectedNimFailureLogs,
   PROTECTED_PROVIDER_KIND_LABEL,
   PROTECTED_PROVIDER_OWNER_LABEL,
   type ProtectedProviderContainerAuthority,
@@ -811,6 +812,92 @@ printf 'nim-stalled-probe-diagnostic key=%s\\n' "$FAKE_NIM_API_KEY"`,
     expect(result.stderr).not.toContain(sensitiveValue);
     expect(fs.readFileSync(result.artifacts.stderr, "utf8")).not.toContain(sensitiveValue);
     expect(fs.readFileSync(result.artifacts.result, "utf8")).not.toContain(sensitiveValue);
+  });
+});
+
+describe("protected NIM failure cleanup diagnostics", () => {
+  it("retains redacted cleanup logs when interrupted readiness diagnostics are clipped", async (context) => {
+    const fixture = createReadinessFixture(context);
+    const sensitiveValue = "protected-nim-cleanup-sensitive-value";
+    const authority: ProtectedProviderContainerAuthority = {
+      ...providerAuthority(),
+      kind: "nim",
+      name: protectedProviderContainerName("nim", PROVIDER_COHORT),
+    };
+    const logRequest = path.join(fixture.root, "nim-log-request");
+    const inspectRequest = path.join(fixture.root, "nim-inspect-request");
+    writeCommand(fixture.binDir, "curl", "exit 1");
+    writeCommand(
+      fixture.binDir,
+      "docker",
+      `if [ "$1" = "container" ]; then
+  printf 'inspected\\n' > ${JSON.stringify(inspectRequest)}
+  # Refuse readiness immediately and hold diagnostics until forced shutdown.
+  if [ "$5" != '{{.State.Running}}' ]; then
+    trap '' TERM
+    exec /bin/sleep 30
+  fi
+  printf 'false\\n'
+  exit 0
+fi
+printf '%s\\n' "$*" > ${JSON.stringify(logRequest)}
+printf 'provider-native-log ${sensitiveValue}\\n' >&2
+exit 42`,
+    );
+    const readiness = protectedNimReadinessCommand(authority.containerId);
+    const failed = await fixture.host.command(readiness.command, readiness.args, {
+      artifactName: "nim-readiness-clipped-before-tail",
+      captureLimitBytes: readiness.captureLimitBytes,
+      env: fixture.env,
+      redactionValues: [sensitiveValue],
+      timeoutMs: 500,
+    });
+    expect(failed.timedOut).toBe(true);
+    expect(failed.exitCode).not.toBe(0);
+    expect(fs.existsSync(inspectRequest), failed.stderr).toBe(true);
+    expect(fs.existsSync(logRequest)).toBe(false);
+    expect(failed.stderr).not.toContain(sensitiveValue);
+    const command = vi.fn((...args: Parameters<HostCliClient["command"]>) =>
+      fixture.host.command(args[0], args[1], { ...args[2], env: fixture.env }),
+    );
+    await expect(
+      captureProtectedNimFailureLogs({ command }, authority, [sensitiveValue]),
+    ).resolves.toBeUndefined();
+    expect(fs.readFileSync(logRequest, "utf8").trim()).toBe(
+      `logs --tail 200 ${authority.containerId}`,
+    );
+    const diagnostic = await command.mock.results[0]?.value;
+    expect(diagnostic?.exitCode).toBe(42);
+    expect(diagnostic?.stderr).toContain("provider-native-log [REDACTED]");
+    expect(fs.readFileSync(diagnostic?.artifacts.result ?? "", "utf8")).not.toContain(
+      sensitiveValue,
+    );
+    expect(command.mock.calls[0]?.[2]?.timeoutMs).toBeLessThanOrEqual(5_000);
+    expect(command.mock.calls[0]?.[2]?.captureLimitBytes).toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect(failed.timedOut).toBe(true);
+    expect(failed.exitCode).not.toBe(0);
+  });
+
+  it("does not let unavailable diagnostics block cleanup or use a mutable name", async () => {
+    const command = vi.fn(async () => {
+      throw new Error("fixture diagnostic unavailable");
+    });
+    const authority: ProtectedProviderContainerAuthority = {
+      ...providerAuthority(),
+      kind: "nim",
+      name: protectedProviderContainerName("nim", PROVIDER_COHORT),
+    };
+    await captureProtectedNimFailureLogs({ command }, null, []);
+    await captureProtectedNimFailureLogs(
+      { command },
+      { ...authority, containerId: authority.name },
+      [],
+    );
+    expect(command).not.toHaveBeenCalled();
+    await expect(
+      captureProtectedNimFailureLogs({ command }, authority, []),
+    ).resolves.toBeUndefined();
+    expect(command).toHaveBeenCalledOnce();
   });
 });
 

@@ -43,6 +43,7 @@ on:
       - "nemoclaw-blueprint/**"
       - "scripts/**"
       - "test/helpers/openclaw-real-agent-reload-proof.ts"
+      - "test/helpers/openclaw-real-legacy-migration-proof.ts"
       - "test/e2e/fixtures/gateway-runtime-start.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
       - "test/e2e/fixtures/phases/lifecycle.ts"
@@ -447,6 +448,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      pull-requests: read
     uses: ./.github/workflows/managed-images.yaml
     with:
       dcode-base-contract-base64: ${{ needs.build-and-push-dcode.outputs.contract-base64 }}

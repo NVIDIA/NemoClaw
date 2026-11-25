@@ -59,6 +59,8 @@ import {
   getSandboxGatewayStateForStatus,
 } from "./gateway-state";
 import {
+  hasSwitchyardStatusIntent,
+  probeSwitchyardStatusInference,
   HermesNvidiaCredentialRejectedError,
   HermesNvidiaCredentialVerifierMissingError,
   verifyHermesNvidiaCredential,
@@ -351,6 +353,7 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 }
 
 interface CollectSandboxStatusSnapshotDeps {
+  switchyardPreflight?: Parameters<typeof probeSwitchyardStatusInference>[0]["observe"];
   verifyHermesNvidiaCredentialImpl?: typeof import("./inference-route-health").verifyHermesNvidiaCredential;
   findSandboxAcrossGatewayRoots?: typeof findSandboxAcrossGatewayRoots;
   listPublishedSandboxNamesAcrossGatewayRoots?: typeof listPublishedSandboxNamesAcrossGatewayRoots;
@@ -453,9 +456,7 @@ async function refreshPreflightAfterDockerRecovery(
 
 function reportInferenceProbeError(error: unknown, writer: (message: string) => void): void {
   const detail = sanitizedStatusDetail(error);
-  writer(
-    `  Warning: the authoritative inference.local probe could not run: ${detail || "unknown error"}`,
-  );
+  writer(`  Warning: the sandbox inference probe could not run: ${detail || "unknown error"}`);
 }
 
 function reportInferenceProbeRetry(
@@ -605,9 +606,12 @@ export async function collectSandboxStatusSnapshot(
     ((postRecoveryPreflight ?? initialPreflight)?.suppressInferenceProbe ??
       opts.suppressInferenceProbe === true);
   const nativeSelection = readNativeStatusSelection(sb);
+  const switchyardRequested = hasSwitchyardStatusIntent(sb);
   const { attachment: nativeAttachment, label: nativeLabel } = nativeSelection;
   let nativeAttachmentFailure = nativeSelection.failure;
-  const nativeProvider = Boolean(nativeAttachment || nativeAttachmentFailure);
+  const nativeProvider = Boolean(
+    switchyardRequested || nativeAttachment || nativeAttachmentFailure,
+  );
   let liveResult: OpenShellInferenceRouteResult | null = null;
   let gatewayName: string | null = null;
   if (lookup.state === "present") {
@@ -664,6 +668,7 @@ export async function collectSandboxStatusSnapshot(
     !suppressInferenceProbe &&
     lookup.state === "present" &&
     nativeProvider &&
+    !switchyardRequested &&
     sb
   ) {
     const expected = nativeAttachment;
@@ -745,16 +750,17 @@ export async function collectSandboxStatusSnapshot(
   // value to null afterwards.
   let providerHealth: ProviderHealthStatus | null = null;
   try {
-    providerHealth = nativeAttachmentFailure
-      ? null
-      : maybeGetSandboxStatusInferenceHealth(
-          suppressInferenceProbe,
-          lookup.state === "present",
-          nativeProvider ? currentProvider : (live && live.provider) || currentProvider,
-          nativeProvider ? currentModel : (live && live.model) || currentModel,
-          opts.deps?.probeProviderHealthImpl,
-          sb?.endpointUrl,
-        );
+    providerHealth =
+      nativeAttachmentFailure || switchyardRequested
+        ? null
+        : maybeGetSandboxStatusInferenceHealth(
+            suppressInferenceProbe,
+            lookup.state === "present",
+            nativeProvider ? currentProvider : (live && live.provider) || currentProvider,
+            nativeProvider ? currentModel : (live && live.model) || currentModel,
+            opts.deps?.probeProviderHealthImpl,
+            sb?.endpointUrl,
+          );
   } catch {
     providerHealth = {
       ok: false,
@@ -768,7 +774,7 @@ export async function collectSandboxStatusSnapshot(
   let inferenceHealth = providerHealth;
   // Probe the same route the agent uses: the recorded attached provider for
   // native providers, otherwise the shared `inference.local` route.
-  if (!suppressInferenceProbe && lookup.state === "present") {
+  if (!suppressInferenceProbe && lookup.state === "present" && !switchyardRequested) {
     let gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>> = null;
     // Take the provider and model as one pair. Falling back per field can pair
     // a live model with a recorded provider and request a route neither one
@@ -891,6 +897,17 @@ export async function collectSandboxStatusSnapshot(
           model: invocationRoute.model ?? null,
           preferredInferenceApi: sb?.preferredInferenceApi ?? null,
         });
+  }
+  if (!suppressInferenceProbe && lookup.state === "present" && switchyardRequested && sb) {
+    inferenceHealth = await probeSwitchyardStatusInference({
+      entry: sb,
+      sandboxName,
+      gatewayName: gatewayName ?? undefined,
+      provider: currentProvider,
+      model: currentModel,
+      probe: opts.deps?.probeSandboxInferenceInvocationImpl,
+      observe: opts.deps?.switchyardPreflight,
+    });
   }
   if (
     !suppressInferenceProbe &&

@@ -5,16 +5,21 @@ import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-
 import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/registry";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
-import type { NativeLocalProviderAttachment } from "../../inference/native-local/contract";
+import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
-type RebuildAuthoritativePreflightOptions = RebuildRecreateOnboardOpts & {
-  deferInferenceRouteUntilOnboard?: true;
-  agent?: string | null;
-  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
-  model: string;
-  provider: string;
-  sandboxName: string;
-};
+type RebuildAuthoritativePreflightOptions = RebuildRecreateOnboardOpts &
+  Pick<
+    RebuildResumeConfig,
+    | "nativeLocalProviderAttachment"
+    | "nativeNvidiaProviderAttachment"
+    | "nativeHostedProviderAttachment"
+  > & {
+    deferInferenceRouteUntilOnboard?: true;
+    agent?: string | null;
+    model: string;
+    provider: string;
+    sandboxName: string;
+  };
 
 type RebuildCompatibleEndpointSmokeOptions = Pick<
   Parameters<

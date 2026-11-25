@@ -7,6 +7,31 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect, it, vi } from "vitest";
+import { processIsAlive, terminateFixtureChild } from "../../support/process-liveness";
+
+// Keep the historical Slack remediation fixture independent of production version pins.
+vi.mock("../../../src/lib/messaging/channels/slack/manifest.ts", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../src/lib/messaging/channels/slack/manifest.ts")>();
+  return {
+    ...actual,
+    slackManifest: {
+      ...actual.slackManifest,
+      agentPackages: actual.slackManifest.agentPackages.map((pkg) => ({
+        ...pkg,
+        integrityByVersion: {
+          ...pkg.integrityByVersion,
+          "2026.9.2":
+            "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==",
+        },
+        tarballUrlByVersion: {
+          ...pkg.tarballUrlByVersion,
+          "2026.9.2": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.2.tgz",
+        },
+      })),
+    },
+  };
+});
 
 vi.mock("../../../scripts/lib/openclaw-npm-remediation.mts", async (importOriginal) => {
   const actual =
@@ -64,7 +89,7 @@ function officialPluginFixture(channelId: string, version = "2026.9.1") {
       'fs.appendFileSync(process.env.OPENCLAW_TRACE, `openclaw|${args.join("|")}|offline=${process.env.NPM_CONFIG_OFFLINE || ""}/${process.env.npm_config_offline || ""}\\n`);',
       'if (args[0] === "plugins" && args[1] === "install" && process.env.OPENCLAW_CACHE_MISS === "1") { if (process.env.NPM_CONFIG_OFFLINE !== "true" || process.env.npm_config_offline !== "true") fs.appendFileSync(process.env.OPENCLAW_TRACE, "registry-fallback\\n"); process.stdout.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stderr.write("npm error code ENOTCACHED\\nnpm error request to https://registry.npmjs.org/@openclaw%2fdiscord?token=" + process.env.OPENCLAW_INSPECTION_CANARY); process.exit(44); }',
       'if (args[0] === "plugins" && args[1] === "install") process.exit(args[4] === `npm:${process.env.OPENCLAW_PLUGIN_SPEC}` ? 0 : 41);',
-      'if (args[1] === "inspect" && process.env.OPENCLAW_INSPECTION_HANG === "1") { setInterval(() => {}, 1000); return; }',
+      `if (args[1] === "inspect" && process.env.OPENCLAW_INSPECTION_HANG === "1") { if (process.env.OPENCLAW_INSPECTION_CHILD_PID) { const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify('process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)')}], { stdio: "ignore" }); fs.writeFileSync(process.env.OPENCLAW_INSPECTION_CHILD_PID, String(child.pid)); } setInterval(() => {}, 1000); return; }`,
       'if (args[0] === "plugins" && args[1] === "inspect") { process.stderr.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stdout.write(JSON.stringify({ plugin: { id: process.env.OPENCLAW_PLUGIN_ID, trustedOfficialInstall: process.env.OPENCLAW_TRUSTED !== "false", diagnostic: process.env.OPENCLAW_INSPECTION_CANARY }, install: { ...(process.env.OPENCLAW_ARCHIVE_FIELD ? { [process.env.OPENCLAW_ARCHIVE_FIELD]: "retained-local-archive" } : {}), source: "npm", resolvedSpec: process.env.OPENCLAW_PLUGIN_SPEC, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY, installPath: process.env.OPENCLAW_PLUGIN_INSTALL_PATH } })); process.exit(0); }',
       "process.exit(42);",
       "",
@@ -96,6 +121,7 @@ function officialPluginFixture(channelId: string, version = "2026.9.1") {
 
   const env = {
     PATH: `${tmp}:${TEST_PATH}`,
+    TMPDIR: tmp,
     OPENCLAW_TRACE: tracePath,
     OPENCLAW_PACKED_DIRECTORIES: packedDirectories,
     OPENCLAW_PLUGIN_INTEGRITY: pkg.integrityByVersion![version]!,
@@ -188,22 +214,56 @@ it.each(["slack", "discord", "teams", "whatsapp", "googlechat"])(
   },
 );
 
-it("bounds a hung official-plugin inspection and removes its packed archive", () => {
-  const { tmp, env, packedDirectories } = officialPluginFixture("slack");
-  try {
-    const timedOut = spawnSync(process.execPath, CLI_ARGS, {
-      encoding: "utf8",
-      timeout: 70_000,
-      killSignal: "SIGKILL",
-      env: { ...env, OPENCLAW_INSPECTION_HANG: "1" },
-    });
-    expect(timedOut.status).toBe(2);
-    expect(timedOut.stderr).toContain("Official OpenClaw plugin 'slack' inspection timed out");
-    expect(remainingPackedDirectories(packedDirectories)).toEqual([]);
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-}, 75_000);
+it.skipIf(process.platform === "win32")(
+  "bounds a hung official-plugin inspection and removes its packed archive and child",
+  async () => {
+    const { tmp, env, packedDirectories } = officialPluginFixture("slack");
+    const childPidFile = path.join(tmp, "inspection-child.pid");
+    try {
+      const timedOut = spawnSync(process.execPath, CLI_ARGS, {
+        encoding: "utf8",
+        timeout: 70_000,
+        killSignal: "SIGKILL",
+        env: {
+          ...env,
+          OPENCLAW_INSPECTION_HANG: "1",
+          OPENCLAW_INSPECTION_CHILD_PID: childPidFile,
+        },
+      });
+      const childPid = Number(fs.readFileSync(childPidFile, "utf8"));
+      expect(Number.isSafeInteger(childPid) && childPid > 0).toBe(true);
+      expect(timedOut.status).toBe(2);
+      expect(timedOut.stderr).toContain("Official OpenClaw plugin 'slack' inspection timed out");
+      expect(remainingPackedDirectories(packedDirectories)).toEqual([]);
+      await expect.poll(() => processIsAlive(childPid), { timeout: 3_000 }).toBe(false);
+    } finally {
+      terminateFixtureChild(childPidFile);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+  75_000,
+);
+
+it.runIf(process.platform === "win32")(
+  "bounds a hung official-plugin inspection and removes its packed archive on Windows",
+  () => {
+    const { tmp, env, packedDirectories } = officialPluginFixture("slack");
+    try {
+      const timedOut = spawnSync(process.execPath, CLI_ARGS, {
+        encoding: "utf8",
+        timeout: 70_000,
+        killSignal: "SIGKILL",
+        env: { ...env, OPENCLAW_INSPECTION_HANG: "1" },
+      });
+      expect(timedOut.status).toBe(2);
+      expect(timedOut.stderr).toContain("Official OpenClaw plugin 'slack' inspection timed out");
+      expect(remainingPackedDirectories(packedDirectories)).toEqual([]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+  75_000,
+);
 
 it("patches the installed official Slack bundle only after registry provenance is verified", async () => {
   const fixture = officialPluginFixture("slack", "2026.9.2");

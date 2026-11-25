@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, it } from "vitest";
+import { RECREATION_RESTORE_CASES } from "./dcode-recreation-identity.fixture";
 import { runOnboardProcessAsync } from "../helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
@@ -296,26 +297,14 @@ const { createSandbox } = require(${onboardPath});
       );
     },
   );
-  it.for([
-    { scenario: "forced recreation", force: true, marked: false, primary: "openai/gpt-4o" },
-    {
-      scenario: "marked recreation resume",
-      force: false,
-      marked: true,
-      primary: "inference/gpt-5.4",
-    },
-    {
-      scenario: "unmarked recreation resume",
-      force: false,
-      marked: false,
-      primary: "openai/gpt-4o",
-    },
-  ])(
+  it.for(RECREATION_RESTORE_CASES)(
     "$scenario restores native state with its recorded selection authority (#12667)",
     {
       timeout: 60_000,
     },
-    async ({ force, marked, primary }, context) => {
+    async (row, context) => {
+      const { force = false, marked = false, primary = "openai/gpt-4o" } = row;
+      const { agent = "openclaw", drift = false } = row;
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-backup-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -345,7 +334,9 @@ const sandboxState = require(${sandboxStatePath});
 const processRecovery = require(${processRecoveryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
-
+const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
+let sourceDeleted = false;
+const dcodeFixture = require(${JSON.stringify(path.join(repoRoot, "test/onboarding/dcode-recreation-identity.fixture.ts"))}).installDcodeRecreationIdentityFixture(require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/dcode-selection-drift.ts"))}), ${JSON.stringify(drift)}, () => sourceDeleted, sandboxState, ${JSON.stringify(tmpDir)});
 const events = [];
 let nativeConfig = { agents: { defaults: { model: { primary: "openai/gpt-4o" } } }, models: { providers: {} }, custom: { retained: true } };
 let registered = null;
@@ -361,6 +352,10 @@ sandboxConfig.setOpenClawConfigValues = (_name, updates) => {
   }
 };
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
+processRecovery.prepareUnregisteredOpenClawPostRestoreDoctor = async ({ sandboxName, runtimeSelection }) => ({
+  ok: true,
+  window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+});
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => {
   events.push({ kind: "restart", primary: nativeConfig.agents.defaults.model.primary });
   return { ok: true };
@@ -371,7 +366,11 @@ runner.run = (command) => {
   const cmd = _n(command);
   const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") {
+    sourceDeleted = true;
+    events.push({ kind: "delete", preflight: dcodeFixture.preflight, reconcile: sessions.loadSession()?.checkpoint?.sandboxRecreate?.reconcileOpenClawInference ?? null });
+    createdSandbox.delete();
+  }
   events.push({ kind: "run", cmd });
   return createdSandbox.run(command) ?? { status: 0 };
 };
@@ -393,16 +392,18 @@ runner.run = (command) => {
 	const sourceSandbox = fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  gpuEnabled: false,
+	  ...(${JSON.stringify(agent)} === "openclaw" ? {} : { agent: ${JSON.stringify(agent)} }),
+	  ...(${JSON.stringify(drift)} ? { provider: "nvidia-prod", nativeNvidiaProviderAttachment: { schemaVersion: 1, profileId: "nemoclaw-nvidia-inference-v1", providerName: "nemoclaw-nvidia-prod-v1", providerId: "11111111-2222-4333-8444-555555555555" } } : {}),
 	}, { sandboxId: createdSandbox.state.sandboxId });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
-	  provider: "nvidia-prod",
+	  provider: ${JSON.stringify(drift ? "compatible-endpoint" : "nvidia-prod")},
 	  model: "gpt-5.4",
+      ...(${JSON.stringify(drift)} ? { endpointUrl: "https://api.example/v1", credentialEnv: "COMPATIBLE_API_KEY" } : {}),
 	  getSandbox: registry.getSandbox,
       registerSandbox: (entry) => { registered = entry; },
 	});
-
 let latestBackup = null;
 sandboxState.getLatestBackup = () => latestBackup;
 sandboxState.backupSandboxState = (name) => {
@@ -428,10 +429,8 @@ sandboxState.restoreRecreatedSandboxState = (name, backupPath, options) => {
     failedFiles: [],
   };
 };
-
 const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
-
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
 	  if (command.includes("sandbox create") && createdSandbox.state.lifecycleState === "deleted") createdSandbox.recreate(args.flat());
@@ -447,19 +446,18 @@ preflight.checkPortAvailable = async () => ({ ok: true });
   });
   return child;
 };
-
 const { createSandbox } = require(${onboardPath});
-
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  process.env.NEMOCLAW_RECREATE_SANDBOX = ${JSON.stringify(force ? "1" : "0")};
+  process.env.NEMOCLAW_RECREATE_SANDBOX = ${JSON.stringify(force || drift ? "1" : "0")};
   const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
+    [null, "gpt-5.4", ${JSON.stringify(drift ? "compatible-endpoint" : "nvidia-prod")}, null, "my-assistant", null, null, null, ${JSON.stringify(agent)} === "openclaw" ? null : require(${JSON.stringify(path.join(repoRoot, "src/lib/agent/defs.ts"))}).loadAgent(${JSON.stringify(agent)}), null, null, null, []],
     createFixture,
   );
+  if (${JSON.stringify(drift)}) createArgs[15] = { ...createArgs[15], endpointUrl: "https://api.example/v1", credentialEnv: "COMPATIBLE_API_KEY" };
+  if (${JSON.stringify(agent)} !== "openclaw" && !${JSON.stringify(marked)}) createArgs[15] = { ...createArgs[15], recreateTransaction: { ...createArgs[15].recreateTransaction, freshSelection: true } };
   // Seed the durable checkpoint left by the interrupted invocation. The resumed
   // request carries only its existing transaction identity, never fresh authority.
-  const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
   const interrupted = sessions.loadSession();
   if (${JSON.stringify(marked)}) interrupted.checkpoint.sandboxRecreate.reconcileOpenClawInference = true;
   sessions.saveSession(interrupted);
@@ -501,8 +499,10 @@ const { createSandbox } = require(${onboardPath});
         cmd?: string;
         name?: string;
         backupPath?: string;
-        options?: { targetAgentType?: string };
+        options?: { targetAgentType?: string; keepReplacementDeepAgentsConfig?: boolean };
         primary?: string;
+        reconcile?: true | null;
+        preflight?: boolean;
       }>;
       const backupIndex = events.findIndex((e) => e.kind === "backup");
       const deleteIndex = events.findIndex(
@@ -521,9 +521,18 @@ const { createSandbox } = require(${onboardPath});
         "/tmp/fake-backup-path",
         "restore must use backup path",
       );
-      assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
+      assert.equal(restoreEvent?.options?.targetAgentType, agent);
+      const deleteEvent = events.find((event) => event.kind === "delete");
+      assert.equal(deleteEvent?.reconcile, drift || marked || null);
+      const keepDcodeConfig = agent === "langchain-deepagents-code" && (drift || marked);
+      assert.equal(deleteEvent?.preflight, keepDcodeConfig);
+      assert.equal(
+        restoreEvent?.options?.keepReplacementDeepAgentsConfig,
+        keepDcodeConfig || undefined,
+      );
       assert.equal(payload.nativeConfig.agents.defaults.model.primary, primary);
-      assert.equal(events.find((event) => event.kind === "restart")?.primary, primary);
+      const restart = events.find((event) => event.kind === "restart")?.primary;
+      assert.equal(restart, agent === "openclaw" ? primary : undefined);
       assert.deepEqual(payload.nativeConfig.custom, { retained: true });
       assert.equal(payload.registered.model, "gpt-5.4");
       assert.equal(
@@ -725,6 +734,10 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
+processRecovery.prepareUnregisteredOpenClawPostRestoreDoctor = async ({ sandboxName, runtimeSelection }) => ({
+  ok: true,
+  window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+});
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
@@ -1230,7 +1243,7 @@ const { createSandbox } = require(${onboardPath});
 	    createFixture,
 	  );
   if (${preopened}) {
-    createArgs[15].recreateTransaction = { ...createArgs[15].recreateTransaction, ...(${fresh} ? { freshNonForced: true } : {}) };
+    createArgs[15].recreateTransaction = { ...createArgs[15].recreateTransaction, ...(${fresh} ? { freshSelection: true } : {}) };
   }
   if (${journalOnly} && !${preopened}) {
     // Exercise a new lower-layer journal, with recreation planned but not necessarily forced.

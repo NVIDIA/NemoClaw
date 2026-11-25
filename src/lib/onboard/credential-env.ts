@@ -3,6 +3,7 @@
 
 import {
   KNOWN_CREDENTIAL_ENV_KEYS,
+  deleteCredential,
   loadCredentials,
   resolveProviderCredential,
 } from "../credentials/store";
@@ -34,4 +35,21 @@ export function hydrateCredentialEnv(
 ): string | null {
   if (!envName) return null;
   return resolveCredential(envName);
+}
+
+/** Restore named credential entries after host work, including failed hydration. */
+export async function withRestoredCredentialEnv<T>(
+  envNames: readonly string[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = new Map(envNames.map((name) => [name, process.env[name]]));
+  try {
+    return await operation();
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) deleteCredential(name);
+      else process.env[name] = value;
+    }
+    previous.clear();
+  }
 }

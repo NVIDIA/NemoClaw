@@ -1,0 +1,28 @@
+{
+  "archivePackages": [
+    {
+      "label": "OpenClaw Discord plugin 2026.9.2",
+      "packageSpec": "@openclaw/discord@2026.9.2",
+      "integrity": "sha512-j+fSHxbXA+DSxwbL8SvtsDNL6tvBX4+RmH+EerVW6dCbeIwSconXj6J/+AaN/mhzZI4g0jPPj30TUhdCRRbc2w==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.2.tgz"
+    },
+    {
+      "label": "OpenClaw Slack plugin 2026.9.2",
+      "packageSpec": "@openclaw/slack@2026.9.2",
+      "integrity": "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.2.tgz"
+    },
+    {
+      "label": "OpenClaw Microsoft Teams plugin 2026.9.2",
+      "packageSpec": "@openclaw/msteams@2026.9.2",
+      "integrity": "sha512-py5KvGOTcd0qGGRf3EuqbH2jO+kZtvMquDMjwGkT6x9F4XZtaCBL/lmLitb4hDb5xaIpPP8ZLIbT8GIMXQr3Og==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.2.tgz"
+    },
+    {
+      "label": "@openclaw/slack 2026.9.5",
+      "packageSpec": "@openclaw/slack@2026.9.5",
+      "integrity": "sha512-Q45q/ZW+zw6Gr5Fg8J8V8xMWYXegMVEn3q8TcRBJyuD0nP0PtuW9FdkPF82KJ/yCP0tj18VPCgLPOuhYaiwR7A==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.5.tgz"
+    }
+  ]
+}

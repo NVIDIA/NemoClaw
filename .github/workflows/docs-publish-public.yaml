@@ -31,11 +31,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify release tag commit is on main
+      - name: Verify release tag commit is on the v0 release branch
         run: |
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::Public docs publishing only runs for release tags whose commits are reachable from origin/main."
+          # A full checkout already has the remote branches. Prefer v0 after the rename.
+          release_branch=origin/main
+          if git show-ref --verify --quiet refs/remotes/origin/v0; then
+            release_branch=origin/v0
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "$release_branch"; then
+            echo "::error::Public docs publishing only runs for release tags whose commits are reachable from $release_branch."
             exit 1
           fi
 

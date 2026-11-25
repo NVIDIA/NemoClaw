@@ -85,6 +85,22 @@ describe("Bedrock raw-command progress", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe(expectedOutput);
+    const artifactResult = JSON.parse(
+      await fs.readFile(
+        path.join(artifacts.rootDir, "raw-shell/bedrock-progress-output.result.json"),
+        "utf8",
+      ),
+    );
+    expect(artifactResult.timing.timeoutAtMs).toBeNull();
+    expect(artifactResult.timing.lastStdoutAtMs).toBeGreaterThanOrEqual(0);
+    expect(artifactResult.timing.lastStdoutAtMs).toBeLessThanOrEqual(
+      artifactResult.timing.durationMs,
+    );
+    expect(artifactResult.timing.lastStderrAtMs).toBeGreaterThanOrEqual(0);
+    expect(artifactResult.timing.lastStderrAtMs).toBeLessThanOrEqual(
+      artifactResult.timing.durationMs,
+    );
+
     observation.timers[0]?.();
     expect(observation.lines.at(-1)).toContain("no active command");
     expect(observation.lines).toEqual(
@@ -123,6 +139,19 @@ describe("Bedrock raw-command progress", () => {
     );
 
     expect(result.timedOut).toBe(true);
+    const artifactResult = JSON.parse(
+      await fs.readFile(
+        path.join(artifacts.rootDir, "raw-shell/bedrock-progress-timeout.result.json"),
+        "utf8",
+      ),
+    );
+    expect(artifactResult.timing.lastStdoutAtMs).toBeNull();
+    expect(artifactResult.timing.lastStderrAtMs).toBeNull();
+    expect(artifactResult.timing.timeoutAtMs).toBeGreaterThanOrEqual(0);
+    expect(artifactResult.timing.durationMs).toBeGreaterThanOrEqual(
+      artifactResult.timing.timeoutAtMs,
+    );
+
     expect(observation.lines).toEqual(
       expect.arrayContaining([
         expect.stringContaining("event: command bedrock-progress-timeout started"),

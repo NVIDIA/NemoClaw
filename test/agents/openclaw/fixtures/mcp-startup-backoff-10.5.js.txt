@@ -1,0 +1,46 @@
+// Published OpenClaw 2026.10.5 runtime; exact executable fixture for compatibility qualification.
+const startups = resolveGlobalSingleton(Symbol.for("openclaw.mcpStartupBackoff"), () => /* @__PURE__ */ new Map());
+var McpStartupBackoffError = class extends Error {
+	constructor(state, reportFailure, retryAfterMs) {
+		super(`${state.message}; server unavailable; retry after ${new Date(retryAfterMs).toISOString()}. Check server reachability or reload MCP after fixing it.`);
+		this.reportFailure = reportFailure;
+		this.retryAfterMs = retryAfterMs;
+	}
+};
+function resetMcpStartupBackoff(key) {
+	if (key === void 0) startups.clear();
+	else startups.delete(key);
+}
+async function connectWithMcpStartupBackoff(key, signal, connect, recoveryRetryMs) {
+	while (startups.get(key)?.pending) await racePromiseWithAbortSignal(startups.get(key).pending.catch(() => void 0), signal);
+	signal.throwIfAborted();
+	const state = startups.get(key) ?? {
+		owner: signal,
+		delayMs: 15e3,
+		retryAfterMs: 0,
+		message: ""
+	};
+	const retryAfterMs = () => state.owner === signal && state.delayMs === 3e4 ? state.retryAfterMs - state.delayMs + recoveryRetryMs : state.retryAfterMs;
+	if (Date.now() < retryAfterMs()) throw new McpStartupBackoffError(state, false, retryAfterMs());
+	startups.set(key, state);
+	try {
+		state.pending = connect();
+		await state.pending;
+		if (startups.get(key) === state) startups.delete(key);
+	} catch (error) {
+		if (signal.aborted) {
+			if (startups.get(key) === state) startups.delete(key);
+			throw error;
+		}
+		state.delayMs = Math.min(state.delayMs * 2, 6e5);
+		state.retryAfterMs = Date.now() + state.delayMs;
+		state.message = redactMcpDiagnosticError(error);
+		throw new McpStartupBackoffError(state, true, retryAfterMs());
+	} finally {
+		state.pending = void 0;
+		for (const [oldKey, oldState] of startups) {
+			if (startups.size <= 1024) break;
+			if (!oldState.pending) startups.delete(oldKey);
+		}
+	}
+}

@@ -1601,7 +1601,7 @@ export function createSandboxRecreateRuntime(
         );
       }
       const begun = beginSandboxRecreateDelete({
-        ...(request.freshNonForced && reconcileOpenClawInference
+        ...(request.freshSelection && reconcileOpenClawInference
           ? { reconcileOpenClawInference: true as const }
           : {}),
         sessionStore: { ...sessionStore, compareAndSwapSession: compareAndSwap },

@@ -1,8 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+import {
+  encodeSwitchyardProviderBindings,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
+} from "../hermes-switchyard-routing";
+
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { isolateAmbientRecreateEnv } from "../actions/sandbox/rebuild-env-isolation";
 
 import { describe, expect, it } from "vitest";
 
@@ -758,6 +765,26 @@ describe("buildManagedStartupProfile", () => {
       switchyardRouting: null,
       webSearch: { enabled: false, provider: "tavily" },
     });
+    expect(decodeManagedStartupProfile(built.encodedProfile).agentConfig).not.toHaveProperty(
+      "switchyardBindings",
+    );
+  });
+
+  it("keeps ambient Switchyard bindings out of a rebuilt Hermes profile (#13863)", () => {
+    const environment = { [HERMES_SWITCHYARD_BINDINGS_ENV]: "unrelated-bindings" };
+    expect(() => buildManagedStartupProfile(hermesInput({ environment }))).toThrow(
+      "Switchyard provider bindings require routing intent",
+    );
+
+    const restore = isolateAmbientRecreateEnv(environment);
+    try {
+      const { profile } = buildManagedStartupProfile(hermesInput({ environment }));
+      expect(profile.agent).toBe("hermes");
+      expect(profile.agentConfig).not.toHaveProperty("switchyardBindings");
+    } finally {
+      restore();
+    }
+    expect(environment[HERMES_SWITCHYARD_BINDINGS_ENV]).toBe("unrelated-bindings");
   });
 
   it("persists validated Switchyard routing in the Hermes startup profile (#13862)", () => {
@@ -769,6 +796,10 @@ describe("buildManagedStartupProfile", () => {
       hermesInput({
         environment: {
           [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+          [HERMES_SWITCHYARD_BINDINGS_ENV]: encodeSwitchyardProviderBindings(
+            switchyardBindingFixture(routing),
+            routing,
+          ),
         },
       }),
     );

@@ -26,6 +26,85 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it.each<[string, (steps: Array<Record<string, unknown>>, index: number) => void]>([
+    [
+      "missing",
+      (steps, index) => {
+        steps.splice(index, 1);
+      },
+    ],
+    [
+      "disabled",
+      (steps, index) => {
+        steps[index]!.if = "${{ false }}";
+      },
+    ],
+    [
+      "unconditional",
+      (steps, index) => {
+        delete steps[index]!.if;
+      },
+    ],
+    [
+      "different installer",
+      (steps, index) => {
+        steps[index]!.run = "protoc --version";
+      },
+    ],
+    [
+      "candidate-workspace installer",
+      (steps, index) => {
+        delete steps[index]!.uses;
+        steps[index]!.run =
+          'bash .github/actions/setup-v1-protoc/install.sh "${{ runner.os }}-${{ runner.arch }}"';
+      },
+    ],
+    [
+      "mutable installer reference",
+      (steps, index) => {
+        steps[index]!.uses = "NVIDIA/NemoClaw/.github/actions/setup-v1-protoc@main";
+      },
+    ],
+    [
+      "substituted installer revision",
+      (steps, index) => {
+        steps[index]!.uses =
+          "NVIDIA/NemoClaw/.github/actions/setup-v1-protoc@0000000000000000000000000000000000000000";
+      },
+    ],
+    [
+      "setup after candidate checkout",
+      (steps, index) => {
+        const [setup] = steps.splice(index, 1);
+        const checkoutIndex = steps.findIndex((step) =>
+          String(step.uses).startsWith("actions/checkout@"),
+        );
+        steps.splice(checkoutIndex + 1, 0, setup!);
+      },
+    ],
+    [
+      "late",
+      (steps, index) => {
+        steps.push(...steps.splice(index, 1));
+      },
+    ],
+  ])("rejects %s pinned protoc setup for Hermes security", (_scenario, mutate) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    );
+    const steps = profile.jobs.run.steps as Array<Record<string, unknown>>;
+    const index = steps.findIndex((step) => step.name === "Set up the pinned v1 protoc");
+    mutate(steps, index);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-protoc-profile-"));
+    try {
+      const profilePath = path.join(directory, "profile.yaml");
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).not.toEqual([]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each<
     [string, (steps: Array<{ name: string; with?: Record<string, string>; if?: string }>) => void]
   >([
@@ -211,15 +290,18 @@ describe("standard E2E execution profile", () => {
 
   it("requires the SDK producer to include an available reviewed transition replacement", () => {
     const workflow = readWorkflow() as {
-      jobs: Record<string, { steps: Array<{ env?: Record<string, string>; name?: string }> }>;
+      jobs: Record<string, { steps: Array<{ run?: string; name?: string }> }>;
     };
     const packageStep = workflow.jobs["package-openshell-sdk"]!.steps.find(
       (step) => step.name === "Download and verify reviewed OpenShell SDK packages",
     )!;
-    delete packageStep.env!.NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT;
+    packageStep.run = packageStep.run!.replace(
+      "packageReviewedOpenShellSdk(output, 'if-present'",
+      "packageReviewedOpenShellSdk(output, 'exclude'",
+    );
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
-      "catalogue SDK packaging must include an available reviewed transition replacement",
+      "catalogue SDK packaging must admit candidate identities and retain reviewed main and exact-base packages",
     );
   });
 

@@ -33,7 +33,6 @@ const THREAD_AUTO_APPROVAL_TIMEOUT_MS = 35 * 60_000;
 const TUI_CALLER_RECOVERY_TIMEOUT_MS = 45_000;
 const TUI_SESSION_ID_ENV = "NEMOCLAW_TUI_SESSION_ID";
 const DCODE_PROCESS_COUNT_MARKER = "NEMOCLAW_DCODE_PROCESS_COUNT:";
-const TUI_CALLER_RECOVERY_MARKER = "NEMOCLAW_TUI_CALLER_RECOVERY_OK:";
 const DCODE_TUI_SESSION_GUARD = path.join(
   REPO_ROOT,
   "test/e2e/e2e-cloud-experimental/dcode-tui-session-guard.sh",
@@ -165,11 +164,21 @@ async function cleanupFailedTuiSession(
   sandboxName: string,
   sessionId: string,
   baseline: number,
+  scriptPath: string,
   context: Pick<E2ETargetFixtures, "host">,
 ): Promise<void> {
   const result = await context.host.command(
     "bash",
-    [DCODE_TUI_SESSION_GUARD, "recover", sandboxName, sessionId, String(baseline)],
+    [
+      DCODE_TUI_SESSION_GUARD,
+      "recover",
+      sandboxName,
+      sessionId,
+      String(baseline),
+      ...(scriptPath === DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK
+        ? ["/proc", "restore-startup-config"]
+        : []),
+    ],
     {
       artifactName: "cloud-experimental-dcode-tui-caller-recovery",
       env: buildAvailabilityProbeEnv(),
@@ -178,11 +187,26 @@ async function cleanupFailedTuiSession(
   );
   const remainingCount = processCountFromResult("clean up the failed DCode TUI session", result);
   if (remainingCount instanceof Error) return Promise.reject(remainingCount);
-  const output = resultText(result);
-  if (!output.includes(`${TUI_CALLER_RECOVERY_MARKER}${remainingCount}`)) {
-    return Promise.reject(
-      new Error(`clean up the failed DCode TUI session did not confirm completion: ${output}`),
+  if (scriptPath === DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK) {
+    const verification = await context.host.command(
+      "bash",
+      [path.join(REPO_ROOT, scriptPath), "--verify-export-baseline"],
+      {
+        artifactName: "cloud-experimental-dcode-export-baseline-recovery",
+        env: { ...buildAvailabilityProbeEnv(), SANDBOX_NAME: sandboxName },
+        timeoutMs: TUI_CALLER_RECOVERY_TIMEOUT_MS,
+      },
     );
+    if (
+      verification.exitCode !== 0 ||
+      verification.timedOut ||
+      verification.signal ||
+      !resultText(verification).includes("NEMOCLAW_DCODE_EXPORT_BASELINE_OK")
+    ) {
+      return Promise.reject(
+        new Error(`DCode export baseline recovery is incomplete: ${resultText(verification)}`),
+      );
+    }
   }
 }
 
@@ -200,7 +224,13 @@ async function runDcodeTuiCheck(
   let recoveryAttempt: Promise<void> | undefined;
   const recover = async (): Promise<void> => {
     if (!recoveryArmed) return;
-    recoveryAttempt ??= cleanupFailedTuiSession(sandboxName, sessionId, baseline, context);
+    recoveryAttempt ??= cleanupFailedTuiSession(
+      sandboxName,
+      sessionId,
+      baseline,
+      scriptPath,
+      context,
+    );
     try {
       await recoveryAttempt;
       recoveryArmed = false;
@@ -231,7 +261,7 @@ async function runDcodeTuiCheck(
       return Promise.reject(
         new AggregateError(
           [error, recoveryError],
-          "DCode TUI check failed, and its sandbox process cleanup did not complete",
+          "DCode TUI check failed, and its caller recovery did not complete",
         ),
       );
     }
@@ -283,7 +313,8 @@ export async function runE2eCloudExperimentalChecks(
   }
   for (const scriptPath of checkScripts) {
     const result =
-      scriptPath === DEEPAGENTS_CODE_TUI_CHECK
+      scriptPath === DEEPAGENTS_CODE_TUI_CHECK ||
+      scriptPath === DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK
         ? await runDcodeTuiCheck(sandboxName, scriptPath, apiKey, context)
         : await context.host.command("bash", [path.join(REPO_ROOT, scriptPath)], {
             artifactName: `cloud-experimental-${path.basename(scriptPath, ".sh")}`,

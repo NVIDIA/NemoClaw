@@ -188,10 +188,10 @@ describe("buildLiveVitestArgs (#6961)", () => {
     ]);
   });
 
-  it("fails fast only for inference-routing (#9622)", () => {
-    expect(buildLiveVitestArgs({ testPath: INFERENCE_ROUTING_TEST_PATH })).toContain("--bail=1");
+  it("keeps required routing cases running after an earlier failure", () => {
+    expect(buildLiveVitestArgs({ testPath: INFERENCE_ROUTING_TEST_PATH })).toContain("--bail=0");
     expect(buildLiveVitestArgs({ testPath: "test/e2e/live/onboard-resume.test.ts" })).not.toContain(
-      "--bail=1",
+      "--bail=0",
     );
   });
 

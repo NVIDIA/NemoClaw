@@ -101,6 +101,25 @@ function runFixture(options: Record<string, unknown>) {
 }
 
 describe("released Switchyard package validation (#13861)", () => {
+  it("constructs the package probe in a plain Node.js process", () => {
+    const probe = new URL("../../e2e/fixtures/hermes-switchyard-package.ts", import.meta.url).href;
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--input-type=module",
+        "-e",
+        `const { HERMES_SWITCHYARD_PACKAGE_PROBE } = await import(${JSON.stringify(probe)});
+         process.stdout.write(String(Buffer.byteLength(HERMES_SWITCHYARD_PACKAGE_PROBE)));`,
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(Number(result.stdout)).toBeGreaterThan(0);
+  });
+
   it.each(["x86_64", "aarch64"])(
     "installs the complete disabled bundle read-only for %s",
     (arch) => {

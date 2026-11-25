@@ -76,6 +76,24 @@ it.each([
   );
 });
 
+it.each([
+  ["different owner", `Uid:\t${(process.getuid?.() ?? 1000) + 1}\n`],
+  ["missing ownership record", ""],
+])("captures native state when the final process entry is a %s", (_kind, status) => {
+  writeNativeQuiescenceStates(procRoot, "Z", "Z", "T");
+  const unrelatedProcess = path.join(procRoot, "999999");
+  fs.mkdirSync(unrelatedProcess);
+  fs.writeFileSync(path.join(unrelatedProcess, "status"), status);
+  const backup = sandboxState.backupSandboxState("alpha");
+  expect(backup.success, backup.error).toBe(true);
+  assertNativeStateResumed();
+  expect(backup.manifest?.backupComplete).toBe(true);
+  const archive = path.join(backup.manifest!.backupPath, "native-home.tar");
+  expect(spawnSync("tar", ["-xOf", archive, "./payload.txt"], { encoding: "utf8" }).stdout).toBe(
+    "native payload",
+  );
+});
+
 it("classifies a churning live capture without retaining a failed backup (#12867)", () => {
   vi.stubEnv("NEMOCLAW_TEST_NATIVE_CHURN_MARKER", churnMarker);
   const backup = sandboxState.backupSandboxState("alpha");

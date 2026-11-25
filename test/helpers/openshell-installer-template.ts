@@ -129,6 +129,65 @@ const MACOS_METHOD_END = "esac\n";
 export function installerReleaseTemplate(source: string, version: string): string {
   // Historical trust fixtures retain the installer bytes authorized before the
   // direct-install permission fix. The current candidate is checked separately.
+  if (source.includes("prepare_openshell_install_directory() {")) {
+    const helperStart = source.indexOf("user_local_executable_directory_safe() {");
+    const helperEnd = source.indexOf('OS="$(uname -s)"', helperStart);
+    assert.ok(
+      helperStart >= 0 && helperEnd > helperStart,
+      "destination preparation fixture boundaries",
+    );
+    source = source.slice(0, helperStart) + source.slice(helperEnd);
+    const installStart = source.indexOf("# Recheck the prepared destination after downloads");
+    const installEnd = source.indexOf(
+      'required_driver_bins_installed_in_dir "$target_dir"',
+      installStart,
+    );
+    assert.ok(
+      installStart >= 0 && installEnd > installStart,
+      "destination install fixture boundaries",
+    );
+    source =
+      source.slice(0, installStart) +
+      `if [ -w "$target_dir" ]; then
+  install_bins "$target_dir"
+elif [ "\${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
+  target_dir="\${XDG_BIN_HOME:-$HOME/.local/bin}"
+  mkdir -p "$target_dir"
+  install_bins "$target_dir"
+  warn "Installed openshell to $target_dir/openshell (user-local path)"
+  warn "For future shells, run: export PATH=\\"$target_dir:\\$PATH\\""
+  warn "Add that export to your shell profile, or open a new shell before using openshell directly."
+else
+  sudo install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
+  if [ -x "$tmpdir/openshell-gateway" ]; then
+    sudo install -m 755 "$tmpdir/openshell-gateway" "$target_dir/openshell-gateway"
+  fi
+  if [ -x "$tmpdir/openshell-sandbox" ]; then
+    sudo install -m 755 "$tmpdir/openshell-sandbox" "$target_dir/openshell-sandbox"
+  fi
+  if [ -x "$tmpdir/openshell-driver-vm" ]; then
+    sudo install -m 755 "$tmpdir/openshell-driver-vm" "$target_dir/openshell-driver-vm"
+    sign_macos_vm_driver "$target_dir/openshell-driver-vm" 1
+  fi
+fi
+
+` +
+      source.slice(installEnd);
+    const installBins = source.indexOf("install_bins() {");
+    assert.ok(installBins > 0, "historical destination selection position");
+    source =
+      source.slice(0, installBins) +
+      `target_dir="/usr/local/bin"
+if [[ -n "$ACTIVE_OPENSHELL_BIN" && "$ACTIVE_OPENSHELL_BIN" = /* ]]; then
+  active_dir="$(dirname "$ACTIVE_OPENSHELL_BIN")"
+  if [ -d "$active_dir" ] && [ -w "$active_dir" ]; then
+    target_dir="$active_dir"
+  fi
+fi
+
+` +
+      source.slice(installBins);
+  }
   const safetyHelper = "user_local_executable_directory_safe() {\n";
   if (source.includes(safetyHelper)) {
     const systemTargetFallback = `force_user_local=0

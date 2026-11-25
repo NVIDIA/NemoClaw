@@ -1,12 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync, spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  MODEL_ROUTER_PIDFD_STOP_SCRIPT,
+  stopModelRouterWithPidfd,
   getRouterHealthSnapshot,
   inspectModelRouterProcessForPort,
   isRouterResponsive,
@@ -307,6 +313,55 @@ describe("inspectModelRouterProcessForPort", () => {
 });
 
 describe("stopModelRouterProcess", () => {
+  it("accepts a verified process-handle stop only after the port is unresponsive", async () => {
+    const kill = vi.fn();
+    const stopWithHandle = vi.fn(() => "stopped" as const);
+    const isResponsive = vi.fn(async () => false);
+
+    await stopModelRouterProcess(123, 4000, {
+      isRunning: () => true,
+      readCommandLine: () => ROUTER_ARGS,
+      isResponsive,
+      stopWithHandle,
+      kill,
+    });
+
+    expect(stopWithHandle).toHaveBeenCalledWith(123, 4000);
+    expect(isResponsive).toHaveBeenCalledWith(4000, 1000);
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("retains failure when an exited process handle leaves a responsive port", async () => {
+    const kill = vi.fn();
+    await expect(
+      stopModelRouterProcess(123, 4000, {
+        isRunning: () => true,
+        readCommandLine: () => ROUTER_ARGS,
+        isResponsive: async () => true,
+        stopWithHandle: () => "not-running",
+        kill,
+      }),
+    ).rejects.toThrow("port 4000 remains responsive");
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it.each(["failed", "not-router"] as const)(
+    "does not fall back to numeric signals after a process-handle result of %s",
+    async (outcome) => {
+      const kill = vi.fn();
+      await expect(
+        stopModelRouterProcess(123, 4000, {
+          isRunning: () => true,
+          readCommandLine: () => ROUTER_ARGS,
+          isResponsive: async () => false,
+          stopWithHandle: () => outcome,
+          kill,
+        }),
+      ).rejects.toThrow("identity-bound shutdown failed");
+      expect(kill).not.toHaveBeenCalled();
+    },
+  );
+
   it("returns when the recorded PID does not report as running and the liveness endpoint is unresponsive", async () => {
     const isResponsive = vi.fn(async () => false);
     const kill = vi.fn();
@@ -462,4 +517,196 @@ describe("stopModelRouterProcess", () => {
       }),
     ).rejects.toThrow("port 4000 remains responsive");
   });
+});
+
+// Execute the production helper with a capability-limited fake kernel. No real
+// process lookup or signal is available, including on hosts without pidfd.
+function observeHelper(command: string[], denySignal = false) {
+  const harness = String.raw`
+import builtins, contextlib, io, json, posixpath, sys, types
+command, deny_signal = json.loads(sys.argv[1])
+source = sys.argv[2]
+events = []
+def acquire(pid):
+    events.append(["acquire", pid])
+    return 777
+def signal_process(descriptor, value):
+    events.append(["signal", descriptor, value])
+    if deny_signal: raise PermissionError()
+class Poll:
+    def register(self, descriptor, event):
+        events.append(["register", descriptor])
+    def poll(self, milliseconds):
+        events.append(["poll", milliseconds])
+        return [] if milliseconds == 3000 else [(777, 1)]
+def open_command(path, mode):
+    assert path == "/proc/123/cmdline" and mode == "rb"
+    events.append(["read-command"])
+    return io.BytesIO(("\0".join(command) + "\0").encode())
+modules = {
+    "os": types.SimpleNamespace(pidfd_open=acquire, path=posixpath, close=lambda fd: events.append(["close", fd])),
+    "select": types.SimpleNamespace(poll=Poll, POLLIN=1),
+    "signal": types.SimpleNamespace(pidfd_send_signal=signal_process, SIGTERM=15, SIGKILL=9),
+    "sys": types.SimpleNamespace(argv=["helper", "123", "4000"]),
+}
+capabilities = dict(vars(builtins), open=open_command, __import__=lambda name, *args: modules[name])
+output = io.StringIO()
+with contextlib.redirect_stdout(output):
+    try: exec(source, {"__builtins__": capabilities})
+    except SystemExit: pass
+print(json.dumps({"outcome": output.getvalue().strip(), "events": events}))
+`;
+  return JSON.parse(
+    execFileSync(
+      "python3",
+      ["-I", "-c", harness, JSON.stringify([command, denySignal]), MODEL_ROUTER_PIDFD_STOP_SCRIPT],
+      {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH },
+        timeout: 5000,
+      },
+    ),
+  ) as { outcome: string; events: (string | number)[][] };
+}
+
+describe("Model Router process identity", () => {
+  it("refuses a truncated command identity without sending any signal", () => {
+    const result = observeHelper([
+      "/venv/bin/model-router",
+      "proxy",
+      "--port",
+      "4000",
+      "x".repeat(66000),
+    ]);
+    expect(result).toEqual({
+      outcome: "failed",
+      events: [["acquire", 123], ["read-command"], ["close", 777]],
+    });
+  });
+
+  it("holds one kernel identity for both signals and closes it after verified exit", () => {
+    const result = observeHelper([
+      "/venv/bin/python",
+      "/venv/bin/model-router",
+      "proxy",
+      "--port",
+      "4000",
+    ]);
+    expect(result).toEqual({
+      outcome: "stopped",
+      events: [
+        ["acquire", 123],
+        ["read-command"],
+        ["register", 777],
+        ["signal", 777, 15],
+        ["poll", 3000],
+        ["signal", 777, 9],
+        ["poll", 1000],
+        ["close", 777],
+      ],
+    });
+  });
+
+  it.each([
+    ["/usr/bin/unrelated", "proxy", "--port", "4000"],
+    ["/venv/bin/model-router", "proxy", "--port", "4001"],
+  ])("closes the handle without signaling when command identity is wrong (%s)", (...command) => {
+    const result = observeHelper(command);
+    expect(result).toEqual({
+      outcome: "not-router",
+      events: [["acquire", 123], ["read-command"], ["close", 777]],
+    });
+  });
+
+  it("closes the handle and fails without escalation when signaling is denied", () => {
+    const result = observeHelper(["/venv/bin/model-router", "proxy", "--port=4000"], true);
+    expect(result).toEqual({
+      outcome: "failed",
+      events: [
+        ["acquire", 123],
+        ["read-command"],
+        ["register", 777],
+        ["signal", 777, 15],
+        ["close", 777],
+      ],
+    });
+  });
+
+  it.each([
+    [0, 4000],
+    [-1, 4000],
+    [1.5, 4000],
+    [123, 0],
+    [123, 65536],
+    [123, 4000.5],
+  ])("rejects an invalid process or port before invoking a helper (%s, %s)", (pid, port) => {
+    expect(stopModelRouterWithPidfd(pid, port)).toBe("failed");
+  });
+
+  it.skipIf(process.platform === "linux")(
+    "does not emulate a Linux process handle on other hosts",
+    () => {
+      expect(stopModelRouterWithPidfd(process.pid, 4000)).toBe("unavailable");
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "escalates through the held kernel handle when the owned router ignores SIGTERM",
+    async () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-router-identity-"));
+      const script = path.join(directory, "model-router");
+      fs.writeFileSync(
+        script,
+        "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nprint('ready', flush=True)\nwhile True: time.sleep(1)\n",
+      );
+      const child = spawn("python3", [script, "proxy", "--port", "4000"], {
+        env: { PATH: process.env.PATH, PYTHONSAFEPATH: "1", PYTHONNOUSERSITE: "1" },
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
+      try {
+        await new Promise<void>((resolve, reject) => {
+          child.once("error", reject);
+          child.stdout.once("data", () => resolve());
+          child.once("exit", () => reject(new Error("test router exited before readiness")));
+        });
+        expect(stopModelRouterWithPidfd(child.pid as number, 4001)).toBe("not-router");
+        expect(() => process.kill(child.pid as number, 0)).not.toThrow();
+        expect(stopModelRouterWithPidfd(child.pid as number, 4000)).toBe("stopped");
+        await exited;
+        expect(child.signalCode).toBe("SIGKILL");
+      } finally {
+        child.kill("SIGKILL");
+        await exited;
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "refuses to signal a live unrelated process",
+    async () => {
+      const child = spawn(
+        process.execPath,
+        ["-e", "console.log('ready');setInterval(() => {}, 1000)"],
+        {
+          env: { PATH: process.env.PATH },
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      );
+      const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
+      try {
+        await new Promise<void>((resolve, reject) => {
+          child.once("error", reject);
+          child.stdout.once("data", () => resolve());
+          child.once("exit", () => reject(new Error("test process exited before readiness")));
+        });
+        expect(stopModelRouterWithPidfd(child.pid as number, 4000)).toBe("not-router");
+        expect(() => process.kill(child.pid as number, 0)).not.toThrow();
+      } finally {
+        child.kill("SIGKILL");
+        await exited;
+      }
+    },
+  );
 });

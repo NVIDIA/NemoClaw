@@ -116,6 +116,17 @@ describe("onboard Hermes dashboard helpers", () => {
     ).toBe(true);
   });
 
+  it("ignores NEMOCLAW_HERMES_DASHBOARD_TUI without NEMOCLAW_HERMES_DASHBOARD", () => {
+    const state = resolveHermesDashboardOnboardState({
+      agentName: "hermes",
+      effectivePort: 18789,
+      env: { NEMOCLAW_HERMES_DASHBOARD_TUI: "1" },
+    });
+
+    expect(state.enabled).toBe(false);
+    expect(getHermesDashboardRegistryFields(state).hermesDashboardTui).toBeUndefined();
+  });
+
   it("rejects NEMOCLAW_DASHBOARD_PORT set to the reserved Hermes API port 8642 (#4984)", () => {
     expect(() =>
       resolveHermesDashboardOnboardState({

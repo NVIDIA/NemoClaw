@@ -5,10 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./mcp-bridge", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge")>()),
-  prepareMcpBridgesForDestroy: async () => ({ entries: [] }),
+  prepareMcpBridgesForDestroy: async (
+    ...args: Parameters<typeof import("./mcp-bridge").prepareMcpBridgesForDestroy>
+  ) => ({ entries: [], runtimeSelection: args[1]?.runtimeSelection }),
 }));
 
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
+import { runNativeHomeRecoveryScenario } from "../../../../test/helpers/destroy-native-home-recovery";
 import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../../agent/deep-agents-code-runtime-identity";
 import type { SandboxEntry } from "../../state/registry";
 import { executeSandboxDestroy, wipeAgentNativeHome } from "./destroy-execution";
@@ -309,6 +312,122 @@ describe("native-home destroy fallback", () => {
           command: execute.mock.calls[0]![0].command,
         }),
       );
+    },
+  );
+
+  it.each([
+    {
+      label: "retained state",
+      options: {},
+      ok: true,
+      stops: [
+        [
+          {
+            sandboxName: "alpha",
+            sandboxIdentityFingerprint: "a".repeat(64),
+            target: { kind: "named", gatewayName: "nemoclaw" },
+            timeoutMs: 60_000,
+          },
+        ],
+      ],
+      execs: 2,
+      deletes: 1,
+      prefix: ["openshell-exec", "privileged", "stopped-cleanup", "stop"],
+    },
+    {
+      label: "failed stop",
+      options: { stopFails: true },
+      ok: false,
+      stops: [
+        [
+          {
+            sandboxName: "alpha",
+            sandboxIdentityFingerprint: "a".repeat(64),
+            target: { kind: "named", gatewayName: "nemoclaw" },
+            timeoutMs: 60_000,
+          },
+        ],
+      ],
+      execs: 1,
+      deletes: 0,
+      prefix: ["openshell-exec", "privileged", "stopped-cleanup", "stop"],
+    },
+    {
+      label: "changed identity",
+      options: { identityChanges: true },
+      ok: false,
+      stops: [
+        [
+          {
+            sandboxName: "alpha",
+            sandboxIdentityFingerprint: "a".repeat(64),
+            target: { kind: "named", gatewayName: "nemoclaw" },
+            timeoutMs: 60_000,
+          },
+        ],
+      ],
+      execs: 1,
+      deletes: 0,
+      prefix: ["openshell-exec", "privileged", "stopped-cleanup", "stop"],
+    },
+    {
+      label: "retained state after stop",
+      options: { wipeFails: true },
+      ok: false,
+      stops: [
+        [
+          {
+            sandboxName: "alpha",
+            sandboxIdentityFingerprint: "a".repeat(64),
+            target: { kind: "named", gatewayName: "nemoclaw" },
+            timeoutMs: 60_000,
+          },
+        ],
+      ],
+      execs: 2,
+      deletes: 0,
+      prefix: ["openshell-exec", "privileged", "stopped-cleanup", "stop"],
+    },
+    {
+      label: "already stopped Error state",
+      options: { initialStopped: true },
+      ok: true,
+      stops: [],
+      execs: 1,
+      deletes: 1,
+      prefix: ["openshell-exec", "privileged", "sandbox-user", "stopped-cleanup", "delete"],
+    },
+    {
+      label: "unsafe cleanup ownership",
+      options: { unsafeCleanup: true },
+      ok: false,
+      stops: [],
+      execs: 1,
+      deletes: 0,
+      prefix: ["openshell-exec", "privileged", "stopped-cleanup"],
+    },
+    {
+      label: "nondefault workspace",
+      options: { workspace: "team" },
+      ok: false,
+      stops: [],
+      execs: 1,
+      deletes: 0,
+      prefix: ["openshell-exec", "privileged", "stopped-cleanup"],
+    },
+  ])(
+    "preserves public destroy custody for $label",
+    async ({ options, ok, stops, execs, deletes, prefix }) => {
+      const observed = await runNativeHomeRecoveryScenario(options);
+      expect(observed.onMutationStarted).toHaveBeenCalledOnce();
+      expect(observed.result.ok).toBe(ok);
+      expect(observed.current === null).toBe(ok);
+      expect(observed.events.slice(0, prefix.length)).toEqual(prefix);
+      expect(observed.stopSandbox.mock.calls).toEqual(stops);
+      expect(observed.runOpenshell.mock.calls.filter(([args]) => args[1] === "exec")).toHaveLength(
+        execs,
+      );
+      expect(observed.events.filter((event) => event === "delete")).toHaveLength(deletes);
     },
   );
 });

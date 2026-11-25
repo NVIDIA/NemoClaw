@@ -46,9 +46,11 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/patch-session-list-preview.py", mode: "100755" },
   { path: "agents/hermes/plugin/__init__.py", mode: "100644" },
   { path: "agents/hermes/plugin/plugin.yaml", mode: "100644" },
+  { path: "agents/hermes/qualify-switchyard-judge.py", mode: "100644" },
   { path: "agents/hermes/runtime-config-guard.py", mode: "100755" },
   { path: "agents/hermes/sharp-security-probes.mts", mode: "100644" },
   { path: "agents/hermes/start.sh", mode: "100755" },
+  { path: "agents/hermes/switchyard-preflight.py", mode: "100644" },
   { path: "agents/hermes/validate-cli-adapter.py", mode: "100755" },
   { path: "agents/hermes/validate-env-secret-boundary.py", mode: "100755" },
   { path: "ci/reviewed-npm-audit.json", mode: "100644" },
@@ -139,6 +141,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/lib/reviewed-npm-identity.mts", mode: "100755" },
   { path: "scripts/lib/sandbox-init.sh", mode: "100755" },
   { path: "scripts/lib/sandbox-rlimits.sh", mode: "100644" },
+  { path: "scripts/lib/verify-openclaw-official-plugin.mts", mode: "100755" },
   { path: "scripts/managed-startup-hold.sh", mode: "100755" },
   { path: "scripts/patch-bundled-npm-brace-expansion.mts", mode: "100755" },
   { path: "scripts/patch-bundled-npm-tar.mts", mode: "100755" },
@@ -452,7 +455,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
     mode: "100644",
   },
   {
-    path: "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
+    path: "agents/hermes/managed-startup-image-runtime.bundle",
     mode: "100644",
   },
   {

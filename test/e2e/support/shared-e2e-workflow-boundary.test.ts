@@ -687,6 +687,9 @@ describe("pre-candidate execution environment identity", () => {
   );
   const boundOwners = [
     { owner: owners[0]!, bindingName: "NEMOCLAW_E2E_EXPECTED_SHA" },
+    { owner: owners[0]!, bindingName: "UPGRADE_PR_NUMBER" },
+    { owner: owners[0]!, bindingName: "CANDIDATE_SHA" },
+    { owner: owners[0]!, bindingName: "UPGRADE_BASE_SHA" },
     { owner: owners[2]!, bindingName: "REPOSITORY" },
     { owner: owners[3]!, bindingName: "GITHUB_TOKEN" },
     { owner: owners[4]!, bindingName: "CANDIDATE_SHA" },

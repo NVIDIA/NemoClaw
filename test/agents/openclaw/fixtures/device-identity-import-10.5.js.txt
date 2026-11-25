@@ -1,0 +1,2 @@
+// Exact published OpenClaw 2026.10.5 excerpts; source commit 1b58cb9a1b4f4353e1add63c8506db4d890962e8.
+import { n as loadOrCreateDeviceIdentityAsync, t as loadDeviceIdentityIfPresentAsync } from "./device-identity-async-DJeq5qUk.mjs";

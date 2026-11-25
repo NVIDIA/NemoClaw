@@ -27,7 +27,9 @@ afterEach(() => {
 });
 
 function makeTempRoot(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-gateway-service-"));
+  const root = fs.mkdtempSync(
+    path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-install-gateway-service-"),
+  );
   tempRoots.push(root);
   return root;
 }
@@ -235,6 +237,38 @@ function runForcedCandidateProbe(home: string, probeName: "ss" | "fuser", source
 }
 
 describe("install.sh OpenShell gateway service", () => {
+  it("preserves an explicit trusted gateway after installing into a prepared directory (#14268)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const preparedBin = path.join(home, "bin");
+    fs.mkdirSync(preparedBin);
+    writeExecutable(path.join(preparedBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(path.join(preparedBin, "openshell-gateway"), "#!/usr/bin/env bash\nexit 0\n");
+
+    const result = runInstallHelper(
+      home,
+      [
+        `NEMOCLAW_SOURCE_ROOT=${JSON.stringify(path.dirname(INSTALLER))}`,
+        `_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR=${JSON.stringify(preparedBin)}`,
+        "spin() { return 0; }",
+        "upstream_openshell_gateway_user_service_installed() { return 1; }",
+        "maybe_install_openshell_during_install force",
+        'printf "SELECTED_CLI=%s\\n" "$(command -v openshell)"',
+      ].join("\n"),
+      {
+        PATH: `${preparedBin}:${path.dirname(gatewayBin)}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+        XDG_BIN_HOME: "",
+        NEMOCLAW_GATEWAY_PORT: "8080",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "0",
+        NEMOCLAW_OPENSHELL_GATEWAY_BIN: gatewayBin,
+      },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain(`SELECTED_CLI=${path.join(preparedBin, "openshell")}`);
+    expect(fs.readFileSync(servicePath(home), "utf-8")).toContain(`ExecStart=${gatewayBin}`);
+  });
+
   it.each(["user-local", "system-local"])(
     "stages the shared Linux template for a %s binary (#6903)",
     (installKind) => {

@@ -285,15 +285,15 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     jobEnv.GH_TOKEN !== undefined ||
     workflowSteps.some(
       (step) =>
-        ![projection, verifyBeforeUse, verify, restore].includes(step) &&
+        ![projection, verifyBeforeUse, verify].includes(step) &&
         (record(step.env).GITHUB_TOKEN !== undefined || record(step.env).GH_TOKEN !== undefined),
     )
   )
     errors.push(`${JOB_ID} must expose GitHub credentials only to candidate admission operations`);
   if (verifyBeforeUse?.if !== undefined || verify?.if !== undefined)
     errors.push(`${JOB_ID} must not skip OpenShell verification`);
-  if (restore?.if !== "${{ always() && steps.openshell-projection.outcome == 'success' }}") {
-    errors.push(`${JOB_ID} must restore sources after a successful OpenShell projection`);
+  if (restore?.if !== "${{ always() }}") {
+    errors.push(`${JOB_ID} must always reconcile a recorded OpenShell projection`);
   }
   for (const [step, operation, output] of [
     [projection, "prepare", "openshell-projection.json"],
@@ -301,11 +301,25 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     [verify, "verify", "openshell-projection-verified.json"],
     [restore, "restore", "openshell-projection-restored.json"],
   ] as const) {
-    const expected = `set -euo pipefail\nnode tools/e2e/protected-openshell-workspace.mts ${operation} > "$E2E_ARTIFACT_DIR/${output}"\n`;
+    const expected =
+      operation === "restore"
+        ? [
+            "set -euo pipefail",
+            'receipt="$GITHUB_WORKSPACE/.git/nemoclaw-openshell-projection.json"',
+            'if [[ "${PROJECTION_OUTCOME:-}" == success || -e "$receipt" || -L "$receipt" ]]; then',
+            `  node tools/e2e/protected-openshell-workspace.mts restore > "$E2E_ARTIFACT_DIR/${output}"`,
+            "fi",
+            "",
+          ].join("\n")
+        : `set -euo pipefail\nnode tools/e2e/protected-openshell-workspace.mts ${operation} > "$E2E_ARTIFACT_DIR/${output}"\n`;
+    const expectedEnv =
+      operation === "restore"
+        ? { PROJECTION_OUTCOME: "${{ steps.openshell-projection.outcome }}" }
+        : admissionEnv;
     if (
       step?.run !== expected ||
       step?.shell !== "bash" ||
-      !isDeepStrictEqual(step?.env, admissionEnv) ||
+      !isDeepStrictEqual(step?.env, expectedEnv) ||
       step?.["continue-on-error"] !== undefined
     ) {
       errors.push(`${JOB_ID} must use the reviewed OpenShell ${operation} operation`);

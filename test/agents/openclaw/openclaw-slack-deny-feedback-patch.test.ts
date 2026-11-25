@@ -39,6 +39,7 @@ function prepareModuleSource(
     withMentionState?: boolean;
     withNativeContextBindings?: boolean;
     withNativeSenderBinding?: boolean;
+    inlineMentionState?: boolean;
     denyLine?: string;
     nativeDeniedMentionFeedback?: boolean;
   } = {},
@@ -121,8 +122,31 @@ function prepareModuleSource(
     moduleType === "commonjs" ? "module.exports = { prepareSlackMessage };" : "",
     "",
   ].join("\n");
+  const inlineNativeDeniedMentionFeedback = nativeDeniedMentionFeedback.replace(
+    "\tconst { explicitlyMentionedBotUser, explicitlyMentionedBotSubteam, explicitlyMentioned } = await resolveSlackExplicitMentionState(params);",
+    [
+      "\tctx.botUserId = 'UBOT';",
+      "\tconst normalizeSlackId = (value) => value;",
+      "\tconst mentionedUserIds = params.explicitlyMentionedBotUser ? ['UBOT'] : [];",
+      "\tconst mentionMetadata = { hasSubteamMention: Boolean(params.explicitlyMentionedBotSubteam) };",
+      "\tconst messageText = message.text ?? '';",
+      "\tconst isSlackSubteamMentionForBot = async () => true;",
+      "\tconst logVerbose = () => {};",
+      "\tconst currentBotUserId = normalizeSlackId(ctx.botUserId);",
+      "\tconst explicitlyMentionedBotUser = Boolean(currentBotUserId && mentionedUserIds.includes(currentBotUserId));",
+      "\tconst explicitlyMentionedBotSubteam = Boolean(ctx.botUserId && mentionMetadata.hasSubteamMention) && await isSlackSubteamMentionForBot({",
+      "\t\tclient: opts.eventScope?.client ?? ctx.app.client,",
+      "\t\ttext: messageText,",
+      "\t\tbotUserId: ctx.botUserId,",
+      "\t\tteamId: opts.eventScope?.teamId ?? ctx.teamId,",
+      "\t\tlog: logVerbose",
+      "\t});",
+    ].join("\n"),
+  );
   return options.nativeDeniedMentionFeedback
-    ? nativeDeniedMentionFeedback
+    ? options.inlineMentionState
+      ? inlineNativeDeniedMentionFeedback
+      : nativeDeniedMentionFeedback
     : legacyDeniedMentionFeedback;
 }
 
@@ -130,9 +154,11 @@ function writeSlackPackage(
   root: string,
   options: {
     moduleType?: "commonjs" | "esm";
+    extension?: "js" | "mjs";
     withMentionState?: boolean;
     withNativeContextBindings?: boolean;
     withNativeSenderBinding?: boolean;
+    inlineMentionState?: boolean;
     denyLine?: string;
     nativeDeniedMentionFeedback?: boolean;
   } = {},
@@ -148,7 +174,7 @@ function writeSlackPackage(
       ...(options.moduleType === "esm" ? { type: "module" } : {}),
     }),
   );
-  const prepareFile = path.join(distDir, "prepare-fixture.js");
+  const prepareFile = path.join(distDir, `prepare-fixture.${options.extension ?? "js"}`);
   fs.writeFileSync(prepareFile, prepareModuleSource(options));
   return prepareFile;
 }
@@ -419,43 +445,64 @@ describe("OpenClaw Slack denial-feedback patch", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("patches the OpenClaw 2026.9.1 denied-sender gate", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-native-deny-"));
-    const prepareFile = writeSlackPackage(tmp, {
-      moduleType: "esm",
-      nativeDeniedMentionFeedback: true,
-    });
-    try {
-      const original = fs.readFileSync(prepareFile, "utf8");
-      const { result, output } = runGuardProbe(prepareFile, {
-        loadMode: "import",
+  it.each([
+    { extension: "js", inlineMentionState: false },
+    { extension: "mjs", inlineMentionState: false },
+    { extension: "mjs", inlineMentionState: true },
+  ] as const)(
+    "patches the native denied-sender gate in $extension with inline mentions $inlineMentionState",
+    ({ extension, inlineMentionState }) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-native-deny-"));
+      const prepareFile = writeSlackPackage(tmp, {
+        moduleType: "esm",
+        nativeDeniedMentionFeedback: true,
+        extension,
+        inlineMentionState,
       });
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(fs.readFileSync(prepareFile, "utf8")).toBe(original);
-      expect(original).not.toContain("__nemoclawNotifyDeniedSlackMention");
+      try {
+        const original = fs.readFileSync(prepareFile, "utf8");
+        const { result, output } = runGuardProbe(prepareFile, {
+          loadMode: "import",
+        });
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(fs.readFileSync(prepareFile, "utf8")).toBe(original);
+        expect(original).not.toContain("__nemoclawNotifyDeniedSlackMention");
 
-      const mention = output?.mention as {
-        result: unknown;
-        calls: FeedbackCall[];
-      };
-      expect(mention.result).toBeNull();
-      expect(mention.calls).toHaveLength(1);
-      expect(mention.calls[0]).toMatchObject({
-        method: "chat.postEphemeral",
-        channel: "C1",
-        user: "U999DENIED",
-      });
+        const mention = output?.mention as {
+          result: unknown;
+          calls: FeedbackCall[];
+        };
+        expect(mention.result).toBeNull();
+        expect(mention.calls).toHaveLength(1);
+        expect(mention.calls[0]).toMatchObject({
+          method: "chat.postEphemeral",
+          channel: "C1",
+          user: "U999DENIED",
+        });
 
-      const silent = output?.silent as {
-        result: unknown;
-        calls: FeedbackCall[];
-      };
-      expect(silent.result).toBeNull();
-      expect(silent.calls).toHaveLength(0);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+        const explicitUser = output?.explicitUser as { result: unknown; calls: FeedbackCall[] };
+        expect(explicitUser.result).toBeNull();
+        expect(explicitUser.calls).toHaveLength(1);
+        expect(explicitUser.calls[0].method).toBe("chat.postEphemeral");
+        const explicitSubteam = output?.explicitSubteam as {
+          result: unknown;
+          calls: FeedbackCall[];
+        };
+        expect(explicitSubteam.result).toBeNull();
+        expect(explicitSubteam.calls).toHaveLength(1);
+        expect(explicitSubteam.calls[0].method).toBe("chat.postEphemeral");
+
+        const silent = output?.silent as {
+          result: unknown;
+          calls: FeedbackCall[];
+        };
+        expect(silent.result).toBeNull();
+        expect(silent.calls).toHaveLength(0);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     {

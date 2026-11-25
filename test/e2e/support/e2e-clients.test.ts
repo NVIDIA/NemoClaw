@@ -34,18 +34,16 @@ import type {
 import { LAUNCH_TURN_SCRIPT, runOpenClawLaunchSession } from "../live/launch-agent-turn.ts";
 import { precleanSandbox, sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
 
-interface RunnerCall {
-  command: string;
-  args: string[];
-  options?: ShellProbeRunOptions;
-}
-
 type FakeRunnerResponse = Partial<
   Pick<ShellProbeResult, "exitCode" | "signal" | "stderr" | "stdout" | "timedOut">
 >;
 
 class FakeRunner implements CommandRunner {
-  readonly calls: RunnerCall[] = [];
+  readonly calls: {
+    command: string;
+    args: string[];
+    options?: ShellProbeRunOptions;
+  }[] = [];
   readonly responses: FakeRunnerResponse[] = [];
   stdout = "";
   stderr = "";
@@ -454,13 +452,13 @@ describe("E2E fixture clients", () => {
   it("host client removes a current OpenShell gateway with the caller environment", async () => {
     const runner = new FakeRunner();
     const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+    const env = { HOME: "/tmp/cloud-onboard-home" };
+    const expected = { ...env, NPM_CONFIG_PREFIX: `${env.HOME}/.npm-global` };
 
-    await host.cleanupGatewayRegistration("nemoclaw", {
-      env: { HOME: "/tmp/cloud-onboard-home" },
-    });
+    await host.cleanupGatewayRegistration("nemoclaw", { env });
 
     expect(runner.calls.map((call) => call.args)).toEqual([["gateway", "remove", "nemoclaw"]]);
-    expect(runner.calls[0]?.options?.env).toEqual({ HOME: "/tmp/cloud-onboard-home" });
+    expect(runner.calls[0]?.options?.env).toEqual(expected);
   });
 
   it("host client falls back to the legacy gateway destroy verb", async () => {
@@ -1033,6 +1031,7 @@ describe("E2E fixture clients", () => {
 
     await sandbox.exec("assistant", ["sh", "-c", "echo '$TOKEN' && rm -rf /tmp/not-real"], {
       artifactName: "baseline-sandbox-exec-alive",
+      env: { OPENSHELL_GATEWAY: "e2e-lifecycle-owned" },
       timeoutMs: 60_000,
     });
 
@@ -1050,6 +1049,7 @@ describe("E2E fixture clients", () => {
       ],
       options: {
         artifactName: "baseline-sandbox-exec-alive",
+        env: { OPENSHELL_GATEWAY: "e2e-lifecycle-owned" },
         timeoutMs: 60_000,
       },
     });

@@ -78,7 +78,7 @@ describe("Pi candidate contract validation", () => {
     expect(contract.reference).toBe(`ghcr.io/nvidia/nemoclaw/pi-sandbox@${DIGEST}`);
   });
 
-  it("records the publication release in a Pi candidate contract with plain Node (#14026)", () => {
+  it("retains the publication release and cohort when a Pi candidate job is retried (#14026)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const candidate = required(workflow.jobs?.["pi-candidate"], "missing Pi candidate job");
     const publication = required(
@@ -89,6 +89,22 @@ describe("Pi candidate contract validation", () => {
     expect(publication.needs).toContain("publication-identity");
     expect(candidate.env?.RELEASE).toBe("${{ needs.publication-identity.outputs.release }}");
     expect(publication.env?.RELEASE).toBe("${{ needs.publication-identity.outputs.release }}");
+    expect(candidate.env?.PUBLICATION_COHORT).toBe(
+      "${{ needs.publication-identity.outputs.cohort }}",
+    );
+    expect(publication.env?.PUBLICATION_COHORT).toBe(
+      "${{ needs.publication-identity.outputs.cohort }}",
+    );
+    const imageCohorts = [
+      "Build the Pi candidate managed image",
+      "Publish and validate the Pi candidate image by digest",
+    ].map((name) => {
+      const labels = String(step(candidate, name).with?.labels ?? "")
+        .replaceAll("${{ env.PUBLICATION_COHORT }}", "ghrun-12345-1")
+        .replaceAll("${{ github.run_id }}", "12345")
+        .replaceAll("${{ github.run_attempt }}", "2");
+      return labels.match(/^io\.nvidia\.nemoclaw\.managed-image\.cohort=(.+)$/mu)?.[1];
+    });
     const producer = step(candidate, "Record the exact Pi candidate contract");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-contract-"));
     try {
@@ -100,6 +116,7 @@ describe("Pi candidate contract validation", () => {
           DIGEST,
           PLATFORM: "linux/arm64",
           PUBLICATION_COHORT: "ghrun-12345-1",
+          GITHUB_RUN_ATTEMPT: "2",
           RELEASE: "v0.0.141",
           REPOSITORY: "ghcr.io/nvidia/nemoclaw/pi-sandbox",
           RUNNER_TEMP: directory,
@@ -116,6 +133,8 @@ describe("Pi candidate contract validation", () => {
         ),
       );
       expect(contract.source.release).toBe("v0.0.141");
+      expect(contract.source.cohort).toBe("ghrun-12345-1");
+      expect(imageCohorts).toEqual([contract.source.cohort, contract.source.cohort]);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

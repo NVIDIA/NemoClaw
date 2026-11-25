@@ -15,8 +15,11 @@ import {
   HERMES_RELAY_PLUGINS_STAGING_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE,
+  assertSwitchyardRootApplyEnvironment,
   readHermesSwitchyardRoutingEnvironment,
+  readSwitchyardProviderBindingsEnvironment,
   serializeHermesSwitchyardRouting,
+  type SerializedHermesSwitchyardRouting,
 } from "../../hermes-switchyard-routing";
 import {
   type ManagedStartupAgentEnvironment,
@@ -953,7 +956,17 @@ function verifyCommittedRoutingFile(target: string, expected: Buffer): void {
     Number(installed.stat.mode & 0o777n) !== 0o444 ||
     !installed.bytes.equals(expected)
   ) {
-    fail(`committed Hermes routing artifact drifted: ${target}`);
+    fail(
+      `committed Hermes routing artifact drifted: ${target}\n` +
+        "Hermes startup stopped because its protected routing configuration does not match this image.\n" +
+        "Do not edit the protected routing files to bypass this check.\n" +
+        "To start a fresh Hermes sandbox, run on the host:\n" +
+        "  nemoclaw onboard --fresh --agent hermes --name <new-name> --switchyard-config <routing-config.json>\n" +
+        "Replace <new-name> with an unused sandbox name and <routing-config.json> with your Switchyard routing JSON file.\n" +
+        "This creates a fresh workspace; it does not recover data from the failed sandbox.\n" +
+        "Restoring your previous data requires an independently maintained backup.\n" +
+        "Do not delete the failed sandbox while data recovery is unresolved.",
+    );
   }
 }
 
@@ -980,17 +993,19 @@ export function installHermesSwitchyardRoutingFiles(
   configurationEnvironment: Readonly<NodeJS.ProcessEnv>,
   paths: HermesSwitchyardRoutingFilePaths = HERMES_SWITCHYARD_ROUTING_PATHS,
   sandboxIdentityInput?: NumericIdentity,
+  publish: (
+    files: SerializedHermesSwitchyardRouting | null,
+  ) => void = publishHermesSwitchyardRouting,
 ): void {
   const routing = readHermesSwitchyardRoutingEnvironment(configurationEnvironment);
   if (!routing) {
-    // Remove activation first so no live Relay configuration can reference a
-    // deployment file while stale state is being cleared.
-    removeSafeRootFile(paths.relayPluginsTarget);
-    removeSafeRootFile(paths.relayPluginStateTarget);
-    removeSafeRootFile(paths.switchyardDeploymentTarget);
+    publish(null);
     return;
   }
-  const serialized = serializeHermesSwitchyardRouting(routing);
+  const serialized = serializeHermesSwitchyardRouting(
+    routing,
+    readSwitchyardProviderBindingsEnvironment(configurationEnvironment, routing),
+  );
   const expectedRelay = Buffer.from(serialized.relayPluginsToml, "utf8");
   const expectedRelayState = Buffer.from(serialized.relayPluginStateJson, "utf8");
   const expectedDeployment = Buffer.from(serialized.switchyardDeploymentToml, "utf8");
@@ -1016,17 +1031,36 @@ export function installHermesSwitchyardRoutingFiles(
     sandboxIdentity,
   );
 
-  // Install the referenced deployment and enabled lifecycle state before
-  // making the Relay plugin configuration visible.
-  atomicWriteRootFile(paths.switchyardDeploymentTarget, expectedDeployment, 0o444);
-  atomicWriteRootFile(paths.relayPluginStateTarget, expectedRelayState, 0o444);
-  atomicWriteRootFile(paths.relayPluginsTarget, expectedRelay, 0o444);
+  publish(serialized);
   verifyCommittedRoutingFile(paths.switchyardDeploymentTarget, expectedDeployment);
   verifyCommittedRoutingFile(paths.relayPluginStateTarget, expectedRelayState);
   verifyCommittedRoutingFile(paths.relayPluginsTarget, expectedRelay);
   removeStableRoutingSource(paths.switchyardDeploymentSource, deploymentSource);
   removeStableRoutingSource(paths.relayPluginStateSource, relayStateSource);
   removeStableRoutingSource(paths.relayPluginsSource, relaySource);
+}
+
+function publishHermesSwitchyardRouting(files: SerializedHermesSwitchyardRouting | null): void {
+  // This production boundary owns native validation and exclusion of every
+  // managed gateway launch. Keep staging-file ownership checks in the caller.
+  ensureRootOwnedDirectory("/usr/local/share/nemoclaw");
+  const result = spawnSync(
+    "/opt/hermes/.venv/bin/python",
+    ["-I", "/opt/nemoclaw-hermes-config/switchyard-preflight.py", "publish"],
+    {
+      input: JSON.stringify(files),
+      encoding: "utf8",
+      timeout: 50_000,
+      killSignal: "SIGKILL",
+      maxBuffer: 4096,
+      env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root", HERMES_HOME: "/sandbox/.hermes" },
+    },
+  );
+  if (result.status !== 0 || result.signal || result.error) {
+    fail(
+      "Switchyard publication failed. Routing inputs were not accepted; the gateway must remain stopped.",
+    );
+  }
 }
 
 export function verifyHermesSwitchyardRoutingFiles(
@@ -1040,7 +1074,10 @@ export function verifyHermesSwitchyardRoutingFiles(
     assertRoutingFileAbsent(paths.switchyardDeploymentTarget);
     return;
   }
-  const serialized = serializeHermesSwitchyardRouting(routing);
+  const serialized = serializeHermesSwitchyardRouting(
+    routing,
+    readSwitchyardProviderBindingsEnvironment(configurationEnvironment, routing),
+  );
   verifyCommittedRoutingFile(
     paths.relayPluginsTarget,
     Buffer.from(serialized.relayPluginsToml, "utf8"),
@@ -1662,6 +1699,22 @@ function applyAdapter(
   if (mapped.agent !== context.agent) {
     fail(`mapped ${mapped.agent} environment for ${context.agent}`);
   }
+  if (context.agent === "openclaw") {
+    // A replacement can retain a fresh native owner from another PID namespace.
+    // Prove it has ended before the generator or validator opens restored state.
+    execute(
+      [
+        "/usr/local/bin/node",
+        "/usr/local/lib/nemoclaw/openclaw-legacy-migrations.mts",
+        "--wait-gateway-executable",
+        "/usr/local/bin/openclaw",
+        "2026.10.5",
+      ],
+      "sandbox",
+      mapped.configurationEnvironment,
+      mapped.applicationRuntime,
+    );
+  }
   const commandPlan = buildManagedStartupImageActionPlan({
     agent: mapped.agent,
     actions: mapped.actions,
@@ -1747,6 +1800,13 @@ export async function applyManagedStartupImageProfile(
   }
   if (profile.agent !== expectedAgent) {
     fail(`managed startup profile targets ${profile.agent}, expected ${expectedAgent}`);
+  }
+  if (profile.agentConfig.agent === "hermes" && profile.agentConfig.switchyardRouting) {
+    if (!profile.agentConfig.switchyardBindings) fail("Switchyard provider bindings are missing");
+    assertSwitchyardRootApplyEnvironment(env, {
+      routing: profile.agentConfig.switchyardRouting,
+      bindings: profile.agentConfig.switchyardBindings,
+    });
   }
   requireManagedStartupExchangeDirectory();
   const mapped = mapManagedStartupProfileToAgentEnvironment(profile, env);

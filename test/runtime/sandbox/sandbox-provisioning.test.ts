@@ -88,7 +88,7 @@ function runOpenclawRepairLayoutCase(
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
   const cleanupBlock = dockerRunCommandBetween(
     dockerfile,
-    "# Flatten stale published base images",
+    "RUN set -eu; \\\n    config_dir=/sandbox/.openclaw;",
     "# Stale-base fallback for the gateway/root-in-sandbox-group setup",
   );
   const permissionBlock = dockerRunCommandBetween(

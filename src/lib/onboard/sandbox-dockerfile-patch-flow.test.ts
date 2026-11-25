@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { SandboxBaseImageResolutionMetadata } from "../sandbox-base-image";
 import {
   captureBaseResolution,
@@ -36,6 +40,55 @@ const resolutionMetadata: SandboxBaseImageResolutionMetadata = {
 };
 
 describe("prepareSandboxDockerfilePatch", () => {
+  it.each([
+    [
+      "a literal managed-image FROM",
+      "FROM ghcr.io/nvidia/nemoclaw/sandbox-openclaw@sha256:abc\n",
+      false,
+    ],
+    ["an unrelated BASE_IMAGE", "ARG BASE_IMAGE=ubuntu:24.04\nFROM ${BASE_IMAGE}\n", false],
+    [
+      "the NemoClaw sandbox-base ARG",
+      "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest\nFROM ${BASE_IMAGE}\n",
+      true,
+    ],
+  ])("resolves only a consumed default base for %s", async (_label, content, consumesBase) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-base-"));
+    onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
+    const stagedDockerfile = path.join(root, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, content);
+    const pullAndResolveBaseImageDigest = vi.fn(() => ({
+      digest: "sha256:customagent",
+      ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:customagent",
+    }));
+    const patchStagedDockerfile = vi.fn();
+    await prepareSandboxDockerfilePatch({
+      agent: null,
+      fromDockerfile: stagedDockerfile,
+      sandboxBaseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+      sandboxBaseTag: "latest",
+      stagedDockerfile,
+      model: "model-a",
+      chatUiUrl: "http://127.0.0.1:7000",
+      provider: null,
+      preferredInferenceApi: null,
+      webSearchConfig: null,
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      log: vi.fn(),
+      deps: {
+        isLinuxDockerDriverGatewayEnabled: () => true,
+        pullAndResolveBaseImageDigest,
+        enforceDockerGpuPatchPreserveNetwork: vi.fn(async () => false),
+        patchStagedDockerfile,
+      },
+    });
+    expect(pullAndResolveBaseImageDigest).toHaveBeenCalledTimes(consumesBase ? 1 : 0);
+    expect(patchStagedDockerfile.mock.calls[0]?.[7]).toBe(
+      consumesBase ? "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:customagent" : null,
+    );
+  });
+
   it("keeps rebuild hints isolated per flow and lets fresh bypass reuse (#4680)", () => {
     const warmContext = createBaseImageResolutionContext({
       fresh: false,
@@ -322,6 +375,12 @@ describe("prepareSandboxDockerfilePatch", () => {
   });
 
   it("resolves the base image when an agent uses a custom Dockerfile", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-consumed-base-"));
+    onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
+    const stagedDockerfile = path.join(root, "Dockerfile");
+    const content =
+      "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest\nFROM ${BASE_IMAGE}\n";
+    fs.writeFileSync(stagedDockerfile, content);
     const pullAndResolveBaseImageDigest = vi.fn(() => ({
       digest: "sha256:customagent",
       ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:customagent",
@@ -334,7 +393,7 @@ describe("prepareSandboxDockerfilePatch", () => {
       sandboxBaseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base",
       sandboxBaseTag: "latest",
       preResolvedBaseImageMetadata: resolutionMetadata,
-      stagedDockerfile: "/tmp/Dockerfile",
+      stagedDockerfile,
       model: "model-a",
       chatUiUrl: "http://127.0.0.1:7000",
       provider: null,
@@ -363,6 +422,7 @@ describe("prepareSandboxDockerfilePatch", () => {
       "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:customagent",
     );
     expect(patchStagedDockerfile.mock.calls[0]?.[11]).toEqual({
+      sourceSnapshot: expect.objectContaining({ content }),
       agentName: "hermes",
       buildIdPolicy: "rewrite",
       toolDisclosure: "progressive",

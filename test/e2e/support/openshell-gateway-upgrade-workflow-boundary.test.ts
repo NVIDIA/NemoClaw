@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURES,
 } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
@@ -26,7 +27,10 @@ import {
   gatewayUpgradeRecoverySucceeded,
   gatewayUpgradeAgentResponseIsSuccessful,
   gatewayUpgradeInstallerCommand,
+  gatewayUpgradeMarkerWriteCommand,
   prepareGatewayUpgradeUserManager,
+  prepareGatewayUpgradeInstallPaths,
+  gatewayUpgradeInstallEnv,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeBaseImageOverrideEnabled,
@@ -38,6 +42,40 @@ import {
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
 describe("OpenShell gateway upgrade boundary", () => {
+  it.each(["", "//"])("prepares private install paths with HOME suffix %j", (suffix) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-upgrade-install-paths-"));
+    const home = `${root}/home${suffix}`;
+    try {
+      prepareGatewayUpgradeInstallPaths(home);
+      expect(fs.statSync(path.join(home, ".local", "bin")).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(path.join(home, ".npm-global")).mode & 0o777).toBe(0o700);
+      expect(gatewayUpgradeInstallEnv(home, "/toolchain/bin")).toEqual({
+        XDG_BIN_HOME: `${root}/home/.local/bin`,
+        NPM_CONFIG_PREFIX: `${root}/home/.npm-global`,
+        npm_config_prefix: `${root}/home/.npm-global`,
+        PATH: `${root}/home/.local/bin:${root}/home/.npm-global/bin:/toolchain/bin`,
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves existing private executable bytes and directory permissions", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-upgrade-existing-cli-"));
+    const bin = path.join(root, ".local", "bin");
+    const target = path.join(bin, "openshell");
+    fs.mkdirSync(bin, { recursive: true, mode: 0o750 });
+    fs.writeFileSync(target, "previous private installation", { mode: 0o750 });
+    try {
+      prepareGatewayUpgradeInstallPaths(root);
+      expect(fs.readFileSync(target, "utf8")).toBe("previous private installation");
+      expect(fs.statSync(target).mode & 0o777).toBe(0o750);
+      expect(fs.statSync(bin).mode & 0o777).toBe(0o750);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { statuses: ["ok"], expected: true },
     { statuses: ["error"], expected: false },
@@ -183,6 +221,7 @@ describe("OpenShell gateway upgrade boundary", () => {
     ).toEqual([
       "openshell-gateway-upgrade-v0-0-89-x86-64",
       "openshell-gateway-upgrade-v0-0-123-x86-64",
+      "openshell-gateway-upgrade-v0-0-141-x86-64",
     ]);
 
     const { environment, runner, shard } = catalogueTarget(
@@ -214,43 +253,50 @@ describe("OpenShell gateway upgrade boundary", () => {
     });
   });
 
-  it("pins the v0.0.123 gateway-registration regression target to amd64 (#11898)", () => {
-    const { environment, runner, shard } = catalogueTarget(
-      "openshell-gateway-upgrade-v0-0-123-x86-64",
-    );
-
-    expect({
-      runner,
-      shard,
-      nemoclawRef: environment.NEMOCLAW_OLD_NEMOCLAW_REF,
-      commit: environment.NEMOCLAW_OLD_NEMOCLAW_COMMIT,
-      installerSha256: environment.NEMOCLAW_OLD_INSTALLER_SHA256,
-      overridesBaseImage: legacyGatewayUpgradeBaseImageOverrideEnabled(
-        environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
-      ),
-      sandboxBaseImageRef: environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
-      openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
-      openClawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
-    }).toEqual({
-      runner: "ubuntu-latest",
-      shard: "v0-0-123-x86-64",
-      nemoclawRef: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef,
-      commit: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawCommit,
-      installerSha256: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.installerSha256,
-      overridesBaseImage: false,
-      sandboxBaseImageRef: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.sandboxBaseImageRef,
-      openShellVersion: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openShellVersion,
-      openClawVersion: REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.openclawVersion,
-    });
-    validateLegacyGatewayUpgradeFixture({
-      nemoclawRef: environment.NEMOCLAW_OLD_NEMOCLAW_REF,
-      nemoclawCommit: environment.NEMOCLAW_OLD_NEMOCLAW_COMMIT,
-      installerSha256: environment.NEMOCLAW_OLD_INSTALLER_SHA256,
-      sandboxBaseImageRef: environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
-      openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
-      openclawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
-    });
+  it("retains one stopped sandbox for the v0.0.123 gateway-registration regression (#11898)", () => {
+    expect(REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.additionalStoppedSandboxes).toBe(1);
   });
+
+  it.each([REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE, REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE])(
+    "pins the $nemoclawRef upgrade target to amd64 (#14268)",
+    (fixture) => {
+      const { environment, runner, shard } = catalogueTarget(
+        `openshell-gateway-upgrade-${fixture.nemoclawRef.replaceAll(".", "-")}-x86-64`,
+      );
+
+      expect({
+        runner,
+        shard,
+        nemoclawRef: environment.NEMOCLAW_OLD_NEMOCLAW_REF,
+        commit: environment.NEMOCLAW_OLD_NEMOCLAW_COMMIT,
+        installerSha256: environment.NEMOCLAW_OLD_INSTALLER_SHA256,
+        overridesBaseImage: legacyGatewayUpgradeBaseImageOverrideEnabled(
+          environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
+        ),
+        sandboxBaseImageRef: environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
+        openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
+        openClawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
+      }).toEqual({
+        runner: "ubuntu-latest",
+        shard: `${fixture.nemoclawRef.replaceAll(".", "-")}-x86-64`,
+        nemoclawRef: fixture.nemoclawRef,
+        commit: fixture.nemoclawCommit,
+        installerSha256: fixture.installerSha256,
+        overridesBaseImage: false,
+        sandboxBaseImageRef: fixture.sandboxBaseImageRef,
+        openShellVersion: fixture.openShellVersion,
+        openClawVersion: fixture.openclawVersion,
+      });
+      validateLegacyGatewayUpgradeFixture({
+        nemoclawRef: environment.NEMOCLAW_OLD_NEMOCLAW_REF,
+        nemoclawCommit: environment.NEMOCLAW_OLD_NEMOCLAW_COMMIT,
+        installerSha256: environment.NEMOCLAW_OLD_INSTALLER_SHA256,
+        sandboxBaseImageRef: environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
+        openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
+        openclawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
+      });
+    },
+  );
 
   it("rejects reintroducing the superseded workflow job", () => {
     const workflow = readWorkflow() as { jobs: Record<string, unknown> };
@@ -317,6 +363,27 @@ describe("OpenShell gateway upgrade boundary", () => {
       ).toBe(expected);
     },
   );
+
+  it("writes marker bytes that the restored workspace check accepts (#14268)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upgrade-marker-"));
+    const markerPath = path.join(root, "workspace with spaces", "marker");
+    const marker = "gateway-upgrade-marker-'literal'-$HOME";
+    try {
+      const result = spawnSync(
+        "bash",
+        ["-c", gatewayUpgradeMarkerWriteCommand(markerPath, marker)],
+        {
+          encoding: "utf8",
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(markerPath, "utf8")).toBe(`${marker}\n`);
+      const restored = spawnSync("grep", ["-Fx", "--", marker, markerPath], { encoding: "utf8" });
+      expect(restored.status, restored.stderr).toBe(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("fails credential custody when managed-file inspection errors", () => {
     const temporaryDirectory = fs.mkdtempSync(

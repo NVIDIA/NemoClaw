@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { projectReviewedOpenShell0110Graph } from "./openshell-sdk-0110-graph.mts";
 import {
   validateInstallerSources,
   validateOpenShellFeatureGateSource,
   type OpenShellReleaseTrust,
 } from "../../scripts/checks/extract-installer-pins.mts";
+import type { ReviewedSourceRegistryPackage } from "../../scripts/lib/reviewed-ci-npm-install.mts";
 import { isDeepStrictEqual } from "node:util";
 import { parseAuditConfig } from "../../scripts/audit-reviewed-npm-graph.mts";
 import { reviewedNpmDependencyLocations } from "../../scripts/lib/reviewed-npm-archive.mts";
@@ -111,6 +113,7 @@ export function projectProtectedOpenShellSdk(
   candidate: { packageSource: string; lockSource: string },
   trusted: { packageSource: string; lockSource: string; auditSource: string },
   releaseVersion: string,
+  admittedSdk?: ReviewedSourceRegistryPackage,
 ): { sdkVersion: string; sdkIntegrity: string; files: Record<string, string> } {
   const selected = sdkManifest(candidate.packageSource);
   if (selected.version !== releaseVersion)
@@ -122,13 +125,33 @@ export function projectProtectedOpenShellSdk(
   const identities = [config.sourceRegistryPackage, config.sourceRegistryPackageReplacement].filter(
     Boolean,
   );
-  for (const { sdk } of [current, next]) {
-    const identity = identities.find(
+  for (const [sdk, allowed] of [
+    [current.sdk, identities],
+    [next.sdk, [...identities, admittedSdk]],
+  ] as const) {
+    const identity = allowed.find(
       (entry) => entry?.packageSpec === `${SDK_NAME}@${String(sdk.version)}`,
     );
     if (!identity || sdk.resolved !== identity.tarballUrl || sdk.integrity !== identity.integrity) {
       throw new Error("Protected SDK archive is not trusted by the workflow commit");
     }
+  }
+  if (selected.version === "0.1.10") {
+    projectReviewedOpenShell0110Graph(
+      next.packages,
+      current.packages,
+      baseline.manifest,
+      current.root,
+      baseline.dependencies,
+    );
+    return {
+      sdkVersion: selected.version,
+      sdkIntegrity: String(next.sdk.integrity),
+      files: {
+        "package.json": `${JSON.stringify(baseline.manifest, null, 2)}\n`,
+        "package-lock.json": `${JSON.stringify(current.lock, null, 2)}\n`,
+      },
+    };
   }
   const metadata = ({
     version: _version,

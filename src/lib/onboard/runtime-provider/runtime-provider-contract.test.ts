@@ -1156,6 +1156,7 @@ describe("socket-free MXC action contract", () => {
         }),
       };
       let deleteConvergenceMs = 0;
+      const probeGatewayProcess = vi.fn(async () => true);
       const runOpenshell = vi.fn((args: string[]) => {
         switch (`${String(args[0])}:${String(args[1])}`) {
           case "sandbox:get":
@@ -1182,14 +1183,21 @@ describe("socket-free MXC action contract", () => {
             }),
           },
           openShellLifecycle,
+          probeGatewayProcess,
           probeInferenceInvocation: vi.fn(async () => ({ ok: true as const })),
           updateSandbox,
           runtimeProviders: providers,
-          probeGatewayProcess: vi.fn(async () => true),
           verifyGateway: vi.fn(async () => undefined),
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
+      expect(probeGatewayProcess.mock.calls).toEqual(
+        {
+          openclaw: [[sandboxName, "nemoclaw", { startup: { timeoutMs: expect.any(Number) } }]],
+          hermes: [],
+          "langchain-deepagents-code": [],
+        }[agent],
+      );
       await expect(
         withCurrentPortableHostFence(() =>
           stopSandbox(sandboxName, {

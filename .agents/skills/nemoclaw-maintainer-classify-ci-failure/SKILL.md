@@ -28,4 +28,8 @@ The script uses authenticated `gh` reads. It performs no GitHub writes. It bound
 
 Run the script from a Linux NemoClaw checkout with Node.js 22.19 or later, `/proc`, Bash, authenticated `gh` in a trusted location, and GNU coreutils (`dd`, `stat`, `tail`, and `wc`).
 
+Check these prerequisites before invoking the classifier. If the host cannot run it, use an already authorized Linux environment when available.
+Otherwise inspect retained evidence under the E2E audit procedure and report that automated classification is unavailable.
+Do not weaken executable-path checks, install credentials, or describe an unavailable classifier as a product failure.
+
 Any nonzero log acquisition result is a classifier failure. After the cleanup attempt, the script exits nonzero with no success JSON and reports a bounded, redacted diagnostic. On GitHub authentication or authorization failure, stop, follow the repository GitHub access hard stop, and ask the user to correct the configured `gh` access (including SSO or token scope) before rerunning. Treat `unclassified` as bounded evidence, not proof that no known cause exists.

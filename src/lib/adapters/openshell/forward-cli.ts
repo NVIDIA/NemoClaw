@@ -29,7 +29,10 @@ import {
   type StartOpenShellForwardRequest,
   type VerifyOpenShellForwardReleaseRequest,
 } from "./forward";
-import { buildCliOpenShellForwardServiceArgs } from "./forward-cli-args";
+import {
+  buildCliOpenShellForwardServiceArgs,
+  matchesCliOpenShellForwardCommand,
+} from "./forward-cli-args";
 import { buildOpenShellSubprocessEnv } from "./resolve-shared";
 import {
   replaceOpenShellRuntimeSelectionEnv,
@@ -922,12 +925,8 @@ async function inspectForward(
     ) {
       processState = "indeterminate";
     } else {
-      const expectedCommand = [
-        options.executable,
-        ...buildCliOpenShellForwardServiceArgs(forward),
-      ].join(" ");
-      const preEndpointCommand = [
-        options.executable,
+      const expectedArgs = buildCliOpenShellForwardServiceArgs(forward);
+      const preEndpointArgs = [
         "--gateway",
         forward.gatewayName,
         "--workspace",
@@ -941,10 +940,19 @@ async function inspectForward(
         "127.0.0.1",
         "--local",
         `${forward.localHost}:${String(forward.port)}`,
-      ].join(" ");
-      if (command.stdout.trim() === expectedCommand) {
+      ];
+      if (
+        matchesCliOpenShellForwardCommand(command.stdout.trim(), options.executable, expectedArgs)
+      ) {
         processState = "owned";
-      } else if (options.acceptPreEndpoint && command.stdout.trim() === preEndpointCommand) {
+      } else if (
+        options.acceptPreEndpoint &&
+        matchesCliOpenShellForwardCommand(
+          command.stdout.trim(),
+          options.executable,
+          preEndpointArgs,
+        )
+      ) {
         processState = "pre_endpoint";
       } else {
         processState = "foreign";

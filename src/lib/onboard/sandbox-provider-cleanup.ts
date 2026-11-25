@@ -1,6 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { retireUnselectedNativeLocalProviders } from "../inference/native-local/selection";
+import { removeSwitchyardProviders } from "./switchyard/bindings";
+import type { SandboxEntry } from "../state/registry";
+
+/** Caller must confirm sandbox deletion before retiring its provider identities. */
+export async function retireDestroyedSandboxInferenceProviders(input: {
+  sandbox: SandboxEntry;
+  gatewayName: string;
+  adapter: OpenShellProviderAdapter;
+}): Promise<void> {
+  await retireUnselectedNativeLocalProviders({
+    adapter: input.adapter,
+    destroyedAttachment: input.sandbox.nativeLocalProviderAttachment,
+    sandboxName: input.sandbox.name,
+    gatewayName: input.gatewayName,
+  });
+  if (input.sandbox.hermesSwitchyard)
+    await removeSwitchyardProviders({
+      state: input.sandbox.hermesSwitchyard,
+      adapter: input.adapter,
+      target: { kind: "named", gatewayName: input.gatewayName },
+    });
+}
+
 import { listMessagingProviderSuffixes } from "../messaging/channels";
 import { listMessagingBridgeProfiles } from "./messaging-bridge-provider";
 import { createManagedProviderAdapter } from "../adapters/openshell/managed-provider-adapter";

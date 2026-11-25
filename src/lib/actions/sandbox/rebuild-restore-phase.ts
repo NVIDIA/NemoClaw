@@ -51,7 +51,7 @@ export async function runRebuildRestorePhase(
     log(`Pre-restore quiesce window: ${doctorWindow.ok ? "verified" : doctorWindow.stage}`);
     if (!doctorWindow.ok) {
       console.error(
-        `  ${YW}OpenClaw state restore could not enter its gateway-down maintenance window.${R}`,
+        `  ${YW}OpenClaw state restore could not enter its gateway-down maintenance window (${doctorWindow.stage}).${R}`,
       );
       return { restoreSucceeded: false };
     }

@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { beforeEach, expect, it, vi } from "vitest";
+
+import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 
 const mocks = vi.hoisted(() => ({
   listRoots: vi.fn(),
@@ -37,6 +41,10 @@ import {
   managedWorkload,
   profileInput,
 } from "../../domain/config/export-source-test-fixture";
+import {
+  nativeLocalIdentity,
+  type NativeLocalBinding,
+} from "../../inference/native-local/contract";
 import type { SandboxEntry } from "../../state/registry/types";
 
 beforeEach(() => {
@@ -137,7 +145,9 @@ it("marks observations that never start before cancellation (#12859)", async () 
   expect(snapshot.collectionStatus).toBe("partial");
 });
 
-it("joins a published OpenClaw configuration to its operation target (#12859)", async () => {
+it("joins a managed OpenClaw 2026.10.5 configuration to its operation target (#12859)", async () => {
+  const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
+  const imageTag = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
   mocks.readRegistry.mockReturnValue({
     defaultSandbox: null,
     sandboxes: {
@@ -151,6 +161,23 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
       selected: {
         name: "selected",
         agent: "openclaw",
+        agentVersion: "2026.10.5",
+        imageTag,
+        workload: {
+          schemaVersion: 1,
+          kind: "managed-image",
+          reference: imageTag,
+          platform: "linux/amd64",
+          release: "v0.0.132",
+          sourceRevision: "b".repeat(40),
+          sourceCohort: "ghrun-123456-1",
+          capabilityContractVersion: 1,
+          startupProfileContractVersion: 1,
+          encodedProfile,
+          startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+          credentialProxyReplayRequired: false,
+          shared: true,
+        },
         gatewayPort: 8080,
         model: "nvidia/nemotron-3-ultra-550b-a55b",
         provider: "nvidia-prod",
@@ -230,7 +257,12 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
     deadlineAt: Date.now() + 10_000,
   });
   expect(read).toHaveBeenCalled();
-  expect(read).toHaveBeenCalledTimes(6);
+  // One configured agent each, so no sandbox needs the native roster command.
+  expect(read).toHaveBeenCalledTimes(3);
+  expect(read).not.toHaveBeenCalledWith(
+    expect.objectContaining({ sandboxName: "selected", command: ["uname", "-s"] }),
+    expect.anything(),
+  );
   expect(event.parameters).toMatchObject({
     publishedEnvironmentCount: 2,
     configuredRuntimeCount: 2,
@@ -245,6 +277,8 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
         agentHarnessId: "openclaw",
         agentsStatus: "reported",
         currentInferenceRouteStatus: "reported",
+        managedAgentVersion: "2026.10.5",
+        managedAgentVersionStatus: "reported",
       },
     ],
   });
@@ -285,14 +319,10 @@ const nativeModelCases = [
   },
 ] as const;
 
-async function collectNativeConfiguration(
+async function collectNativeEvent(
   agent: string,
-  configPath: string,
-  rawConfig: string,
-  entryOverrides: Partial<SandboxEntry> = {},
-  extraResponses: Record<string, string> = {},
-  // A valid managed receipt supplies the sandbox OS; otherwise the collector runs `uname -s`.
-  unameReads = entryOverrides.workload ? 0 : 1,
+  entryOverrides: Partial<SandboxEntry>,
+  responses: Record<string, string>,
 ) {
   mocks.readRegistry.mockReturnValue({
     defaultSandbox: null,
@@ -300,11 +330,6 @@ async function collectNativeConfiguration(
       native: { name: "native", agent, gatewayPort: 8080, ...entryOverrides },
     },
   });
-  const responses: Record<string, string> = {
-    [JSON.stringify(["uname", "-s"])]: "Linux",
-    [JSON.stringify(["cat", configPath])]: rawConfig,
-    ...extraResponses,
-  };
   const read = vi.fn(async ({ command }: { command: readonly string[] }) => {
     return (
       responses[JSON.stringify(command)] ?? Promise.reject(new Error("Unexpected sandbox command"))
@@ -336,6 +361,23 @@ async function collectNativeConfiguration(
     },
     { signal: new AbortController().signal, deadlineAt: Date.now() + 10_000 },
   );
+  return { event, read };
+}
+
+async function collectNativeConfiguration(
+  agent: string,
+  configPath: string,
+  rawConfig: string,
+  entryOverrides: Partial<SandboxEntry> = {},
+  extraResponses: Record<string, string> = {},
+  // A valid managed receipt supplies the sandbox OS; otherwise the collector runs `uname -s`.
+  unameReads = entryOverrides.workload ? 0 : 1,
+) {
+  const { event, read } = await collectNativeEvent(agent, entryOverrides, {
+    [JSON.stringify(["uname", "-s"])]: "Linux",
+    [JSON.stringify(["cat", configPath])]: rawConfig,
+    ...extraResponses,
+  });
   expect(read).toHaveBeenCalledWith(
     expect.objectContaining({ sandboxName: "native", command: ["cat", configPath] }),
     expect.objectContaining({ workspace: "native" }),
@@ -548,11 +590,7 @@ const hostedRouteBranches = [
         agents: { defaults: { model: `inference/${hostedNvidiaModel}` }, entries: { main: {} } },
         models: { providers: { inference: { api: "openai-completions", baseUrl } } },
       }),
-    extraResponses: {
-      [JSON.stringify(["openclaw", "agents", "list", "--json"])]: JSON.stringify([
-        { id: "main", isDefault: true },
-      ]),
-    },
+    extraResponses: {},
     workload: (routedBaseUrl: string) => ({
       imageTag: imageRef,
       workload: hostedNvidiaWorkload(
@@ -626,5 +664,352 @@ it.each(hostedRouteBranches)(
     });
     expect(event.parameters.collectionStatus).toBe("partial");
     expect(isOperationEvent(event)).toBe(true);
+  },
+);
+
+const hermesConfigPath = "/sandbox/.hermes/config.yaml";
+// Hermes has no roster command, so these route tests do not depend on how the roster is read.
+const hermesConfig = (model: string, baseUrl: string) =>
+  `model:\n  default: ${model}\n  provider: custom\n  base_url: "${baseUrl}"\n`;
+const nativeLocalBinding: NativeLocalBinding = {
+  provider: "ollama-local",
+  agent: "hermes",
+  endpointUrl: "http://host.openshell.internal:11435/v1",
+  credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  authMode: "authenticated",
+  gatewayName: "nemoclaw",
+  sandboxName: "native",
+};
+const nativeLocalAttachment = (binding: NativeLocalBinding) => ({
+  ...binding,
+  ...nativeLocalIdentity(binding),
+  schemaVersion: 1,
+  providerId: "provider-id",
+});
+
+// Native providers are attached to the sandbox, so the gateway keeps no shared route for them.
+const nativeRouteCases = [
+  {
+    label: "native NVIDIA",
+    config: hermesConfig(hostedNvidiaModel, hostedNvidiaEndpoint),
+    entry: {
+      provider: "nvidia-prod",
+      model: hostedNvidiaModel,
+      modelSelectionProvenance: hostedNvidiaProvenance,
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-id",
+      },
+    },
+    route: {
+      modelId: hostedNvidiaModel,
+      providerProfile: "nvidia",
+      modelSource: "custom",
+      apiFamily: "openai-completions",
+    },
+  },
+  {
+    label: "native hosted OpenAI",
+    config: hermesConfig("gpt-4o", "https://api.openai.com/v1"),
+    entry: {
+      provider: "openai-api",
+      model: "gpt-4o",
+      modelSelectionProvenance: {
+        schemaVersion: 1,
+        model: "gpt-4o",
+        provider: "openai-api",
+        providerProfile: "openai",
+        modelSource: "provider_catalog",
+        apiFamily: "openai-completions",
+      },
+      nativeHostedProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: "provider-id",
+      },
+    },
+    route: {
+      modelId: "gpt-4o",
+      providerProfile: "openai",
+      modelSource: "provider_catalog",
+      apiFamily: "openai-completions",
+    },
+  },
+  {
+    label: "native local Ollama",
+    config: hermesConfig("qwen2.5:7b", nativeLocalBinding.endpointUrl),
+    entry: {
+      provider: "ollama-local",
+      model: "qwen2.5:7b",
+      modelSelectionProvenance: {
+        schemaVersion: 1,
+        model: "qwen2.5:7b",
+        provider: "ollama-local",
+        providerProfile: "ollama",
+        modelSource: "local",
+        apiFamily: "openai-completions",
+      },
+      gatewayName: "nemoclaw",
+      nativeLocalProviderAttachment: nativeLocalAttachment(nativeLocalBinding),
+    },
+    route: {
+      modelId: "qwen2.5:7b",
+      providerProfile: "ollama",
+      modelSource: "local",
+      apiFamily: "openai-completions",
+    },
+  },
+] as const;
+
+it.each(nativeRouteCases)(
+  "reports the recorded $label selection as the current route (#14241)",
+  async ({ config, entry, route }) => {
+    const event = await collectNativeConfiguration(
+      "hermes",
+      hermesConfigPath,
+      config,
+      entry as unknown as Partial<SandboxEntry>,
+    );
+    const row = event.parameters.configurations[0];
+    expect(row.agents[0].models[0].modelStatus).toBe("reported");
+    expect(row.currentInferenceRouteStatus).toBe("reported");
+    expect(row.currentInferenceRoute).toEqual({
+      assignment: "primary",
+      modelId: route.modelId,
+      modelStatus: "reported",
+      modelSource: route.modelSource,
+      modelSourceStatus: "reported",
+      providerProfile: route.providerProfile,
+      providerStatus: "reported",
+      apiFamily: route.apiFamily,
+      apiStatus: "reported",
+    });
+    // The shared gateway route belongs to other sandboxes, not to this one.
+    expect(mocks.createReader.mock.results[0].value.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
+
+it("reports a recorded Pi native-local selection as the current route (#14241)", async () => {
+  const { entry, route } = nativeRouteCases[2];
+  // Pi has no telemetry config parser, so the collector reads only the sandbox OS.
+  const { event, read } = await collectNativeEvent(
+    "pi",
+    {
+      ...entry,
+      nativeLocalProviderAttachment: nativeLocalAttachment({ ...nativeLocalBinding, agent: "pi" }),
+    } as unknown as Partial<SandboxEntry>,
+    { [JSON.stringify(["uname", "-s"])]: "Linux" },
+  );
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(event.parameters.configurations[0]).toMatchObject({
+    currentInferenceRouteStatus: "reported",
+    currentInferenceRoute: { modelId: route.modelId, providerProfile: route.providerProfile },
+  });
+  expect(mocks.createReader.mock.results[0].value.observeInferenceRoute).not.toHaveBeenCalled();
+});
+
+it("reports not_configured when the gateway has no route for a shared-route sandbox (#14241)", async () => {
+  const event = await collectNativeConfiguration(
+    "hermes",
+    hermesConfigPath,
+    hermesConfig("custom-model", "https://inference.local/v1"),
+    { provider: "compatible-endpoint", model: "custom-model" },
+  );
+  expect(event.parameters.configurations[0]).toMatchObject({
+    currentInferenceRouteStatus: "not_configured",
+    currentInferenceRoute: { modelStatus: "not_configured", providerStatus: "not_configured" },
+  });
+  expect(mocks.createReader.mock.results[0].value.observeInferenceRoute).toHaveBeenCalledTimes(1);
+  expect(isOperationEvent(event)).toBe(true);
+});
+
+it.each([
+  ["a native selection whose provider differs from its attachment", 0, { provider: "openai-api" }],
+  [
+    "a native-local attachment recorded for another agent",
+    2,
+    {
+      nativeLocalProviderAttachment: nativeLocalAttachment({
+        ...nativeLocalBinding,
+        agent: "openclaw",
+      }),
+    },
+  ],
+] as const)("marks %s as a route collection error (#14241)", async (_label, index, overrides) => {
+  const { config, entry } = nativeRouteCases[index];
+  const event = await collectNativeConfiguration("hermes", hermesConfigPath, config, {
+    ...entry,
+    ...overrides,
+  } as unknown as Partial<SandboxEntry>);
+  expect(event.parameters.configurations[0]).toMatchObject({
+    currentInferenceRouteStatus: "collection_error",
+    currentInferenceRoute: { modelStatus: "collection_error" },
+  });
+  expect(mocks.createReader.mock.results[0].value.observeInferenceRoute).not.toHaveBeenCalled();
+  expect(isOperationEvent(event)).toBe(true);
+});
+it("reports a healthy OpenClaw rebuild without the native roster command (#14239)", async () => {
+  const { agent, configPath, config, workload } = hostedRouteBranches[0];
+  // collectNativeConfiguration rejects the roster command and counts every sandbox read.
+  const event = await collectNativeConfiguration(agent, configPath, config(hostedNvidiaEndpoint), {
+    model: hostedNvidiaModel,
+    provider: "nvidia-prod",
+    modelSelectionProvenance: hostedNvidiaProvenance,
+    agentVersion: "2026.9.1",
+    openshellDriver: "docker",
+    sandboxGpuEnabled: false,
+    webSearchEnabled: false,
+    observabilityEnabled: false,
+    appliedPolicySelection: { schemaVersion: 1, source: "verified_selection", tier: "balanced" },
+    messaging: {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "native",
+        agent: "openclaw",
+        workflow: "onboard",
+        disabledChannels: [],
+        channels: [],
+        credentialBindings: [],
+      },
+    },
+    ...workload(hostedNvidiaEndpoint),
+  } as unknown as Partial<SandboxEntry>);
+  expect(event.parameters).toMatchObject({
+    configuredRuntimeCount: 1,
+    configuredAgentCount: 1,
+    countsStatus: "reported",
+    collectionStatus: "complete",
+    configurations: [
+      {
+        status: "reported",
+        agentsStatus: "reported",
+        defaultAgentModel: { agentPosition: 0, modelPosition: 0, status: "reported" },
+        sandboxOS: "linux",
+        sandboxOSStatus: "reported",
+        managedAgentVersionStatus: "reported",
+        settings: {
+          computeDriverStatus: "reported",
+          gpuStatus: "reported",
+          imageOwnershipStatus: "reported",
+          policyTierStatus: "reported",
+          webSearchStatus: "reported",
+        },
+      },
+    ],
+  });
+  expect(isOperationEvent(event)).toBe(true);
+});
+
+const twoAgentConfig = JSON.stringify({
+  agents: {
+    defaults: { model: "openai/gpt-4o" },
+    entries: { main: { default: true }, helper: {} },
+  },
+  models: { providers: { openai: { api: "openai-completions" } } },
+});
+
+async function collectWithFailures(failing: readonly string[]) {
+  mocks.readRegistry.mockReturnValue({
+    defaultSandbox: null,
+    sandboxes: { pair: { name: "pair", agent: "openclaw", gatewayPort: 8080 } },
+  });
+  const responses: Record<string, string> = {
+    uname: "Linux",
+    cat: twoAgentConfig,
+    openclaw: JSON.stringify([
+      { id: "main", isDefault: true },
+      { id: "helper", isDefault: false },
+    ]),
+  };
+  mocks.createReader.mockReturnValue({
+    read: vi.fn(async ({ command }: { command: readonly string[] }) =>
+      failing.includes(command[0])
+        ? Promise.reject(new Error("Native evidence could not be verified"))
+        : responses[command[0]],
+    ),
+    observeInferenceRoute: vi.fn(async () =>
+      failing.includes("route")
+        ? Promise.reject(new Error("no gateway in this test"))
+        : { ok: true, value: { state: "unconfigured" } },
+    ),
+    dispose: vi.fn(),
+  });
+  return collectOperationSnapshot({
+    signal: new AbortController().signal,
+    deadlineAt: Date.now() + 10_000,
+  });
+}
+
+it.each([
+  [
+    "no read",
+    [],
+    { status: "reported", agentsStatus: "reported", defaultAgentModel: { status: "reported" } },
+    "reported",
+    "complete",
+  ],
+  [
+    "the OS read",
+    ["uname"],
+    { sandboxOSStatus: "collection_error", status: "reported", agentsStatus: "reported" },
+    "reported",
+    "partial",
+  ],
+  [
+    "the route read",
+    ["route"],
+    { currentInferenceRouteStatus: "collection_error", agentsStatus: "reported" },
+    "reported",
+    "partial",
+  ],
+  [
+    "the roster read",
+    ["openclaw"],
+    {
+      status: "collection_error",
+      agentsStatus: "reported",
+      agents: [{ modelsStatus: "reported" }, { modelsStatus: "reported" }],
+      defaultAgentModel: { status: "collection_error" },
+      sandboxOSStatus: "reported",
+    },
+    "reported",
+    "partial",
+  ],
+  [
+    "the configuration read",
+    ["cat"],
+    {
+      status: "collection_error",
+      agentsStatus: "reported",
+      agents: [{ modelsStatus: "collection_error" }, { modelsStatus: "collection_error" }],
+      defaultAgentModel: { status: "collection_error" },
+      sandboxOSStatus: "reported",
+    },
+    "reported",
+    "partial",
+  ],
+  [
+    "both agent reads",
+    ["cat", "openclaw"],
+    {
+      status: "collection_error",
+      agentsStatus: "collection_error",
+      sandboxOSStatus: "reported",
+      currentInferenceRouteStatus: "not_configured",
+    },
+    "collection_error",
+    "partial",
+  ],
+] as const)(
+  "degrades only the fields that %s supplies (#14239)",
+  async (_label, failing, row, countsStatus, collectionStatus) => {
+    const snapshot = await collectWithFailures(failing);
+    expect(snapshot.configurations[0]).toMatchObject(row);
+    expect(snapshot).toMatchObject({ countsStatus, collectionStatus });
   },
 );

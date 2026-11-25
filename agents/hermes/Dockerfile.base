@@ -28,14 +28,14 @@ FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e05
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
-        ca-certificates=20250419 \
+        ca-certificates=20250419+deb13u1 \
         curl=8.14.1-2+deb13u7 \
         git=1:2.47.3-0+deb13u1 \
         libssl-dev=3.5.7-1~deb13u3 \
         libssl3t64=3.5.7-1~deb13u3 \
         openssh-server=1:10.0p1-7+deb13u4 \
-        xz-utils=5.8.1-1+deb13u1 \
-        zlib1g-dev=1:1.3.dfsg+really1.3.1-1+b1 \
+        xz-utils=5.8.1-1+deb13u2 \
+        zlib1g-dev=1:1.3.dfsg+really1.3.1-1+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/security/build-native-security-packages.sh /scripts/security/build-native-security-packages.sh
@@ -87,9 +87,10 @@ ARG UV_VERSION=0.11.33
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
 # tools again after install.
-# Install the reviewed libexpat, jq, and Vim packages from immutable Debian
-# snapshots: Expat from 20260811T082421Z, jq from 20260724T000000Z, and Vim
-# from 20260727T143429Z, matching the checksum-bound OpenClaw base packages.
+# Install the reviewed libexpat, jq, and Vim packages with exact versions
+# and hashes matching the OpenClaw base. Expat and vim-tiny come from the
+# 20260811T082421Z Debian Snapshot archive; jq and vim-common come from the
+# official Debian pool.
 # hadolint ignore=DL3001,DL4006
 RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,target=/tmp/nemoclaw-security/scripts/security/security-package-inventory.mts \
     --mount=type=bind,source=src/lib/sandbox-base-image/security-package-specs.ts,target=/tmp/nemoclaw-security/src/lib/sandbox-base-image/security-package-specs.ts \
@@ -101,14 +102,14 @@ RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,tar
         curl=8.14.1-2+deb13u7 \
         git=1:2.47.3-0+deb13u1 \
         gnupg=2.4.7-21+deb13u1 \
-        ca-certificates=20250419 \
+        ca-certificates=20250419+deb13u1 \
         iproute2=6.15.0-1 \
         iptables=1.8.11-2 \
         nftables=1.1.3-1 \
         libcap2-bin=1:2.75-10+deb13u1+b3 \
         libssl3t64=3.5.7-1~deb13u3 \
-        libc6=2.41-12+deb13u4 \
-        libc-bin=2.41-12+deb13u4 \
+        libc6=2.41-12+deb13u5 \
+        libc-bin=2.41-12+deb13u5 \
         bsdutils=1:2.41.5-0+deb13u1 \
         login=1:4.16.0-2+really2.41.5-0+deb13u1 \
         mount=2.41.5-0+deb13u1 \
@@ -145,35 +146,34 @@ RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,tar
         *) echo "Unsupported architecture for Debian security packages: $arch" >&2; exit 1 ;; \
     esac \
     && security_deb_dir="/tmp/nemoclaw-debian-security" \
-    && snapshot_url="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main" \
-    && expat_snapshot_url="https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main" \
-    && vim_snapshot_url="https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main" \
+    && debian_pool_url="https://deb.debian.org/debian/pool/main" \
+    && debian_snapshot_url="https://snapshot-cloudflare.debian.org/archive/debian/20260811T082421Z/pool/main" \
     && vim_common_sha256="c21aad77632ef790d2352f1c38e688069980bbd530034248dd5e1158da9c9fe3" \
     && mkdir -p "$security_deb_dir" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libexpat1.deb" \
-        "$expat_snapshot_url/e/expat/libexpat1_2.8.3-1_${arch}.deb" \
+        "$debian_snapshot_url/e/expat/libexpat1_2.8.3-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libonig5.deb" \
-        "$snapshot_url/libo/libonig/libonig5_6.9.9-1+b1_${arch}.deb" \
+        "$debian_pool_url/libo/libonig/libonig5_6.9.9-1+b1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libjq1.deb" \
-        "$snapshot_url/j/jq/libjq1_1.8.2-1_${arch}.deb" \
+        "$debian_pool_url/j/jq/libjq1_1.8.2-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/jq.deb" \
-        "$snapshot_url/j/jq/jq_1.8.2-1_${arch}.deb" \
+        "$debian_pool_url/j/jq/jq_1.8.2-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/vim-common.deb" \
-        "$vim_snapshot_url/v/vim/vim-common_9.2.0858-1_all.deb" \
+        "$debian_pool_url/v/vim/vim-common_9.2.0858-1_all.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/vim-tiny.deb" \
-        "$vim_snapshot_url/v/vim/vim-tiny_9.2.0858-1_${arch}.deb" \
+        "$debian_snapshot_url/v/vim/vim-tiny_9.2.0858-1_${arch}.deb" \
     && printf '%s  %s\n' \
         "$libexpat_sha256" "$security_deb_dir/libexpat1.deb" \
         "$libonig_sha256" "$security_deb_dir/libonig5.deb" \

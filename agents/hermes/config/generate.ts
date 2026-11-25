@@ -51,7 +51,10 @@ export function generateHermesConfig({
   const envLines = policy.env_lines;
   finalizeHermesPlatformToolsets(config, settings);
   const switchyardFiles = settings.switchyardRouting
-    ? serializeHermesSwitchyardRouting(settings.switchyardRouting)
+    ? serializeHermesSwitchyardRouting(
+        settings.switchyardRouting,
+        settings.switchyardBindings ?? undefined,
+      )
     : null;
   const written = writeHermesConfigFiles(config, envLines, policy, switchyardFiles, homeDir);
 

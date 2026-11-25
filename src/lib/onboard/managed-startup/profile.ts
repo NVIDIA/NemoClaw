@@ -7,7 +7,9 @@ import { TextDecoder } from "node:util";
 import { isLoopbackDashboardUrl } from "../../dashboard/url.ts";
 import {
   type HermesSwitchyardRoutingIntent,
+  type SwitchyardProviderBindings,
   validateHermesSwitchyardRoutingIntent,
+  validateSwitchyardProviderBindings,
 } from "../../hermes-switchyard-routing.ts";
 import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
 import { authorizeMessagingManagedStartupFields } from "../../messaging/managed-startup-placeholders.ts";
@@ -309,6 +311,7 @@ export interface ManagedStartupHermesConfig {
   readonly webSearch: ManagedStartupWebSearch;
   /** Absent only on canonical profiles created before Switchyard integration. */
   readonly switchyardRouting?: HermesSwitchyardRoutingIntent | null;
+  readonly switchyardBindings?: SwitchyardProviderBindings | null;
 }
 
 export interface ManagedStartupDcodeConfig {
@@ -569,6 +572,11 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
       "agentConfig.switchyardRouting",
       "runtime-env",
     ),
+    affordance(
+      "NEMOCLAW_HERMES_SWITCHYARD_BINDINGS_B64",
+      "agentConfig.switchyardBindings",
+      "runtime-env",
+    ),
     affordance("NEMOCLAW_WEB_SEARCH_ENABLED", "agentConfig.webSearch.enabled"),
     affordance("NEMOCLAW_WEB_SEARCH_PROVIDER", "agentConfig.webSearch.provider"),
     affordance("NEMOCLAW_MESSAGING_PLAN_B64", "messaging.plan"),
@@ -818,14 +826,14 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
   openclaw: [
     { input: "BASE_IMAGE", reason: "release-composition" },
     { input: "OPENCLAW_VERSION", reason: "release-composition" },
-    { input: "OPENCLAW_2026_9_2_INTEGRITY", reason: "integrity-pin" },
-    { input: "OPENCLAW_2026_9_2_TARBALL", reason: "release-composition" },
+    { input: "OPENCLAW_2026_10_5_INTEGRITY", reason: "integrity-pin" },
+    { input: "OPENCLAW_2026_10_5_TARBALL", reason: "release-composition" },
     {
-      input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY",
+      input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_10_5_INTEGRITY",
       reason: "integrity-pin",
     },
     {
-      input: "OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY",
+      input: "OPENCLAW_BRAVE_PLUGIN_2026_10_5_INTEGRITY",
       reason: "integrity-pin",
     },
     {
@@ -1064,7 +1072,12 @@ const OPENCLAW_CONFIG_KEYS = new Set([
 const LEGACY_OPENCLAW_CONFIG_KEYS = new Set([...OPENCLAW_CONFIG_KEYS, "deviceAuth"]);
 const LEGACY_DEVICE_AUTH_KEYS = new Set(["disabled", "optOutSource"]);
 const LEGACY_DEVICE_AUTH_OPT_OUT_SOURCES = new Set(["operator", "managed-onboard"]);
-const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch", "switchyardRouting"]);
+const HERMES_CONFIG_KEYS = new Set([
+  "agent",
+  "webSearch",
+  "switchyardRouting",
+  "switchyardBindings",
+]);
 const DCODE_CONFIG_KEYS = new Set(["agent", "autoApprovalMode", "observabilityEnabled"]);
 const PI_CONFIG_KEYS = new Set(["agent"]);
 const PI_DASHBOARD_KEYS = new Set(["agent", "mode"]);
@@ -1862,6 +1875,7 @@ function validateExtraAgents(value: unknown): ManagedStartupExtraAgents {
 function validateAgentConfig(
   value: unknown,
   expectedAgent: ManagedStartupAgent,
+  allowStoredLegacyRouting: boolean,
 ): ManagedStartupAgentConfig {
   const config = requireRecord(value, "agentConfig");
   const agent = requireStringEnum<ManagedStartupAgent>(
@@ -1904,10 +1918,22 @@ function validateAgentConfig(
       !hasSwitchyardRouting || config.switchyardRouting === null
         ? null
         : validateHermesSwitchyardRoutingIntent(config.switchyardRouting);
+    const hasBindings = Object.hasOwn(config, "switchyardBindings");
+    const legacyUnboundRouting =
+      allowStoredLegacyRouting && switchyardRouting?.judge.mode === "reuse-capable" && !hasBindings;
+    const switchyardBindings =
+      switchyardRouting && !legacyUnboundRouting
+        ? validateSwitchyardProviderBindings(config.switchyardBindings, switchyardRouting)
+        : null;
+    if (!switchyardRouting && config.switchyardBindings != null)
+      invalid("Switchyard bindings require an explicit routing configuration");
     return {
       agent,
       webSearch: validateWebSearch(config.webSearch, agent),
       ...(hasSwitchyardRouting ? { switchyardRouting } : {}),
+      ...(hasBindings || (switchyardRouting && !legacyUnboundRouting)
+        ? { switchyardBindings }
+        : {}),
     };
   }
 
@@ -2246,6 +2272,13 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
  * lists are sorted so all producers fingerprint the same resolved intent.
  */
 export function validateManagedStartupProfile(value: unknown): ManagedStartupProfile {
+  return validateManagedStartupProfileValue(value, false);
+}
+
+function validateManagedStartupProfileValue(
+  value: unknown,
+  allowStoredLegacyRouting: boolean,
+): ManagedStartupProfile {
   assertPayloadStructureAndCredentialShapes(value);
   const ownedValue = cloneJsonValue(value, "profile", {
     nullPrototypeObjects: true,
@@ -2287,7 +2320,7 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
     invalid("corporateCa.bundleSha256 must be null or a lowercase SHA-256 digest");
   }
 
-  const agentConfig = validateAgentConfig(profile.agentConfig, agent);
+  const agentConfig = validateAgentConfig(profile.agentConfig, agent, allowStoredLegacyRouting);
   const dashboard = validateDashboard(profile.dashboard, agent);
 
   return {
@@ -2371,14 +2404,17 @@ function canonicalizeJson(value: unknown): unknown {
   return result;
 }
 
-/** Canonical JSON used by both the transport and fingerprint. */
-export function serializeManagedStartupProfile(profile: ManagedStartupProfile): string {
-  const validated = validateManagedStartupProfile(profile);
-  const serialized = JSON.stringify(canonicalizeJson(validated));
+function serializeValidatedManagedStartupProfile(profile: ManagedStartupProfile): string {
+  const serialized = JSON.stringify(canonicalizeJson(profile));
   if (Buffer.byteLength(serialized, "utf8") > MANAGED_STARTUP_PROFILE_MAX_BYTES) {
     invalid(`canonical payload exceeds ${String(MANAGED_STARTUP_PROFILE_MAX_BYTES)} bytes`);
   }
   return serialized;
+}
+
+/** Canonical JSON used by both the transport and fingerprint. */
+export function serializeManagedStartupProfile(profile: ManagedStartupProfile): string {
+  return serializeValidatedManagedStartupProfile(validateManagedStartupProfile(profile));
 }
 
 /** Encode canonical JSON as unpadded base64url for transport through argv or an environment variable. */
@@ -2388,6 +2424,13 @@ export function encodeManagedStartupProfile(profile: ManagedStartupProfile): str
 
 /** Decode the current canonical representation or migrate one canonical prior-version profile. */
 export function decodeManagedStartupProfile(encoded: string): ManagedStartupProfile {
+  return decodeManagedStartupProfileValue(encoded, false);
+}
+
+function decodeManagedStartupProfileValue(
+  encoded: string,
+  allowStoredLegacyRouting: boolean,
+): ManagedStartupProfile {
   if (
     typeof encoded !== "string" ||
     encoded.length === 0 ||
@@ -2419,14 +2462,26 @@ export function decodeManagedStartupProfile(encoded: string): ManagedStartupProf
     invalid("payload is not valid JSON");
   }
   const migration = migrateDecodedManagedStartupProfile(parsed);
-  const profile = validateManagedStartupProfile(migration.value);
+  const profile = validateManagedStartupProfileValue(migration.value, allowStoredLegacyRouting);
   const canonicalPayload = migration.migratedLegacyProfile
     ? JSON.stringify(canonicalizeJson(parsed))
-    : serializeManagedStartupProfile(profile);
+    : serializeValidatedManagedStartupProfile(profile);
   if (canonicalPayload !== raw) {
     invalid("payload is not in canonical form");
   }
   return profile;
+}
+
+/** Read historical receipt identity without exposing an unbound profile for execution. */
+export function readStoredManagedStartupProfileMetadata(encoded: string): {
+  readonly agent: ManagedStartupAgent;
+  readonly corporateCaBundleSha256: string | null;
+} {
+  const profile = decodeManagedStartupProfileValue(encoded, true);
+  return {
+    agent: profile.agent,
+    corporateCaBundleSha256: profile.corporateCa.bundleSha256,
+  };
 }
 
 /** SHA-256 over canonical decoded JSON, independent of object key insertion order. */

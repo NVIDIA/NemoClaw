@@ -12,6 +12,11 @@ import {
   runLoggedDockerShell,
 } from "../../helpers/dockerfile-run-shell";
 
+import {
+  prepareOfficialPluginBuildFixture,
+  writeReviewedNpmFixture,
+} from "../../helpers/reviewed-npm-fixture";
+
 const DOCKERFILE = path.join(import.meta.dirname, "..", "../..", "Dockerfile");
 
 function runPluginInstallBlock(
@@ -21,17 +26,29 @@ function runPluginInstallBlock(
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
   const command = dockerRunCommandBetween(
     dockerfile,
-    "# Install optional plugins from verified offline archives",
+    "# Install non-messaging OpenClaw plugins that need to match the runtime.",
     "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-plugin-"));
 
   try {
     const archive = "reviewed Tavily plugin fixture";
-    fs.writeFileSync(path.join(tmp, "tavily-plugin-2026.9.2.tgz"), archive);
+    fs.writeFileSync(path.join(tmp, "tavily-plugin-2026.10.5.tgz"), archive);
+    const integrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
+    const packages = [
+      {
+        packageSpec: "@openclaw/tavily-plugin@2026.10.5",
+        integrity,
+        tarballUrl:
+          "https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.10.5.tgz",
+      },
+    ];
+    const fixture = prepareOfficialPluginBuildFixture(command, tmp, packages);
+    const npmFixture = path.join(tmp, "npm-fixture");
+    writeReviewedNpmFixture(npmFixture, path.join(tmp, "npm-calls.log"), packages);
     const outcome = runLoggedDockerShell(
-      command.replace(
-        "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives;",
+      fixture.command.replace(
+        "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives",
         'export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR="$TAVILY_TEST_ARCHIVE_DIR";',
       ),
       tmp,
@@ -39,8 +56,10 @@ function runPluginInstallBlock(
       {
         env: {
           ...env,
+          ...fixture.env,
+          NEMOCLAW_REVIEWED_NPM_EXECUTABLE: npmFixture,
           TAVILY_TEST_ARCHIVE_DIR: tmp,
-          OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY: `sha512-${createHash("sha512").update(archive).digest("base64")}`,
+          OPENCLAW_TAVILY_PLUGIN_2026_10_5_INTEGRITY: integrity,
         },
       },
     );
@@ -55,7 +74,7 @@ const TAVILY_BUILD_ENV = {
   NEMOCLAW_WEB_SEARCH_ENABLED: "1",
   NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
   NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "0",
-  OPENCLAW_VERSION: "2026.9.2",
+  OPENCLAW_VERSION: "2026.10.5",
   TAVILY_API_KEY: "",
   NODE_OPTIONS: "",
 };
@@ -73,7 +92,7 @@ describe("sandbox provisioning: reviewed OpenClaw Tavily plugin", () => {
 
     expect(result.status, `stderr: ${result.stderr}`).toBe(0);
     expect(calls.trim().split("\n")).toEqual([
-      "plugins install --force --accept-capabilities npm-pack:/test-archives/tavily-plugin-2026.9.2.tgz|TAVILY_API_KEY=",
+      "plugins install --force --accept-capabilities @openclaw/tavily-plugin@2026.10.5|TAVILY_API_KEY=",
       "doctor --fix --non-interactive|TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY",
     ]);
   });
@@ -86,7 +105,7 @@ describe("sandbox provisioning: reviewed OpenClaw Tavily plugin", () => {
 
     expect(result.status).toBe(41);
     expect(calls.trim()).toBe(
-      "plugins install --force --accept-capabilities npm-pack:/test-archives/tavily-plugin-2026.9.2.tgz",
+      "plugins install --force --accept-capabilities @openclaw/tavily-plugin@2026.10.5",
     );
   });
 });

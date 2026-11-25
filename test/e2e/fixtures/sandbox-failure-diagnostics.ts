@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import os from "node:os";
+import { readFileSync } from "node:fs";
 import { GATEWAY_PORT } from "../../../src/lib/core/ports.ts";
 import { resolveGatewayLogPathForPort } from "../../../src/lib/onboard/gateway/state-dir.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
@@ -16,6 +17,7 @@ export async function captureSandboxFailureDiagnostics(
     artifactPrefix: string;
     redactionValues: string[];
     captureGatewayLog?: boolean;
+    captureOpenClawOwner?: boolean;
     expectedExitCode?: number;
     env?: NodeJS.ProcessEnv;
   },
@@ -27,6 +29,8 @@ export async function captureSandboxFailureDiagnostics(
     OPENSHELL_GATEWAY: sourceEnv.OPENSHELL_GATEWAY,
     NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: sourceEnv.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
   };
+  // Capture transient native state before slower supervisor log requests.
+  if (options.captureOpenClawOwner) await captureContainerDiagnostics();
   await host
     .command(
       host.openshellCommandPath,
@@ -61,62 +65,92 @@ export async function captureSandboxFailureDiagnostics(
       )
       .catch(() => undefined);
   }
-  // OpenShell's event stream does not include the entrypoint's stderr.
-  // Read the stopped container through the existing runtime owner instead of
-  // depending on an exec service that died with the supervisor.
-  try {
-    const runtime = new RuntimeProviderPrerequisite(host, undefined, env);
-    const diagnosticOptions = {
-      redactionValues: options.redactionValues,
-      captureLimitBytes: 32_768,
-      timeoutMs: 30_000,
-    };
-    const prefix = options.artifactPrefix;
-    const containerId = await runtime.resolveSandboxResourceHandle(options.sandboxName, {
-      ...diagnosticOptions,
-      artifactName: `${prefix}-container-identity`,
-    });
-    const startupLog = runtime.hostInvocation([
-      "cp",
-      `${containerId}:/tmp/nemoclaw-start.log`,
-      "-",
-    ]);
-    await Promise.allSettled([
-      runtime.command(
-        [
-          "inspect",
-          "--format",
-          "{{.State.Status}}\t{{.State.OOMKilled}}\t{{.State.ExitCode}}\t{{.State.FinishedAt}}",
-          containerId,
-        ],
-        { ...diagnosticOptions, artifactName: `${prefix}-container-state` },
-      ),
-      runtime.command(["logs", "--tail", "200", "--since", "3m", containerId], {
+  if (!options.captureOpenClawOwner) await captureContainerDiagnostics();
+
+  async function captureContainerDiagnostics(): Promise<void> {
+    // OpenShell's event stream does not include the entrypoint's stderr.
+    // Read the stopped container through the existing runtime owner instead of
+    // depending on an exec service that died with the supervisor.
+    try {
+      const runtime = new RuntimeProviderPrerequisite(host, undefined, env);
+      const diagnosticOptions = {
+        redactionValues: options.redactionValues,
+        captureLimitBytes: 32_768,
+        timeoutMs: 30_000,
+      };
+      const prefix = options.artifactPrefix;
+      const containerId = await runtime.resolveSandboxResourceHandle(options.sandboxName, {
         ...diagnosticOptions,
-        artifactName: `${prefix}-container-logs`,
-      }),
-      // The managed entrypoint records its output in this file. Stream only
-      // its contents from the stopped container; never unpack files on the host.
-      host.command(
-        "bash",
-        [
-          "-o",
-          "pipefail",
-          "-c",
-          '"$@" | tar -xOf - nemoclaw-start.log',
-          prefix,
-          startupLog.command,
-          ...startupLog.args,
-        ],
-        {
+        artifactName: `${prefix}-container-identity`,
+      });
+      const startupLog = runtime.hostInvocation([
+        "cp",
+        `${containerId}:/tmp/nemoclaw-start.log`,
+        "-",
+      ]);
+      await Promise.allSettled([
+        ...(options.captureOpenClawOwner
+          ? [
+              Promise.resolve().then(() =>
+                runtime.command(
+                  [
+                    "exec",
+                    containerId,
+                    "python3",
+                    "-I",
+                    "-c",
+                    readFileSync(
+                      new URL("../lib/openclaw-owner-diagnostic.py", import.meta.url),
+                      "utf8",
+                    ),
+                    "--state-root",
+                    "/sandbox/.openclaw",
+                  ],
+                  {
+                    ...diagnosticOptions,
+                    artifactName: `${prefix}-native-owner`,
+                    timeoutMs: 10_000,
+                  },
+                ),
+              ),
+            ]
+          : []),
+        runtime.command(
+          [
+            "inspect",
+            "--format",
+            "{{.State.Status}}\t{{.State.OOMKilled}}\t{{.State.ExitCode}}\t{{.State.FinishedAt}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+            containerId,
+          ],
+          { ...diagnosticOptions, artifactName: `${prefix}-container-state` },
+        ),
+        runtime.command(["logs", "--tail", "200", "--since", "3m", containerId], {
           ...diagnosticOptions,
-          env,
-          artifactName: `${prefix}-startup-log`,
-        },
-      ),
-    ]);
-  } catch {
-    // Failure-only evidence must preserve the original lifecycle assertion.
+          artifactName: `${prefix}-container-logs`,
+        }),
+        // The managed entrypoint records its output in this file. Stream only
+        // its contents from the stopped container; never unpack files on the host.
+        host.command(
+          "bash",
+          [
+            "-o",
+            "pipefail",
+            "-c",
+            '"$@" | tar -xOf - nemoclaw-start.log',
+            prefix,
+            startupLog.command,
+            ...startupLog.args,
+          ],
+          {
+            ...diagnosticOptions,
+            env,
+            artifactName: `${prefix}-startup-log`,
+          },
+        ),
+      ]);
+    } catch {
+      // Failure-only evidence must preserve the original lifecycle assertion.
+    }
   }
 }
 

@@ -1,6 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { validateSwitchyardBindingState } from "../../hermes-switchyard-routing";
+
+/** Bind provider-role observations to the same selection that the registry publishes. */
+export function requireSwitchyardBindingForSelection(
+  entry: Pick<SandboxEntry, "provider" | "model" | "hermesSwitchyard">,
+): SandboxEntry["hermesSwitchyard"] {
+  if (entry.hermesSwitchyard === undefined) return undefined;
+  const state = validateSwitchyardBindingState(entry.hermesSwitchyard);
+  if (
+    entry.provider !== state.routing.capable.provider ||
+    entry.model !== state.routing.capable.model
+  )
+    throw new Error("Switchyard selection does not match its provider binding state.");
+  return state;
+}
+
 import {
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInference,
@@ -34,6 +50,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "nativeLocalProviderAttachment",
   "nativeNvidiaProviderAttachment",
   "nativeHostedProviderAttachment",
+  "hermesSwitchyard",
   "openshellDriver",
   "pendingRouteReservation",
   "pendingCreateIdentity",

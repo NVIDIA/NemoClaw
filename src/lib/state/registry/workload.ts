@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 
 import { MANAGED_IMAGE_REPOSITORIES } from "../../onboard/managed-image/contract";
 import {
-  decodeManagedStartupProfile,
+  readStoredManagedStartupProfileMetadata,
   MANAGED_STARTUP_PROFILE_MAX_BYTES,
   MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES,
 } from "../../onboard/managed-startup/profile";
@@ -141,9 +141,9 @@ export function cloneSandboxWorkloadReceipt(
   ) {
     return undefined;
   }
-  let profile: ReturnType<typeof decodeManagedStartupProfile>;
+  let profile: ReturnType<typeof readStoredManagedStartupProfileMetadata>;
   try {
-    profile = decodeManagedStartupProfile(value.encodedProfile);
+    profile = readStoredManagedStartupProfileMetadata(value.encodedProfile);
   } catch {
     return undefined;
   }
@@ -155,7 +155,7 @@ export function cloneSandboxWorkloadReceipt(
   if (value.corporateCaB64 !== undefined && corporateCaBytes === null) {
     return undefined;
   }
-  const expectedCorporateCaSha256 = profile.corporateCa.bundleSha256;
+  const expectedCorporateCaSha256 = profile.corporateCaBundleSha256;
   if (
     (expectedCorporateCaSha256 === null) !== (corporateCaBytes === null) ||
     (corporateCaBytes !== null &&

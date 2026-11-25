@@ -1,0 +1,92 @@
+function resolveDeviceSessionAuthz(client) {
+	const callerScopes = client?.connect.scopes ?? [];
+	return {
+		callerDeviceId: client?.isDeviceTokenAuth ? client.connect.device?.id.trim() || null : null,
+		callerScopes,
+		isAdminCaller: callerScopes.includes("operator.admin")
+	};
+}
+function requestsNonOperatorDeviceRole(input) {
+	return [input.role, ...input.roles ?? []].some((role) => {
+		const normalized = role?.trim();
+		return Boolean(normalized && normalized !== "operator");
+	});
+}
+// Exact published OpenClaw 2026.10.5 excerpts; source commit 1b58cb9a1b4f4353e1add63c8506db4d890962e8.
+function authorizePairingDecision(operation, requestId, pending, authz, { respond, context }) {
+	const reason = pending ? authz.callerDeviceId && pending.deviceId.trim() !== authz.callerDeviceId ? "device-ownership-mismatch" : operation === "approve" && requestsNonOperatorDeviceRole(pending) ? "role-management-requires-admin" : void 0 : void 0;
+	if (pending && !reason) return true;
+	const message = `device pairing ${operation === "approve" ? "approval" : "rejection"} denied`;
+	if (pending && reason) {
+		context.logGateway.warn(`${message} request=${requestId} reason=${reason}`);
+		emitDevicePairingDeniedSecurityEvent({
+			authz,
+			targetDeviceId: pending.deviceId,
+			controlId: `device.pair.${operation}`,
+			reason
+		});
+	}
+	respond(false, void 0, errorShape(ErrorCodes.INVALID_REQUEST, message));
+	return false;
+}
+const deviceHandlers = {
+	"device.pair.approve": async ({ params, respond, context, client }) => {
+		if (!assertValidParams(params, validateDevicePairApproveParams, "device.pair.approve", respond)) return;
+		const requestId = params.requestId.trim();
+		const authz = resolveDeviceSessionAuthz(client);
+		if (!authz.isAdminCaller) {
+			if (!authorizePairingDecision("approve", requestId, await getPendingDevicePairing(requestId), authz, {
+				respond,
+				context
+			})) return;
+		}
+		const approved = await approveDevicePairing(requestId, { callerScopes: authz.callerScopes });
+		if (!approved) {
+			respond(false, void 0, errorShape(ErrorCodes.INVALID_REQUEST, "unknown requestId"));
+			return;
+		}
+		if (approved.status === "forbidden") {
+			emitDevicePairingDeniedSecurityEvent({
+				authz,
+				controlId: "device.pair.approve",
+				reason: approved.reason
+			});
+			respond(false, void 0, errorShape(ErrorCodes.INVALID_REQUEST, formatDevicePairingForbiddenMessage(approved)));
+			return;
+		}
+		const normalizedDeviceId = approved.device.deviceId.trim();
+		context.scopeUpgradeCoordinator?.notify(requestId, "approved");
+		if (approved.nodePairingGenerationChanged) {
+			invalidateNodeWakeState(normalizedDeviceId);
+			context.invalidateClientsForDevice?.(normalizedDeviceId, {
+				role: "node",
+				reason: "device-pairing-reapproved"
+			});
+		}
+		context.logGateway.info(`device pairing approved device=${approved.device.deviceId} role=${approved.device.role ?? "unknown"}`);
+		emitDevicePairingLifecycleSecurityEvent({
+			action: "device.pairing.approved",
+			severity: "low",
+			authz,
+			targetDeviceId: approved.device.deviceId,
+			controlId: "device.pair.approve",
+			attributes: {
+				role_count: approved.device.roles?.length ?? (approved.device.role ? 1 : 0),
+				scope_count: approved.device.approvedScopes?.length ?? approved.device.scopes?.length ?? 0
+			}
+		});
+		context.broadcast("device.pair.resolved", {
+			requestId,
+			deviceId: approved.device.deviceId,
+			decision: "approved",
+			ts: Date.now()
+		}, { dropIfSlow: true });
+		respond(true, {
+			requestId,
+			device: redactPairedDevice(approved.device)
+		}, void 0);
+		if (approved.nodePairingGenerationChanged) queueMicrotask(() => {
+			context.disconnectClientsForDevice?.(normalizedDeviceId, { role: "node" });
+		});
+	},
+};

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const portableMocks = vi.hoisted(() => ({
@@ -35,14 +37,16 @@ describe("runInferenceSet Hermes routing", () => {
     const baseProfile = managedStartupE2eProfile("hermes");
     expect(baseProfile.agentConfig.agent).toBe("hermes");
     const agentConfig = baseProfile.agentConfig as ManagedStartupHermesConfig;
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "nvidia-prod", model: "nvidia/efficient-model" },
+      capable: { provider: "openai-api", model: "openai/capable-model" },
+    });
     const encodedProfile = encodeManagedStartupProfile({
       ...baseProfile,
       agentConfig: {
         ...agentConfig,
-        switchyardRouting: createHermesSwitchyardRoutingIntent({
-          efficient: { provider: "nvidia-prod", model: "nvidia/efficient-model" },
-          capable: { provider: "openai-api", model: "openai/capable-model" },
-        }),
+        switchyardRouting: routing,
+        switchyardBindings: switchyardBindingFixture(routing),
       },
     });
     const config: ConfigObject = { model: { default: HERMES_SWITCHYARD_ROUTE_ID } };

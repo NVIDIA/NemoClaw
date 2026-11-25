@@ -318,7 +318,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
-      "test": "verifies changed Hugging Face catalog references without credentials",
+      "test": "routes security guidance and model references through credential-free checks",
       "category": "security"
     },
     {
@@ -510,6 +510,11 @@
       "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
       "test": "budgets WSL shard 1 for serial live tests, cleanup and evidence upload",
       "category": "compatibility"
+    },
+    {
+      "file": "test/repository/code-scanning-workflow.test.ts",
+      "test": "preserves complete JavaScript coverage across disjoint query partitions",
+      "category": "security"
     },
     {
       "file": "test/automation/pull-requests/candidate-upgrade-admission-workflow.test.ts",

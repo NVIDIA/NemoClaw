@@ -11,6 +11,7 @@ export type VitestWatchTriggerPattern = {
 };
 
 const E2E_WORKFLOW_CONTRACTS = [
+  "test/e2e/support/manual-pr-concurrency.test.ts",
   "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
@@ -46,6 +47,61 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern:
+      /(?:^|\/)test\/e2e\/fixtures\/provider-profiles\/nemoclaw-e2e-(?:extra-provider|switchyard-peer)-v1\.yaml$/,
+    testsToRun: runTests("test/e2e/support/gateway-extra-provider-profile.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-security-code-review\/SKILL\.md$/,
+    testsToRun: runTests("test/security/security-review-paths.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)schemas\/network-policy\.schema\.json$/,
+    testsToRun: runTests("test/onboarding/validate-config-schemas.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-e2e\/references\/manual-pr\.md$/,
+    testsToRun: runTests("test/repository/manual-pr-dispatch-checkpoint.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)tools\/e2e\/protected-openshell-filesystem\.py$/,
+    testsToRun: runTests(
+      "test/e2e/support/protected-openshell-filesystem.test.ts",
+      "test/e2e/support/protected-openshell-workspace.test.ts",
+    ),
+  },
+  {
+    pattern:
+      /(?:^|\/)test\/e2e\/(?:lib\/openclaw-owner-diagnostic|support\/openclaw-owner-diagnostic-cases)\.py$/,
+    testsToRun: runTests("test/e2e/support/openclaw-owner-diagnostic.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)test\/e2e\/lib\/issue-4462-admin-request-selector\.py$/,
+    testsToRun: runTests(
+      "test/security/admin-approval-helper.test.ts",
+      "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
+      "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/lib\/openclaw-gateway-owner\.mts$/,
+    testsToRun: runTests("src/lib/onboard/managed-startup/provider-root-apply.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/lib\/openclaw_pairing_state\.py$/,
+    testsToRun: runTests(
+      "src/lib/actions/sandbox/auto-pair-approval-sqlite.test.ts",
+      "src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification.test.ts",
+      "src/lib/onboard/managed-startup/provider-root-apply.test.ts",
+      "test/agents/openclaw/runtime/nemoclaw-start-auto-pair-sqlite.test.ts",
+      "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
+      "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+      "test/runtime/sandbox/sandbox-build-context.test.ts",
+      "test/runtime/sandbox/sandbox-provisioning-helper-permissions.test.ts",
+      "test/security/admin-approval-helper.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)Dockerfile(?:\.base)?$/,
     testsToRun: (file) => {
       const relative = file.startsWith(`${REPO_ROOT}/`) ? file.slice(REPO_ROOT.length + 1) : file;
@@ -53,6 +109,26 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
         ? ["test/runtime/messaging/messaging-build-applier-integrity.test.ts"]
         : [];
     },
+  },
+  {
+    pattern:
+      /(?:^|\/)agents\/langchain-deepagents-code\/(?:requirements\.(?:in|lock)|dependency-overrides\.in|Dockerfile(?:\.base)?|patch-dependency-compatibility\.py|validate-runtime-contract\.py|validate-nemotron-ultra-profile\.py|profile-plugin\/.*)$/,
+    testsToRun: runTests(
+      "test/agents/deepagents/langchain-deepagents-code-image.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
+    ),
+  },
+  {
+    pattern:
+      /(?:^|\/)agents\/langchain-deepagents-code\/(?:patch-managed-deepagents-code\.py|dcode-wrapper\.sh|dcode-launcher\.sh|start\.sh)$/,
+    testsToRun: runTests(
+      "test/agents/deepagents/langchain-deepagents-code-managed-entrypoints.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-headless-runtime.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
+      "test/agents/deepagents/dcode-non-interactive-json.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-image.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)test\/e2e\/fixtures\/discord-enrollment-preload\.mts$/,
@@ -89,6 +165,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)scripts\/lib\/sandbox-init\.sh$/,
     testsToRun: runTests("test/runtime/sandbox/sandbox-init.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/pr\.ya?ml$/,
+    testsToRun: runTests("test/automation/pull-requests/pr-workflow-contract.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/,
@@ -156,6 +236,18 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
+    testsToRun: runTests("test/inference/managed/hermes-policy-cleanup-workflow.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:agents\/hermes\/(?:managed-startup-image-runtime\.bundle|managed-startup-filesystem\.ts|build-managed-startup-runtime\.ts)|src\/lib\/onboard\/managed-startup\/image-runtime\.ts|tools\/mcp-tool-discovery-runtime\/managed-startup-direct-entry\.ts)$/,
+    testsToRun: runTests(
+      "test/agents/hermes/managed-startup-runtime.test.ts",
+      "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/Dockerfile\.base$/,
     testsToRun: runTests(
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
@@ -166,6 +258,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)agents\/hermes\/install-switchyard\.py$/,
     testsToRun: runTests("test/agents/hermes/hermes-switchyard-package.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/(?:qualify-switchyard-judge\.py|start\.sh)$/,
+    testsToRun: runTests("test/agents/hermes/hermes-switchyard-judge-preflight.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/switchyard-preflight\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-switchyard-preflight.test.ts"),
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/image-build-probes\.py$/,
@@ -215,6 +315,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
           ]
         : [
             "test/generation/providerless-agent-config.test.ts",
+            "test/networking/dashboard-remote-bind-lifecycle.test.ts",
             "src/lib/onboard/managed-startup-profile.test.ts",
             "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
             "test/mcp/mcp-tool-discovery-image-contract.test.ts",
@@ -417,8 +518,16 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/dockerhub-auth-workflow-boundary.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/docs-publish-(?:staging|public)\.yaml$/,
+    testsToRun: runTests("test/generation/docs-publish-staging-workflow.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
     testsToRun: runTests("test/repository/code-scanning-workflow.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/label-v1-prs\.yaml$/,
+    testsToRun: runTests("test/automation/pull-requests/label-v1-prs-workflow.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/(?:pr-limits\.json|workflows\/pr-limit\.yaml)$/,

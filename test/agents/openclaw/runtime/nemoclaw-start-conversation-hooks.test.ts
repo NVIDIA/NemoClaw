@@ -46,7 +46,7 @@ function startupFixture(
   const doctorStart =
     mode === "root"
       ? source.lastIndexOf("run_requested_openclaw_post_upgrade_doctor || exit 1")
-      : source.indexOf("  run_requested_openclaw_post_upgrade_doctor || exit 1");
+      : source.indexOf("\n  run_requested_openclaw_post_upgrade_doctor || exit 1");
   const doctorEnd = source.indexOf(
     mode === "root"
       ? "# Apply manifest-declared runtime env aliases"

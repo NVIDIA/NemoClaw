@@ -4,6 +4,7 @@
 import {
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  NVIDIA_HOSTED_NATIVE_DEFINITION,
   normalizeNativeNvidiaProviderAttachment,
 } from "../native-nvidia/contract";
 import {
@@ -12,6 +13,11 @@ import {
 } from "./hosted-attachment";
 import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
 import type { NativeProviderAttachment } from "./contract";
+import { nativeProviderLifecycle } from "./index";
+import type {
+  OpenShellGatewayTarget,
+  OpenShellProviderAdapter,
+} from "../../adapters/openshell/sandbox-observer";
 
 /** Persisted authority selects the route; a logical provider name alone does not. */
 export function recordedNativeProviderAttachment(selection: {
@@ -55,6 +61,25 @@ export function recordedNativeProviderAttachment(selection: {
     return nvidia;
   }
   return hosted;
+}
+
+/** Verify persisted authority against its canonical profile and exact sandbox attachment. */
+export async function verifyRecordedNativeProviderAttachment(
+  selection: Parameters<typeof recordedNativeProviderAttachment>[0],
+  input: {
+    adapter: OpenShellProviderAdapter;
+    target: OpenShellGatewayTarget;
+    sandboxName: string;
+  },
+): Promise<void> {
+  const expected = recordedNativeProviderAttachment(selection);
+  if (!expected) throw new Error("Missing recorded native provider attachment.");
+  const definition =
+    selection.nativeNvidiaProviderAttachment !== undefined
+      ? NVIDIA_HOSTED_NATIVE_DEFINITION
+      : hostedNativeProviderForAttachment(expected);
+  if (!definition) throw new Error("Invalid recorded native hosted provider attachment.");
+  await nativeProviderLifecycle(definition).verifyNativeProviderAttachment({ ...input, expected });
 }
 
 export function matchesRecordedNativeProviderEndpoint(

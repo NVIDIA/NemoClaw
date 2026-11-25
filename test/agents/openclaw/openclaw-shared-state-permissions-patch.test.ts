@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
 import {
@@ -379,6 +380,74 @@ async function importModelsFixture(file: string): Promise<ModelsFixtureRuntime> 
 }
 
 describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
+  it.each([false, true])(
+    "preserves native 10.5 directory creation admission: %s",
+    (createDirectory) => {
+      const source = fs.readFileSync(
+        new URL("./fixtures/state-permissions-10.5.js.txt", import.meta.url),
+        "utf8",
+      );
+      const patched = patchOpenClawStateDbText(source, "10.5-state.mjs");
+      const created: unknown[] = [];
+      const hardened: unknown[] = [];
+      const database = "/native/state/openclaw.sqlite";
+      const ensure = runInNewContext(`${patched.text}\nensureOpenClawStatePermissions`, {
+        path,
+        process: { env: {} },
+        fs: { statSync: () => ({ mode: 0o777 }) },
+        existsSync: () => true,
+        mkdirSync: (directory: string, options: unknown) => created.push([directory, options]),
+        resolveOpenClawStateSqliteDir: () => path.dirname(database),
+        resolveOpenClawStateSqlitePath: () => database,
+        resolveSqliteDatabaseFilePaths: () => [database, database + "-wal"],
+        applyPrivateModeSync: (file: string, mode: number) => {
+          hardened.push([file, mode]);
+          return { applied: true };
+        },
+      });
+      ensure(database, { NEMOCLAW_OPENCLAW_SHARED_STATE: "1" }, { createDirectory });
+      expect(created).toEqual(
+        createDirectory ? [[path.dirname(database), { recursive: true, mode: 0o700 }]] : [],
+      );
+      expect(hardened).toEqual([
+        [path.dirname(database), 0o700],
+        [database, 0o600],
+        [database + "-wal", 0o600],
+      ]);
+      expect(patchOpenClawStateDbText(patched.text, "10.5-state.mjs").status).toBe(
+        "already-patched",
+      );
+    },
+  );
+
+  it("preserves the 10.5 native retirement guard and rejects its drift before patching", () => {
+    const fixture = makeFixture();
+    const retired = fs.readFileSync(
+      new URL("./fixtures/state-retired-runtime-10.5.js.txt", import.meta.url),
+      "utf8",
+    );
+    try {
+      fs.writeFileSync(
+        path.join(fixture.root, "package.json"),
+        JSON.stringify({ type: "module", version: "2026.10.5" }),
+      );
+      fs.writeFileSync(
+        fixture.migrationFiles[0],
+        retired.replace("voicewake.json", "ignored-voicewake.json"),
+      );
+      expect(() => patchOpenClawSharedStatePermissions(fixture.dist)).toThrow(
+        "reviewed retired-runtime guard",
+      );
+      expect(fs.readFileSync(fixture.stateFiles[0], "utf8")).toBe(UPSTREAM_STATE_DB_SOURCE);
+      fs.writeFileSync(fixture.migrationFiles[0], retired);
+      expect(patchOpenClawSharedStatePermissions(fixture.dist).patched).toBe(true);
+      expect(fs.readFileSync(fixture.migrationFiles[0], "utf8")).toBe(retired);
+      expect(patchOpenClawSharedStatePermissions(fixture.dist).patched).toBe(false);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("recognizes the 2026.9.1 doctor migration layout", () => {
     const patched = patchOpenClawStateMigrationText(
       UPSTREAM_STATE_MIGRATION_20260901_SOURCE,
@@ -504,6 +573,53 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
+
+  it.each([undefined, "1"])(
+    "preserves 2026.9.5 native permission checks with shared marker %s",
+    async (marker) => {
+      const fixture = makeFixture();
+      try {
+        const native = UPSTREAM_AGENT_DB_SOURCE.replace(
+          "chmodSync(dir, OPENCLAW_AGENT_DB_DIR_MODE)",
+          "ensureMode(dir, OPENCLAW_AGENT_DB_DIR_MODE)",
+        ).replace(
+          "\tfor (const candidate of resolveSqliteDatabaseFilePaths(pathname)) if (existsSync(candidate)) chmodSync(candidate, OPENCLAW_AGENT_DB_FILE_MODE);",
+          [
+            "\tfor (const candidate of resolveSqliteDatabaseFilePaths(pathname)) try {",
+            "\t\tensureMode(candidate, OPENCLAW_AGENT_DB_FILE_MODE);",
+            "\t} catch (error) {",
+            '\t\tif (error.code !== "ENOENT") throw error;',
+            "\t}",
+          ].join("\n"),
+        );
+        const file = fixture.agentFiles[0].replace(/\.js$/, ".mjs");
+        fs.renameSync(fixture.agentFiles[0], file);
+        fs.writeFileSync(file, native);
+        patchOpenClawSharedStatePermissions(fixture.dist);
+        expect(patchOpenClawSharedStatePermissions(fixture.dist).status).toBe("already-patched");
+        const runtime = await importAgentFixture(file);
+        const agentDir = path.join(fixture.root, "agent-state");
+        const database = path.join(agentDir, "main.sqlite");
+        const options = {
+          agentId: "main",
+          env: {
+            OPENCLAW_AGENT_DIR: agentDir,
+            ...(marker === undefined ? {} : { NEMOCLAW_OPENCLAW_SHARED_STATE: marker }),
+          },
+        };
+        runtime.ensureOpenClawAgentDatabasePermissions(database, options);
+        fs.writeFileSync(database, "", { mode: 0o644 });
+        runtime.ensureOpenClawAgentDatabasePermissions(database, options);
+        expect(mode(agentDir)).toBe(0o700);
+        expect(mode(database)).toBe(0o600);
+        // Missing WAL/SHM/journal files remain tolerated on repeated calls.
+        runtime.ensureOpenClawAgentDatabasePermissions(database, options);
+        expect(mode(database)).toBe(0o600);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("keeps the gateway per-agent database owner-only", async () => {
     const fixture = makeFixture();

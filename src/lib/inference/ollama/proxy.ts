@@ -58,6 +58,9 @@ const {
 } = require("../ollama-model-registry");
 const { formatBytes } = require("./model-size");
 const { isOllamaAuthProxyCommandLine }: typeof import("./process") = require("./process");
+const {
+  probeOllamaAuthProxyHealth: probeSharedOllamaAuthProxyHealth,
+}: typeof import("../local") = require("../local");
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
 const { promptManualModelId } = require("../model-prompts");
@@ -771,7 +774,7 @@ function restorePersistedOllamaAuthProxy(): void {
  * Targets 127.0.0.1 (not `localhost`): the proxy binds IPv4 0.0.0.0, and
  * `localhost` can resolve to ::1 first — on a host where an unrelated IPv6-only
  * service holds the port, that would probe the wrong listener. This matches the
- * other proxy probes (isProxyHealthy, probeOllamaAuthProxyHealth). See #4820.
+ * other proxy probes (isProxyHealthy and the shared health probe). See #4820.
  */
 function probeProxyToken(token: string): "accepted" | "rejected" | "unreachable" {
   const result = runCurlWithAuthConfig(
@@ -864,102 +867,29 @@ function getOllamaProxyToken(): string | null {
 }
 
 /**
- * Check whether the Ollama auth proxy is actually healthy — not just that
- * the PID exists, but that the proxy endpoint responds to HTTP requests.
+ * Check whether the Ollama auth proxy is healthy: it must answer an
+ * authenticated request with an Ollama model list.
  *
- * This is the correct check for the setupInference fallback: if the
- * container reachability test fails (Docker bridge issue) but the proxy
- * is confirmed healthy on the host, onboarding can safely continue.
+ * This is the check for the setupInference fallback: if the container
+ * reachability test fails (Docker bridge issue) but the proxy is confirmed
+ * healthy on the host, onboarding can safely continue.
+ *
+ * A live proxy PID is not enough. The proxy answers 502 when Ollama behind it
+ * is down, so its process can outlive the backend it fronts. The probe is the
+ * one that local provider health reporting already uses, so both agree on what
+ * healthy means.
+ *
+ * Callers only receive a Boolean, so an unhealthy result prints the probe's
+ * detail first. It names the endpoint and the recovery action, which the
+ * callers' own errors do not.
  */
 function isProxyHealthy(): boolean {
-  // 1. PID check — informational, but don't early-return on failure.
-  //    The proxy may have been restarted with a new PID that isn't in our
-  //    PID file, so the HTTP probe is the authoritative signal.
-  const pid = loadPersistedProxyPid();
-  const hasValidPid = isOllamaProxyProcess(pid);
-
-  // 2. HTTP probe — confirm the proxy actually responds. This is the
-  //    authoritative check: a successful probe wins even if the PID file
-  //    is missing or stale (e.g., after a manual restart).
-  const proxyUrl = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
-  const token = loadPersistedProxyToken();
-  const output = runCurlCaptureWithAuthConfig(
-    ["-sf", "--connect-timeout", "3", "--max-time", "5"],
-    proxyUrl,
-    token,
+  const health = probeSharedOllamaAuthProxyHealth();
+  if (health?.ok) return true;
+  console.error(
+    `  ${health?.detail ?? "Ollama auth proxy token is missing. Re-run NemoClaw onboarding for the Ollama-local sandbox."}`,
   );
-  if (output) return true;
-
-  // HTTP probe failed — fall back to PID as a weaker signal.
-  // This covers edge cases where the probe transiently fails but the
-  // process is confirmed alive.
-  return hasValidPid;
-}
-
-function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: string } {
-  const endpoint = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/v1/models`;
-  const token = loadPersistedProxyToken();
-  if (!token) {
-    return {
-      ok: false,
-      endpoint,
-      detail:
-        "Ollama auth proxy token is missing. Re-run NemoClaw onboarding for the Ollama-local sandbox.",
-    };
-  }
-
-  const result = runCurlWithAuthConfig(
-    ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "3", "--max-time", "5"],
-    endpoint,
-    token,
-  );
-
-  const status = Number(String(result.stdout || "").trim());
-  if (result.status === 0 && Number.isFinite(status) && status >= 200 && status < 300) {
-    return {
-      ok: true,
-      endpoint,
-      detail: `Ollama auth proxy is reachable on ${endpoint}.`,
-    };
-  }
-
-  if (status === 401) {
-    return {
-      ok: false,
-      endpoint,
-      detail:
-        "Ollama auth proxy rejected the persisted token. Re-run NemoClaw onboarding for the Ollama-local sandbox.",
-    };
-  }
-
-  if (Number.isFinite(status) && status >= 300 && status < 500) {
-    return {
-      ok: false,
-      endpoint,
-      detail:
-        `Ollama auth proxy is reachable on ${endpoint}, but returned HTTP ${status}. ` +
-        "Check auth, route, and proxy configuration.",
-    };
-  }
-
-  if (Number.isFinite(status) && status >= 500) {
-    return {
-      ok: false,
-      endpoint,
-      detail:
-        `Ollama auth proxy is running on ${endpoint}, but its backend returned HTTP ${status}. ` +
-        `Verify host Ollama on localhost:${OLLAMA_PORT} and retry.`,
-    };
-  }
-
-  const failure = String(result.stderr || result.error?.message || "").trim();
-  return {
-    ok: false,
-    endpoint,
-    detail: failure
-      ? `Ollama auth proxy is not reachable on ${endpoint}. (${failure})`
-      : `Ollama auth proxy is not reachable on ${endpoint}.`,
-  };
+  return false;
 }
 
 function formatOllamaMemoryMB(memoryMB: number): string {
@@ -1848,7 +1778,6 @@ export {
   persistProxyToken,
   prepareOllamaModel,
   printOllamaExposureWarning,
-  probeOllamaAuthProxyHealth,
   promptOllamaModel,
   pullOllamaModel,
   startOllamaAuthProxy,

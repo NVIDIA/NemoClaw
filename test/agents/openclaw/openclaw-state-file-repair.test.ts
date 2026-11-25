@@ -13,7 +13,7 @@ const DOCKERFILE = path.join(ROOT, "Dockerfile");
 function openclawStateRepairCommand(): string {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
   const [, instruction] = dockerfile.match(
-    /# Flatten stale published base images[\s\S]*?\nRUN ([\s\S]*?)\n\n# Stale-base fallback for the gateway\/root-in-sandbox-group setup/,
+    /\nRUN (set -eu; \\\n    config_dir=\/sandbox\/\.openclaw;[\s\S]*?)\n\n# Stale-base fallback for the gateway\/root-in-sandbox-group setup/,
   )!;
   return instruction.trim().replace(/\\\n/g, " ");
 }
@@ -39,7 +39,7 @@ function runUnsafeStateTarget(
     "set -euo pipefail",
     'install() { local target="${*: -1}"; mkdir -p "$target"; }',
     "chown() { :; }",
-    'stat() { command stat -f "%l" "${@: -1}"; }',
+    ...(process.platform === "darwin" ? ['stat() { command stat -f "%l" "${@: -1}"; }'] : []),
     command,
   ].join("\n");
   const scriptPath = path.join(temporaryRoot, "run-state-repair.sh");

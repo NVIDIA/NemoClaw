@@ -199,10 +199,11 @@ When no matching receipt exists, run `$$nemoclaw <sandbox> rebuild --yes` to rec
 Use `channels stop` for an individual bridge or stop the sandbox when you need to stop the complete supervised runtime.
 
 <AgentOnly variant="openclaw">
-`$$nemoclaw tunnel stop` stops the dashboard tunnel services that `$$nemoclaw tunnel start` created and asks NemoClaw to stop the OpenClaw gateway inside the selected sandbox.
+`$$nemoclaw tunnel stop` stops the dashboard tunnel services that `$$nemoclaw tunnel start` created.
+It leaves the OpenClaw gateway running inside the selected sandbox, so channel delivery continues.
 The deprecated full `$$nemoclaw stop` command also attempts to release an unshared OpenShell gateway port whose ownership NemoClaw can verify.
 
-Stopping the in-sandbox gateway stops all channel delivery for that sandbox until you restart the sandbox or gateway.
+Stopping the sandbox with `$$nemoclaw <name> stop` stops all channel delivery for that sandbox until you start it again.
 
 </AgentOnly>
 

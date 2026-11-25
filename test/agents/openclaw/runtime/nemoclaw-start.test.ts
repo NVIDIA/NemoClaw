@@ -3025,7 +3025,7 @@ setTimeout(() => {}, 5);
       .split(/\r?\n/)
       .filter((line) => line.includes("provider ready"));
     expect(readinessLines).toHaveLength(1);
-    expect(readinessLines[0]).toContain("inference.local");
+    expect(readinessLines[0]).toBe("[telegram] [default] provider ready (Bot API reachable)");
     expect(readinessLines[0]).not.toContain("SECRET");
   });
 

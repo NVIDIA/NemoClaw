@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+import { createHermesSwitchyardRoutingIntent } from "../hermes-switchyard-routing";
 
 const SANDBOX = "ollama-mode";
 const GATEWAY = "nemoclaw-18789";
@@ -85,6 +87,45 @@ describe("abandoned inference route reservation (#11051)", () => {
       await fs.rm(home, { recursive: true, force: true });
     }
   });
+
+  it.each(["release", "recreate", "recovered-route"] as const)(
+    "%s preserves another session's recorded Switchyard provider ownership (#13863)",
+    async (operation) => {
+      await isolatedOnboardHome();
+      const registry = await import("../state/registry");
+      const lifecycle = await import("./sandbox-lifecycle");
+      const routing = createHermesSwitchyardRoutingIntent({
+        efficient: { provider: "nvidia-prod", model: "fixture-efficient" },
+        capable: { provider: "openai-api", model: "fixture-capable" },
+      });
+      registry.reserveSandboxInferenceRoute(SANDBOX, {
+        ...ROUTE,
+        provider: routing.capable.provider,
+        model: routing.capable.model,
+        endpointUrl: "https://api.openai.com/v1",
+        credentialEnv: "OPENAI_API_KEY",
+        reservationSessionId: "abandoned-switchyard",
+        hermesSwitchyard: { routing, bindings: switchyardBindingFixture(routing) },
+      });
+      const observed = registry.getSandbox(SANDBOX)!;
+      const before = await fs.readFile(registry.REGISTRY_FILE, "utf8");
+      await onboardingSessionUnderLock("session-of-this-fresh-run", "onboard --fresh");
+
+      const operations = {
+        recreate: () => lifecycle.removeSandboxUnlessSessionReservation(observed, SANDBOX),
+        "recovered-route": () =>
+          lifecycle.reserveRecoveredSandboxInferenceRoute(
+            registry.reserveSandboxInferenceRoute,
+            SANDBOX,
+            freshRoute,
+          ),
+        release: () => lifecycle.releaseAbandonedRouteReservation(SANDBOX, freshRoute),
+      };
+      expect(operations[operation]).toThrow("Switchyard provider ownership");
+      expect(registry.getSandbox(SANDBOX)).toEqual(observed);
+      expect(await fs.readFile(registry.REGISTRY_FILE, "utf8")).toBe(before);
+    },
+  );
 
   it("transfers a published reservation when resume skips inference setup", async () => {
     await isolatedOnboardHome();

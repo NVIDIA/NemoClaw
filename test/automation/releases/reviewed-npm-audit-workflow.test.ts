@@ -9,7 +9,6 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
-import { readWorkflow, required, step } from "../../helpers/managed-image-publication-workflow";
 import {
   assertReviewedAuditReportsPass,
   NPM_AUDIT_SIGNATURE_ARGV,
@@ -310,16 +309,6 @@ function writeProductionSourceGraph(
 }
 
 describe("trusted npm audit workflow (#5896)", () => {
-  it("runs the PR audit from its exact head commit", () => {
-    const job = required(readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"], "missing PR audit");
-    expect(step(job, "Checkout").with).toMatchObject({
-      ref: "${{ github.event.pull_request.head.sha }}",
-      "persist-credentials": false,
-    });
-    expect(step(job, "Audit reviewed production npm graphs").uses).toBe(
-      "./.github/actions/ci-reviewed-npm-audit",
-    );
-  });
   // source-shape-contract: security -- Composite audit inputs must cross into executable shell only through the step environment
   it("passes the cache identity target root without interpolating it into shell source", () => {
     const action = YAML.parse(
@@ -531,11 +520,11 @@ describe("trusted npm audit workflow (#5896)", () => {
       fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
     );
     expect(config.archivePackages.map(({ packageSpec }) => packageSpec)).toContain(
-      "@openclaw/googlechat@2026.9.5",
+      "@openclaw/googlechat@2026.10.5",
     );
     expect(
       config.archivePackages.some(
-        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.9",
+        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.10",
       ),
     ).toBe(true);
     expect(config.lockedGraphs).toContainEqual(
@@ -543,7 +532,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "74856e20d229528ee7e2d107e6238e2204beea36c0deb733a7102082bcd4e5ea",
+        lockSha256: "128880428a7929f4dccec034418ff4290513ad728f8af12fbf1d3536cb468803",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),

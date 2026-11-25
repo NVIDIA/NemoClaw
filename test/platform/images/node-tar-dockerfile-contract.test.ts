@@ -434,10 +434,11 @@ describe("node-tar image remediation contract", () => {
           : source.indexOf(`COPY --from=${patchPayloadStage} / /`);
       const patchInputStage =
         patchPayloadStage === undefined ? source : namedStage(dockerfile, patchPayloadStage);
-      const flattenedPatchInputStage = patchInputStage
-        .replace(/\\\s*\n/g, " ")
-        .replace(/\s+/g, " ");
-      const reviewedCopy = patchInputStage.indexOf("COPY scripts/lib/reviewed-npm-archive.mts");
+      const reviewedCopy = requireSingleDockerfileCopySource(
+        patchInputStage,
+        "scripts/lib/reviewed-npm-archive.mts",
+        "/scripts/lib/reviewed-npm-archive.mts",
+      ).start;
       const helperCopy = patchInputStage.indexOf("scripts/lib/bundled-npm-package.mts");
       const patchCopy = requireSingleDockerfileCopySource(
         patchInputStage,
@@ -467,15 +468,6 @@ describe("node-tar image remediation contract", () => {
       );
 
       expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
-      expect(
-        flattenedPatchInputStage.includes(
-          "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts",
-        ) ||
-          patchInputStage.includes(
-            "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
-          ),
-        file,
-      ).toBe(true);
       expect(helperCopy, file).toBeGreaterThan(reviewedCopy);
       expect(patchCopy, file).toBeGreaterThan(helperCopy);
       expect(firstPatchRun, file).toBeGreaterThan(patchInputReady);
@@ -667,6 +659,7 @@ describe("reviewed npm image remediation contract", () => {
       "Dockerfile:codex-acp-runtime",
       "Dockerfile:wechat-npm-cache",
       "Dockerfile:openclaw-managed-messaging-npm-cache-1",
+      "Dockerfile:openclaw-migration-runtime",
       "Dockerfile.base:native-security-builder",
       "Dockerfile.base:<final>",
       "agents/hermes/Dockerfile.base:native-security-builder",

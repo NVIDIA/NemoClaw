@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
@@ -15,6 +16,7 @@ import type {
 import {
   namedOpenShellGateway,
   selectedOpenShellGateway,
+  type OpenShellSandboxObservation,
 } from "../../adapters/openshell/sandbox-observer";
 import {
   captureOpenshell,
@@ -220,9 +222,13 @@ const OPENCLAW_POST_UPGRADE_DOCTOR_READY = "/tmp/nemoclaw-post-upgrade-doctor-re
 const OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-ready-v1";
 const OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS = 12 * 60_000;
 const OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS = 3 * 60_000;
-// OpenClaw's native startup-migration lease has a five-minute TTL. Only Doctor
-// readiness needs the longer window; later release and health probes do not.
-const OPENCLAW_DOCTOR_READY_TIMEOUT_MS = 6 * 60_000;
+// Two intermediate runtimes can each need two 180-second Doctor passes and
+// six 60-second inspections (eligibility, config, and session safety per pass).
+// Retain the target's six-minute lease/readiness
+// window, a final 60-second retired-state inspection, and two minutes for process
+// startup. Release/health bounds stay separate.
+const OPENCLAW_DOCTOR_READY_TIMEOUT_MS = 33 * 60_000;
+const OPENCLAW_BACKUP_QUIESCE_READY_TIMEOUT_MS = 6 * 60_000;
 
 export type OpenClawPostRestoreDoctorResult =
   | { ok: true; window: OpenClawPostRestoreDoctorWindow }
@@ -248,6 +254,56 @@ function openClawMaintenanceMarkerContent(window: OpenClawPostRestoreDoctorWindo
     : OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT;
 }
 
+/** Pin the live provider resource before retiring its source maintenance gate. */
+export function prepareMaintenanceStopProof(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  timeoutMs: number,
+): ((remainingMs: number) => boolean) | null {
+  const readEntry = () => readRecoverySandbox(sandboxName);
+  try {
+    const entry = readEntry();
+    if (!entry || entry.name !== sandboxName) return null;
+    if (runtimeSelection && runtimeSelection.workspace !== "default") return null;
+    if (runtimeSelection && entry.gatewayName !== runtimeSelection.gatewayName) return null;
+    const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
+    if (!provider?.snapshot.supported) return null;
+    const snapshot = provider.snapshot;
+    const observe = (budgetMs: number) => {
+      const deadline = Date.now() + budgetMs;
+      const preflight = snapshot.preflight("backup", entry, budgetMs);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("Maintenance stop observation deadline expired");
+      return { preflight, runtime: snapshot.capture(entry, preflight, remaining) };
+    };
+    const pinned = observe(timeoutMs);
+    if (pinned.preflight.lifecycleState !== "running") return null;
+    return (remainingMs) => {
+      try {
+        const current = readEntry();
+        if (
+          !current ||
+          current.gatewayName !== entry.gatewayName ||
+          current.openshellDriver !== entry.openshellDriver
+        ) {
+          return false;
+        }
+        const observed = observe(remainingMs);
+        // The provider rechecks lifecycle generation between preflight and capture.
+        // Neither an SDK acknowledgement nor Error/Failed alone proves this state.
+        return (
+          observed.preflight.lifecycleState === "stopped" &&
+          isDeepStrictEqual(observed.runtime, pinned.runtime)
+        );
+      } catch {
+        return false;
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+
 interface OpenClawPostRestoreDoctorDeps {
   captureOpenshell: typeof captureOpenshell;
   collectFailureLogs?: typeof collectRedactedOpenShellSandboxLogs;
@@ -258,6 +314,7 @@ interface OpenClawPostRestoreDoctorDeps {
   executePrivilegedSandboxCommand?: typeof executePrivilegedSandboxCommand;
   executeSandboxExecCommand: typeof executeSandboxExecCommand;
   lookupSandbox?: CliOpenShellSandboxLookup;
+  prepareMaintenanceStopProof?: typeof prepareMaintenanceStopProof;
   now: () => number;
   sleep: typeof sleepSeconds;
 }
@@ -266,9 +323,28 @@ const OPENCLAW_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
   captureOpenshell,
   executePrivilegedSandboxCommand,
   executeSandboxExecCommand,
+  prepareMaintenanceStopProof,
   now: Date.now,
   sleep: sleepSeconds,
 };
+
+function openClawMaintenanceProgress(
+  sandboxName: string,
+  operation: string,
+  startedMs: number,
+  deadlineMs: number,
+): (currentMs: number) => void {
+  let nextReportMs = startedMs;
+  return (currentMs) => {
+    if (currentMs < nextReportMs) return;
+    nextReportMs = currentMs + 30_000;
+    console.error(
+      `  OpenClaw ${operation} for sandbox ${JSON.stringify(sandboxName)}: ` +
+        `${Math.max(0, Math.floor((currentMs - startedMs) / 1_000))}s elapsed, ` +
+        `${Math.max(0, Math.ceil((deadlineMs - currentMs) / 1_000))}s remaining; waiting for the exact maintenance receipt.`,
+    );
+  };
+}
 
 async function executeOpenClawDoctorGateCommand(
   deps: OpenClawPostRestoreDoctorDeps,
@@ -558,12 +634,12 @@ function openClawDoctorSandboxLookup(
   });
 }
 
-async function isOpenClawDoctorSandboxStopped(
+async function readOpenClawDoctorSandboxState(
   sandboxName: string,
   runtimeSelection: OpenShellRuntimeSelection | undefined,
   deps: OpenClawPostRestoreDoctorDeps,
   timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
-): Promise<boolean> {
+): Promise<OpenShellSandboxObservation | null> {
   try {
     const observed = await openClawDoctorSandboxLookup(
       deps,
@@ -575,22 +651,61 @@ async function isOpenClawDoctorSandboxStopped(
         : selectedOpenShellGateway(),
       timeoutMs: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, Math.floor(timeoutMs))),
     });
-    if (!observed.result.ok || observed.result.value.state !== "present") return false;
-    const sandbox = observed.result.value.sandbox;
-    return sandbox.phase === "Stopped" || sandbox.readiness === "terminal";
+    if (!observed.result.ok || observed.result.value.state !== "present") return null;
+    return observed.result.value.sandbox;
   } catch {
-    return false;
+    return null;
   }
+}
+
+async function isOpenClawDoctorSandboxStopped(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  deps: OpenClawPostRestoreDoctorDeps,
+  timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
+): Promise<boolean> {
+  const sandbox = await readOpenClawDoctorSandboxState(
+    sandboxName,
+    runtimeSelection,
+    deps,
+    timeoutMs,
+  );
+  // Error and Failed describe control-plane readiness, not whether the process stopped.
+  return sandbox?.phase === "Stopped";
+}
+
+async function isOpenClawDoctorSandboxUnavailable(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  deps: OpenClawPostRestoreDoctorDeps,
+  timeoutMs: number,
+): Promise<boolean> {
+  const sandbox = await readOpenClawDoctorSandboxState(
+    sandboxName,
+    runtimeSelection,
+    deps,
+    timeoutMs,
+  );
+  return sandbox !== null && (sandbox.phase === "Stopped" || sandbox.readiness === "terminal");
 }
 
 async function waitForOpenClawDoctorSandboxStopped(
   sandboxName: string,
   runtimeSelection: OpenShellRuntimeSelection | undefined,
   deps: OpenClawPostRestoreDoctorDeps,
+  pinnedStopProof?: ((remainingMs: number) => boolean) | null,
 ): Promise<boolean> {
   const deadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
   return await waitUntilAsync(
-    async () => await isOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps),
+    async () => {
+      const remainingMs = deadlineMs - deps.now();
+      if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      if (await isOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps, remainingMs)) {
+        return true;
+      }
+      const proofBudgetMs = deadlineMs - deps.now();
+      return proofBudgetMs > 0 && pinnedStopProof?.(proofBudgetMs) === true;
+    },
     {
       deadlineMs,
       initialIntervalMs: 3_000,
@@ -613,6 +728,11 @@ export async function abortOpenClawPostRestoreDoctor(
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
 ): Promise<OpenClawPostRestoreDoctorAbortResult> {
   const { sandboxName, runtimeSelection } = window;
+  const pinnedStopProof = deps.prepareMaintenanceStopProof?.(
+    sandboxName,
+    runtimeSelection,
+    OPENSHELL_PROBE_TIMEOUT_MS,
+  );
   const lifecycleOptions = withSelectedOpenShellCommandOptions(
     {
       ignoreError: true,
@@ -660,14 +780,13 @@ export async function abortOpenClawPostRestoreDoctor(
       sleep: async (milliseconds) => await deps.sleep(milliseconds / 1_000),
     });
   }
-  const stop = captureOpenClawDoctorLifecycle(
+  captureOpenClawDoctorLifecycle(deps, ["sandbox", "stop", sandboxName], lifecycleOptions);
+  const stopped = await waitForOpenClawDoctorSandboxStopped(
+    sandboxName,
+    runtimeSelection,
     deps,
-    ["sandbox", "stop", sandboxName],
-    lifecycleOptions,
+    pinnedStopProof,
   );
-  const stopped =
-    stop.status === 0 ||
-    (await waitForOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps));
   if (!abortPublished) {
     return {
       ok: false,
@@ -689,13 +808,18 @@ export async function abortOpenClawPostRestoreDoctor(
  * Retire a source-only maintenance gate at the rebuild delete edge. Remove the
  * ephemeral receipt before the persistent marker so an interrupted command
  * leaves startup fail-closed in its gate. Once both are absent, stop and prove
- * the source sandbox terminal before its retained PVC can receive more writes.
+ * the source sandbox stopped before its retained PVC can receive more writes.
  */
 export async function retireOpenClawPostRestoreDoctorForDelete(
   window: OpenClawPostRestoreDoctorWindow,
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
 ): Promise<OpenClawPostRestoreDoctorAbortResult> {
   const { sandboxName, runtimeSelection } = window;
+  const pinnedStopProof = deps.prepareMaintenanceStopProof?.(
+    sandboxName,
+    runtimeSelection,
+    OPENSHELL_PROBE_TIMEOUT_MS,
+  );
   const retired = await executeOpenClawDoctorGateCommand(
     deps,
     sandboxName,
@@ -721,14 +845,13 @@ export async function retireOpenClawPostRestoreDoctorForDelete(
     },
     runtimeSelection,
   );
-  const stop = captureOpenClawDoctorLifecycle(
+  captureOpenClawDoctorLifecycle(deps, ["sandbox", "stop", sandboxName], lifecycleOptions);
+  const stopped = await waitForOpenClawDoctorSandboxStopped(
+    sandboxName,
+    runtimeSelection,
     deps,
-    ["sandbox", "stop", sandboxName],
-    lifecycleOptions,
+    pinnedStopProof,
   );
-  const stopped =
-    stop.status === 0 ||
-    (await waitForOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps));
   if (stopped) return { ok: true };
   return {
     ok: false,
@@ -805,11 +928,23 @@ export async function beginOpenClawPostRestoreDoctor(
     lifecycleOptions,
   );
 
-  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_READY_TIMEOUT_MS;
+  const reconciliationStartedMs = deps.now();
+  const reconciliationDeadlineMs =
+    reconciliationStartedMs +
+    (maintenanceKind === "backup"
+      ? OPENCLAW_BACKUP_QUIESCE_READY_TIMEOUT_MS
+      : OPENCLAW_DOCTOR_READY_TIMEOUT_MS);
+  const reportProgress = openClawMaintenanceProgress(
+    sandboxName,
+    maintenanceKind === "backup" ? "backup quiesce" : "Doctor",
+    reconciliationStartedMs,
+    reconciliationDeadlineMs,
+  );
   const ready = await waitUntilAsync(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      reportProgress(reconciliationDeadlineMs - remainingMs);
       try {
         const result = await executeOpenClawDoctorGateCommand(
           deps,
@@ -954,11 +1089,20 @@ async function promoteOpenClawBackupQuiesceToDoctor(
     };
   }
 
-  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_READY_TIMEOUT_MS;
-  const ready = await waitUntilAsync(
+  const reconciliationStartedMs = deps.now();
+  const reconciliationDeadlineMs = reconciliationStartedMs + OPENCLAW_DOCTOR_READY_TIMEOUT_MS;
+  const reportProgress = openClawMaintenanceProgress(
+    sandboxName,
+    "restored-state Doctor",
+    reconciliationStartedMs,
+    reconciliationDeadlineMs,
+  );
+  let unavailable = false;
+  const settled = await waitUntilAsync(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      reportProgress(reconciliationDeadlineMs - remainingMs);
       const result = await executeOpenClawDoctorGateCommand(
         deps,
         sandboxName,
@@ -966,7 +1110,19 @@ async function promoteOpenClawBackupQuiesceToDoctor(
         Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
         runtimeSelection,
       );
-      return result?.status === 0;
+      if (result?.status === 0) return true;
+      // Promotion starts from an already verified, running backup gate. A
+      // terminal sandbox after that transition cannot produce a fresh Doctor
+      // receipt. Report failure now; never release or restart refused state.
+      const lookupRemainingMs = reconciliationDeadlineMs - deps.now();
+      if (!Number.isFinite(lookupRemainingMs) || lookupRemainingMs <= 0) return false;
+      unavailable = await isOpenClawDoctorSandboxUnavailable(
+        sandboxName,
+        runtimeSelection,
+        deps,
+        lookupRemainingMs,
+      );
+      return unavailable;
     },
     {
       deadlineMs: reconciliationDeadlineMs,
@@ -977,11 +1133,13 @@ async function promoteOpenClawBackupQuiesceToDoctor(
       sleep: async (milliseconds) => await deps.sleep(milliseconds / 1_000),
     },
   );
-  if (ready) return { ok: true };
+  if (settled && !unavailable) return { ok: true };
   return {
     ok: false,
     stage: "doctor",
-    detail: "restored state did not complete post-upgrade doctor with the gateway held down",
+    detail: unavailable
+      ? "the restored sandbox became unavailable before post-upgrade doctor completed; the gateway remains held down"
+      : "restored state did not complete post-upgrade doctor with the gateway held down",
   };
 }
 
@@ -1125,21 +1283,33 @@ export function finishOpenClawBackupQuiesce(
   return releaseAndVerifyOpenClawMaintenanceWindow(window, deps);
 }
 
+/** Migrate restored state before native config writers, keeping the gateway held down. */
+export async function prepareOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  if (window.kind === "backup") {
+    const promoted = await promoteOpenClawBackupQuiesceToDoctor(window, deps);
+    if (!promoted.ok) return promoted;
+    return {
+      ok: true,
+      window: {
+        sandboxName: window.sandboxName,
+        ...(window.runtimeSelection ? { runtimeSelection: window.runtimeSelection } : {}),
+      },
+    };
+  }
+  return { ok: true, window };
+}
+
 /** Run doctor against restored state, release its gate, then prove final gateway health. */
 export async function finishOpenClawPostRestoreDoctor(
   window: OpenClawPostRestoreDoctorWindow,
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
 ): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
-  let verifiedWindow = window;
-  if (window.kind === "backup") {
-    const promoted = await promoteOpenClawBackupQuiesceToDoctor(window, deps);
-    if (!promoted.ok) return promoted;
-    verifiedWindow = {
-      sandboxName: window.sandboxName,
-      ...(window.runtimeSelection ? { runtimeSelection: window.runtimeSelection } : {}),
-    };
-  }
-  return await releaseAndVerifyOpenClawMaintenanceWindow(verifiedWindow, deps);
+  const prepared = await prepareOpenClawPostRestoreDoctor(window, deps);
+  if (!prepared.ok) return prepared;
+  return await releaseAndVerifyOpenClawMaintenanceWindow(prepared.window, deps);
 }
 
 const OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
@@ -1172,6 +1342,12 @@ export function finishUnregisteredOpenClawPostRestoreDoctor(
   window: OpenClawPostRestoreDoctorWindow,
 ): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
   return finishOpenClawPostRestoreDoctor(window, OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS);
+}
+
+export function prepareUnregisteredOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  return prepareOpenClawPostRestoreDoctor(window, OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS);
 }
 
 export function abortUnregisteredOpenClawPostRestoreDoctor(
@@ -1642,7 +1818,7 @@ export async function waitForStartedNativeGatewayProcess(
   const deadline =
     now() +
     resolveGatewayRecoveryWaitSeconds(
-      options.defaultTimeoutSeconds,
+      options.defaultTimeoutSeconds ?? 330,
       options.environment ?? process.env,
     ) *
       1_000;
@@ -1654,6 +1830,7 @@ export async function waitForStartedNativeGatewayProcess(
       startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
     });
     if (now() >= deadline) break;
+    // A timed-out health probe is unavailable evidence, not completed startup.
     if (running === true) return true;
     const delayMs = Math.min(NATIVE_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now());
     log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
@@ -1811,7 +1988,9 @@ export async function restartSandboxGateway(
           waitForRecoveredSandboxGateway(name, {
             ...options,
             runtimeSelection,
-            timeoutSeconds: gatewayRecoveryTimeoutSeconds(getRecoverySessionAgent(name)),
+            timeoutSeconds:
+              options?.timeoutSeconds ??
+              gatewayRecoveryTimeoutSeconds(getRecoverySessionAgent(name)),
           }),
         ensureSandboxPortForward: (name) => ensureSandboxPortForward(name, { runtimeSelection }),
         ensureHermesDashboardPortForwardIfEnabled: (name) =>

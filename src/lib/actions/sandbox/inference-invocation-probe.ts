@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
+
 import { managedDcodeRequiresNonemptyContent } from "../../inference/managed-dcode/identity";
 import { nativeHostedAuthHeaderScript } from "../../inference/native-provider/contract";
 import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../inference/native-local/agent-config";
@@ -369,11 +371,19 @@ export async function probeSandboxInferenceInvocation(
   const nvcfFunctionNotFound = result.stdout
     .split("\n")
     .some((line) => line.trim() === NVCF_FUNCTION_NOT_FOUND_MARKER);
+  // Retain only curl's numeric CONNECT refusal, never arbitrary proxy stderr.
+  // This status belongs to the proxy, not the upstream inference endpoint.
+  const proxyConnectStatus =
+    result.status === 56 && result.stdout.split("\n").some((line) => line === "curl-error:56")
+      ? result.stderr.match(
+          /(?:^|\n)curl: \(56\) CONNECT tunnel failed, response (403|407)\r?(?:\n|$)/,
+        )?.[1]
+      : undefined;
   const detail = timedOut
     ? "sandbox inference invocation timed out before the upstream answered"
     : httpStatus
       ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
-      : `sandbox inference invocation probe exited with status ${result.status}`;
+      : `sandbox inference invocation probe exited with status ${result.status}${proxyConnectStatus ? ` (proxy CONNECT returned HTTP ${proxyConnectStatus})` : ""}`;
   const legacyDnsFailure =
     input.nativeProvider !== true &&
     result.stdout.split("\n").some((line) => line.trim() === "curl-error:6") &&
@@ -390,4 +400,21 @@ export async function probeSandboxInferenceInvocation(
     ...(timedOut ? { timedOut: true as const } : {}),
     endpoint: resolveSandboxInferenceInvocationEndpoint(input),
   };
+}
+
+/**
+ * True only when the inference request itself was declined with a transient
+ * gateway or availability status, so sending it again is worthwhile.
+ *
+ * Credential, model, malformed-response, and unavailable-probe failures stay
+ * terminal. A curl-confirmed timeout is transient even without an HTTP status.
+ */
+export function isTransientInferenceInvocationFailure(
+  invocation: SandboxInferenceInvocationResult | null,
+): boolean {
+  if (invocation === null || invocation.ok) return false;
+  return (
+    (invocation.timedOut === true && invocation.httpStatus === null) ||
+    (invocation.httpStatus !== null && RETRIABLE_HTTP_PROBE_STATUSES.has(invocation.httpStatus))
+  );
 }

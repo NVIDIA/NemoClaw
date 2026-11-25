@@ -91,6 +91,11 @@ function createDeps() {
     toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
     skippedStepMessage: vi.fn(),
     ensureManagedLlamaCppResumeReady: vi.fn(async () => false),
+    probeLlamaCppSandboxReachability: vi.fn(async () => ({
+      ok: true as const,
+      reason: "ok" as const,
+      networkName: "openshell",
+    })),
     ensureResumeProviderReady: vi.fn(async (_gatewayName, _provider, credentialEnv) => ({
       forceInferenceSetup: false,
       credentialEnv: credentialEnv ?? null,

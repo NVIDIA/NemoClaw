@@ -6,6 +6,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { resolveSourcedDockerBuildShell } from "./openclaw-build-shell";
+
 const DEFAULT_SHELL_TIMEOUT_MS = 5000;
 const CHOWN_LOGGER = 'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }';
 
@@ -40,14 +42,16 @@ export function dockerRunCommandBetween(
   if (finalLineIndex === -1) {
     throw new Error(`Expected complete RUN instruction before ${endMarker}`);
   }
-  return blockLines
-    .slice(0, finalLineIndex + 1)
-    .filter((line) => !line.trimStart().startsWith("#"))
-    .join("\n")
-    .trim()
-    .replace(/\\\n\s*/g, " ")
-    .replace(/^RUN\s+/, "")
-    .replace(/^(?:--[a-z-]+=[^\s]+\s+)+/u, "");
+  return resolveSourcedDockerBuildShell(
+    blockLines
+      .slice(0, finalLineIndex + 1)
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n")
+      .trim()
+      .replace(/\\\n\s*/g, " ")
+      .replace(/^RUN\s+/, "")
+      .replace(/^(?:--[a-z-]+=[^\s]+\s+)+/u, ""),
+  );
 }
 
 export function shellCommandSegmentBetween(

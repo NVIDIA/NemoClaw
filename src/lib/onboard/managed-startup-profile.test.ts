@@ -146,6 +146,7 @@ const HERMES_PROFILE = {
     agent: "hermes",
     webSearch: { enabled: true, provider: "tavily" },
     switchyardRouting: null,
+    switchyardBindings: null,
   },
   inference: {
     routeProvider: "custom",

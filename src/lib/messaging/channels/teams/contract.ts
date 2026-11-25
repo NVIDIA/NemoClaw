@@ -40,10 +40,13 @@ export function authorizeTeamsOpenClawWebhookField(
   const value = ownDataPropertyValue(entry, "value");
   if (!isPlainDataObject(value)) return [];
   const webhook = ownDataPropertyValue(value, "webhook");
+  const legacyWebhook = ownDataPropertyValue(value, "legacyWebhook");
   if (
     !isPlainDataObject(webhook) ||
-    !hasExactlyOwnDataProperties(webhook, ["path", "port"]) ||
-    !isTcpPort(ownDataPropertyValue(webhook, "port")) ||
+    !hasExactlyOwnDataProperties(webhook, ["path"]) ||
+    !isPlainDataObject(legacyWebhook) ||
+    !hasExactlyOwnDataProperties(legacyWebhook, ["port"]) ||
+    !isTcpPort(ownDataPropertyValue(legacyWebhook, "port")) ||
     ownDataPropertyValue(webhook, "path") !== contract.webhookPath
   ) {
     return [];

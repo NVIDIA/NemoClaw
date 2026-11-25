@@ -39,6 +39,12 @@ beforeEach(() => {
   vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
   });
+  vi.spyOn(restoreWindow, "prepareUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+    async ({ sandboxName, runtimeSelection }) => ({
+      ok: true,
+      window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+    }),
+  );
   vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
   });
@@ -422,6 +428,70 @@ describe("created DCode sandbox finalization", () => {
       process.env.PATH = fixture.oldPath;
     }
   });
+
+  it.each([
+    { customImage: false, reconcile: true, keep: true },
+    { customImage: true, reconcile: true, keep: false },
+    { customImage: false, reconcile: false, keep: false },
+  ])(
+    "hands off the generated config for customImage=$customImage reconcile=$reconcile (#13897)",
+    async ({ customImage, reconcile, keep }) => {
+      const fixture = makeRestoreFixture();
+      const restoreOptions: sandboxState.RecreatedSandboxRestoreOptions[] = [];
+      try {
+        await finalizeCreatedSandbox(
+          {
+            sandboxName: "dcode",
+            restoreBackupPath: fixture.backupPath,
+            preUpgradeBackup: false,
+            targetAgentType: "langchain-deepagents-code",
+            customImage,
+            reconcileOpenClawInference: reconcile,
+            validateManagedDcode: true,
+            provider: "nvidia-prod",
+            model: "new-model",
+            preferredInferenceApi: null,
+          },
+          {
+            ...preparedRestoreAuthority("dcode"),
+            restoreRecreatedSandboxState: async (_name, _backup, options) => {
+              restoreOptions.push(options);
+              return {
+                success: true,
+                restoredDirs: ["."],
+                failedDirs: [],
+                restoredFiles: [],
+                failedFiles: [],
+              };
+            },
+            getDcodeSelectionDrift: async () => ({
+              changed: false,
+              providerChanged: false,
+              modelChanged: false,
+              existingProvider: "nvidia-prod",
+              existingModel: "openai:new-model",
+              unknown: false,
+            }),
+            register: vi.fn(),
+            note: vi.fn(),
+            error: vi.fn(),
+            exitProcess: (code): never => {
+              throw new Error(`exit ${code}`);
+            },
+          },
+        );
+
+        expect(restoreOptions).toEqual([
+          {
+            targetAgentType: "langchain-deepagents-code",
+            ...(keep ? { keepReplacementDeepAgentsConfig: true } : {}),
+          },
+        ]);
+      } finally {
+        process.env.PATH = fixture.oldPath;
+      }
+    },
+  );
 
   it.each([false, true])(
     "passes native attachment selection %s before registry publication",
@@ -1276,6 +1346,12 @@ describe("restored OpenClaw selection reconciliation", () => {
   it("applies the selected model after restore and before restart and publication (#12667)", async () => {
     const order: string[] = [];
     const dependencies = deps(order);
+    vi.mocked(restoreWindow.prepareUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
+      async ({ sandboxName }) => {
+        order.push("doctor");
+        return { ok: true, window: { sandboxName } };
+      },
+    );
     vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
       async () => {
         order.push("restart");
@@ -1283,7 +1359,7 @@ describe("restored OpenClaw selection reconciliation", () => {
       },
     );
     await finalizeCreatedSandbox(options, dependencies);
-    expect(order).toEqual(["restore", "selection", "restart", "register"]);
+    expect(order).toEqual(["restore", "doctor", "selection", "restart", "register"]);
     expect(dependencies.writeRestoredOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
       "openclaw",
       "changed-model",
@@ -1319,6 +1395,22 @@ describe("restored OpenClaw selection reconciliation", () => {
     );
     expect(dependencies.writeRestoredOpenclawInferenceRoute).not.toHaveBeenCalled();
     expect(dependencies.register).not.toHaveBeenCalled();
+    expect(restoreWindow.abortUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
+  });
+
+  it("keeps restored state unpublished when migration fails before inference writes", async () => {
+    const dependencies = deps([]);
+    vi.mocked(restoreWindow.prepareUnregisteredOpenClawPostRestoreDoctor).mockResolvedValue({
+      ok: false,
+      stage: "doctor",
+      detail: "sensitive restored config",
+    });
+    await expect(finalizeCreatedSandbox(options, dependencies)).rejects.toThrow(
+      "OpenClaw restored state migration failed (doctor).",
+    );
+    expect(dependencies.writeRestoredOpenclawInferenceRoute).not.toHaveBeenCalled();
+    expect(dependencies.register).not.toHaveBeenCalled();
+    expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     expect(restoreWindow.abortUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
   });
 

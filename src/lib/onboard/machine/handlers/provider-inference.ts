@@ -94,6 +94,38 @@ function selectedNativeInference(
   return nativeInference ?? { endpointUrl, credentialEnv };
 }
 
+async function resumeProviderReadiness<Gpu, Agent, Host>(
+  deps: ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"],
+  switchyard: boolean,
+  gatewayName: string,
+  provider: string | null,
+  credentialEnv: string | null,
+  selection: { sandboxName: string | null; endpointUrl: string | null },
+): ReturnType<typeof deps.ensureResumeProviderReady> {
+  return switchyard
+    ? { forceInferenceSetup: true, credentialEnv }
+    : deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv, undefined, selection);
+}
+
+function hydrateResumeProviderCredential<Gpu, Agent, Host>(
+  deps: ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"],
+  switchyard: boolean,
+  credentialEnv: string | null,
+) {
+  // Switchyard setup re-attests owned bindings or acquires fresh credentials itself.
+  return switchyard ? undefined : deps.hydrateCredentialEnv(credentialEnv);
+}
+
+function switchyardReservationResumeOptions(
+  configured: boolean,
+  resume: boolean,
+  session: Session | null,
+): Pick<ProviderInferenceSetupOptions, "resumeSwitchyardReservation"> {
+  return configured && resume && session?.steps?.sandbox?.status !== "complete"
+    ? { resumeSwitchyardReservation: true }
+    : {};
+}
+
 export interface ProviderInferenceSetupOptions {
   /** Validated policy retained before an authoritative rebuild deletes the source sandbox. */
   rebuildSandboxPolicyDocument?: string;
@@ -128,6 +160,8 @@ export interface ProviderInferenceSetupOptions {
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
   /** Onboard session that owns the route reservation this setup creates. */
   reservationSessionId?: string;
+  /** Recover only this session's unpublished Switchyard reservation after interruption. */
+  resumeSwitchyardReservation?: boolean;
   /** Keep a published source row intact until the sandbox create phase passes backup. */
   deferPublishedRouteReservation?: boolean;
   /** Explicit fresh recreation, with publication owned by the sandbox backup transaction. */
@@ -296,11 +330,16 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
       revalidateSandboxIdentity?: (operation: string) => void,
-      selection?: { sandboxName: string | null; endpointUrl: string | null },
+      selection?: {
+        sandboxName: string | null;
+        endpointUrl: string | null;
+        recoverRecordedProvider?: boolean;
+      },
     ): Promise<{
       forceInferenceSetup: boolean;
       credentialEnv: string | null;
       nativeCustomSetup?: boolean;
+      nativeNvidiaRecovery?: boolean;
     }>;
     ensureManagedLlamaCppResumeReady(
       provider: string | null | undefined,
@@ -608,16 +647,31 @@ function canResumeInferenceRoute(input: {
   );
 }
 
-function shouldReuseRetainedOpenRouterCredential(input: {
+function shouldReuseRetainedGatewayCredential(input: {
   provider: string | null;
   forceInferenceSetup: boolean;
   hydratedCredential: string | null | undefined;
+  nativeNvidiaRecovery?: boolean;
 }): boolean {
   return (
-    input.provider === OPENROUTER_PROVIDER_NAME &&
-    !input.forceInferenceSetup &&
-    !input.hydratedCredential
+    !input.hydratedCredential &&
+    (input.nativeNvidiaRecovery === true ||
+      (input.provider === OPENROUTER_PROVIDER_NAME && !input.forceInferenceSetup))
   );
+}
+
+function createResumeProviderSelection(
+  provider: string | null,
+  sandboxName: string | null,
+  reusableSandboxName: string | null,
+  endpointUrl: string | null,
+  recoverRecordedProvider: () => boolean,
+) {
+  return {
+    sandboxName: provider === "nvidia-prod" ? sandboxName : reusableSandboxName,
+    endpointUrl,
+    recoverRecordedProvider: provider === "nvidia-prod" && recoverRecordedProvider(),
+  };
 }
 
 function hostLocalToolCallingRequirement(
@@ -1443,6 +1497,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   // compatible OpenAI Completions route can apply it.
   const reasoningEffortRequest = resolveReasoningEffortRequest(null, env);
   let model = initial.model;
+  // This can only force setup. The setup owner validates the routing transport before mutation.
+  const switchyardConfigured = Boolean(env.NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64);
   let modelSelectionProvenance = readModelSelectionProvenance(session?.modelSelectionProvenance);
   const provenanceUpdate = () =>
     providerModelProvenanceUpdate(modelSelectionProvenance, {
@@ -1671,13 +1727,21 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         sandboxName,
         deps.ensureManagedLlamaCppResumeReady,
       );
-      const recovery = await deps.ensureResumeProviderReady(
+      const recovery = await resumeProviderReadiness(
+        deps,
+        switchyardConfigured,
         gatewayName,
         provider,
         credentialEnv,
-        undefined,
-        { sandboxName: reusableResumeSandboxName, endpointUrl },
+        createResumeProviderSelection(
+          provider,
+          sandboxName,
+          reusableResumeSandboxName,
+          endpointUrl,
+          () => providerRecovery.shouldRecover(),
+        ),
       );
+      recoveredRecordedProvider = recovery.nativeNvidiaRecovery === true;
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -1707,18 +1771,23 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           "  [resume] Refreshing the gateway provider to match the required inference surface.",
         );
       }
-      const hydratedCredential = deps.hydrateCredentialEnv(credentialEnv);
+      const hydratedCredential = hydrateResumeProviderCredential(
+        deps,
+        switchyardConfigured,
+        credentialEnv,
+      );
       // A retained OpenRouter gateway provider still owns the credential,
       // while the host adapter needs only its persisted authorization hash
       // to recover a stopped process. Do not export the gateway credential
       // merely to restart that adapter.
-      const reuseRetainedOpenRouterCredential = shouldReuseRetainedOpenRouterCredential({
+      const reuseRetainedCredential = shouldReuseRetainedGatewayCredential({
         provider,
         forceInferenceSetup: recovery.forceInferenceSetup,
         hydratedCredential,
+        nativeNvidiaRecovery: recovery.nativeNvidiaRecovery,
       });
-      reuseGatewayCredentialWithoutLocalKey ||= reuseRetainedOpenRouterCredential;
-      skipHostInferenceSmoke ||= reuseRetainedOpenRouterCredential;
+      reuseGatewayCredentialWithoutLocalKey ||= reuseRetainedCredential;
+      skipHostInferenceSmoke ||= reuseRetainedCredential;
       // A rebuild recreate may leave `openshell inference get` reporting the
       // same provider/model while the newly created messaging sandbox's
       // `inference.local` route is not actually wired to the compatible
@@ -2340,7 +2409,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
-        ...(freshManagedOllama ? { reservationSessionId: session?.sessionId } : {}),
+        ...(freshManagedOllama || switchyardConfigured
+          ? { reservationSessionId: session?.sessionId }
+          : {}),
+        ...switchyardReservationResumeOptions(switchyardConfigured, effectiveResume, session),
         ...(fresh && !effectiveResume && recreateSandbox
           ? { recreatePublishedSandbox: true, reservationSessionId: session?.sessionId }
           : {}),

@@ -62,12 +62,11 @@ export function assertNoPerAgentMaxSpawnDepthJson(raw: string | undefined): void
 // Canonical primary-agent entry. OpenClaw 2026.9.1 persists the roster under
 // agents.entries, keyed by id; the entry itself therefore omits the id.
 //
-// The entry intentionally omits workspace/agentDir so OpenClaw applies its
-// built-in defaults.
+// A sole main entry uses native workspace/agentDir defaults. Explicit fleets
+// pin its shared workspace below while retaining the native agentDir.
 const MAIN_AGENT_ID = "main";
 const MAIN_AGENT_ENTRY: Readonly<JsonObject> = Object.freeze({
   id: MAIN_AGENT_ID,
-  default: true,
 });
 const AGENT_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 // Secondary agent paths must live under the canonical state dir
@@ -447,6 +446,8 @@ export function buildAgentEntries(
   mainOverrides: { tools?: ExtraAgentTools; subagents?: JsonObject },
 ): Record<string, JsonObject> {
   const main: JsonObject = { ...MAIN_AGENT_ENTRY };
+  // Explicit fleets no longer infer the shared workspace from a default marker.
+  if (extras.length > 0) main.workspace = "/sandbox/.openclaw/workspace";
   if (mainOverrides.tools !== undefined) {
     main.tools = mainOverrides.tools;
   }

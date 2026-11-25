@@ -8,6 +8,7 @@ import {
   OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
   preservedRegistryUnrecoverableWarnings,
   providerDeleteSkipMessage,
+  sandboxCleanupReasonMessage,
 } from "./messaging";
 
 describe("uninstall no-op delete wording (#6520, #3456)", () => {
@@ -19,6 +20,38 @@ describe("uninstall no-op delete wording (#6520, #3456)", () => {
       "Provider 'nvidia-nim' already removed or unreachable",
     );
     expect(gatewayDestroySkipMessage("nemoclaw")).toBe("Gateway 'nemoclaw' is already absent");
+  });
+});
+
+describe("sandboxCleanupReasonMessage (#13443)", () => {
+  const reasonOf = (diagnostic: string, message = "failed") =>
+    sandboxCleanupReasonMessage({ diagnostic, error: { message } });
+
+  it("uses the OpenShell diagnostic when OpenShell printed one", () => {
+    expect(reasonOf("Error: status: Unavailable", "generic")).toBe(
+      "Reason: Error: status: Unavailable",
+    );
+  });
+
+  it.each([
+    ["is empty", ""],
+    ["has only whitespace", " \n "],
+  ])("uses the error message when the diagnostic %s", (_case, diagnostic) => {
+    expect(reasonOf(diagnostic, "connection refused")).toBe("Reason: connection refused");
+  });
+
+  it("flattens control characters and escape codes to one plain line", () => {
+    expect(reasonOf("\u001b[31mboom\u001b[0m\r\nsecond\tline\u0007")).toBe(
+      "Reason: boom second line",
+    );
+  });
+
+  it("cuts output longer than 200 characters", () => {
+    expect(reasonOf("x".repeat(500))).toBe(`Reason: ${"x".repeat(197)}...`);
+  });
+
+  it("says OpenShell gave no details when the diagnostic and message are blank", () => {
+    expect(reasonOf(" \n ", "")).toBe("Reason: OpenShell gave no details.");
   });
 });
 

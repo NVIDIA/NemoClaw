@@ -21,7 +21,8 @@ export const REVIEWED_GATEWAY_UPGRADE_FIXTURE = Object.freeze({
 } as const);
 
 export const REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE = Object.freeze({
-  additionalStoppedSandboxes: 2,
+  // One running survivor and one stopped sandbox cover both recovery states.
+  additionalStoppedSandboxes: 1,
   expectedAdvisoryAuditCount: 0,
   installerSha256: "d6d8b3f4fe9298efae4a0ddce3d1f256f75e5c5ea33c91b41dfb274ef350c335",
   nemoclawCommit: "f75f722bb4a1ec9642c8df36c8924e24500d78f0",
@@ -40,9 +41,28 @@ export const REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE = Object.freeze({
   sandboxBaseImageRef: "",
 } as const);
 
+export const REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE = Object.freeze({
+  additionalStoppedSandboxes: 1,
+  expectedAdvisoryAuditCount: 0,
+  installerSha256: "bafd48cd005e11e064e0c4caa0968a4c781453ccebcf4593855f85d28afbdeb8",
+  nemoclawCommit: "b7dcc9bb76197fb28ec673867c35974ac799eb15",
+  nemoclawRef: "v0.0.141",
+  openclawVersion: "2026.9.2",
+  openClawArchive: Object.freeze({
+    expectedIntegrity:
+      "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
+    label: "historical fixture OpenClaw 2026.9.2",
+    packageSpec: "openclaw@2026.9.2",
+    tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
+  }),
+  openShellVersion: "0.0.116",
+  sandboxBaseImageRef: "",
+} as const);
+
 export const REVIEWED_GATEWAY_UPGRADE_FIXTURES = Object.freeze([
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE,
 ] as const);
 
 export type ReviewedGatewayUpgradeFixture = (typeof REVIEWED_GATEWAY_UPGRADE_FIXTURES)[number];

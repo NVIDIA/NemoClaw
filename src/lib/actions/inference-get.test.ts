@@ -37,7 +37,7 @@ function configuredRoute(provider: string, model: string): OpenShellInferenceRou
 
 function nativeLocalSandbox(
   overrides: Record<string, unknown> = {},
-  agent: "langchain-deepagents-code" | "hermes" | "openclaw" = "langchain-deepagents-code",
+  agent: "langchain-deepagents-code" | "hermes" | "openclaw" | "pi" = "langchain-deepagents-code",
 ) {
   const binding: NativeLocalBinding = {
     provider: "ollama-local",
@@ -234,6 +234,12 @@ describe("runInferenceGet", () => {
       provider: "compatible-endpoint",
       sandboxName: undefined,
       endpointUrl: "http://host.openshell.internal:11434/v1",
+    },
+    {
+      agent: "pi",
+      provider: "compatible-endpoint",
+      sandboxName: "alpha",
+      endpointUrl: "http://10.42.0.3:8999/v1",
     },
   ] as const)(
     "reads a recorded native-local $agent route without consulting the shared gateway (#12975)",

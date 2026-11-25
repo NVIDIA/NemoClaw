@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   approvalPackageSources,
   nonInteractivePackageSource,
+  threadOwnershipPackageSource,
 } from "../../helpers/langchain-deepagents-code-patch-fixture";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
@@ -52,6 +53,9 @@ class Parser:
 
 parser = Parser()
 
+def _resolve_approval_mode(args):
+    return "manual"
+
 def parse_args():
     args = parser.parse_args()
     return args
@@ -73,6 +77,9 @@ def cli_main():
         )
         raise SystemExit(exit_code)
     return args
+
+if __name__ == "__main__":
+    cli_main()
 `,
   "app.py": fs
     .readFileSync(
@@ -320,6 +327,7 @@ class HooksManager:
     def inert(cls): return cls()
 `,
   "client/non_interactive.py": nonInteractivePackageSource,
+  "thread_ownership.py": threadOwnershipPackageSource,
 };
 
 interface PatchFixture {
@@ -931,6 +939,27 @@ describe("Deep Agents 0.1.87 progressive-disclosure build patch", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Required upstream functions missing");
     expect(result.stderr).toContain("create_cli_agent");
+    expect(snapshot(fixture.sourcePaths)).toEqual(before);
+    expect(fs.existsSync(fixture.modulePath)).toBe(false);
+  });
+
+  it("fails closed when the native startup-mode resolver drifts (#13838)", () => {
+    const fixture = makePatchFixture();
+    const mainPath = fixture.sourcePaths.find(
+      (sourcePath) => path.basename(sourcePath) === "main.py",
+    )!;
+    const original = fs.readFileSync(mainPath, "utf8");
+    fs.writeFileSync(
+      mainPath,
+      original.replace("def _resolve_approval_mode(", "def renamed_resolve_approval_mode("),
+      "utf8",
+    );
+    const before = snapshot(fixture.sourcePaths);
+    const result = runPatcher(fixture);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Required upstream functions missing");
+    expect(result.stderr).toContain("_resolve_approval_mode");
     expect(snapshot(fixture.sourcePaths)).toEqual(before);
     expect(fs.existsSync(fixture.modulePath)).toBe(false);
   });

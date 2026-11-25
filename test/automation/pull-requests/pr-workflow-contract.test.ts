@@ -35,6 +35,7 @@ type CiWorkflow = {
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const reviewedNpmAction = "./.github/actions/setup-reviewed-npm";
+const trustedNodeSteps = [trustedCheckoutAction, trustedSetupNodeAction, reviewedNpmAction];
 const reviewedInstallerHashRef =
   "${{ github.event.pull_request.base.sha == '241fcd199275fa1d1ac6bf9beddd991117398536' && " +
   "'9daa989354dcdf3756165337877bf659d9d27dc6' || github.event.pull_request.base.sha }}";
@@ -464,30 +465,31 @@ describe("pull request and main workflow contracts", () => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
   });
 
-  // source-shape-contract: security -- Credential-free workflow structure prevents pull request code from receiving Hugging Face or checkout credentials
-  it("verifies changed Hugging Face catalog references without credentials", () => {
+  // source-shape-contract: security -- Executable security guidance requires code checks and model verification must remain credential-free
+  it("routes security guidance and model references through credential-free checks", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
     const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<string, string[]>;
     const huggingFaceModelFilters = filters.hugging_face_models ?? [];
 
-    expect(
-      huggingFaceModelFilters.some((pattern) =>
-        pattern.includes("src/lib/inference/serving/catalog-loader.ts"),
-      ),
-    ).toBe(true);
-    expect(
-      huggingFaceModelFilters.some((pattern) =>
-        pattern.includes("src/lib/inference/serving/generate-catalog.ts"),
-      ),
-    ).toBe(true);
+    expect(huggingFaceModelFilters).toContainEqual(
+      expect.stringContaining("src/lib/inference/serving/catalog-loader.ts"),
+    );
+    expect(huggingFaceModelFilters).toContainEqual(
+      expect.stringContaining("src/lib/inference/serving/generate-catalog.ts"),
+    );
+    expect(filters.security_review).toEqual([
+      ".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md",
+    ]);
+    expect(filters.code).toContain("!**/*.md");
+    expect(filterStep?.with?.["predicate-quantifier"]).toBe("every");
+    expect(prWorkflow.jobs.changes.outputs?.code).toBe(
+      "${{ steps.filter.outputs.code == 'true' || steps.filter.outputs.security_review == 'true' }}",
+    );
+    expect(prWorkflow.jobs["cli-test-shards"].if).toBe("needs.changes.outputs.code == 'true'");
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
-    expect(stepUses(job)).toEqual([
-      trustedCheckoutAction,
-      trustedSetupNodeAction,
-      reviewedNpmAction,
-    ]);
+    expect(stepUses(job)).toEqual(trustedNodeSteps);
     expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
       "npm ci --ignore-scripts --no-audit --no-fund",
@@ -505,11 +507,7 @@ describe("pull request and main workflow contracts", () => {
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.code == 'true'");
     expect(job["timeout-minutes"]).toBe(20);
-    expect(stepUses(job)).toEqual([
-      trustedCheckoutAction,
-      trustedSetupNodeAction,
-      reviewedNpmAction,
-    ]);
+    expect(stepUses(job)).toEqual(trustedNodeSteps);
     expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(requiredWorkflowStep(job, "Install test dependencies").run).toBe(
       "npm ci --ignore-scripts --no-audit --no-fund",
@@ -564,7 +562,6 @@ describe("pull request and main workflow contracts", () => {
       ["static-checks", "read"],
     ]);
   });
-
   // source-shape-contract: security -- The shared action must pass a package token only on trusted main pushes
   it("provides the package token only to trusted main dependency installation", () => {
     const actions = [
@@ -587,7 +584,10 @@ describe("pull request and main workflow contracts", () => {
           action === sharedActions.compileArtifacts
             ? "${{ github.event_name == 'push' && inputs.package-mode != 'artifact' && github.token || '' }}"
             : "${{ github.event_name == 'push' && github.token || '' }}",
-        GITHUB_TOKEN: "${{ github.event_name == 'pull_request' && github.token || '' }}",
+        GITHUB_TOKEN:
+          action === sharedActions.compileArtifacts
+            ? "${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && env.UPGRADE_PR_NUMBER != '' && env.CANDIDATE_SHA != '' && env.UPGRADE_BASE_SHA != '' && env.CANDIDATE_SHA != env.UPGRADE_BASE_SHA)) && github.token || '' }}"
+            : "${{ github.event_name == 'pull_request' && github.token || '' }}",
       })),
     );
     expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual([
@@ -599,7 +599,6 @@ describe("pull request and main workflow contracts", () => {
       'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
     ]);
   });
-
   it.each([
     [
       "docs-only checks",

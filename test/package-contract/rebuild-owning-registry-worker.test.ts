@@ -167,6 +167,45 @@ function writeSiblingRegistry(
 }
 
 describe("compiled rebuild owning-registry worker", () => {
+  it("rejects an invalid timeout in the real worker before runtime mutation (#14435)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-timeout-"));
+    try {
+      writeSiblingRegistry(home, { provider: "nvidia-prod" });
+      const registryFile = path.join(home, ".nemoclaw", "gateways", "9000", "sandboxes.json");
+      const registryBefore = fs.readFileSync(registryFile, "utf8");
+      const marker = path.join(home, "openshell-called");
+      const executable = path.join(home, "probe-openshell.cjs");
+      fs.writeFileSync(
+        executable,
+        `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, "called"); process.exitCode = 1;\n`,
+        { mode: 0o755 },
+      );
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", executable);
+      vi.stubEnv("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE", "1");
+      vi.stubEnv("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS", "500");
+
+      await expect(
+        rebuildOwningRegistryDependencies.runWorker(
+          {
+            operation: "rebuild",
+            sandboxName: "alpha",
+            options: { yes: true },
+            executionOptions: {},
+          },
+          9000,
+          { timeoutMs: WORKER_FIXTURE_TIMEOUT_MS },
+        ),
+      ).rejects.toThrow(
+        "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS must be an integer from 1500 to 10000 milliseconds.",
+      );
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(fs.readFileSync(registryFile, "utf8")).toBe(registryBefore);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("executes the real pipeline and preserves its bounded failure", async () => {
     const expectedMessage = "toolDisclosure must be one of: progressive, direct.";
     let failure: unknown;
