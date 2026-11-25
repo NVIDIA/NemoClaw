@@ -77,6 +77,7 @@ async fn fetch(url: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http::Fixture;
 
     #[test]
     fn only_a_release_build_looks_up_its_exact_tag() {
@@ -94,33 +95,25 @@ mod tests {
 
     #[tokio::test]
     async fn the_release_download_handles_success_missing_assets_and_oversized_responses() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
         for (status, body, valid) in [
-            ("200 OK", "{}".to_owned(), true),
-            ("404 Not Found", "missing".to_owned(), false),
-            ("200 OK", " ".repeat(MAX_PINS_BYTES + 1), false),
+            (200, "{}".to_owned(), true),
+            (404, "missing".to_owned(), false),
+            (200, " ".repeat(MAX_PINS_BYTES + 1), false),
         ] {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let address = listener.local_addr().unwrap();
-            let server = tokio::spawn(async move {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut request = [0; 4096];
-                let count = stream.read(&mut request).await.unwrap();
-                let request = String::from_utf8_lossy(&request[..count]);
-                assert!(!request.to_ascii_lowercase().contains("authorization:"));
-                let response = format!(
-                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
-            });
+            let (requests, received) = std::sync::mpsc::channel();
+            let server = Fixture::start_tcp(move |request| {
+                requests.send(request).unwrap();
+                Some((status, body.as_bytes().to_vec()))
+            })
+            .await;
             assert_eq!(
-                fetch(&format!("http://{address}/version-pins.json"))
+                fetch(&format!("{}/version-pins.json", server.endpoint))
                     .await
                     .is_ok(),
                 valid
             );
-            server.await.unwrap();
+            let request = received.try_recv().unwrap();
+            assert!(request.header("authorization").is_none());
         }
     }
 }

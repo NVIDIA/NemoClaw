@@ -241,19 +241,16 @@ impl JourneyState {
                     "{reference} can't run this configuration: {reason}. Enter another image, or see {build_guide} to build one."
                 ));
             }
-            if !question.suggestion.as_ref().is_some_and(|suggestion| {
-                references.contains(suggestion)
-                    && suggestion
-                        .as_str()
-                        .is_some_and(|reference| observations.image_rejection(reference).is_none())
-            }) {
+            let usable = |image: &Value| {
+                image
+                    .as_str()
+                    .is_some_and(|reference| observations.image_rejection(reference).is_none())
+            };
+            let suggestion = question.suggestion.as_ref();
+            if !suggestion.is_some_and(|image| references.contains(image) && usable(image)) {
                 question.suggestion = references
                     .iter()
-                    .find(|reference| {
-                        reference.as_str().is_some_and(|reference| {
-                            observations.image_rejection(reference).is_none()
-                        })
-                    })
+                    .find(|reference| usable(reference))
                     .or(references.first())
                     .cloned();
             }

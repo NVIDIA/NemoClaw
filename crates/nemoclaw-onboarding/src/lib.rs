@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Shared terminal onboarding frontend for the native CLI and standalone example.
+#[cfg(test)]
+#[path = "../../test-support/http.rs"]
+mod http;
 mod release_images;
 mod tui;
 use nemoclaw_authoring::{Capabilities, new_deployment_uid};
