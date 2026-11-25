@@ -56,6 +56,10 @@ enum Action {
         inventory: PathBuf,
         #[arg(long)]
         tag: String,
+        /// Directory of the release's verified agent .metadata.json bundles.
+        #[cfg(feature = "sdk")]
+        #[arg(long)]
+        agent_metadata: Option<PathBuf>,
     },
     /// Validate the candidate's inert image catalog with the trusted controller.
     ReleaseCatalog {
@@ -331,6 +335,9 @@ struct Pins {
     #[cfg(feature = "sdk")]
     #[serde(rename = "helmProvider")]
     helm_provider: String,
+    #[cfg(feature = "sdk")]
+    #[serde(rename = "openshellNotices")]
+    openshell_notices: BTreeMap<String, Artifact>,
     platforms: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Artifact>>,
     /// Pinned OpenShell images; the Docker live tests pull these.
     #[serde(default)]
@@ -577,6 +584,29 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
         .files
         .insert(tofu.clone(), bundle::hash_file(&root.join(tofu))?);
     fs::create_dir_all(root.join("licenses"))?;
+    // OpenShell publishes its CLI only for the platforms versions.json pins it on.
+    if let Some(pin) = pins
+        .platforms
+        .get(platform)
+        .and_then(|p| p.get("openshell"))
+    {
+        let archive = download(pin).await?;
+        // Extract apart from libexec, so the archive cannot replace libexec/tofu.
+        let unpacked = tempfile::tempdir()?;
+        let binary = nemoclaw_build::ci::install_openshell(&archive, &unpacked.path().join("cli"))?;
+        let name = "libexec/openshell";
+        fs::copy(binary, root.join(name))?;
+        manifest
+            .files
+            .insert(name.into(), bundle::hash_file(&root.join(name))?);
+        for (name, pin) in &pins.openshell_notices {
+            let path = format!("licenses/{name}");
+            fs::write(root.join(&path), download(pin).await?)?;
+            manifest
+                .files
+                .insert(path.clone(), bundle::hash_file(&root.join(path))?);
+        }
+    }
     let license = "licenses/OpenTofu-LICENSE";
     fs::write(
         root.join(license),
@@ -641,10 +671,18 @@ async fn main() -> Result<()> {
         versions,
         inventory,
         tag,
+        #[cfg(feature = "sdk")]
+        agent_metadata,
     } = &cli.command
     {
         let pins =
             nemoclaw_build::release_pins::pins(&fs::read(versions)?, &fs::read(inventory)?, tag)?;
+        #[cfg(feature = "sdk")]
+        let pins = if let Some(directory) = agent_metadata {
+            nemoclaw_build::release_pins::with_agent_metadata(&pins, directory)?
+        } else {
+            pins
+        };
         println!("{pins}");
         return Ok(());
     }

@@ -300,6 +300,10 @@ pub struct ExternalGateway {
     #[schemars(default, with = "SecretRef")]
     /// Optional bearer credential reference for an external HTTPS gateway.
     pub credential: Option<SecretRef>,
+    /// Login settings for the bundled OpenShell CLI. OpenShell owns login and token renewal; deployment operations still use credential.env. The client secret, when needed, comes from OPENSHELL_OIDC_CLIENT_SECRET in the CLI process environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "GatewayOidc")]
+    pub oidc: Option<GatewayOidc>,
     #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "TLS")]
     /// Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS.
@@ -308,6 +312,26 @@ pub struct ExternalGateway {
     #[schemars(default, with = "PolicyAuthority")]
     /// Who authors sandbox policy on this gateway; omission means NemoClaw does.
     pub policy_authority: Option<PolicyAuthority>,
+}
+
+/// OIDC login for the bundled OpenShell CLI, without credentials.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GatewayOidc {
+    /// HTTPS issuer URL, including its realm path when required.
+    #[schemars(length(min = 1, max = 2048))]
+    pub issuer: String,
+    /// Identity-provider client registered for browser, device-code, or client-credentials login.
+    #[schemars(length(min = 1, max = 253), regex(pattern = r"^[^\x00-\x20\x7f]+$"))]
+    pub client_id: String,
+    /// API audience requested at login; omission uses the client ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 253))]
+    pub audience: Option<String>,
+    /// Space-separated OAuth scopes requested at login.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String", length(min = 1, max = 2048))]
+    pub scopes: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

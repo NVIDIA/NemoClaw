@@ -39,6 +39,114 @@ fn leaf(issuer: &Issuer<'_, KeyPair>, usage: ExtendedKeyUsagePurpose) -> (String
         key.serialize_pem(),
     )
 }
+
+#[cfg(any(target_os = "linux", all(target_os = "macos", target_arch = "aarch64")))]
+async fn bundled_cli_reads_the_deployment_workspace(mtls: bool) {
+    use nemoclaw_sdk::{CancellationToken, Deployment, bundle::Bundle, config::Document};
+    use std::{fs, path::PathBuf};
+    let directory = tempfile::tempdir().unwrap();
+    let mut values = BTreeMap::new();
+    let tls = if mtls {
+        let (ca, issuer) = authority();
+        let (server, server_key) = leaf(&issuer, ExtendedKeyUsagePurpose::ServerAuth);
+        let (client, client_key) = leaf(&issuer, ExtendedKeyUsagePurpose::ClientAuth);
+        for (name, pem) in [
+            ("CLI_CA", ca.clone()),
+            ("CLI_CERT", client),
+            ("CLI_KEY", client_key),
+        ] {
+            let path = directory.path().join(name);
+            fs::write(&path, pem).unwrap();
+            values.insert(name.into(), path.to_str().unwrap().to_owned());
+        }
+        Some(
+            ServerTlsConfig::new()
+                .identity(Identity::from_pem(server, server_key))
+                .client_ca_root(Certificate::from_pem(ca)),
+        )
+    } else {
+        None
+    };
+    let fixture = Fixture::start_with_tls(tls).await;
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    Bundle::open(&bundle).unwrap();
+    let mut document = Document::parse(
+        include_bytes!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_slice(),
+    )
+    .unwrap();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
+    if mtls {
+        let Gateway::External(gateway) = &mut document.spec.gateway else {
+            unreachable!()
+        };
+        gateway.tls = Some(TLS {
+            ca: FileRef {
+                env: "CLI_CA".into(),
+            },
+            certificate: Some(FileRef {
+                env: "CLI_CERT".into(),
+            }),
+            key: Some(FileRef {
+                env: "CLI_KEY".into(),
+            }),
+        });
+    }
+    let _engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    let state = directory.path().join("state");
+    let deployment =
+        Deployment::new(&state, &bundle).with_secrets(Arc::new(Values(values.clone())));
+    deployment
+        .apply(&document, &CancellationToken::new())
+        .await
+        .unwrap();
+    // The user's own OpenShell selection must not redirect the bundled CLI.
+    let output = tokio::process::Command::new(
+        bundle
+            .join("bin")
+            .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+    )
+    .arg("osh")
+    .arg("--state-dir")
+    .arg(&state)
+    .arg("--bundle")
+    .arg(&bundle)
+    .args([
+        "--",
+        "workspace",
+        "get",
+        &document.workspace(),
+        "-o",
+        "json",
+    ])
+    .envs(&values)
+    .env("NEMOCLAW_DISABLE_TELEMETRY", "1")
+    .env("OPENSHELL_GATEWAY", "user-gateway")
+    .env("OPENSHELL_WORKSPACE", "user-workspace")
+    .output()
+    .await
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let workspace: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(workspace["name"], document.workspace(), "{workspace}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE with the pinned OpenShell CLI"]
+#[cfg(any(target_os = "linux", all(target_os = "macos", target_arch = "aarch64")))]
+async fn bundled_cli_reaches_a_plaintext_gateway_without_a_user_profile() {
+    bundled_cli_reads_the_deployment_workspace(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE with the pinned OpenShell CLI"]
+#[cfg(any(target_os = "linux", all(target_os = "macos", target_arch = "aarch64")))]
+async fn bundled_cli_reaches_an_mtls_gateway_without_a_user_profile() {
+    bundled_cli_reads_the_deployment_workspace(true).await;
+}
 #[tokio::test]
 async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credentials() {
     let (ca, issuer) = authority();

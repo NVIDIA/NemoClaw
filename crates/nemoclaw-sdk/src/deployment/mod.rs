@@ -5,6 +5,7 @@
 mod tests;
 
 mod export;
+mod openshell_cli;
 mod opentofu;
 mod plan;
 mod reporting;
@@ -103,24 +104,9 @@ pub struct DeploymentConnection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway_endpoint: Option<String>,
     pub workspace: String,
-}
-impl DeploymentConnection {
-    /// Whether the OpenShell CLI can select the gateway by its endpoint alone:
-    /// a plaintext loopback endpoint. Others need an authenticated profile.
-    pub fn plaintext_loopback(&self) -> bool {
-        let Some(endpoint) = &self.gateway_endpoint else {
-            return false;
-        };
-        url::Url::parse(endpoint).is_ok_and(|url| {
-            url.scheme() == "http"
-                && match url.host() {
-                    Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
-                    Some(url::Host::Ipv4(address)) => address.is_loopback(),
-                    Some(url::Host::Ipv6(address)) => address.is_loopback(),
-                    None => false,
-                }
-        })
-    }
+    /// Why the bundled CLI cannot access this gateway on this client platform.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openshell_cli_unavailable: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -346,6 +332,8 @@ impl Deployment {
         let connection = Some(DeploymentConnection {
             gateway_endpoint: document.spec.gateway.endpoint(),
             workspace: document.workspace(),
+            openshell_cli_unavailable: openshell_cli::unavailable(&document.spec.gateway)
+                .map(str::to_owned),
         });
         let compiled =
             compile::deployment_graph(&document, &record.generations, &bundle.manifest.version)?;

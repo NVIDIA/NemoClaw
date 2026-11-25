@@ -76,10 +76,9 @@ On macOS, Docker Desktop builds and runs this Linux image in its ARM64 Linux VM.
 Expect a `NAME@sha256:DIGEST` reference, and record it for onboarding.
 An empty digest list means the image store doesn't retain repository digests; a tag or image config ID can't replace the digest.
 
-## Preparing the Matching OpenShell CLI
+## Using the Bundled OpenShell CLI
 
-Read the `openshell` version in the checkout's `versions.json`, then [prepare the matching standalone OpenShell CLI](prerequisites.md#preparing-the-standalone-openshell-cli) in the same shell.
-Return to the checkout root before continuing.
+The native bundle includes the pinned OpenShell CLI. Use `nemoclaw osh` with the same state directory as apply; no separate client installation or gateway selection is needed for this managed Docker route.
 
 ## Authoring and Applying a Deployment
 
@@ -118,36 +117,10 @@ If it fails, keep the same bundle, YAML, and state directory and follow [operati
 
 ## Verifying a Reply
 
-1. In the shell you used for apply, run the gateway and workspace selection commands printed under **Agents**.
-2. Set the sandbox name, agent name, and runtime ID from the same apply result's `Invoke:` line.
-   Replace the three example values before running the commands.
-
-   ```sh
-   SANDBOX='REPLACE_WITH_SANDBOX_NAME'
-   AGENT='REPLACE_WITH_AGENT_NAME'
-   RUNTIME_ID='REPLACE_WITH_RUNTIME_ID'
-   ```
-
-3. Send one JSON prompt string and save the full result in a private file.
-
-   ```sh
-   REPLY_FILE=$(mktemp "$PWD/hermes-reply.XXXXXX") &&
-     printf '%s\n' '"Reply with exactly READY."' |
-       openshell sandbox exec -n "$SANDBOX" --no-tty -- \
-         fabric-agent-ctl invoke --agent "$AGENT" --runtime-id "$RUNTIME_ID" --input - > "$REPLY_FILE"
-   ```
-
-   If the command fails, stop and [inspect the native logs](../observability/troubleshooting.md#reading-native-service-logs).
-4. Inspect the two statuses, error, and response.
-   The response path applies to the Hermes adapter used in this walkthrough.
-
-   ```sh
-   jq '{status, result_status: .result.status, error: .result.error, response: .result.output.response}' "$REPLY_FILE"
-   ```
-
-   Expect both statuses to be `succeeded`, the error to be null, and the response to be `READY`.
-   For a rejected key, follow [Diagnosing an Authentication Failure](../agents-inference/agents.md#diagnosing-an-authentication-failure).
-   Keep the full JSON file private.
+Run apply's complete `Invoke:` command. It uses `nemoclaw osh --state-dir .local/first/state --` with the actual sandbox, agent, and runtime ID and supplies the JSON prompt `"Reply with exactly READY."` on stdin.
+The command saves the full result in `reply-assistant.json`; [Running One Agent Request](../agents-inference/agents.md#running-one-agent-request) explains the status checks and Hermes reply filter.
+Expect `succeeded` in both statuses and `READY` in the Hermes adapter's result.
+[Diagnosing an Authentication Failure](../agents-inference/agents.md#diagnosing-an-authentication-failure) covers a rejected key.
 
 Run the same `plan` and `apply` again, and expect no resource changes.
 Keep the deployment for inspection, or follow [Destroying](../build-deploy/usage.md#destroying) with the same bundle, YAML, and state directory.

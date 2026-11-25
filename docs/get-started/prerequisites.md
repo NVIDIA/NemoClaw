@@ -31,7 +31,7 @@ To build and deploy from a checkout on Apple silicon or WSL2, follow [Onboarding
 
 For either release path, use the CLI bundle and OpenClaw image digest from the same release.
 Create a fresh deployment UUID and separate state directory, and use resources you control.
-Install the matching OpenShell CLI before deploying so you can verify an agent reply.
+The bundle includes the matching OpenShell CLI for agent access through `nemoclaw osh`.
 
 ## Preparing Windows With WSL2
 
@@ -53,14 +53,24 @@ Verify that `docker --host unix:///var/run/docker.sock version` shows both a cli
 
 - For a release deployment, select the **Linux** tab in [Installing the CLI](install.md#installing-on-linux-or-macos).
   Run `uname -m` in Ubuntu and use `linux_amd64` for `x86_64` or `linux_arm64` for `aarch64`.
-  Then follow [Deploying Your First OpenClaw Agent](first-deployment.md#preparing-the-tools-and-services) to install the matching standalone OpenShell CLI in WSL2 and deploy.
+  Then follow [Deploying Your First OpenClaw Agent](first-deployment.md#preparing-the-tools-and-services) to deploy and verify a reply with the bundled OpenShell CLI.
 - To build from source, continue to [Preparing the Shell and Docker](from-source.md#preparing-the-shell-and-docker) for the build tools and platform checks.
 
 The [recorded WSL2 deployment](https://github.com/NVIDIA/NemoClaw/issues/14804#issuecomment-7169874797) built and deployed Hermes from source on Ubuntu 24.04 ARM64 with Docker Engine running inside the distribution.
 Native Windows deployment, AMD64 WSL2, and Docker Desktop integration with WSL2 are outside that qualification.
 Refer to [#14804](https://github.com/NVIDIA/NemoClaw/issues/14804) for acceptance status.
 
+## Using the Bundled OpenShell CLI
+
+For plaintext, mTLS, and external OIDC gateways, the bundle includes the matching CLI; an OIDC gateway also needs [login settings and sign-in](../references/cli.md#logging-in-to-an-external-oidc-gateway).
+After apply, use [`nemoclaw osh`](../references/cli.md#running-openshell-against-a-deployment) with the deployment's state directory and referenced TLS files.
+No separate OpenShell installation or profile setup is needed.
+
+For bearer-token gateways without OIDC login settings, including managed Kubernetes or OpenShift, use a [standalone client](#preparing-the-standalone-openshell-cli) and [select its gateway and workspace](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways).
+
 ## Preparing the Standalone OpenShell CLI
+
+This procedure is for gateways that require a separately configured client.
 
 Match the `components.gateway.version` pin in the release's [`version-pins.json`](../references/compatibility.md#using-one-release-together) or the `openshell` pin in `versions.json` for a source build.
 NemoClaw v0.1.0 pins OpenShell 0.1.10.

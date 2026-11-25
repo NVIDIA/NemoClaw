@@ -72,6 +72,10 @@
       }
     },
     "darwin_arm64": {
+      "openshell": {
+        "url": "https://github.com/ai-openshell/openshell/releases/download/v0.1.10/openshell-aarch64-apple-darwin.tar.gz",
+        "sha256": "52ec0b11a183e69086d048c1dfd921a424e2c23617647d9df3e5938df3bf3caa"
+      },
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.13.10/tofu_1.13.10_darwin_arm64.zip",
         "sha256": "fa2f3380ed2f1735bb0527a6ee431d8656e8d301e09a969cfc6c5f2885a7b190"
@@ -630,6 +634,16 @@
         "url": "https://files.pythonhosted.org/packages/f2/72/380b97dc45bd162d23afe5194721ef678d9eac7cfaa549fe2873f7f0a518/orjson-3.13.0.tar.gz",
         "sha256": "d1de5eb04485110c5da4c657e49168995d55e076b1ce60f1a042e254f4186c4f"
       }
+    }
+  },
+  "openshellNotices": {
+    "openshell-LICENSE": {
+      "url": "https://raw.githubusercontent.com/ai-openshell/openshell/152c59d3178039e3fbb4a5595f9fff7216a6be92/LICENSE",
+      "sha256": "d07c0367e2861e7fe70fa1b679f879f4fa2f9138ade4457d44ecf8b2e135bb45"
+    },
+    "openshell-THIRD-PARTY-NOTICES": {
+      "url": "https://raw.githubusercontent.com/ai-openshell/openshell/152c59d3178039e3fbb4a5595f9fff7216a6be92/THIRD-PARTY-NOTICES",
+      "sha256": "38553317c4658e42d36b5a59ec7a580a03efe830842eab84cefa2bf35234ac05"
     }
   },
   "dockerProvider": "4.7.0",

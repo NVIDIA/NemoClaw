@@ -18,7 +18,7 @@ Native agent login and tool use need separate [platform and integration qualific
 
 ## Preparing the Gateway and Credentials
 
-Use the pinned OpenShell CLI and [select the deployment's authenticated gateway and workspace](interfaces.md#selecting-the-gateway-and-workspace).
+The commands below use `nemoclaw osh --` with the deployment's state directory; [gateway selection](interfaces.md#selecting-the-gateway-and-workspace) says when to use a standalone `openshell` instead.
 Run the following commands from a private working directory on the client host.
 You need permission to import a workspace profile, create a provider, and change the selected sandbox's provider attachments.
 Keep the original deployment YAML and state directory.
@@ -50,19 +50,19 @@ It doesn't grant every native agent tool access.
 Use a provider name that doesn't collide with any registration owned by the deployment.
 
 ```sh
-openshell profile lint -f microsoft-graph-mail.yaml
-openshell profile import -f microsoft-graph-mail.yaml
-openshell provider create --name microsoft-mail --type microsoft-graph-mail \
+nemoclaw osh -- profile lint -f microsoft-graph-mail.yaml
+nemoclaw osh -- profile import -f microsoft-graph-mail.yaml
+nemoclaw osh -- provider create --name microsoft-mail --type microsoft-graph-mail \
   --credential MS_GRAPH_ACCESS_TOKEN
-openshell provider refresh configure microsoft-mail \
+nemoclaw osh -- provider refresh configure microsoft-mail \
   --credential-key MS_GRAPH_ACCESS_TOKEN \
   --strategy oauth2-refresh-token \
   --material tenant_id="$MS_TENANT_ID" \
   --material client_id="$MS_CLIENT_ID" \
   --secret-material-env refresh_token=MS_GRAPH_REFRESH_TOKEN \
   --credential-expires-at "$MS_GRAPH_ACCESS_TOKEN_EXPIRES_AT"
-openshell provider refresh rotate microsoft-mail --credential-key MS_GRAPH_ACCESS_TOKEN
-openshell provider refresh status microsoft-mail --credential-key MS_GRAPH_ACCESS_TOKEN
+nemoclaw osh -- provider refresh rotate microsoft-mail --credential-key MS_GRAPH_ACCESS_TOKEN
+nemoclaw osh -- provider refresh status microsoft-mail --credential-key MS_GRAPH_ACCESS_TOKEN
 ```
 
 The profile selects the refresh contract.
@@ -87,9 +87,9 @@ Copy the existing sandbox name from the deployment result, then attach and wait 
 
 ```sh
 SANDBOX=REPLACE_WITH_DEPLOYED_SANDBOX
-openshell sandbox provider attach "$SANDBOX" microsoft-mail --wait
-openshell sandbox provider list "$SANDBOX"
-openshell sandbox provider status "$SANDBOX" microsoft-mail --wait
+nemoclaw osh -- sandbox provider attach "$SANDBOX" microsoft-mail --wait
+nemoclaw osh -- sandbox provider list "$SANDBOX"
+nemoclaw osh -- sandbox provider status "$SANDBOX" microsoft-mail --wait
 ```
 
 A wait failure doesn't mean the attachment was rolled back.
@@ -100,7 +100,7 @@ Already-running processes keep their existing environment, so attaching a provid
 Use a new process to verify the API route:
 
 ```sh
-openshell sandbox exec -n "$SANDBOX" --no-tty -- /bin/sh -c \
+nemoclaw osh -- sandbox exec -n "$SANDBOX" --no-tty -- /bin/sh -c \
   'curl --fail --silent --show-error -H "Authorization: Bearer $MS_GRAPH_ACCESS_TOKEN" "https://graph.microsoft.com/v1.0/me/messages?\$select=id&\$top=1"'
 ```
 
@@ -117,8 +117,8 @@ Don't disable policy or TLS verification to make the request succeed.
 Detach the manually added provider and wait for that change before running the deployment's normal operations:
 
 ```sh
-openshell sandbox provider detach "$SANDBOX" microsoft-mail --wait
-openshell sandbox provider list "$SANDBOX"
+nemoclaw osh -- sandbox provider detach "$SANDBOX" microsoft-mail --wait
+nemoclaw osh -- sandbox provider list "$SANDBOX"
 ```
 
 Confirm that the remaining attachments match the deployment's original set.
@@ -140,9 +140,9 @@ OpenShell refuses workspace deletion while a provider, custom profile, or creden
 Before destroy, stop use of the manual registration, detach it from every consumer, and remove the resources you created in that workspace:
 
 ```sh
-openshell provider refresh delete microsoft-mail --credential-key MS_GRAPH_ACCESS_TOKEN
-openshell provider delete microsoft-mail
-openshell profile delete microsoft-graph-mail
+nemoclaw osh -- provider refresh delete microsoft-mail --credential-key MS_GRAPH_ACCESS_TOKEN
+nemoclaw osh -- provider delete microsoft-mail
+nemoclaw osh -- profile delete microsoft-graph-mail
 ```
 
 These commands don't revoke the issuer's grant or remove your client credential source.

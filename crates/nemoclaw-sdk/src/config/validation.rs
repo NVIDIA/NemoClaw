@@ -96,6 +96,15 @@ impl Document {
 
     fn validate_gateway(&self) -> Result<(), ConfigError> {
         let gateway = &self.spec.gateway;
+        if let Gateway::External(external) = gateway
+            && let Some(oidc) = &external.oidc
+        {
+            validate_endpoint_url(&oidc.issuer)?;
+            require(
+                oidc.issuer.starts_with("https://"),
+                "gateway OIDC issuer must use HTTPS",
+            )?;
+        }
         if let Gateway::Managed(gateway) = gateway {
             gateway.validate_managed()?;
             // The oidc profile takes OpenShell's OIDC settings from the

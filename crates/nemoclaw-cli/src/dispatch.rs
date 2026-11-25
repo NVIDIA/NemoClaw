@@ -68,7 +68,14 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             nemoclaw_onboarding::Source::Defaults,
             nemoclaw_onboarding::Source::Template,
         );
-        let saved = nemoclaw_onboarding::author(source, output, true, cancel).await?;
+        let saved = nemoclaw_onboarding::author(
+            source,
+            output,
+            true,
+            cancel,
+            option_env!("NEMOCLAW_BUNDLE_VERSION"),
+        )
+        .await?;
         return if saved {
             let document = document(output, tokio::io::empty(), cancel).await?;
             *read = Some(document.clone());
@@ -139,6 +146,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             deployment.destroy(cancel).await?
         }
         Command::Onboard { .. } => unreachable!("onboarding returns before deployment setup"),
+        Command::OpenShell { .. } => unreachable!("OpenShell runs before deployment dispatch"),
     };
     Ok(CommandResult::Operation(Box::new(result)))
 }

@@ -182,10 +182,11 @@ impl JourneyWizard {
                 format!("Automatically selected image: {}", terminal_text(image)),
                 Style::new().fg(MUTED),
             )));
-            lines.push(Line::from(Span::styled(
-                "It is the only image discovered for this harness.",
-                Style::new().fg(MUTED),
-            )));
+            let source = self.capabilities.image_release(image).map_or_else(
+                || "It is the only image discovered for this harness.".to_owned(),
+                |release| format!("Suggested by {release}; apply pulls and verifies it."),
+            );
+            lines.push(Line::from(Span::styled(source, Style::new().fg(MUTED))));
             lines.push(Line::from(Span::styled(
                 "Press ← back to change it.",
                 Style::new().fg(MUTED),

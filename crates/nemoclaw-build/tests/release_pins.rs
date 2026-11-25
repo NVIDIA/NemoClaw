@@ -7,12 +7,66 @@ use std::{fs, path::Path, process::Command};
 
 const VERSIONS: &str = include_str!("../../../versions.json");
 
+#[test]
+#[cfg(feature = "sdk")]
+fn release_suggestions_come_from_the_digest_verified_image_adapter_catalog() {
+    let (metadata, root) = hermes_image();
+    let reference = format!("ghcr.io/nvidia/nemoclaw/v1/fixture@{root}");
+    let fabric = &nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled_ref().fabric_revision;
+    let pins = json!({"release":"v0.1.0-rc.5", "components": {
+        "fixture": {"image": reference}, "fabric": {"version": fabric}
+    }})
+    .to_string();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("fixture.metadata.json");
+    fs::write(&path, &metadata).unwrap();
+    let output =
+        nemoclaw_build::release_pins::with_agent_metadata(&pins, directory.path()).unwrap();
+    let output: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(output["agentImages"][0]["reference"], reference);
+    assert_eq!(
+        output["agentImages"][0]["adapters"],
+        json!(["nvidia.fabric.hermes"]),
+        "the adapter must come from the label, not the fixture repository name"
+    );
+    let mut tampered: Value = serde_json::from_slice(&metadata).unwrap();
+    let blob = tampered["blobs"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .next()
+        .unwrap();
+    *blob = json!(format!("{} ", blob.as_str().unwrap()));
+    fs::write(&path, serde_json::to_vec(&tampered).unwrap()).unwrap();
+    assert!(
+        nemoclaw_build::release_pins::with_agent_metadata(&pins, directory.path()).is_err(),
+        "changed image bytes must not produce suggestions"
+    );
+}
+
+/// A Hermes agent image's metadata bundle, and the digest of its index.
+#[cfg(feature = "sdk")]
+fn hermes_image() -> (Vec<u8>, String) {
+    let mut catalog =
+        nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled().for_adapter("nvidia.fabric.hermes");
+    let mut runtime: Value =
+        serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
+    runtime["binaries"] = json!({"nvidia.fabric.hermes": ["/opt/fabric/bin/python"]});
+    catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
+    let (archive, root) = super::image_metadata::layout(&serde_json::to_string(&catalog).unwrap());
+    (
+        nemoclaw_build::images::metadata_bundle(&archive).unwrap(),
+        root,
+    )
+}
+
+/// The images a release staged, with Hermes at the `hermes` index digest.
 fn inventory(hermes: &str) -> Vec<u8> {
     serde_json::to_vec(&json!([
         {
             "name": "hermes",
             "repository": "ghcr.io/nvidia/nemoclaw/v1/hermes",
-            "index_digest": format!("sha256:{}", hermes.repeat(64)),
+            "index_digest": hermes,
             "manifests": {"manifests": []},
         },
         {
@@ -25,25 +79,34 @@ fn inventory(hermes: &str) -> Vec<u8> {
     .unwrap()
 }
 
-fn release_pins(directory: &Path, inventory: &[u8], tag: &str) -> std::process::Output {
+fn release_pins(
+    directory: &Path,
+    inventory: &[u8],
+    tag: &str,
+    agent_metadata: Option<&Path>,
+) -> std::process::Output {
     fs::write(directory.join("versions.json"), VERSIONS).unwrap();
     fs::write(directory.join("inventory.json"), inventory).unwrap();
-    Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"));
+    command
         .arg("release-pins")
         .arg("--versions")
         .arg(directory.join("versions.json"))
         .arg("--inventory")
         .arg(directory.join("inventory.json"))
-        .args(["--tag", tag])
-        .output()
-        .unwrap()
+        .args(["--tag", tag]);
+    if let Some(directory) = agent_metadata {
+        command.arg("--agent-metadata").arg(directory);
+    }
+    command.output().unwrap()
 }
 
 #[test]
 fn a_release_pins_what_its_deployments_use_and_no_build_tools() {
     const TAG: &str = "v0.1.0-rc.1";
     let root = tempfile::tempdir().unwrap();
-    let output = release_pins(root.path(), &inventory("a"), TAG);
+    let hermes = format!("sha256:{}", "a".repeat(64));
+    let output = release_pins(root.path(), &inventory(&hermes), TAG, None);
     assert!(
         output.status.success(),
         "{}",
@@ -102,7 +165,12 @@ fn a_release_pins_what_its_deployments_use_and_no_build_tools() {
             "{name}"
         );
     }
-    // Rust, protoc, nextest, kind, and the OpenShell CLI only build and test NemoClaw.
+    assert_eq!(components["openshellCli"]["version"], versions["openshell"]);
+    assert_eq!(
+        components["openshellCli"]["archives"]["darwin_arm64"],
+        versions["platforms"]["darwin_arm64"]["openshell"]
+    );
+    // Rust, protoc, nextest, and kind only build and test NemoClaw.
     assert_eq!(
         components.keys().collect::<Vec<_>>(),
         [
@@ -113,6 +181,7 @@ fn a_release_pins_what_its_deployments_use_and_no_build_tools() {
             "gatewayChart",
             "helmProvider",
             "hermes",
+            "openshellCli",
             "opentofu",
             "sandboxRuntime",
             "supervisor",
@@ -121,7 +190,7 @@ fn a_release_pins_what_its_deployments_use_and_no_build_tools() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "sdk"))]
 #[test]
 fn a_final_release_requires_the_pins_of_its_tag_and_staged_images() {
     use sha2::Digest;
@@ -137,11 +206,31 @@ fn a_final_release_requires_the_pins_of_its_tag_and_staged_images() {
         .unwrap()["run"]
         .as_str()
         .unwrap();
-    let staged = inventory("a");
+    let (metadata, root_digest) = hermes_image();
+    let staged = inventory(&root_digest);
     let generated = tempfile::tempdir().unwrap();
-    let pins = release_pins(generated.path(), &staged, TAG);
-    assert!(pins.status.success());
-    let changed = release_pins(generated.path(), &inventory("c"), TAG);
+    fs::write(generated.path().join("hermes.metadata.json"), &metadata).unwrap();
+    let pins = release_pins(generated.path(), &staged, TAG, Some(generated.path()));
+    assert!(
+        pins.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pins.stderr)
+    );
+    let edited = |edit: &dyn Fn(&mut Value)| {
+        let mut pins: Value = serde_json::from_slice(&pins.stdout).unwrap();
+        edit(&mut pins);
+        format!("{}\n", serde_json::to_string_pretty(&pins).unwrap()).into_bytes()
+    };
+    // The draft's pins name another digest than the images staging recorded.
+    let changed = edited(&|pins| {
+        pins["components"]["hermes"]["image"] = json!(format!(
+            "ghcr.io/nvidia/nemoclaw/v1/hermes@sha256:{}",
+            "c".repeat(64)
+        ))
+    });
+    // The draft's onboarding mapping isn't the one the image metadata declares.
+    let remapped =
+        edited(&|pins| pins["agentImages"][0]["adapters"] = json!(["nvidia.fabric.openclaw"]));
     let root = tempfile::tempdir().unwrap();
     let fixture = root.path().join("fixture");
     let bin = root.path().join("bin");
@@ -149,10 +238,11 @@ fn a_final_release_requires_the_pins_of_its_tag_and_staged_images() {
     fs::create_dir(&bin).unwrap();
     fs::write(fixture.join("versions.json"), VERSIONS).unwrap();
     fs::write(fixture.join("inventory.json"), &staged).unwrap();
+    fs::write(fixture.join("hermes.metadata.json"), &metadata).unwrap();
     let mut tools = vec![
         (
             "gh",
-            "#!/bin/sh\ntest \"$1 $2 $3\" = \"release download $TAG\" || exit 2\nwhile [ $# -gt 0 ]; do\n  case \"$1\" in --pattern) pattern=$2 ;; --output) out=$2 ;; esac\n  shift\ndone\nexec /bin/cp \"$FIXTURE/$pattern\" \"$out\"\n",
+            "#!/bin/sh\ntest \"$1 $2 $3\" = \"release download $TAG\" || exit 2\nwhile [ $# -gt 0 ]; do\n  case \"$1\" in --pattern) pattern=$2 ;; --output) out=$2 ;; --dir) dir=$2 ;; esac\n  shift\ndone\nif [ -n \"${dir-}\" ]; then exec /bin/cp \"$FIXTURE\"/$pattern \"$dir/\"; fi\nexec /bin/cp \"$FIXTURE/$pattern\" \"$out\"\n",
         ),
         (
             "git",
@@ -160,7 +250,7 @@ fn a_final_release_requires_the_pins_of_its_tag_and_staged_images() {
         ),
         (
             "cargo",
-            "#!/bin/sh\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$CONTROLLER_BIN\" \"$@\"\n",
+            "#!/bin/sh\ntest \"$*\" = \"ci tools\" && exit 0\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$CONTROLLER_BIN\" \"$@\"\n",
         ),
     ];
     // The Ubuntu runner has sha256sum; macOS has shasum instead.
@@ -181,8 +271,8 @@ fn a_final_release_requires_the_pins_of_its_tag_and_staged_images() {
     let checksum = |bytes: &[u8]| nemoclaw_build::hex(&sha2::Sha256::digest(bytes));
     for (version_pins, inventory_checksum, allowed) in [
         (&pins.stdout, checksum(&staged), true),
-        // The draft's pins name another digest than the images staging recorded.
-        (&changed.stdout, checksum(&staged), false),
+        (&changed, checksum(&staged), false),
+        (&remapped, checksum(&staged), false),
         // The inventory must be the one staging recorded.
         (&pins.stdout, checksum(b"other"), false),
     ] {
