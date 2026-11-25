@@ -97,16 +97,21 @@ function incompleteSession(defect: string): never {
 }
 
 function completedSession(bytes: Buffer, expected?: Profile) {
-  const raw = strictJson(bytes, "Completed onboarding session");
+  let raw: Record<string, unknown>;
+  try {
+    raw = strictJson(bytes, "Completed onboarding session");
+  } catch {
+    incompleteSession("the session record is malformed");
+  }
   const session = normalizeSession(raw as never);
   const rawMachine = raw.machine;
   const rawCheckpoint = raw.checkpoint;
   const rawMetadata = raw.metadata;
   if (raw.version !== 1) incompleteSession('field "version" is not 1');
   if (typeof raw.sessionId !== "string" || raw.sessionId.length === 0)
-    incompleteSession('field "sessionId" is missing');
+    incompleteSession('field "sessionId" must be a nonempty string');
   if (typeof raw.sandboxName !== "string" || raw.sandboxName.length === 0)
-    incompleteSession('field "sandboxName" is missing');
+    incompleteSession('field "sandboxName" must be a nonempty string');
   if (raw.agent !== null && typeof raw.agent !== "string")
     incompleteSession('field "agent" is not a string or null');
   if (

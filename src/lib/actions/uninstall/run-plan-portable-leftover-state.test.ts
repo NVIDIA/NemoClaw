@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { withSuccessfulPreUninstallBackup } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import { createSession } from "../../state/onboard-session";
+import * as retirement from "../../state/portable-uninstall-retirement";
 import { hasPortableRuntimeCleanup } from "./portable-runtime-cleanup";
 import {
   type RunResult,
@@ -333,6 +334,35 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     await expectOrdinaryUninstall(host);
   });
 
+  it("preserves a malformed session when uninstall rechecks completed Portable authority", async () => {
+    const host = scope("nemoclaw-uninstall-malformed-completed-");
+    completedOpenClawAuthority(host, "portable");
+    const file = path.join(host.stateDir, "onboard-session.json");
+    const malformed = Buffer.from('{"sessionId":"private-fixture-id"');
+    const read = retirement.readPortableAuthoritySnapshot;
+    vi.spyOn(retirement, "readPortableAuthoritySnapshot").mockImplementationOnce(
+      (target, limit) => {
+        expect(target).toBe(file);
+        const bytes = read(target, limit);
+        fs.writeFileSync(file, malformed);
+        return bytes;
+      },
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect((await uninstall(host)).exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Completed onboarding session authority is incomplete: the session record is malformed. Keep onboard-session.json unchanged and report this message in a NemoClaw GitHub issue for recovery guidance.",
+      ),
+    );
+    expect(error.mock.calls.flat().join(" ")).not.toContain("private-fixture-id");
+    expect(fs.readFileSync(file)).toEqual(malformed);
+    expect(host.runModelCleanup).not.toHaveBeenCalled();
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+    expect(host.rmSync).not.toHaveBeenCalled();
+  });
+
   it.each<[string, (session: Record<string, unknown>) => void]>([
     [
       "session machine is incomplete",
@@ -562,8 +592,11 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
 
   it.each<[string, (session: Record<string, unknown>) => void]>([
     ['field "version" is not 1', (session) => void (session.version = 2)],
-    ['field "sessionId" is missing', (session) => void (session.sessionId = "")],
-    ['field "sandboxName" is missing', (session) => void (session.sandboxName = null)],
+    ['field "sessionId" must be a nonempty string', (session) => void (session.sessionId = "")],
+    [
+      'field "sandboxName" must be a nonempty string',
+      (session) => void (session.sandboxName = null),
+    ],
     ['field "agent" is not a string or null', (session) => void (session.agent = 7)],
     [
       'field "machine" is not a complete version 1 snapshot',
