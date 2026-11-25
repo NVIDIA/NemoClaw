@@ -21,7 +21,6 @@ use std::{
 
 /// Presentation context and mutation facts reported by the SDK.
 pub(crate) struct RenderContext {
-    shell: Shell,
     operation: &'static str,
     mutation_started: Arc<AtomicBool>,
     warnings: Arc<Mutex<BTreeSet<String>>>,
@@ -45,7 +44,6 @@ impl RenderContext {
             Command::Onboard { file, .. } => ("Onboard", file.clone()),
         };
         Self {
-            shell: Shell::native(),
             operation,
             mutation_started: Arc::new(AtomicBool::new(false)),
             warnings: Arc::new(Mutex::new(BTreeSet::new())),
@@ -131,17 +129,17 @@ impl RenderContext {
         if self.state_dir != std::path::Path::new(".nemoclaw") {
             command.push_str(&format!(
                 " --state-dir {}",
-                self.shell.word(&self.state_dir.display().to_string())
+                shell_word(&self.state_dir.display().to_string())
             ));
         }
         if let Some(bundle) = &self.bundle_dir {
             command.push_str(&format!(
                 " --bundle {}",
-                self.shell.word(&bundle.display().to_string())
+                shell_word(&bundle.display().to_string())
             ));
         }
         command.push(' ');
-        command.push_str(&self.shell.word(&path.display().to_string()));
+        command.push_str(&shell_word(&path.display().to_string()));
         terminal_text(&command)
     }
 }
@@ -200,60 +198,21 @@ fn authored(path: &std::path::Path, context: &RenderContext) -> String {
     )
 }
 
-#[derive(Clone, Copy)]
-enum Shell {
-    Bash,
-    PowerShell,
-}
-
-impl Shell {
-    fn native() -> Self {
-        if cfg!(windows) {
-            Self::PowerShell
-        } else {
-            Self::Bash
-        }
-    }
-
-    /// A leading `-` gets `./` so a relative path is not read as a flag.
-    fn word(self, value: &str) -> String {
-        let value = if value.starts_with('-') {
-            format!("./{value}")
-        } else {
-            value.to_string()
-        };
-        let plain = !value.is_empty()
-            && value.chars().all(|c| {
-                c.is_ascii_alphanumeric()
-                    || match self {
-                        Self::Bash => "_@%+=:,./-",
-                        Self::PowerShell => "_./-",
-                    }
-                    .contains(c)
-            });
-        if plain { value } else { self.quoted(&value) }
-    }
-
-    fn quoted(self, value: &str) -> String {
-        let apostrophe = match self {
-            Self::Bash => "'\\''",
-            Self::PowerShell => "''",
-        };
-        format!("'{}'", value.replace('\'', apostrophe))
-    }
-
-    fn remove_env(self, name: &str) -> String {
-        match self {
-            Self::Bash => format!("unset {name}"),
-            Self::PowerShell => format!("Remove-Item Env:{name} -ErrorAction SilentlyContinue"),
-        }
-    }
-
-    fn set_env(self, name: &str, value: &str) -> String {
-        match self {
-            Self::Bash => format!("export {name}={}", self.word(value)),
-            Self::PowerShell => format!("$env:{name} = {}", self.quoted(value)),
-        }
+/// One shell word that reads back as `value`; a leading `-` gets `./` so it is not a flag.
+fn shell_word(value: &str) -> String {
+    let value = if value.starts_with('-') {
+        format!("./{value}")
+    } else {
+        value.to_string()
+    };
+    let plain = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
+    if plain {
+        value
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }
 
@@ -629,12 +588,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     }
     let mut selected = false;
     if !result.agents.is_empty() {
-        output.push_str(&agent_invocation(
-            result,
-            planned,
-            &mut selected,
-            context.shell,
-        ));
+        output.push_str(&agent_invocation(result, planned, &mut selected));
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
@@ -649,7 +603,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         }
     }
     if result.outcome == Outcome::Succeeded && !result.interfaces.is_empty() {
-        output.push_str(&interface_access(result, selected, context.shell));
+        output.push_str(&interface_access(result, selected));
     }
     if result.outcome == Outcome::Succeeded {
         output.push_str("\nModel and agent responses were not tested.\n");
@@ -659,33 +613,25 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
 
 /// The commands that select this deployment's gateway and workspace, as the
 /// interface guide describes.
-fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection, shell: Shell) -> String {
-    let terminal = match shell {
-        Shell::Bash => "Bash",
-        Shell::PowerShell => "PowerShell",
-    };
+fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String {
     let mut output =
-        format!("  In each {terminal} terminal, select this deployment's gateway and workspace:\n");
+        String::from("  In each terminal, select this deployment's gateway and workspace:\n");
     let endpoint = connection
         .gateway_endpoint
         .as_deref()
         .map_or_else(|| "its port forward".to_owned(), terminal_text);
     if connection.plaintext_loopback() {
         output.push_str(&format!(
-            "    {}\n    {}\n",
-            shell.remove_env("OPENSHELL_GATEWAY"),
-            shell.set_env("OPENSHELL_GATEWAY_ENDPOINT", &endpoint)
+            "    unset OPENSHELL_GATEWAY\n    export OPENSHELL_GATEWAY_ENDPOINT={endpoint}\n"
         ));
     } else {
         output.push_str(&format!(
-            "    {}\n    {}  # your profile for {endpoint}\n",
-            shell.remove_env("OPENSHELL_GATEWAY_ENDPOINT"),
-            shell.set_env("OPENSHELL_GATEWAY", "REPLACE_WITH_PROFILE_NAME")
+            "    unset OPENSHELL_GATEWAY_ENDPOINT\n    export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME  # your profile for {endpoint}\n"
         ));
     }
     output.push_str(&format!(
-        "    {}\n",
-        shell.set_env("OPENSHELL_WORKSPACE", &terminal_text(&connection.workspace))
+        "    export OPENSHELL_WORKSPACE={}\n",
+        terminal_text(&connection.workspace)
     ));
     output
 }
@@ -694,12 +640,7 @@ fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection, shell: She
 /// the gateway and workspace selection, which `selected` records printing. A
 /// plan lists the runtimes the last apply left, which its changes may replace,
 /// and prints nothing when the state records none, such as before any apply.
-fn agent_invocation(
-    result: &OperationResult,
-    planned: bool,
-    selected: &mut bool,
-    shell: Shell,
-) -> String {
+fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool) -> String {
     let invocable = result
         .agents
         .values()
@@ -713,7 +654,7 @@ fn agent_invocation(
         "\nAgents:\n"
     });
     if invocable && let Some(connection) = &result.connection {
-        output.push_str(&gateway_selection(connection, shell));
+        output.push_str(&gateway_selection(connection));
         *selected = true;
     }
     for (sandbox, agent) in &result.agents {
@@ -721,33 +662,20 @@ fn agent_invocation(
         let name = terminal_text(&agent.agent);
         match &agent.runtime_id {
             Some(runtime) => {
-                let reply = format!("reply-{sandbox}.json");
-                let prompt = match shell {
-                    Shell::Bash => "printf '%s\\n' '\"Reply with exactly READY.\"'",
-                    Shell::PowerShell => "'\"Reply with exactly READY.\"'",
-                };
+                let reply = shell_word(&format!("reply-{sandbox}.json"));
                 let command = format!(
-                    "{prompt} | openshell sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input - > {}",
-                    shell.word(sandbox.as_str()),
-                    shell.word(name.as_str()),
-                    shell.word(runtime),
-                    shell.word(&reply)
+                    "printf '%s\\n' '\"Reply with exactly READY.\"' | openshell sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input - > {reply}",
+                    shell_word(sandbox.as_str()),
+                    shell_word(name.as_str()),
+                    shell_word(runtime),
                 );
-                let inspect = match shell {
-                    Shell::Bash => format!(
-                        "jq '{{command_status: .status, agent_status: .result.status, error: .result.error, response: .result.output.response}}' {}",
-                        shell.word(&reply)
-                    ),
-                    Shell::PowerShell => format!(
-                        "$reply = Get-Content -Raw -LiteralPath {} | ConvertFrom-Json; [pscustomobject]@{{command_status=$reply.status; agent_status=$reply.result.status; error=$reply.result.error; response=$reply.result.output.response}}",
-                        shell.quoted(&reply)
-                    ),
-                };
+                let inspect = format!(
+                    "jq '{{command_status: .status, agent_status: .result.status, error: .result.error, response: .result.output.response}}' {reply}"
+                );
                 output.push_str(&format!(
-                    "  {sandbox}: agent {name}, runtime {}\n    Invoke:   {}\n    Hermes reply{}: {}\n",
+                    "  {sandbox}: agent {name}, runtime {}\n    Invoke:   {}\n    Hermes reply (requires jq): {}\n",
                     terminal_text(runtime),
                     terminal_text(&command),
-                    if matches!(shell, Shell::Bash) { " (requires jq)" } else { "" },
                     terminal_text(&inspect)
                 ));
             }
@@ -766,11 +694,11 @@ fn agent_invocation(
 /// How to reach each enabled interface: the commands a person runs, under the
 /// gateway and workspace selection, unless the agents' section printed it.
 /// Only the person's own retrieval command discloses a token.
-fn interface_access(result: &OperationResult, selected: bool, shell: Shell) -> String {
+fn interface_access(result: &OperationResult, selected: bool) -> String {
     use nemoclaw_sdk::SignIn;
     let mut output = String::from("\nAgent interfaces:\n");
     if !selected && let Some(connection) = &result.connection {
-        output.push_str(&gateway_selection(connection, shell));
+        output.push_str(&gateway_selection(connection));
     }
     for access in &result.interfaces {
         let sandbox = terminal_text(&access.sandbox);
@@ -977,17 +905,11 @@ mod tests {
     use serde_json::{Value, json};
 
     fn render(args: &[&str], result: Value) -> String {
-        render_for_shell(args, result, Shell::Bash)
-    }
-
-    fn render_for_shell(args: &[&str], result: Value, shell: Shell) -> String {
         let cli = Cli::try_parse_from(args).unwrap();
-        let mut context = RenderContext::new(&cli);
-        context.shell = shell;
         super::render(
             CommandResult::Operation(serde_json::from_value(result).unwrap()),
             cli.command.output_format(),
-            &context,
+            &RenderContext::new(&cli),
         )
         .unwrap()
     }
@@ -1053,17 +975,12 @@ mod tests {
     #[test]
     fn saved_paths_are_quoted_so_the_commands_run_as_printed() {
         let text = authored("my dir/it's.yaml");
-        let quoted_path = if cfg!(windows) {
-            "'my dir/it''s.yaml'"
-        } else {
-            "'my dir/it'\\''s.yaml'"
-        };
         assert!(
-            text.contains(&format!("nemoclaw plan {quoted_path}\n")),
+            text.contains("nemoclaw plan 'my dir/it'\\''s.yaml'\n"),
             "{text}"
         );
         assert!(
-            text.contains(&format!("nemoclaw apply {quoted_path}\n")),
+            text.contains("nemoclaw apply 'my dir/it'\\''s.yaml'\n"),
             "{text}"
         );
         let text = authored("-odd.yaml");
@@ -1236,110 +1153,6 @@ mod tests {
             "assistant": {"agent": "main", "runtimeId": "rt-1"},
             "reviewer": {"agent": "critic"}
         })
-    }
-
-    #[test]
-    fn powershell_paths_preserve_apostrophes_and_metacharacters() {
-        let text = render_for_shell(
-            &[
-                "nemoclaw",
-                "plan",
-                "--state-dir",
-                "C:\\Alex's work\\$state",
-                "deployment.yaml",
-            ],
-            json!({"outcome": "planned", "changes": [], "deferred": ["runtime"]}),
-            Shell::PowerShell,
-        );
-        assert!(
-            text.contains("--state-dir 'C:\\Alex''s work\\$state'"),
-            "{text}"
-        );
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn native_windows_handoff_runs_in_windows_powershell() {
-        let cli = Cli::try_parse_from(["nemoclaw", "apply", "deployment.yaml"]).unwrap();
-        let result = json!({"outcome": "succeeded", "changes": [], "agents": agents(),
-            "connection": {"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"}});
-        let text = super::render(
-            CommandResult::Operation(serde_json::from_value(result).unwrap()),
-            OutputFormat::Text,
-            &RenderContext::new(&cli),
-        )
-        .unwrap();
-        let selection: String = text
-            .lines()
-            .filter(|line| {
-                line.starts_with("    $env:") || line.starts_with("    Remove-Item Env:")
-            })
-            .map(|line| format!("{line}\n"))
-            .collect();
-        let invoke = text
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("Invoke:"))
-            .unwrap();
-        let inspect = text
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("Hermes reply:"))
-            .unwrap();
-        let script = format!(
-            r#"
-function openshell {{
-    $prompt = ($input | Out-String | ConvertFrom-Json)
-    [pscustomobject]@{{prompt=$prompt; arguments=$args; gateway=$env:OPENSHELL_GATEWAY_ENDPOINT; workspace=$env:OPENSHELL_WORKSPACE; stale=$env:OPENSHELL_GATEWAY; status='succeeded'; result=@{{status='succeeded'; output=@{{response='READY'}}}}}} | ConvertTo-Json -Compress -Depth 4
-}}
-$env:OPENSHELL_GATEWAY = 'stale'
-{selection}
-{invoke}
-Get-Content -Raw -LiteralPath reply-assistant.json
-{inspect} | ConvertTo-Json -Compress
-"#
-        );
-        let directory = tempfile::tempdir().unwrap();
-        let output = std::process::Command::new("powershell.exe")
-            .current_dir(directory.path())
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let values: Vec<Value> = serde_json::Deserializer::from_slice(&output.stdout)
-            .into_iter()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        let observed = &values[0];
-        assert_eq!(observed["prompt"], "Reply with exactly READY.");
-        assert_eq!(observed["gateway"], "http://127.0.0.1:17671");
-        assert_eq!(observed["workspace"], "nc-1234567890abcdef");
-        assert!(observed["stale"].is_null());
-        assert_eq!(values[1]["command_status"], "succeeded");
-        assert_eq!(values[1]["agent_status"], "succeeded");
-        assert_eq!(values[1]["response"], "READY");
-        // PowerShell consumes `--` when the receiver is a function; the real
-        // native executable receives it as an argument.
-        assert_eq!(
-            observed["arguments"],
-            json!([
-                "sandbox",
-                "exec",
-                "-n",
-                "assistant",
-                "--no-tty",
-                "fabric-agent-ctl",
-                "invoke",
-                "--agent",
-                "main",
-                "--runtime-id",
-                "rt-1",
-                "--input",
-                "-"
-            ])
-        );
     }
 
     /// Before any apply records a runtime, a plan lists no agents as last
