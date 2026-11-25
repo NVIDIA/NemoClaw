@@ -909,7 +909,7 @@ test(
           : []),
         "nemoclaw and openshell are installed and usable",
         "sandbox appears in list/status and has policy/inference configuration",
-        "native OpenClaw install, invoke, update, self-update, restart, discovery, and removal are not intercepted",
+        "native OpenClaw plugin installation, invocation, replacement, restart, discovery, and removal use the real runtime",
         "an unregistered native-home file survives the exercised native lifecycle",
         "direct hosted inference and the sandbox's configured inference route both respond",
         ...(USE_PREINSTALLED_LAUNCHABLE
