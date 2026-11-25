@@ -16,60 +16,20 @@ Check `release-evidence.json` for signing, macOS notarization, and unsigned exce
 <a name="installing-on-windows"></a>
 <a name="installing-on-linux-or-macos"></a>
 
-<div className="nemoclaw-install-tabs">
-
 ## Choosing Your Operating System
 
 Select the tab for your machine.
 
-<style>{`
-.nemoclaw-install-tabs #choosing-your-operating-system {
-  margin-block: 1rem 0.5rem;
-}
-
-.nemoclaw-install-tabs #choosing-your-operating-system + p {
-  margin-block: 0.5rem;
-}
-
-.nemoclaw-install-tabs :has(> [role="tab"]) {
-  gap: 0.5rem;
-  padding-bottom: 0.75rem;
-}
-
-.nemoclaw-install-tabs [role="tab"] {
-  min-height: 2.75rem;
-  min-width: 5rem;
-  justify-content: center;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--grayscale-a7, #808080);
-  border-radius: 0.375rem;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.nemoclaw-install-tabs [role="tab"][aria-selected="true"] {
-  border-color: currentColor;
-  background-color: var(--accent-a4, transparent);
-}
-
-.nemoclaw-install-tabs [role="tab"]::before {
-  content: none;
-}
-
-.nemoclaw-install-tabs a[id]:empty {
-  display: block;
-  scroll-margin-top: 7rem;
-}
-`}</style>
-
 <Tabs>
 <Tab title="macOS" id="macos" language="macos">
 
-<a id="installing-with-the-macos-installer"></a>
+<Anchor id="installing-with-the-macos-installer">
 
 On a Mac with Apple silicon and macOS 15 or later, `nemoclaw-v0.1.0-darwin_arm64.pkg` installs the bundle in `/usr/local/nemoclaw`.
 The installer requires administrator privileges and adds `/usr/local/nemoclaw/bin` to `PATH` for new Terminal windows.
 A final release includes the package only after signing and notarization.
+
+</Anchor>
 
 If the release omits the package or you need to keep multiple versions side by side, <a href="?language=linux#installing-on-linux-or-macos">use the shared Linux and macOS archive instructions</a> with `PLATFORM=darwin_arm64`.
 The archive is tested on macOS 15.
@@ -124,11 +84,13 @@ Continue to [Next Steps](#next-steps).
 </Tab>
 <Tab title="Windows" id="windows" language="windows">
 
-<a id="installing-with-the-windows-installer"></a>
+<Anchor id="installing-with-the-windows-installer">
 
 On x64 Windows, `nemoclaw-v0.1.0-windows_amd64.msi` installs the bundle in `%LOCALAPPDATA%\Programs\NemoClaw` and adds its `bin` directory to your user `Path`.
 The installer requires no administrator rights.
 Find the installed version under **NVIDIA NemoClaw Agent Configs** in **Settings** > **Apps** > **Installed apps**.
+
+</Anchor>
 
 A release includes the signed installer only if it signs the Windows executables.
 If the release omits the installer or you need to keep multiple versions side by side, <a href="?language=windows#installing-on-windows">install the Windows archive</a>.
@@ -194,11 +156,13 @@ Use that path for subsequent `nemoclaw` commands in the same session.
 
 Continue to [Next Steps](#next-steps).
 
-<a id="installing-on-windows"></a>
+<Anchor id="installing-on-windows">
 
 The archive requires `tar.exe`, which ships with Windows 10 version 1803 or later and Windows Server 2019 or later.
 Use PowerShell in an empty download directory.
 Stop on any download or verification failure.
+
+</Anchor>
 
 1. Select the archive name.
 
@@ -274,7 +238,7 @@ Continue to [Next Steps](#next-steps).
 </Tab>
 <Tab title="Linux" id="linux" language="linux">
 
-<a id="installing-on-linux-or-macos"></a>
+<Anchor id="installing-on-linux-or-macos">
 
 On Linux, use the `linux_amd64` or `linux_arm64` archive on a client with glibc 2.35 or later.
 On macOS, open **Applications > Utilities > Terminal** to run these commands.
@@ -283,6 +247,8 @@ If the browser automatically extracts archives, keep the original `.tar.gz` for 
 Finder can browse the bundle, but double-clicking `bin/nemoclaw` does not start onboarding.
 Keep the whole bundle together and run commands in Terminal.
 If macOS blocks execution, stop and record the exact warning, archive name, release, and signing evidence; do not remove quarantine or bypass Gatekeeper to qualify a release.
+
+</Anchor>
 
 Run these commands from an empty download directory with `curl` and `tar` available.
 Stop on any download or verification failure.
@@ -360,8 +326,6 @@ Continue to [Next Steps](#next-steps).
 
 </Tab>
 </Tabs>
-
-</div>
 
 To install from a checkout, follow the [source build guide](../build-deploy/build.md).
 
