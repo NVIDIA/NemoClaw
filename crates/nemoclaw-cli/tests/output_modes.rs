@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::fs;
+use std::{fs, process::Command};
 
 #[test]
 fn json_selection_does_not_turn_usage_errors_into_operation_results() {
@@ -235,7 +235,7 @@ fn a_configuration_failure_lists_each_error_with_its_place() {
     let config = directory.path().join("input.yaml");
     // API-key auth whose provider has no credential, and a second sandbox
     // whose route names a provider that doesn't exist.
-    let text = include_str!("../../../examples/local.yaml").replace(
+    let text = include_str!("../../../examples/agents/local.yaml").replace(
         "        name: main\n",
         "        name: main\n        auth:\n          method: api-key\n",
     );
