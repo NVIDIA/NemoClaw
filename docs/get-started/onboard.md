@@ -56,18 +56,11 @@ An absent image or a read that could not be verified can leave an advisory and a
 Review is not a deployment plan and does not establish that the configuration will run.
 Refer to [provider discovery](../references/provider.md#engine-and-fabric-discovery) for the read contracts.
 
-A release CLI reads its exact release's `version-pins.json` from GitHub.
-When no usable local image fits the selected harness, onboarding offers the matching agent image digest from that metadata.
-The release derives this mapping from each image's verified Fabric metadata, not its repository name.
-A single candidate is selected automatically; several candidates remain choices.
-This suggestion does not pull an image or prove runtime compatibility, inference, or registry access.
-Apply still acquires the selected digest and checks it.
-If the release metadata is unavailable, onboarding keeps local discovery and manual digest entry available and links the build guide.
-
-The CLI refuses pins from another release or Fabric revision.
-Development builds do not look up release image suggestions.
-Older candidates without the `agentImages` mapping provide no release suggestions.
-Onboarding does not read or forward GitHub credentials when looking up public release metadata.
+When no usable local image fits the selected harness, a release CLI offers its release's agent images whose Fabric metadata lists the harness's adapter, from the release's `version-pins.json` on GitHub.
+Onboarding selects a single image and lists several as choices.
+The suggestion does not pull the image or establish that it runs; apply pulls the digest and checks it.
+Development builds do not read release suggestions.
+If the release's pins are unavailable, or name another release or Fabric revision, onboarding offers local images and manual entry.
 
 ## Reviewing and Saving the YAML
 
