@@ -56,14 +56,10 @@ A successful generic invocation doesn't imply that every result has an `output.r
 ### Selecting the Host OpenShell Client
 
 Use the OpenShell client qualified with the NemoClaw release that owns the deployment.
-The CLI reports the required version, the executable found on `PATH`, and its detected version beside native access commands.
-A missing executable, unsuccessful version command, or unrecognized version output leaves compatibility unverified.
-This check reads `openshell --version`; it does not authenticate to a gateway or test a request.
-Shell aliases and functions can override `PATH`; use the reported executable by absolute path if your shell defines one.
-
-The gateway check is separate: the gateway must report exactly the OpenShell version pinned by that NemoClaw release and support its selected compute driver.
-For an external gateway that fails this contract, ask its operator for a compatible endpoint; installing another client does not change the gateway.
-Do not upgrade another deployment's gateway to satisfy this one.
+Beside native access commands, the CLI reports the required version, the executable found on `PATH`, and the version that `openshell --version` reports; it doesn't contact a gateway.
+Shell aliases and functions can override `PATH`; run the reported executable by absolute path if your shell defines one.
+The gateway check is separate: the gateway must report the OpenShell version pinned by that release, and installing another client doesn't change it.
+For an external gateway that fails this check, ask its operator for a compatible endpoint rather than upgrading another deployment's gateway.
 
 For a release, use the `components.openshellClient` entry in that tag's `version-pins.json`; for a source build, use the same checkout's `versions.json`.
 Release metadata without this entry names its client in that release's prerequisites; do not substitute a newer release's or checkout's pin.
@@ -86,11 +82,8 @@ command -v openshell
 openshell --version
 ```
 
-Stop on a verification failure.
-The detected version must equal `CLIENT_VERSION`; otherwise check the selected executable before continuing.
-Preserve existing directories; reuse a verified client when two NemoClaw releases qualify the same version.
-When their pins differ, select the appropriate directory in each deployment's shell.
-Changing `PATH` does not alter another installation, a running process, or a gateway.
+Stop on any failure; `openshell --version` must report `CLIENT_VERSION`.
+The `PATH` change selects this client in the current shell only, leaving other installations and gateways unchanged; releases that pin the same version share its directory.
 
 ### Deploying Several Agents
 
