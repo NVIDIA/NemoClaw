@@ -1017,6 +1017,7 @@ describe("regression guards", () => {
       expect(errorSpy).toHaveBeenCalledWith(
         "  This error originated from the OpenShell runtime layer.",
       );
+      expect(errorSpy).toHaveBeenCalledWith("  Docs: https://github.com/ai-openshell/openshell");
     } finally {
       childProcess.spawnSync = originalSpawnSync;
       process.exit = originalExit;

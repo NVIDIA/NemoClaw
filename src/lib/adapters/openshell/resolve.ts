@@ -38,7 +38,7 @@ export function openshellNotFoundDiagnosticLines(
   return [
     "  openshell binary not found. Checked:",
     ...checked.map((location) => `    - ${location}`),
-    "  Install OpenShell (https://github.com/NVIDIA/OpenShell) or set NEMOCLAW_OPENSHELL_BIN to an absolute, executable path.",
+    "  Install OpenShell (https://github.com/ai-openshell/openshell/releases) or set NEMOCLAW_OPENSHELL_BIN to an absolute, executable path.",
   ];
 }
 

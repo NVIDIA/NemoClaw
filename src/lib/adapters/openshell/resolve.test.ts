@@ -182,6 +182,7 @@ describe("lib/resolve-openshell", () => {
         "    - /opt/homebrew/bin/openshell",
         "    - /usr/local/bin/openshell",
         "    - /usr/bin/openshell",
+        "  Install OpenShell (https://github.com/ai-openshell/openshell/releases) or set NEMOCLAW_OPENSHELL_BIN to an absolute, executable path.",
       ]),
     );
   });

@@ -119,7 +119,7 @@ function logOpenshellRuntimeHint(file: string, renderedCommand = ""): void {
     (file === "bash" && /^\s*openshell\s/.test(renderedCommand))
   ) {
     console.error("  This error originated from the OpenShell runtime layer.");
-    console.error("  Docs: https://github.com/NVIDIA/OpenShell");
+    console.error("  Docs: https://github.com/ai-openshell/openshell");
   }
 }
 
