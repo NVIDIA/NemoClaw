@@ -97,22 +97,33 @@ fn an_unregistered_oidc_gateway_stops_before_running_the_requested_command() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("Sign in"));
 }
 
+/// The bundled CLI can't carry a bearer token, so a gateway that needs one is
+/// refused, even when mTLS is also configured, instead of reached without it.
 #[test]
-fn a_gateway_reached_only_with_a_bearer_token_is_refused() {
+fn a_gateway_that_needs_a_bearer_token_is_refused() {
     let root = tempfile::tempdir().unwrap();
-    let gateway = serde_json::json!({
-        "endpoint":"https://gateway.example.com", "credential":{"env":"GATEWAY_TOKEN"}
-    });
-    let output = osh(root.path(), gateway, "#!/bin/sh\nexit 0\n")
-        .arg("status")
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("bearer token"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let mtls = serde_json::json!({"ca":{"env":"CLI_CA"},"certificate":{"env":"CLI_CERT"},"key":{"env":"CLI_KEY"}});
+    for tls in [serde_json::Value::Null, mtls] {
+        let mut gateway = serde_json::json!({
+            "endpoint":"https://gateway.example.com", "credential":{"env":"GATEWAY_TOKEN"}
+        });
+        if !tls.is_null() {
+            gateway["tls"] = tls;
+        }
+        let output = osh(root.path(), gateway, "#!/bin/sh\nexit 0\n")
+            .arg("status")
+            .env("CLI_CA", root.path().join("ca"))
+            .env("CLI_CERT", root.path().join("cert"))
+            .env("CLI_KEY", root.path().join("key"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("bearer token"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]
@@ -252,25 +263,4 @@ fn oidc_login_settings_with_controls_are_refused_without_a_registration_hint() {
         !error.contains('\u{1b}') && !error.contains("gateway add"),
         "{error}"
     );
-}
-
-#[test]
-fn a_bearer_token_is_not_silently_omitted_when_mtls_is_configured() {
-    let root = tempfile::tempdir().unwrap();
-    let gateway = serde_json::json!({
-        "endpoint":"https://gateway.example.com", "credential":{"env":"GATEWAY_TOKEN"},
-        "tls":{"ca":{"env":"CLI_CA"},"certificate":{"env":"CLI_CERT"},"key":{"env":"CLI_KEY"}}
-    });
-    let output = osh(root.path(), gateway, "#!/bin/sh\nexit 0\n")
-        .arg("status")
-        .env("CLI_CA", root.path().join("ca"))
-        .env("CLI_CERT", root.path().join("cert"))
-        .env("CLI_KEY", root.path().join("key"))
-        .output()
-        .unwrap();
-    assert!(
-        !output.status.success(),
-        "a required bearer reference cannot be represented by mTLS alone"
-    );
-    assert!(String::from_utf8_lossy(&output.stderr).contains("bearer token"));
 }
