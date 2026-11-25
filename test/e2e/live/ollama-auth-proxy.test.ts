@@ -20,12 +20,13 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
+import { hasOwnedLoopbackTcpListener } from "../fixtures/owned-tcp-listener.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const PROXY_SCRIPT = path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.mts");
-const OLLAMA_PORT = parsePort("NEMOCLAW_E2E_OLLAMA_PORT", 11434);
+const OLLAMA_PORT = parsePort("NEMOCLAW_E2E_OLLAMA_PORT", 11436);
 const PROXY_PORT = parsePort("NEMOCLAW_E2E_OLLAMA_PROXY_PORT", 11435);
 const MODEL = process.env.NEMOCLAW_E2E_OLLAMA_PROXY_MODEL ?? "qwen2.5:0.5b";
 const LIVE_TIMEOUT_MS = 35 * 60_000;
@@ -198,7 +199,7 @@ test(
     timeout: LIVE_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm proxy script Node and curl prerequisites",
+        "confirm Node and curl prerequisites",
         "install and start Ollama with the test model",
         "start the tokenized Ollama auth proxy",
         "enforce proxy authentication",
@@ -225,8 +226,6 @@ test(
         "a divergent token file is detected and repaired by restarting the proxy with file token",
       ],
     });
-
-    expect(fs.existsSync(PROXY_SCRIPT), `proxy script missing: ${PROXY_SCRIPT}`).toBe(true);
 
     const tokenRoot = await mkdtemp(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-"));
     const tokenFile = path.join(tokenRoot, ".nemoclaw", "ollama-proxy-token");
@@ -277,19 +276,6 @@ test(
       await expectCommandZero(install, "install Ollama");
     }
 
-    await host.command(
-      "bash",
-      [
-        "-lc",
-        "pkill -f 'ollama serve' 2>/dev/null || true; systemctl --user stop ollama 2>/dev/null || true; systemctl stop ollama 2>/dev/null || true",
-      ],
-      {
-        artifactName: "phase-2-stop-existing-ollama",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-
     ollama = spawnLogged(
       "ollama",
       ["serve"],
@@ -299,11 +285,19 @@ test(
       progress,
       "ollama-serve",
     );
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    await expect
+      .poll(() => hasOwnedLoopbackTcpListener(ollama.pid, OLLAMA_PORT), {
+        timeout: 3_000,
+        interval: 50,
+        message: `Ollama must own 127.0.0.1:${OLLAMA_PORT}. If occupied, choose a free NEMOCLAW_E2E_OLLAMA_PORT; existing listeners are preserved.`,
+      })
+      .toBe(true);
     const tagsStatus = await curlStatus(host, `http://127.0.0.1:${OLLAMA_PORT}/api/tags`, {
       artifactName: "phase-2-ollama-tags-status",
     });
     expect(tagsStatus).toBe("200");
+    expect(ollama.exitCode).toBeNull();
+    expect(ollama.signalCode).toBeNull();
 
     const pull = await host.command("ollama", ["pull", MODEL], {
       artifactName: "phase-2-ollama-pull-model",
@@ -333,11 +327,6 @@ test(
     await new Promise((resolve) => setTimeout(resolve, 2_000));
 
     const correctAuth = `Bearer ${proxyToken}`;
-    const aliveStatus = await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/api/tags`, {
-      artifactName: "phase-3-proxy-alive-status",
-    });
-    expect(aliveStatus).toMatch(/^[1-9][0-9]{2}$/u);
-
     progress.phase("enforce proxy authentication");
     expect(
       await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/api/generate`, {
@@ -423,11 +412,6 @@ test(
       "ollama-auth-proxy-restarted",
     );
     await new Promise((resolve) => setTimeout(resolve, 2_000));
-    expect(
-      await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/api/tags`, {
-        artifactName: "phase-7-restarted-proxy-status",
-      }),
-    ).toMatch(/^[1-9][0-9]{2}$/u);
     const recover = await curlBody(host, `http://127.0.0.1:${PROXY_PORT}/v1/chat/completions`, {
       artifactName: "phase-7-recovery-chat-completions",
       auth: `Bearer ${persistedToken}`,

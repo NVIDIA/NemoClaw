@@ -1235,8 +1235,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: false,
     exposeCliBin: false,
+    owningPaths: ["test/e2e/fixtures/owned-tcp-listener.ts"],
     environment: {
-      NEMOCLAW_E2E_OLLAMA_PORT: "11434",
+      NEMOCLAW_E2E_OLLAMA_PORT: "11436",
       NEMOCLAW_E2E_OLLAMA_PROXY_PORT: "11435",
     },
   }),
