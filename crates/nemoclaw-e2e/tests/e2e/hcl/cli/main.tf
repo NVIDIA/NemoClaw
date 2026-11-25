@@ -20,18 +20,12 @@ variable "context" {
 }
 
 variable "operation" {
-  description = "plan, apply, destroy, export (to exported.yaml in the work directory), or plan_destroy (plan --destroy)."
+  description = "plan, apply, or destroy."
   type        = string
   validation {
-    condition     = contains(["plan", "apply", "destroy", "export", "plan_destroy"], var.operation)
-    error_message = "The operation must be plan, apply, destroy, export, or plan_destroy."
+    condition     = contains(["plan", "apply", "destroy"], var.operation)
+    error_message = "The operation must be plan, apply, or destroy."
   }
-}
-
-variable "document" {
-  description = "A document to plan or apply in place of the case's, such as the one an export wrote."
-  type        = string
-  default     = null
 }
 
 variable "empty_path" {
@@ -64,14 +58,11 @@ locals {
       })
     })
   }))
-  config   = var.document != null ? var.document : local.document == null ? var.context.config : "document.yaml"
-  exported = "${var.context.work_dir}/exported.yaml"
+  config = local.document == null ? var.context.config : "document.yaml"
   arguments = {
-    plan         = ["plan", "--output", "json", "--non-interactive", local.config]
-    apply        = ["apply", "--output", "json", "--non-interactive", local.config]
-    destroy      = ["destroy", "--output", "json"]
-    export       = ["export", "--output", local.exported]
-    plan_destroy = ["plan", "--destroy", "--output", "json", "--non-interactive"]
+    plan    = ["plan", "--output", "json", "--non-interactive", local.config]
+    apply   = ["apply", "--output", "json", "--non-interactive", local.config]
+    destroy = ["destroy", "--output", "json"]
   }[var.operation]
 }
 
@@ -108,8 +99,7 @@ resource "terraform_data" "operation" {
 locals {
   directory = "${var.context.work_dir}/${terraform_data.operation.id}"
   exit_code = tonumber(trimspace(file("${local.directory}/exit")))
-  # export writes YAML to a file rather than a JSON result.
-  result = local.exit_code == 0 && var.operation != "export" ? jsondecode(file("${local.directory}/stdout")) : null
+  result    = local.exit_code == 0 ? jsondecode(file("${local.directory}/stdout")) : null
   state = try(jsondecode(file(
     "${var.context.state_dir}/${terraform_data.operation.id == "" ? "" : "terraform.tfstate"}"
   )), { resources = [] })
@@ -154,14 +144,6 @@ output "bindings" {
       agent_sandbox = try(local.agents[resource.name].sandbox.id, null)
     } if resource.type == "openshell_sandbox"
   }
-}
-
-output "exported" {
-  description = "The path and text of the document an export wrote, or null for other operations."
-  value = var.operation == "export" && local.exit_code == 0 ? {
-    path = local.exported
-    text = file(local.exported)
-  } : null
 }
 
 output "baseline" {

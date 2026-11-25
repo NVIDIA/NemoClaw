@@ -32,12 +32,18 @@ const PAUSED: &str = "⏸";
 /// The reply the stub model gives, which `lifecycle` configures.
 const STUB_REPLY: &str = "nemoclaw-stub-reply";
 /// The prompts of the QA plan's 005-DEPLOY, which every agent must answer
-/// with `READY` and then `391`; 009-LIFECYCLE asks for `READY` again.
+/// with `READY` and then `391`.
 const READY_PROMPT: &str = "Reply with exactly READY.";
 const PRODUCT_PROMPT: &str = "What is 17 multiplied by 23? Reply with only the number.";
-/// The QA plan's cases that `lifecycle.tftest.hcl` runs, by the prefix of
-/// their run blocks' names: `case_005_plan` belongs to 005-DEPLOY.
-const CASES: [&str; 2] = ["005", "009"];
+/// What `lifecycle.tftest.hcl` checks, by the prefix of its run blocks'
+/// names: the QA plan's 005-DEPLOY, which the report names by run ID, such as
+/// `SPARK-HERMES-005`, and the live suites' unchanged plan, which the QA plan
+/// has no case for. Any other run block is setup.
+const CHECKS: [(&str, &str); 2] = [
+    ("005", "case_005_"),
+    (UNCHANGED_PLAN, "check_unchanged_plan"),
+];
+const UNCHANGED_PLAN: &str = "unchanged plan";
 /// The credential variable a stub row's providers read when the example names
 /// none.
 const STUB_KEY_ENV: &str = "NEMOCLAW_SCENARIO_MODEL_KEY";
@@ -359,8 +365,11 @@ struct Bound {
     /// The verifier's targets for 005-DEPLOY: each agent asked for READY and
     /// for 391.
     targets: Value,
-    /// Only the READY targets, which 009-LIFECYCLE asks again.
-    ready_targets: Value,
+    /// Whether the lifecycle plans the applied deployment again, which it does
+    /// unless the deployment serves a model: as the live hardware cases do,
+    /// it leaves unchanged reconciliation to the integration tests rather
+    /// than hold a GPU for it.
+    replans: bool,
     stub_port: u16,
     stub_credentials: BTreeSet<String>,
 }
@@ -442,7 +451,6 @@ fn bind(row: &Row, mut document: Value, inputs: Inputs<'_>) -> Result<Bound, Str
         }
     }
     let mut targets = serde_json::Map::new();
-    let mut ready_targets = serde_json::Map::new();
     for (name, sandbox) in spec["sandboxes"]
         .as_object_mut()
         .ok_or("the example has no sandboxes")?
@@ -465,9 +473,6 @@ fn bind(row: &Row, mut document: Value, inputs: Inputs<'_>) -> Result<Bound, Str
                 "response_pointer": "/output/response",
                 "answer": if row.stub { STUB_REPLY } else { answer },
             });
-            if suffix == "ready" {
-                ready_targets.insert(format!("{name}-{suffix}"), target.clone());
-            }
             targets.insert(format!("{name}-{suffix}"), target);
         }
     }
@@ -503,10 +508,14 @@ fn bind(row: &Row, mut document: Value, inputs: Inputs<'_>) -> Result<Bound, Str
         }
     }
     document["metadata"]["uid"] = json!(inputs.uid);
+    let replans = document["spec"]
+        .get("services")
+        .and_then(Value::as_object)
+        .is_none_or(serde_json::Map::is_empty);
     Ok(Bound {
         document,
         targets: Value::Object(targets),
-        ready_targets: Value::Object(ready_targets),
+        replans,
         stub_port,
         stub_credentials,
     })
@@ -600,11 +609,10 @@ impl Drop for Cleanup {
     }
 }
 
-/// Each case's outcome from `tofu test`'s report of the lifecycle's run
+/// Each check's outcome from `tofu test`'s report of the lifecycle's run
 /// blocks: passed when all of its runs passed, FAILED when one failed or a
-/// setup run (one that belongs to no case) failed, and not run when its runs
-/// were skipped.
-fn case_outcomes(output: &str) -> BTreeMap<&'static str, &'static str> {
+/// setup run failed, and not run when its runs were skipped.
+fn check_outcomes(output: &str) -> BTreeMap<&'static str, &'static str> {
     let runs: Vec<(&str, &str)> = output
         .lines()
         .filter_map(|line| {
@@ -613,16 +621,15 @@ fn case_outcomes(output: &str) -> BTreeMap<&'static str, &'static str> {
             Some((name, result.trim()))
         })
         .collect();
-    let setup_failed = runs
+    let setup_failed = runs.iter().any(|(name, result)| {
+        !CHECKS.iter().any(|(_, prefix)| name.starts_with(prefix)) && *result != "pass"
+    });
+    CHECKS
         .iter()
-        .any(|(name, result)| !name.starts_with("case_") && *result != "pass");
-    CASES
-        .iter()
-        .map(|case| {
-            let prefix = format!("case_{case}_");
+        .map(|(check, prefix)| {
             let results: Vec<&str> = runs
                 .iter()
-                .filter(|(name, _)| name.starts_with(&prefix))
+                .filter(|(name, _)| name.starts_with(prefix))
                 .map(|(_, result)| *result)
                 .collect();
             let outcome = if setup_failed || results.contains(&"fail") || results.contains(&"error")
@@ -633,12 +640,12 @@ fn case_outcomes(output: &str) -> BTreeMap<&'static str, &'static str> {
             } else {
                 "passed"
             };
-            (*case, outcome)
+            (*check, outcome)
         })
         .collect()
 }
 
-/// Runs one row and reports each case's outcome.
+/// Runs one row and reports each check's outcome.
 fn run_row(
     row: &Row,
     host: &Host,
@@ -724,13 +731,19 @@ fn run_row(
         "stub": row.stub,
         "port": bound.stub_port,
         "targets": bound.targets,
-        "ready_targets": bound.ready_targets,
     });
     // The output is kept to read each run block's result, and echoed.
     let output = Command::new(std::env::current_exe().unwrap())
         .args(["hcl_live::case", "--exact", "--ignored", "--nocapture"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .env("NEMOCLAW_HCL_CASE", "lifecycle")
+        .env(
+            "NEMOCLAW_HCL_CASE",
+            if bound.replans {
+                "lifecycle"
+            } else {
+                "lifecycle-model"
+            },
+        )
         .env("NEMOCLAW_HCL_TEST_DIRECTORY", "scenarios")
         .env("NEMOCLAW_HCL_RUN", &run)
         .env("NEMOCLAW_HCL_DOCUMENT", &config)
@@ -742,7 +755,11 @@ fn run_row(
         .map_err(|error| format!("cannot run hcl_live::case: {error}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     print!("{stdout}");
-    let outcomes = case_outcomes(&stdout);
+    let mut outcomes = check_outcomes(&stdout);
+    // lifecycle-model has no unchanged plan to report.
+    if !bound.replans {
+        outcomes.insert(UNCHANGED_PLAN, "not run: the example serves a model");
+    }
     if !output.status.success() && !outcomes.values().any(|outcome| *outcome == "FAILED") {
         return Err(format!(
             "the lifecycle failed before its cases; see {}",
@@ -788,8 +805,12 @@ fn page() {
         for id in &row.ids {
             match &outcome {
                 Ok(cases) => {
-                    for (case, result) in cases {
-                        let run_id = format!("{id}-{case}");
+                    for (check, result) in cases {
+                        let run_id = if *check == UNCHANGED_PLAN {
+                            format!("{id} {check}")
+                        } else {
+                            format!("{id}-{check}")
+                        };
                         if *result == "FAILED" {
                             failed.push(run_id.clone());
                         }
@@ -894,33 +915,49 @@ mod tests {
     }
 
     #[test]
-    fn each_case_passes_only_when_all_its_runs_pass() {
+    fn each_check_passes_only_when_all_its_runs_pass() {
         let output = "\
 scenarios/lifecycle.tftest.hcl... fail
   run \"setup_model\"... pass
   run \"case_005_plan\"... pass
   run \"case_005_reply\"... pass
-  run \"case_009_export\"... pass
-  run \"case_009_reapply\"... fail
-  run \"case_009_destroy\"... skip
+  run \"check_unchanged_plan\"... fail
+  run \"case_005_destroy\"... pass
 ";
         assert_eq!(
-            case_outcomes(output),
-            BTreeMap::from([("005", "passed"), ("009", "FAILED")])
+            check_outcomes(output),
+            BTreeMap::from([("005", "passed"), ("unchanged plan", "FAILED")])
         );
     }
 
     #[test]
-    fn a_failed_setup_fails_every_case_and_skipped_runs_mean_not_run() {
-        let output = "  run \"setup_model\"... fail\n  run \"case_005_plan\"... skip\n  run \"case_009_export\"... skip\n";
+    fn a_failed_setup_fails_every_check_and_skipped_runs_mean_not_run() {
+        let output = "  run \"setup_model\"... fail\n  run \"case_005_plan\"... skip\n  run \"check_unchanged_plan\"... skip\n";
         assert_eq!(
-            case_outcomes(output),
-            BTreeMap::from([("005", "FAILED"), ("009", "FAILED")])
+            check_outcomes(output),
+            BTreeMap::from([("005", "FAILED"), ("unchanged plan", "FAILED")])
         );
-        let output = "  run \"setup_model\"... pass\n  run \"case_005_plan\"... pass\n  run \"case_009_export\"... skip\n";
+        let output = "  run \"setup_model\"... pass\n  run \"case_005_plan\"... pass\n  run \"check_unchanged_plan\"... skip\n";
         assert_eq!(
-            case_outcomes(output),
-            BTreeMap::from([("005", "passed"), ("009", "not run")])
+            check_outcomes(output),
+            BTreeMap::from([("005", "passed"), ("unchanged plan", "not run")])
+        );
+    }
+
+    #[test]
+    fn only_a_row_whose_example_serves_no_model_plans_again_unchanged() {
+        let stub = by_id("DOCKER-OPENCLAW");
+        assert!(bound(&stub, &stub.example).unwrap().replans);
+        let served = by_id("SPARK-HERMES");
+        assert!(!bound(&served, &served.example).unwrap().replans);
+        let running = Running {
+            endpoint: "http://172.30.189.1:19110/v1".into(),
+            model: "nemotron-3.5-super-vl".into(),
+        };
+        assert!(
+            bound_with(&served, &served.example, Some(running))
+                .unwrap()
+                .replans
         );
     }
 
@@ -1098,10 +1135,6 @@ scenarios/lifecycle.tftest.hcl... fail
         assert!(bound.stub_credentials.is_empty());
         assert_eq!(bound.targets["assistant-ready"]["answer"], "READY");
         assert_eq!(bound.targets["assistant-391"]["answer"], "391");
-        assert_eq!(
-            bound.ready_targets,
-            json!({"assistant-ready": bound.targets["assistant-ready"]})
-        );
     }
 
     #[test]
