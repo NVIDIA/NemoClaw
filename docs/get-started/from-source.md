@@ -3,8 +3,8 @@
 
 # Onboarding From Source on macOS or WSL2
 
-Build the checkout's CLI bundle and a Linux ARM64 Hermes image on an Apple silicon Mac or in WSL2 on Windows ARM64, then deploy Hermes with a managed Docker gateway and verify one reply through hosted NVIDIA Endpoints inference.
-Windows ARM64 has no native bundle, so it uses the Linux ARM64 bundle inside WSL2.
+Build the checkout's CLI bundle and a Linux Hermes image on an Apple silicon Mac or in WSL2 on Windows, then deploy Hermes with a managed Docker gateway and verify one reply through hosted NVIDIA Endpoints inference.
+Windows ARM64 has no native bundle, so it uses the Linux ARM64 bundle inside WSL2; Windows AMD64 can use the Linux AMD64 bundle the same way.
 The procedure creates containers and can incur inference charges.
 It does not qualify release signing, notarization, or browser quarantine handling; for a release, follow [Installing the CLI](install.md).
 
@@ -14,33 +14,37 @@ On macOS, open **Applications > Utilities > Terminal** and run `bash`, so that t
 Run the CLI in Terminal; double-clicking `bin/nemoclaw` in Finder doesn't start onboarding.
 Install Git, curl, jq, Apple's Command Line Tools, and Rust.
 
-On Windows, install WSL2 with an ARM64 Ubuntu distribution.
+On Windows, install WSL2 with an Ubuntu distribution that matches the machine's architecture.
 In PowerShell, find its name with `wsl --list --verbose` and enter it with `wsl -d NAME`.
 Run every later command in Bash inside WSL, and keep the checkout on the Linux filesystem, such as under `~/src`.
 Install Git, curl, jq, a C toolchain, and [Rust](https://www.rust-lang.org/tools/install).
 In Docker Desktop, enable integration for the distribution under **Settings > Resources > WSL Integration**.
 
 The checkout's `rust-toolchain.toml` selects the Rust version.
-Start [Docker Desktop](https://docs.docker.com/desktop/), then check the architecture, engine, and image store:
+Start [Docker Desktop](https://docs.docker.com/desktop/), then select the bundle and image platforms for this machine and check the engine and image store:
 
 ```sh
-uname -m
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) PLATFORM=darwin_arm64; IMAGE_PLATFORM=linux/arm64 ;;
+  Linux-aarch64) PLATFORM=linux_arm64; IMAGE_PLATFORM=linux/arm64 ;;
+  Linux-x86_64) PLATFORM=linux_amd64; IMAGE_PLATFORM=linux/amd64 ;;
+  *) echo 'This procedure covers Apple silicon and WSL2 on ARM64 or AMD64' >&2; exit 1 ;;
+esac
 docker version
 docker info --format '{{json .DriverStatus}}'
 ```
 
-Expect `arm64` on macOS or `aarch64` in WSL, both a Docker client and server, and `io.containerd.snapshotter.v1` in the driver status.
+Expect both a Docker client and server, and `io.containerd.snapshotter.v1` in the driver status.
 If the image store differs, follow [Checking the Docker Image Store](../build-deploy/build.md#checking-the-docker-image-store) before changing it.
 
 ## Building the Checkout
 
 Clone the branch to test into a new directory and check out the intended commit.
-From its root, set `PLATFORM` to `darwin_arm64` on macOS or `linux_arm64` in WSL, then build the bundle:
+From its root, in the same shell, build the bundle:
 
 ```sh
 git clone --branch v1 https://github.com/NVIDIA/NemoClaw.git
 cd NemoClaw
-PLATFORM=darwin_arm64
 cargo ci tools
 export PROTOC="$PWD/.tools/protoc-36.2/bin/protoc"
 cargo run --locked -p nemoclaw-build -- bundle
@@ -63,7 +67,7 @@ Build the image under a new repository name, which leaves other builds' tags int
 
 ```sh
 TEST_IMAGE_PREFIX="nc-test-$(date +%Y%m%d%H%M%S)"
-IMAGE_PREFIX="$TEST_IMAGE_PREFIX" cargo images build --platform linux/arm64 hermes
+IMAGE_PREFIX="$TEST_IMAGE_PREFIX" cargo images build --platform "$IMAGE_PLATFORM" hermes
 docker image inspect "$TEST_IMAGE_PREFIX:hermes" --format '{{index .RepoDigests 0}}'
 ```
 
@@ -73,7 +77,7 @@ An empty digest list means the image store doesn't retain repository digests; a 
 
 ## Preparing the Matching OpenShell CLI
 
-Install this checkout's OpenShell client as [Selecting the Host OpenShell Client](../agents-inference/agents.md#selecting-the-host-openshell-client) describes, with `PINS=versions.json` and the same `PLATFORM`.
+Install this checkout's OpenShell client as [Selecting the Host OpenShell Client](../agents-inference/agents.md#selecting-the-host-openshell-client) describes, with `PINS=versions.json` and the `PLATFORM` that this shell selected.
 
 ## Authoring and Applying a Deployment
 
