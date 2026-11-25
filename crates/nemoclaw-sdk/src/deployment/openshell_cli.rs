@@ -4,20 +4,89 @@
 use super::*;
 
 /// An OpenShell process configured for one deployment. Keep this value alive
-/// until the process exits; dropping it removes its private configuration.
+/// until the process exits. OIDC sessions persist; other configuration is temporary.
 pub struct OpenShellCommand {
     command: tokio::process::Command,
-    _configuration: tempfile::TempDir,
+    _configuration: Option<tempfile::TempDir>,
+    registration: Option<Vec<String>>,
+    profile_lock_path: Option<PathBuf>,
+    _profile_lock: Option<fs::File>,
 }
 
 impl OpenShellCommand {
     pub fn command(&mut self) -> &mut tokio::process::Command {
         &mut self.command
     }
+
+    /// Registration arguments when this deployment has no OIDC profile yet.
+    /// Reads profiles through OpenShell's public JSON output, never its files.
+    pub async fn registration(&mut self) -> Result<Option<Vec<String>>, Error> {
+        let Some(registration) = &self.registration else {
+            return Ok(None);
+        };
+        if self.registered(&registration[4]).await? {
+            return Ok(None);
+        }
+        let mut options = fs::OpenOptions::new();
+        options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lock = options
+            .open(
+                self.profile_lock_path
+                    .as_ref()
+                    .expect("OIDC profile lock path"),
+            )
+            .map_err(|_| Error::State("cannot open OpenShell profile lock"))?;
+        lock.try_lock().map_err(|_| {
+            Error::Conflict("another OpenShell command is preparing this deployment's OIDC profile")
+        })?;
+        // Recheck after acquiring the creation lock: another first login may
+        // have registered the profile since the initial lookup.
+        if self.registered(&registration[4]).await? {
+            return Ok(None);
+        }
+        self._profile_lock = Some(lock);
+        Ok(Some(registration.clone()))
+    }
+
+    async fn registered(&self, name: &str) -> Result<bool, Error> {
+        let mut probe = tokio::process::Command::new(self.command.as_std().get_program());
+        for (name, value) in self.command.as_std().get_envs() {
+            match value {
+                Some(value) => {
+                    probe.env(name, value);
+                }
+                None => {
+                    probe.env_remove(name);
+                }
+            }
+        }
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            probe
+                .args(["gateway", "list", "--output", "json"])
+                .stdin(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| Error::State("OpenShell profile lookup timed out"))?
+        .map_err(|_| Error::State("cannot run OpenShell profile lookup"))?;
+        if !output.status.success() {
+            return Err(Error::State("OpenShell profile lookup failed"));
+        }
+        let profiles: Vec<Value> = serde_json::from_slice(&output.stdout)
+            .map_err(|_| Error::State("invalid OpenShell profile listing"))?;
+        Ok(profiles.iter().any(|profile| profile["name"] == name))
+    }
 }
 
 impl Deployment {
-    /// Prepare the bundled CLI for a plaintext or mTLS gateway in saved state.
+    /// Prepare the bundled CLI for a plaintext, mTLS, or external OIDC gateway.
     pub fn openshell(&self) -> Result<OpenShellCommand, Error> {
         if cfg!(windows) {
             return Err(Error::Bundle(
@@ -46,7 +115,7 @@ impl Deployment {
         let document = &record.document;
         if !supported(document) {
             return Err(Error::State(
-                "nemoclaw openshell currently supports plaintext and mTLS gateways; bearer-token and managed Kubernetes gateways require a separately configured OpenShell CLI (issue #14855)",
+                "nemoclaw openshell requires gateway.oidc login settings for bearer-token gateways; managed Kubernetes gateways still require a separately configured OpenShell CLI (issue #14855)",
             ));
         }
         let binary = bundle
@@ -62,12 +131,31 @@ impl Deployment {
             .map_err(|_| Error::State("cannot resolve deployment state directory"))?;
         let root = state.join("openshell");
         crate::kubernetes::receipt::private_directory(&root)?;
-        let configuration = tempfile::tempdir_in(&root)
-            .map_err(|_| Error::State("cannot create private OpenShell configuration"))?;
+        let oidc = gateway_oidc(document);
+        let (configuration, configuration_path) = if let Some(oidc) = oidc {
+            use sha2::Digest;
+            // Separate sessions when the gateway or login settings change.
+            // Hash only selection settings, never credentials.
+            let selection =
+                serde_json::to_vec(&(document.workspace(), document.spec.gateway.endpoint(), oidc))
+                    .map_err(|_| Error::State("cannot encode OpenShell profile selection"))?;
+            let digest: String = sha2::Sha256::digest(selection)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            let directory = root.join(format!("oidc-{digest}"));
+            crate::kubernetes::receipt::private_directory(&directory)?;
+            (None, directory)
+        } else {
+            let temporary = tempfile::tempdir_in(&root)
+                .map_err(|_| Error::State("cannot create private OpenShell configuration"))?;
+            let path = temporary.path().to_path_buf();
+            (Some(temporary), path)
+        };
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(configuration.path(), fs::Permissions::from_mode(0o700))
+            fs::set_permissions(&configuration_path, fs::Permissions::from_mode(0o700))
                 .map_err(|_| Error::State("cannot protect private OpenShell configuration"))?;
         }
         let workspace = document.workspace();
@@ -75,8 +163,7 @@ impl Deployment {
         // The certificate names and XDG layout are OpenShell's documented
         // mTLS interface. Metadata and token files remain OpenShell-owned.
         if let Some(tls) = gateway.tls() {
-            let directory = configuration
-                .path()
+            let directory = configuration_path
                 .join("openshell/gateways")
                 .join(&workspace)
                 .join("mtls");
@@ -96,12 +183,12 @@ impl Deployment {
         }
         let mut command = tokio::process::Command::new(binary);
         command
-            .env("XDG_CONFIG_HOME", configuration.path())
-            .env("XDG_STATE_HOME", configuration.path().join("state"))
-            .env("XDG_DATA_HOME", configuration.path().join("data"))
+            .env("XDG_CONFIG_HOME", &configuration_path)
+            .env("XDG_STATE_HOME", configuration_path.join("state"))
+            .env("XDG_DATA_HOME", configuration_path.join("data"))
             .env(
                 "OPENSHELL_SYSTEM_GATEWAY_DIR",
-                configuration.path().join("system"),
+                configuration_path.join("system"),
             )
             .env("OPENSHELL_GATEWAY", &workspace)
             .env(
@@ -112,23 +199,56 @@ impl Deployment {
             )
             .env("OPENSHELL_WORKSPACE", &workspace)
             .env_remove("OPENSHELL_GATEWAY_INSECURE");
+        let registration = oidc.map(|oidc| {
+            let mut args = vec![
+                "gateway".into(),
+                "add".into(),
+                gateway.endpoint().expect("supported gateway endpoint"),
+                "--name".into(),
+                workspace,
+                "--oidc-issuer".into(),
+                oidc.issuer.clone(),
+                "--oidc-client-id".into(),
+                oidc.client_id.clone(),
+            ];
+            for (flag, value) in [
+                ("--oidc-audience", &oidc.audience),
+                ("--oidc-scopes", &oidc.scopes),
+            ] {
+                if let Some(value) = value {
+                    args.extend([flag.into(), value.clone()]);
+                }
+            }
+            args
+        });
         Ok(OpenShellCommand {
             command,
             _configuration: configuration,
+            registration,
+            profile_lock_path: oidc.map(|_| configuration_path.join("profile.lock")),
+            _profile_lock: None,
         })
+    }
+}
+
+fn gateway_oidc(document: &Document) -> Option<&crate::config::GatewayOidc> {
+    match &document.spec.gateway {
+        crate::config::Gateway::External(gateway) => gateway.oidc.as_ref(),
+        _ => None,
     }
 }
 
 pub(super) fn supported(document: &Document) -> bool {
     let gateway = &document.spec.gateway;
     gateway.as_kubernetes().is_none()
-        && gateway.credential().is_none()
-        && gateway.endpoint().is_some_and(|endpoint| {
-            endpoint.starts_with("http://")
-                || gateway
-                    .tls()
-                    .is_some_and(|tls| tls.certificate.is_some() && tls.key.is_some())
-        })
+        && (gateway_oidc(document).is_some()
+            || (gateway.credential().is_none()
+                && gateway.endpoint().is_some_and(|endpoint| {
+                    endpoint.starts_with("http://")
+                        || gateway
+                            .tls()
+                            .is_some_and(|tls| tls.certificate.is_some() && tls.key.is_some())
+                })))
 }
 
 #[cfg(all(test, unix, not(all(target_os = "macos", target_arch = "x86_64"))))]
@@ -190,6 +310,49 @@ mod tests {
         )
         .unwrap();
         (Deployment::new(&state, &bundle), workspace)
+    }
+
+    #[test]
+    fn external_oidc_login_settings_are_accepted_without_storing_a_client_secret() {
+        let document =
+            Document::parse(include_bytes!("../../../../examples/agents/openclaw.yaml").as_slice())
+                .unwrap();
+        let mut value = serde_json::to_value(document).unwrap();
+        value["spec"]["gateway"]["endpoint"] = serde_json::json!("https://gateway.example.com");
+        value["spec"]["gateway"]["oidc"] = serde_json::json!({
+            "issuer": "https://idp.example.com/realms/openshell",
+            "clientId": "openshell-cli",
+            "audience": "openshell",
+            "scopes": "openid offline_access"
+        });
+        let yaml = serde_json::to_vec(&value).unwrap();
+        assert!(
+            Document::parse(yaml.as_slice()).is_ok(),
+            "external gateway OIDC login settings must be accepted"
+        );
+        for issuer in [
+            "http://idp.example.com",
+            "https://user:password@idp.example.com",
+            "https://idp.example.com?secret=value",
+        ] {
+            let mut invalid = value.clone();
+            invalid["spec"]["gateway"]["oidc"]["issuer"] = serde_json::json!(issuer);
+            assert!(
+                Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err(),
+                "reject an insecure or credential-bearing issuer"
+            );
+        }
+        let mut plaintext = value.clone();
+        plaintext["spec"]["gateway"]["endpoint"] = serde_json::json!("http://127.0.0.1:17671");
+        assert!(
+            Document::parse(serde_json::to_vec(&plaintext).unwrap().as_slice()).is_err(),
+            "OIDC gateway access requires HTTPS"
+        );
+        value["spec"]["gateway"]["oidc"]["clientSecret"] = serde_json::json!("do-not-store");
+        assert!(
+            Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).is_err(),
+            "client secrets belong in the process environment"
+        );
     }
 
     #[tokio::test]

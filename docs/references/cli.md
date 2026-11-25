@@ -22,12 +22,12 @@ Each command takes the following input and has the following result:
 | `nemoclaw apply FILE` | YAML path or `-` for stdin | Text result. Computes a checked plan and applies it. |
 | `nemoclaw export` | Retained state, without YAML | Observed YAML after configuration and ownership checks. |
 | `nemoclaw destroy` | Retained state, without YAML | Text result. Removes owned workloads under the retention rules. |
-| `nemoclaw openshell -- ARGS` (alias `osh`) | Retained state and any referenced TLS files | Runs the bundle's pinned OpenShell CLI against the saved gateway and workspace. Supports plaintext and mTLS gateways. |
+| `nemoclaw openshell -- ARGS` (alias `osh`) | Retained state and any referenced TLS files | Runs the bundle's pinned OpenShell CLI against the saved gateway and workspace. Supports plaintext, mTLS, and external OIDC gateways. |
 
 ### Running OpenShell Against a Deployment
 
 On Linux amd64, Linux arm64, and macOS Apple silicon, the bundle includes the OpenShell CLI pinned to its gateway version.
-Use the same state directory as apply; no OpenShell profile or gateway selection is needed:
+Use the same state directory as apply; NemoClaw selects the gateway and workspace:
 
 ```sh
 nemoclaw osh --state-dir .nemoclaw -- sandbox list
@@ -44,10 +44,56 @@ On Unix, its configuration directory is accessible only to its owner and copied 
 The configuration is removed when the command exits normally or handles an interrupt or termination signal; a forced kill can leave the temporary directory for manual removal after its processes stop.
 The caller's original files are retained.
 The process uses isolated XDG configuration, state, and data directories and overrides the system gateway directory, preserving the user's OpenShell profiles.
-Profile changes made through this command last only for that invocation.
+For plaintext and mTLS access without OIDC, profile changes made through this command last only for that invocation.
 
-Bearer-token authentication, including managed Kubernetes gateways, remains outside this command's scope ([#14855](https://github.com/NVIDIA/NemoClaw/issues/14855)).
-Those deployments still use a separately configured OpenShell CLI and its authentication flow.
+#### Logging In to an External OIDC Gateway
+
+Add the operator's OIDC login settings to the external gateway in your deployment YAML before applying it:
+
+```yaml
+gateway:
+  management: external
+  endpoint: https://gateway.example.com
+  credential: {env: GATEWAY_TOKEN}
+  oidc:
+    issuer: https://idp.example.com/realms/openshell
+    clientId: openshell-cli
+    audience: openshell
+    scopes: openid offline_access
+```
+
+`clientId` must name a client registered with your identity provider for the login flow you use.
+`audience` and `scopes` are optional.
+Deployment operations still read `GATEWAY_TOKEN`; `osh` uses its own OpenShell login and does not read or import that token.
+For a private gateway CA, keep the `tls.ca` reference and its file available.
+For a private identity-provider CA, configure `SSL_CERT_FILE` as [the Kubernetes guide](../build-deploy/kubernetes.md#reaching-the-gateway-from-the-openshell-cli) describes.
+
+For browser login, run:
+
+```sh
+nemoclaw osh -- gateway login
+nemoclaw osh -- sandbox list
+```
+
+On first login, NemoClaw runs OpenShell's `gateway add` with the saved settings; that command registers the profile and authenticates once.
+Later logins use the existing profile.
+Without a profile, other commands report the login command without starting authentication.
+For device-code login on a headless host, set `OPENSHELL_NO_BROWSER=1`; the identity-provider client must support that grant.
+
+For automation, supply `OPENSHELL_OIDC_CLIENT_SECRET` through your secret manager or process environment, then run the same login command.
+OpenShell uses the client-credentials grant and renews the access token by repeating that grant; keep the variable available for subsequent commands.
+Do not put the client secret in YAML or command arguments.
+OpenShell owns browser/device login, token storage, and renewal.
+The authenticated identity must have permission to access the deployment's workspace.
+
+OIDC profiles and token bundles persist under `<state-dir>/openshell/oidc-<selection-hash>/`.
+The selection includes the gateway endpoint, workspace, issuer, client ID, audience, and scopes; changing it requires a new login and retains the previous session in its original directory.
+Referenced TLS files are copied into that private configuration and persist with it; on Unix, copied files use mode `0600` and the configuration directory uses mode `0700`.
+These profiles do not change the user's standalone OpenShell configuration.
+Run `nemoclaw osh -- gateway logout` to clear the selected profile's authentication tokens; it retains the profile and TLS files.
+After all commands using it have stopped, remove an obsolete `oidc-<selection-hash>` directory to remove its retained configuration and credentials.
+
+Bearer-token gateways without `gateway.oidc`, and managed Kubernetes gateways, still require a separately configured OpenShell CLI ([#14855](https://github.com/NVIDIA/NemoClaw/issues/14855)).
 The pinned release publishes no Windows or Intel macOS CLI; use WSL2 on Windows or a supported Linux or Apple silicon client.
 
 Apply can download models and check readiness.

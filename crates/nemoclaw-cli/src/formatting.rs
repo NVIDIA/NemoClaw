@@ -133,7 +133,7 @@ impl RenderContext {
         )
     }
 
-    fn deployment_command(&self, operation: &str) -> String {
+    pub(crate) fn deployment_command(&self, operation: &str) -> String {
         let mut command = format!("nemoclaw {operation}");
         if self.state_dir != std::path::Path::new(".nemoclaw") {
             command.push_str(&format!(

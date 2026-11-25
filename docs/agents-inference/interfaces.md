@@ -21,7 +21,8 @@ The commands below use this form; [`nemoclaw openshell`](../references/cli.md#ru
 
 ### Selecting a Standalone CLI for Bearer-Token Gateways
 
-For bearer-token gateways, including managed Kubernetes or OpenShift, use a separately configured OpenShell CLI instead.
+For an external OIDC gateway, configure `gateway.oidc` and run `nemoclaw osh -- gateway login` once, as [the CLI reference](../references/cli.md#logging-in-to-an-external-oidc-gateway) describes; then use the bundled commands above.
+For bearer-token gateways without OIDC login settings, including managed Kubernetes or OpenShift, use a separately configured OpenShell CLI instead.
 In the commands below, replace `nemoclaw osh --` with `openshell` after selecting the gateway and workspace as follows.
 
 Use an OpenShell CLI matching the deployment implementation revision on the client host.

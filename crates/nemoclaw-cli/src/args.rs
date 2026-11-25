@@ -43,7 +43,7 @@ pub(crate) struct Cli {
 }
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Run the bundled OpenShell CLI against this deployment (plaintext or mTLS).
+    /// Run the bundled OpenShell CLI against this deployment (plaintext, mTLS, or external OIDC).
     #[command(name = "openshell", visible_alias = "osh")]
     OpenShell {
         /// Arguments passed unchanged to OpenShell; use -- before its options.

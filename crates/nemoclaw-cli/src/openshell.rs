@@ -37,6 +37,31 @@ async fn execute(cli: &Cli, args: &[OsString]) -> Result<ExitStatus, Box<dyn std
         Arc::new(|_| {}),
     )?;
     let mut process = deployment.openshell()?;
+    let help = args.is_empty()
+        || args
+            .iter()
+            .any(|arg| matches!(arg.to_str(), Some("--help" | "-h" | "--version" | "-V")));
+    if !help && let Some(registration) = process.registration().await? {
+        if !matches!(args, [gateway, login] if (gateway == "gateway" || gateway == "gw") && login == "login")
+        {
+            return Err(format!(
+                "OIDC login is required; run {} -- gateway login",
+                crate::formatting::RenderContext::new(cli).deployment_command("osh")
+            )
+            .into());
+        }
+        // `gateway add` performs the initial login itself. Do not immediately
+        // launch a second browser or repeat a client-credentials exchange.
+        let registration: Vec<_> = registration.into_iter().map(OsString::from).collect();
+        return child(process.command(), &registration).await;
+    }
+    child(process.command(), args).await
+}
+
+async fn child(
+    command: &mut tokio::process::Command,
+    args: &[OsString],
+) -> Result<ExitStatus, Box<dyn std::error::Error>> {
     // Keep the foreground process group and inherited terminal for native TUIs.
     // Register before spawning, so a signal cannot leave an unobserved child.
     #[cfg(unix)]
@@ -47,8 +72,7 @@ async fn execute(cli: &Cli, args: &[OsString]) -> Result<ExitStatus, Box<dyn std
             signal(SignalKind::terminate())?,
         )
     };
-    let mut child = process
-        .command()
+    let mut child = command
         .args(args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
