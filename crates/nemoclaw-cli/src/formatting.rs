@@ -125,7 +125,9 @@ impl RenderContext {
         )
     }
 
-    fn follow_up_command(&self, operation: &str, path: &std::path::Path) -> String {
+    /// `nemoclaw OPERATION` with this deployment's state and bundle, on a
+    /// file or, for `None`, on standard input, which the commands name `-`.
+    fn follow_up_command(&self, operation: &str, input: Option<&std::path::Path>) -> String {
         let mut command = format!("nemoclaw {operation}");
         if self.state_dir != std::path::Path::new(".nemoclaw") {
             command.push_str(&format!(
@@ -140,7 +142,10 @@ impl RenderContext {
             ));
         }
         command.push(' ');
-        command.push_str(&shell_word(&path.display().to_string()));
+        match input {
+            Some(path) => command.push_str(&shell_word(&path.display().to_string())),
+            None => command.push('-'),
+        }
         terminal_text(&command)
     }
 }
@@ -191,8 +196,11 @@ fn authored(path: &std::path::Path, context: &RenderContext) -> String {
         "Authored desired state:",
         palette.paint(&terminal_text(&path.display().to_string()), Tone::Success)
     );
-    let plan = palette.paint(&context.follow_up_command("plan", path), Tone::Accent);
-    let apply = palette.paint(&context.follow_up_command("apply", path), Tone::Accent);
+    let plan = palette.paint(&context.follow_up_command("plan", Some(path)), Tone::Accent);
+    let apply = palette.paint(
+        &context.follow_up_command("apply", Some(path)),
+        Tone::Accent,
+    );
     let note = palette.paint("Apply pulls images and starts containers.", Tone::Muted);
     format!(
         "{heading}\n\nPreview the changes with plan, then apply them:\n\n  {plan}\n  {apply}\n\n{note}\n"
@@ -597,6 +605,9 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             && !result.deferred.is_empty()
             && let Some(input) = &context.input
         {
+            // `-` is standard input, where plan read the document; quoted as
+            // a file's path, it would become `./-`.
+            let input = Some(input.as_path()).filter(|input| *input != std::path::Path::new("-"));
             output.push_str(&format!(
                 "Next: {}\n",
                 context.follow_up_command("apply", input)
@@ -1558,6 +1569,14 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(json["complete"], false);
+    }
+
+    #[test]
+    fn a_plan_read_from_standard_input_names_apply_from_standard_input() {
+        let result =
+            json!({"outcome":"planned","changes":[],"deferred":["Gateway inventory unavailable"]});
+        let text = render(&["nemoclaw", "plan", "-"], result);
+        assert!(text.contains("Next: nemoclaw apply -\n"), "{text}");
     }
 
     #[test]
