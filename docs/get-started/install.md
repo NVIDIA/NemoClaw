@@ -31,11 +31,11 @@ A final release includes the package only after signing and notarization.
 
 </Anchor>
 
-If the release omits the package or you need to keep multiple versions side by side, <a href="?language=linux#installing-on-linux-or-macos">use the shared Linux and macOS archive instructions</a> with `PLATFORM=darwin_arm64`.
+If the release omits the package or you need to keep multiple versions side by side, <a href="?language=linux#installing-on-linux-or-macos">open the shared archive instructions in the Linux tab</a> and set `PLATFORM=darwin_arm64`.
 The archive is tested on macOS 15.
 On a Mac with an Intel processor, [build the `darwin_amd64` bundle](../build-deploy/build.md#building-a-native-bundle).
 
-If you already installed a package, follow [the upgrade steps](#upgrading-with-the-macos-installer) before replacing the bundle.
+If you already installed a package, follow <a href="?language=macos#upgrading-with-the-macos-installer">the upgrade steps</a> before replacing the bundle.
 
 Run these commands in an empty download directory with `curl` available.
 Stop on any download or verification failure.
@@ -72,7 +72,7 @@ Stop on any download or verification failure.
    nemoclaw --version
    ```
 
-   Expect `/usr/local/nemoclaw/bin/nemoclaw` and `nemoclaw 0.1.0`.
+   Expect `/usr/local/nemoclaw/bin/nemoclaw` and the version you installed.
    If another installation takes precedence, put this bundle's `bin` directory first for the current shell and repeat the checks.
 
    ```sh
@@ -96,7 +96,7 @@ A release includes the signed installer only if it signs the Windows executables
 If the release omits the installer or you need to keep multiple versions side by side, <a href="?language=windows#installing-on-windows">install the Windows archive</a>.
 On Windows ARM64, [build the Linux ARM64 bundle in WSL2](from-source.md).
 
-If you already use the installer, follow [the upgrade steps](#upgrading-with-the-windows-installer) before replacing the bundle.
+If you already use the installer, follow <a href="?language=windows#upgrading-with-the-windows-installer">the upgrade steps</a> before replacing the bundle.
 Use PowerShell in an empty download directory.
 Stop on any download or verification failure.
 
@@ -140,7 +140,7 @@ Stop on any download or verification failure.
    nemoclaw --version
    ```
 
-   Expect the executable under `%LOCALAPPDATA%\Programs\NemoClaw\bin` and `nemoclaw 0.1.0`.
+   Expect the executable under `%LOCALAPPDATA%\Programs\NemoClaw\bin` and the version you installed.
    If another installation takes precedence, put this bundle's `bin` directory first for the current session and repeat the checks.
 
    ```powershell
@@ -225,7 +225,7 @@ Stop on any download or verification failure.
    $env:Path = "$Bin;$env:Path"
    ```
 
-10. Check that the selected CLI reports `nemoclaw 0.1.0`.
+10. Check that the selected CLI reports the version you installed.
 
     ```powershell
     nemoclaw --version
@@ -314,7 +314,7 @@ Stop on any download or verification failure.
    export PATH="$INSTALL/dist/$PLATFORM/bin:$PATH"
    ```
 
-10. Check that the selected CLI reports `nemoclaw 0.1.0`.
+10. Check that the selected CLI reports the version you installed.
 
     ```sh
     nemoclaw --version
@@ -357,31 +357,47 @@ Use the [bundle and image digests from the same release](../references/compatibi
 
 ### Upgrading
 
-Changing the CLI on `PATH` does not upgrade a deployment. Existing deployments keep their original bundle, image pins, and state. Refer to [deployment state compatibility](../references/compatibility.md#deployment-state).
+Existing deployments keep their original bundle, image pins, and state.
+Keep the previous bundle for recovery and teardown.
+To manage an existing deployment, run its original CLI by absolute path from the deployment directory.
+Refer to [deployment state compatibility](../references/compatibility.md#deployment-state).
 
-If you installed with a package, follow the [macOS](#upgrading-with-the-macos-installer) or [Windows](#upgrading-with-the-windows-installer) upgrade procedure.
-For an archive installation, follow these steps.
+In the linked installation steps, set `TAG` or `$Tag` to the new release tag when installing the upgrade.
+When preserving the installed bundle from its archive, use the tag of the installed release.
 
-1. Install the new bundle into a separate directory.
-2. Replace the previous `PATH` entry with the new bundle's `bin` directory.
-3. Check the selected version with `nemoclaw --version` in a new shell.
+For an archive upgrade, the installation steps add the new bundle's `bin` directory to the current shell's `PATH`.
 
-Keep the previous bundle for recovery and teardown. For an existing deployment, use its original CLI by absolute path from the deployment directory. For a new release evaluation, use a fresh `metadata.uid`, state directory, and release-matched images. Rebuild [derived images](../build-deploy/derived-images.md) from the matching base.
+<a name="upgrading-with-the-macos-installer"></a>
+<a name="recovering-from-a-failed-macos-installer-upgrade"></a>
+<a name="upgrading-with-the-windows-installer"></a>
 
-#### Upgrading with the macOS Installer
+<Tabs>
+<Tab title="macOS" id="upgrade-macos" language="macos">
 
-The installer replaces `/usr/local/nemoclaw`. Deployments still need the release that created them.
+If you installed from an archive, <a href="?language=linux#installing-on-linux-or-macos">verify and extract the new release's macOS archive</a> into a separate directory.
+If you saved the old bundle's `bin` entry in your shell startup file, replace it with the new bundle's `bin` directory and open a new Terminal window.
+Run `nemoclaw --version` in a shell with the updated `PATH` to verify the selected release.
 
-It moves `/usr/local/nemoclaw` to `/usr/local/nemoclaw.previous` before installing the new bundle, so no old files remain in the installed directory.
+<Anchor id="upgrading-with-the-macos-installer">
+
+If you installed with the macOS package, the installer replaces `/usr/local/nemoclaw`.
+
+</Anchor>
+
+It moves `/usr/local/nemoclaw` to `/usr/local/nemoclaw.previous` before installing the new bundle.
 After the replacement payload installs successfully, it removes the previous bundle.
-If installation fails before that cleanup, it retains the previous bundle for [recovery](#recovering-from-a-failed-macos-installer-upgrade).
+If installation fails before that cleanup, it retains the previous bundle for <a href="?language=macos#recovering-from-a-failed-macos-installer-upgrade">recovery</a>.
 
 1. If existing deployments need the current release, <a href="?language=linux#installing-on-linux-or-macos">extract that release's archive</a> into a separate directory so you can run its CLI by absolute path.
 2. <a href="?language=macos#installing-with-the-macos-installer">Install the new release's package</a>.
+3. Open a new Terminal window and run `nemoclaw --version` to verify the selected release.
 
-#### Recovering from a Failed macOS Installer Upgrade
+<Anchor id="recovering-from-a-failed-macos-installer-upgrade">
 
 If `/usr/local/nemoclaw.previous` remains after an unsuccessful upgrade, restore it before retrying.
+
+</Anchor>
+
 The installer refuses to replace this recovery copy.
 Close any running CLI operations, then run:
 
@@ -398,62 +414,135 @@ This restores the previous bundle and removes the incomplete replacement, withou
 Recovery is manual; the installer does not roll back automatically.
 If no previous bundle exists, retry the installer to replace an incomplete first installation.
 
-#### Upgrading with the Windows Installer
+</Tab>
+<Tab title="Windows" id="upgrade-windows" language="windows">
 
-The installer removes the installed release before it installs the new one, and the `Path` entry stays.
+If you installed from an archive, <a href="?language=windows#installing-on-windows">verify and extract the new release's Windows archive</a> into a separate directory.
+If you saved the old bundle's `bin` entry, replace it with the new bundle's `bin` directory in your user `Path` under **Edit environment variables for your account**.
+Open a new PowerShell window after changing your saved `Path`.
+Run `nemoclaw --version` in a PowerShell session with the updated `Path` to verify the selected release.
+
+<Anchor id="upgrading-with-the-windows-installer">
+
+If you installed with the Windows installer, the new package replaces the installed release and keeps the `Path` entry.
+
+</Anchor>
+
 If the upgrade fails, Windows Installer restores the previous release and its `Path` entry.
 An older release's installer doesn't replace a newer one: it reports that a newer version is already installed, so uninstall first to go back.
 
-A deployment keeps using the release that created it, as [upgrading](#upgrading) describes, and the installer doesn't keep the old release.
 Before you upgrade, destroy the deployments that the installed release created, or <a href="?language=windows#installing-on-windows">unpack that release's archive</a> so you can run its CLI by path later.
 Then <a href="?language=windows#installing-with-the-windows-installer">install the new release's package</a>.
+Open a new PowerShell window and run `nemoclaw --version` to verify the selected release.
+
+</Tab>
+<Tab title="Linux" id="upgrade-linux" language="linux">
+
+1. <a href="?language=linux#installing-on-linux-or-macos">Verify and extract the new release's Linux archive</a> into a separate directory.
+2. If you saved the old bundle's `bin` entry in your shell startup file, replace it with the new bundle's `dist/PLATFORM/bin` directory and open a new shell.
+3. Check the path and version in a shell with the updated `PATH`.
+
+   ```sh
+   command -v nemoclaw
+   nemoclaw --version
+   ```
+
+   Expect the path to the new bundle and the version you installed.
+
+</Tab>
+</Tabs>
+
+For a new release evaluation, use a fresh `metadata.uid`, state directory, and release-matched images.
+Rebuild [derived images](../build-deploy/derived-images.md) from the matching base.
 
 ### Uninstalling
 
-Removing the CLI does not delete deployments, deployment YAML, engine images, or OpenShell profiles. After changing persistent `PATH`, open a new terminal to use the updated value. If a deployment or retained resources still depend on this bundle, keep it with the entire state directory. To retire a deployment first, use the original CLI to [preview teardown and destroy](../build-deploy/usage.md#destroying). [Retained resources](../build-deploy/usage.md#removing-retained-resources) require a separate decision and cleanup before you remove the state directory.
+Removing the CLI does not delete deployments, deployment YAML, engine images, or OpenShell profiles.
+If a deployment or retained resources still depend on this bundle, keep it with the entire state directory.
+To retire a deployment first, use the original CLI to [preview teardown and destroy](../build-deploy/usage.md#destroying).
+[Retained resources](../build-deploy/usage.md#removing-retained-resources) require separate cleanup before you remove the state directory.
 
-For a package installation, follow [Uninstalling with the macOS Installer](#uninstalling-with-the-macos-installer) or [Uninstalling with the Windows Installer](#uninstalling-with-the-windows-installer).
-For an archive installation, follow these steps.
+<a name="uninstalling-with-the-macos-installer"></a>
+<a name="uninstalling-with-the-windows-installer"></a>
 
-1. Remove this bundle's `bin` entry from your persistent `PATH`.
-2. Delete the installation directory only if no deployment or retained resources need it.
+<Tabs>
+<Tab title="macOS" id="uninstall-macos" language="macos">
+
+If you installed from an archive, follow these steps to remove it.
+
+1. If you saved the bundle's `bin` entry in your shell startup file, remove that entry.
+2. Delete the version's installation directory after you confirm that no deployment or retained resources need it.
+
+<Anchor id="uninstalling-with-the-macos-installer">
+
+If you installed with the macOS package, follow these steps to remove it.
+
+</Anchor>
+
+1. If an upgrade failed, <a href="?language=macos#recovering-from-a-failed-macos-installer-upgrade">restore the previous bundle</a>.
+2. If a deployment or retained resource still needs this release, keep its <a href="?language=linux#installing-on-linux-or-macos">matching archive</a>.
+3. Remove the CLI, the `PATH` entry, and the package's record.
+
+   ```sh
+   sudo rm -rf /usr/local/nemoclaw /etc/paths.d/nemoclaw
+   sudo pkgutil --forget com.nvidia.nemoclaw.cli
+   ```
+
+After removing the package or archive, open a new Terminal window and run `command -v nemoclaw` to check which installation, if any, remains on `PATH`.
+
+</Tab>
+<Tab title="Windows" id="uninstall-windows" language="windows">
+
+If you installed from an archive, follow these steps to remove it.
+
+1. If you saved the bundle's `bin` entry in your user `Path` under **Edit environment variables for your account**, remove that entry.
+2. Delete the version's installation directory after you confirm that no deployment or retained resources need it.
+
+<Anchor id="uninstalling-with-the-windows-installer">
+
+If you installed with the Windows installer, follow these steps to remove it.
+
+</Anchor>
+
+If a deployment or retained resource still needs this release, keep its <a href="?language=windows#installing-on-windows">verified archive</a> before uninstalling.
+In **Settings** > **Apps** > **Installed apps**, select **Uninstall** for **NVIDIA NemoClaw Agent Configs**.
+If you kept the original installer, you can also open PowerShell in its directory.
+Set `$Installer` to the installer's filename and run the command.
+
+```powershell
+Start-Process msiexec -ArgumentList "/x", $Installer, "/qn" -Wait
+```
+
+The package uninstaller removes `%LOCALAPPDATA%\Programs\NemoClaw` and its `Path` entry.
+After removing the package or archive, open a new PowerShell window and run `Get-Command nemoclaw` to check for any remaining installation.
+
+</Tab>
+<Tab title="Linux" id="uninstall-linux" language="linux">
+
+1. Identify the bundle for the version you want to remove.
+   If that version is on `PATH`, use `command -v nemoclaw` to find its `bin` directory.
+2. If you saved that bundle's `bin` entry in your shell startup file, such as `~/.bashrc` or `~/.zshrc`, remove that entry.
+3. After you confirm that no deployment or retained resources need the bundle, delete the version's installation directory, such as `~/.local/opt/nemoclaw/v0.1.0`.
+4. Open a new shell and check for any remaining installation.
+
+   ```sh
+   command -v nemoclaw
+   ```
+
+   If another bundle is on `PATH`, the command prints its executable path.
+   When no installation is on `PATH`, the command exits with a nonzero status.
+
+</Tab>
+</Tabs>
 
 NemoClaw keeps its files in these places:
 
 | What | Where | Removed by |
 |---|---|---|
-| The CLI, OpenTofu, providers, and schemas | The release's directory, `/usr/local/nemoclaw` from the macOS installer, or `%LOCALAPPDATA%\Programs\NemoClaw` from the Windows installer | Deleting the directory, or uninstalling [with the macOS installer's commands](#uninstalling-with-the-macos-installer) or [with the Windows installer](#uninstalling-with-the-windows-installer) |
+| The CLI, OpenTofu, providers, and schemas | The release's directory, `/usr/local/nemoclaw` from the macOS installer, or `%LOCALAPPDATA%\Programs\NemoClaw` from the Windows installer | Deleting the archive's installation directory or using the package uninstall procedure |
 | Deployment state, including OpenTofu state and its configuration | Each deployment's state directory: `--state-dir`, by default `.nemoclaw` in the directory you ran `nemoclaw` from; see [deployment state](../build-deploy/state.md#local-deployment-files) | Deleting the directory, after destroy |
 | Deployment YAML | Where you saved it; `nemoclaw onboard` writes `deployment.yaml` in the current directory unless `--output` names another file | Deleting the file |
 | Sandboxes, gateways, model services, and their data | The deployment's Docker or Podman engine, or Kubernetes cluster; see [retained resources](../build-deploy/state.md#understanding-the-retained-resources) | Destroy, then removing retained resources |
 | Agent, gateway, and model runtime images | The engine's image store, or the cluster nodes' | The engine's image commands, such as `docker image rm`; NemoClaw doesn't remove them |
 
 The OpenShell CLI keeps its own gateway profiles. Use OpenShell's commands to remove a profile when you no longer need it.
-
-#### Uninstalling with the macOS Installer
-
-If an upgrade failed, [restore the previous bundle](#recovering-from-a-failed-macos-installer-upgrade) first.
-Keep the matching archive if a deployment or retained resources still need this release. To retire a deployment first, follow the [general uninstall guidance](#uninstalling).
-Remove the CLI, the `PATH` entry, and the package's record:
-
-```sh
-sudo rm -rf /usr/local/nemoclaw /etc/paths.d/nemoclaw
-sudo pkgutil --forget com.nvidia.nemoclaw.cli
-```
-
-In a new Terminal window, run `command -v nemoclaw` to check which installation, if any, remains on `PATH`.
-Deployment YAML and state directories stay where you created them.
-
-#### Uninstalling with the Windows Installer
-
-If an existing deployment still needs this release, keep its <a href="?language=windows#installing-on-windows">verified archive</a> before uninstalling.
-To retire a deployment first, follow the [general uninstall guidance](#uninstalling).
-Then, in **Settings** > **Apps** > **Installed apps**, select **Uninstall** for **NVIDIA NemoClaw Agent Configs**, or uninstall from PowerShell with the installer you installed:
-
-```powershell
-Start-Process msiexec -ArgumentList "/x", $Installer, "/qn" -Wait
-```
-
-This removes `%LOCALAPPDATA%\Programs\NemoClaw` and its `Path` entry.
-In a new terminal, `Get-Command nemoclaw` reports any remaining installation, or reports that it cannot find `nemoclaw`.
-Deployment YAML and state directories stay where you created them.
