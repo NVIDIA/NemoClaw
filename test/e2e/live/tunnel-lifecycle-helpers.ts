@@ -635,6 +635,9 @@ export async function runTunnelLifecycleContract({
     if (restartedStatus.exitCode === 0 && tunnelPid && restartedUrl) break;
     await sleep(1_000);
   }
+  if (!(restartedStatus?.exitCode === 0 && tunnelPid && restartedUrl)) {
+    await artifacts.writeText("cloudflared-log-after-restart-failure.txt", cloudflaredLogTail());
+  }
   expect(
     restartedStatus?.exitCode === 0 && tunnelPid && restartedUrl,
     "status must report the restarted cloudflared PID and public URL before destroy",

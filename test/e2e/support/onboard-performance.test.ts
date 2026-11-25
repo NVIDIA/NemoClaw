@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   evaluateColdOnboardPerformance,
   maximumOutputSilenceMs,
   ONBOARD_PHASE_NAMES,
   readColdOnboardPerformanceBudget,
   readOnboardTraceWindow,
+  retainFailedOnboardTrace,
 } from "../fixtures/onboard-performance.ts";
 import {
   buildOpenClawFirstTurnLatencyEvidence,
@@ -524,4 +525,29 @@ describe("onboard performance evidence", () => {
       ),
     ).toEqual({ reason: "malformed", status: "unavailable" });
   });
+});
+
+it("retains failed performance traces after registering credential redaction", async () => {
+  const order: string[] = [];
+  const artifacts = {
+    addRedactionValues: vi.fn(() => {
+      order.push("redact");
+    }),
+    writeJson: vi.fn(async () => {
+      order.push("write");
+      return "onboard-trace.json";
+    }),
+  };
+  const trace = { spans: [] };
+  await retainFailedOnboardTrace(false, artifacts, "test-key", trace);
+  expect(artifacts.addRedactionValues).toHaveBeenCalledWith(["test-key"]);
+  expect(artifacts.writeJson).toHaveBeenCalledWith("onboard-trace.json", trace);
+  expect(order).toEqual(["redact", "write"]);
+});
+
+it("does not retain traces for passing performance evaluations", async () => {
+  const artifacts = { addRedactionValues: vi.fn(), writeJson: vi.fn() };
+  await retainFailedOnboardTrace(true, artifacts, "test-key", {});
+  expect(artifacts.addRedactionValues).not.toHaveBeenCalled();
+  expect(artifacts.writeJson).not.toHaveBeenCalled();
 });

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ArtifactSink } from "./artifacts.ts";
 import type { ShellProbeOutputEvent } from "./shell-probe.ts";
 
 const ONBOARD_SCOPE = "nemoclaw.onboard";
@@ -388,4 +389,15 @@ export function maximumOutputSilenceMs(
   return boundaries
     .slice(1)
     .reduce((maximum, atMs, index) => Math.max(maximum, atMs - boundaries[index]), 0);
+}
+
+export async function retainFailedOnboardTrace(
+  passed: boolean,
+  artifacts: Pick<ArtifactSink, "addRedactionValues" | "writeJson">,
+  apiKey: string,
+  trace: unknown,
+): Promise<void> {
+  if (passed) return;
+  artifacts.addRedactionValues([apiKey]);
+  await artifacts.writeJson("onboard-trace.json", trace);
 }

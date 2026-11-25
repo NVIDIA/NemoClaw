@@ -210,7 +210,7 @@ export function ensureOpenshellForOnboard(
     openshellInstall = deps.installOpenshell();
     if (!openshellInstall.installed) {
       deps.error("  Failed to install openshell CLI.");
-      deps.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+      deps.error("  Install manually: https://github.com/ai-openshell/openshell/releases");
       deps.exit(1);
     }
   } else {
@@ -220,7 +220,7 @@ export function ensureOpenshellForOnboard(
       openshellInstall = deps.installOpenshell();
       if (!openshellInstall.installed) {
         deps.error("  Failed to reinstall openshell CLI.");
-        deps.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+        deps.error("  Install manually: https://github.com/ai-openshell/openshell/releases");
         deps.exit(1);
       }
     } else {
@@ -257,7 +257,7 @@ export function ensureOpenshellForOnboard(
         openshellInstall = deps.installOpenshell();
         if (!openshellInstall.installed) {
           deps.error("  Failed to upgrade openshell CLI.");
-          deps.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+          deps.error("  Install manually: https://github.com/ai-openshell/openshell/releases");
           deps.exit(1);
         }
       }
@@ -295,7 +295,7 @@ export function ensureOpenshellForOnboard(
     deps.error(`    blueprint.yaml min_openshell_version: ${minOpenshellVersion}`);
     deps.error("");
     deps.error("    Upgrade openshell and retry:");
-    deps.error("      https://github.com/NVIDIA/OpenShell/releases");
+    deps.error("      https://github.com/ai-openshell/openshell/releases");
     deps.error("    Or remove the existing binary so the installer can re-fetch a current build:");
     deps.error('      command -v openshell && rm -f "$(command -v openshell)"');
     deps.error("");
@@ -309,7 +309,7 @@ export function ensureOpenshellForOnboard(
     );
     deps.error("");
     deps.error("    Install a supported OpenShell build and retry:");
-    deps.error("      https://github.com/NVIDIA/OpenShell/releases");
+    deps.error("      https://github.com/ai-openshell/openshell/releases");
     deps.error("");
     deps.exit(1);
   }
@@ -331,7 +331,7 @@ export function ensureOpenshellForOnboard(
       `    Upgrade ${deps.cliDisplayName()} to a version that supports your OpenShell release,`,
     );
     deps.error("    or install a supported OpenShell version:");
-    deps.error("      https://github.com/NVIDIA/OpenShell/releases");
+    deps.error("      https://github.com/ai-openshell/openshell/releases");
     deps.error("");
     deps.exit(1);
   }

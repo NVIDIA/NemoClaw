@@ -1418,14 +1418,14 @@ When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
 Its native OpenClaw configuration probe requires loading the proxy environment, validating the configuration, and reading `gateway.mode` to succeed in sequence.
 The returned mode must be `local`; a failure in any step fails the probe.
-For OpenShell 0.1.9, its process report identifies the non-root workload boundary at PID 1 separately from the `nemoclaw-start` children.
+For OpenShell 0.1.10, its process report identifies the non-root workload boundary at PID 1 separately from the `nemoclaw-start` children.
 The probe runs as the managed image's declared sandbox owner and requires zero capabilities and `NoNewPrivs=1`.
 It records denied PID-1 executable-link access as `null`; it does not infer an executable path from the command line.
 Child executable links must remain readable and identify system Bash. Missing processes and denied child inspection fail the probe.
 The report's `processScope: workload-container` identifies the process census; it does not attest the PID-1 executable binary.
 Separate `containerPair` evidence binds engine launch metadata to that workload and its uniquely labelled supervisor before and after the census.
 It checks running identities, entrypoints, non-root users, capability drops, no-new-privileges, and provider-specific network settings.
-The supervisor must use the pinned 0.1.9 image and pass its native health command. Docker also requires its read-only root filesystem.
+The supervisor must use the pinned 0.1.10 image and pass its native health command. Docker also requires its read-only root filesystem.
 The inspection selects metadata fields and excludes environments, supervisor arguments, credentials, and health logs.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
 The llama.cpp target compares the selected model's authenticated `/v1/models` `meta.n_ctx`
@@ -3039,6 +3039,10 @@ The artifact records the first-turn command wall clock and OpenClaw's internal
 agent duration separately. Older or malformed OpenClaw output records an
 explicit unavailable reason instead of fabricating a duration.
 The artifact also identifies the model, provider, inference mode, and prompt contract.
+When the performance budget evaluation fails, the target also retains decoded spans in
+`onboard-trace.json` through the shared redacting artifact sink. This write follows the
+measured timestamps and budget summary. Trace parsing or an earlier first-turn error can
+prevent this additional artifact.
 When every deterministic cold-onboard budget passes and the real first turn exits
 successfully with the expected sentinel, a sole root-end-to-first-turn overage
 is recorded as a structured, non-blocking hosted-latency anomaly rather than a

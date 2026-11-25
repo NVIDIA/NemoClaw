@@ -49,6 +49,24 @@ function makeDeps(overrides: Partial<OpenShellInstallDeps> = {}) {
 }
 
 describe("ensureOpenshellForOnboard", () => {
+  it("directs a failed install to the current OpenShell release repository", () => {
+    const afterSuccessfulInstall = vi.fn();
+    const deps = makeDeps({
+      isOpenshellInstalled: () => false,
+      installOpenshell: () => ({
+        installed: false,
+        localBin: null,
+        futureShellPathHint: null,
+      }),
+    });
+
+    expect(() => ensureOpenshellForOnboard(deps, { afterSuccessfulInstall })).toThrow("exit 1");
+    expect(deps.error).toHaveBeenCalledWith(
+      "  Install manually: https://github.com/ai-openshell/openshell/releases",
+    );
+    expect(afterSuccessfulInstall).not.toHaveBeenCalled();
+  });
+
   it("binds lazy install dependencies and forwards trusted-owner persistence", () => {
     const installResult: OpenShellInstallResult = {
       installed: true,

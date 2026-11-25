@@ -58,7 +58,7 @@ export function createOpenshellCliHelpers(deps: OpenshellCliDeps): OpenshellCliH
     const resolved = resolveOpenshell();
     if (typeof resolved !== "string" || resolved.length === 0) {
       console.error("  openshell CLI not found.");
-      console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+      console.error("  Install manually: https://github.com/ai-openshell/openshell/releases");
       process.exit(1);
     }
     deps.setCachedBinary(resolved);
