@@ -68,9 +68,6 @@ Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --inpu
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
 Plan and apply print an `Invoke:` sample for each recorded runtime, with the sandbox, agent, runtime ID, and a JSON prompt filled in.
 `Invoke:` saves the full JSON response to `reply-SANDBOX.json` in the current directory.
-After it exits successfully, the printed `Hermes reply` command reads that file and shows the two statuses, error, and response; Bash uses `jq`, and PowerShell uses its JSON parser.
-Require both statuses to be `succeeded` before treating the Hermes response as successful.
-For another adapter, use its public output contract instead of assuming Hermes's response field.
 Select the gateway and workspace with the commands printed before the sample.
 JSON results report the agent and runtime ID under `agents`.
 See [invoke an agent](interfaces.md#invoking-an-agent).
@@ -84,31 +81,6 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 `result.artifacts` names the files Fabric kept for that request, such as the adapter's output.
 Empty stdin is not a prompt: send a JSON string, including its ASCII double quotes.
 For invalid JSON, correct the input before retrying; changing the API key cannot repair the input.
-
-### Reading a Hermes Reply
-
-Save a Hermes invocation's stdout to `reply.json` and check the command's exit status.
-To show its reply and status without printing the full adapter result, run:
-
-```sh
-jq '{command_status: .status, agent_status: .result.status, error: .result.error, response: .result.output.response}' reply.json
-jq -e '.status == "succeeded" and .result.status == "succeeded"' reply.json >/dev/null
-```
-
-In PowerShell, use its JSON parser instead:
-
-```powershell
-$reply = Get-Content -Raw .\reply.json | ConvertFrom-Json
-[pscustomobject]@{command_status=$reply.status; agent_status=$reply.result.status; error=$reply.result.error; response=$reply.result.output.response}
-if ($reply.status -ne 'succeeded' -or $reply.result.status -ne 'succeeded') { throw 'Agent request failed; inspect reply.json' }
-```
-
-This filter uses the Hermes adapter's output fields; other adapters can return another shape.
-Keep `reply.json` for the full result and artifacts.
-Keep it private and review it for credentials and personal data before sharing; native diagnostics are not guaranteed to be redacted by NemoClaw.
-Adapter stdout can include an auxiliary title-generation warning even when `result.status` is `succeeded` and the agent replies.
-That warning does not by itself establish an invocation failure.
-Follow the adapter's configuration documentation before changing a managed harness in response to a `hermes setup` suggestion.
 
 ### Diagnosing an Authentication Failure
 

@@ -118,8 +118,8 @@ If it fails, keep the same bundle, YAML, and state directory and follow [operati
 
 Copy the gateway and workspace selection commands from apply's output into this shell, then run its `Invoke:` command.
 It sends the JSON string `"Reply with exactly READY."` and saves the full result in `reply-assistant.json`.
-After it exits successfully, run the printed `Hermes reply` command, and expect `succeeded` in both `command_status` and `agent_status`, with `READY` in `response`.
-[Reading a Hermes Reply](../agents-inference/agents.md#reading-a-hermes-reply) explains these fields, and [Diagnosing an Authentication Failure](../agents-inference/agents.md#diagnosing-an-authentication-failure) covers a rejected key.
+After it exits successfully, expect `succeeded` in both `status` and `result.status` in that file, and `READY` in the Hermes adapter's result.
+[Running One Agent Request](../agents-inference/agents.md#running-one-agent-request) explains these fields, and [Diagnosing an Authentication Failure](../agents-inference/agents.md#diagnosing-an-authentication-failure) covers a rejected key.
 
 Run the same `plan` and `apply` again, and expect no resource changes.
 Keep the deployment for inspection, or follow [Destroying](../build-deploy/usage.md#destroying) with the same bundle, YAML, and state directory.

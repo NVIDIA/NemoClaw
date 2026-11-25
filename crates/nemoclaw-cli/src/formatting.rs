@@ -669,14 +669,10 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
                     shell_word(name.as_str()),
                     shell_word(runtime),
                 );
-                let inspect = format!(
-                    "jq '{{command_status: .status, agent_status: .result.status, error: .result.error, response: .result.output.response}}' {reply}"
-                );
                 output.push_str(&format!(
-                    "  {sandbox}: agent {name}, runtime {}\n    Invoke:   {}\n    Hermes reply (requires jq): {}\n",
+                    "  {sandbox}: agent {name}, runtime {}\n    Invoke:   {}\n",
                     terminal_text(runtime),
                     terminal_text(&command),
-                    terminal_text(&inspect)
                 ));
             }
             None => output.push_str(&format!("  {sandbox}: agent {name}, no runtime recorded\n")),
@@ -684,7 +680,7 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
     }
     if invocable {
         output.push_str(&format!(
-            "  Invoke sends one JSON prompt and saves the full JSON reply to the named file; it can incur inference charges. Check that Invoke exits 0 before inspecting the file.\n  For Hermes, run the reply command and require command_status and agent_status to both be succeeded. Other adapters can use different response fields.\n  --input FILE reads a sandbox file; --input - reads it from stdin; see {}.\n",
+            "  Invoke sends one JSON prompt and saves the full JSON reply to the named file; it can incur inference charges. Check that Invoke exits 0 before inspecting the file.\n  --input FILE reads a sandbox file; --input - reads it from stdin; see {}.\n",
             documentation_url("docs/agents-inference/agents.md"),
         ));
     }
