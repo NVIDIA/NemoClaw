@@ -59,7 +59,7 @@ Delete retained data separately only when you no longer need it.
 ## Native NIM Candidate
 
 The `kind: nim` implementation under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) remains a candidate.
-The maintained configuration uses native NVIDIA NIM 2.0.12, a Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context, and a 40 GiB GPU budget.
+The maintained configuration uses native NVIDIA NIM 2.1.7, a Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context, and a 40 GiB GPU budget.
 The maintained NIM case selects a read/write file assistant, disables bundled skills and native tool search and Code Mode, and requests deterministic sampling with a 2,048-token output limit.
 The [qualification record in #14556](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) contains the source-specific results and investigation.
 General task reliability, the full tool inventory, the default 8K context, other model and profile combinations, and cross-host restoration remain unqualified.
@@ -72,7 +72,7 @@ Other NIM engines and distributed inference are unsupported.
 Distributed inference is outside the scope of parity with NemoClaw v0.
 
 Build the opt-in `nim` Bake target and select its resulting immutable image digest.
-It adds the supervisor to NIM 2.0.12 without modifying native scripts or nginx.
+It adds the supervisor to NIM 2.1.7 without modifying native scripts or nginx.
 NGC image access and model entitlement remain operator prerequisites.
 The [NIM integration case](../../crates/nemoclaw-e2e/cases/docker-openclaw-nim.yaml) describes the fields.
 Its placeholder image digests aren't deployable.

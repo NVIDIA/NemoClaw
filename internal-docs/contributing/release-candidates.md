@@ -77,6 +77,14 @@ Gateways:
 - On the `openshift` target, the shared supervisor that `supervisor_topology = "gateway"` selects also leaves its UID, group, and `fsGroup` to OpenShift, as the gateway does.
   Before, the chart ran it as UID and group 65534, which `restricted-v2` refuses.
 
+Model services:
+
+- The managed llama.cpp runtime image builds on llama.cpp's CUDA 13.5 server image from release b12679, with the same GPU architectures.
+  Its web interface, now Llama Chat, bundles a different set of npm packages, so the image's dependency notices change, and the image now also retains decimal.js's license and the llama-brand CSS license.
+  Rebuild it to use it.
+- The native NIM candidate builds on NIM for LLMs 2.1.7, which runs vLLM 0.33.0.
+  Rebuild it to use it.
+
 OpenShell 0.1.10:
 
 - OpenShell moved to [`ai-openshell/openshell`](https://github.com/ai-openshell/openshell): the pinned CLI downloads from that repository's releases, and the gateway, supervisor, and sandbox images and the gateway chart come from `quay.io/ai-openshell` instead of `ghcr.io/nvidia/openshell`.
