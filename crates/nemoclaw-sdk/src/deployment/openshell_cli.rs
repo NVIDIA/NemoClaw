@@ -5,28 +5,6 @@ use super::*;
 #[cfg(unix)]
 use crate::kubernetes::receipt::private_directory;
 
-/// Whether the bundled CLI can authenticate to `gateway`: it has an endpoint
-/// and needs no bearer token, which only NemoClaw holds.
-pub(super) fn reaches(gateway: &crate::config::Gateway) -> bool {
-    use crate::config::{Gateway, ManagedTarget};
-    match gateway {
-        Gateway::Managed(managed) => {
-            matches!(
-                managed.target,
-                ManagedTarget::Docker(_) | ManagedTarget::Podman(_)
-            )
-        }
-        Gateway::External(external) => {
-            external.credential.is_none()
-                || external.oidc.is_some()
-                || external
-                    .tls
-                    .as_ref()
-                    .is_some_and(|tls| tls.certificate.is_some())
-        }
-    }
-}
-
 impl Deployment {
     /// The bundled OpenShell CLI, set to run `args` against this deployment's
     /// gateway and workspace through OpenShell's documented selectors. Its
@@ -49,6 +27,27 @@ impl Deployment {
             .ok_or(Error::State("no deployment; apply one first"))?
             .document;
         let gateway = &document.spec.gateway;
+        // Cluster and token-only external gateways need the bearer token only
+        // NemoClaw holds, which the pinned CLI cannot take.
+        let bearer = match gateway {
+            crate::config::Gateway::Managed(managed) => !matches!(
+                managed.target,
+                crate::config::ManagedTarget::Docker(_) | crate::config::ManagedTarget::Podman(_)
+            ),
+            crate::config::Gateway::External(external) => {
+                external.credential.is_some()
+                    && external.oidc.is_none()
+                    && !external
+                        .tls
+                        .as_ref()
+                        .is_some_and(|tls| tls.certificate.is_some())
+            }
+        };
+        if bearer {
+            return Err(Error::State(
+                "the bundled OpenShell CLI cannot use this gateway's bearer token; use a standalone OpenShell CLI",
+            ));
+        }
         let endpoint = gateway.endpoint().ok_or(Error::State(
             "the gateway has no endpoint for the OpenShell CLI to reach",
         ))?;

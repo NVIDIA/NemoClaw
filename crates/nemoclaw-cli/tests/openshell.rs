@@ -111,3 +111,21 @@ fn an_oidc_gateway_without_a_sign_in_shows_the_command_to_register_it() {
     assert_eq!(run(&args).1, "");
     assert_eq!(run(&["status"]), ("status \n".into(), "".into()));
 }
+
+#[test]
+fn a_gateway_reached_only_with_a_bearer_token_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let gateway = serde_json::json!({
+        "endpoint":"https://gateway.example.com", "credential":{"env":"GATEWAY_TOKEN"}
+    });
+    let output = osh(root.path(), gateway, "#!/bin/sh\nexit 0\n")
+        .arg("status")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("bearer token"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

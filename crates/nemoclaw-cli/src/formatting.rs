@@ -601,21 +601,9 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             output.push_str(&format!("  {}\n", terminal_text(reason)));
         }
     }
-    // `nemoclaw osh` selects the gateway and workspace itself; for a gateway
-    // it can't reach, the output points to a standalone CLI's setup instead.
-    let osh = result
-        .connection
-        .as_ref()
-        .filter(|connection| connection.bundled_cli)
-        .map(|_| terminal_text(&format!("{} --", context.nemoclaw("osh"))));
-    let mut pointed = false;
+    let osh = terminal_text(&format!("{} --", context.nemoclaw("osh")));
     if !result.agents.is_empty() {
-        output.push_str(&agent_invocation(
-            result,
-            planned,
-            osh.as_deref(),
-            &mut pointed,
-        ));
+        output.push_str(&agent_invocation(result, planned, &osh));
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
@@ -633,7 +621,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         }
     }
     if result.outcome == Outcome::Succeeded && !result.interfaces.is_empty() {
-        output.push_str(&interface_access(result, osh.as_deref(), pointed));
+        output.push_str(&interface_access(result, &osh));
     }
     if result.outcome == Outcome::Succeeded {
         output.push_str("\nModel and agent responses were not tested.\n");
@@ -641,26 +629,10 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     output
 }
 
-/// Where to set up a standalone OpenShell CLI for a gateway `nemoclaw osh`
-/// can't reach.
-fn standalone_cli() -> String {
-    format!(
-        "  Use a standalone OpenShell CLI for this gateway; see {}#selecting-a-standalone-cli-for-bearer-token-gateways.\n",
-        documentation_url("docs/agents-inference/interfaces.md"),
-    )
-}
-
-/// The `nemoclaw osh` command that invokes each agent whose runtime the
-/// state records, or where to set up a standalone CLI, which `pointed`
-/// records printing. A plan lists the runtimes the last apply left, which its
-/// changes may replace, and prints nothing when the state records none, such
-/// as before any apply.
-fn agent_invocation(
-    result: &OperationResult,
-    planned: bool,
-    osh: Option<&str>,
-    pointed: &mut bool,
-) -> String {
+/// The `osh` command that invokes each agent whose runtime the state records. A
+/// plan lists the runtimes the last apply left, which its changes may replace,
+/// and prints nothing when the state records none, such as before any apply.
+fn agent_invocation(result: &OperationResult, planned: bool, osh: &str) -> String {
     let invocable = result
         .agents
         .values()
@@ -673,27 +645,20 @@ fn agent_invocation(
     } else {
         "\nAgents:\n"
     });
-    if invocable && osh.is_none() {
-        output.push_str(&standalone_cli());
-        *pointed = true;
-    }
     for (sandbox, agent) in &result.agents {
         let sandbox = terminal_text(sandbox);
         let name = terminal_text(&agent.agent);
         match &agent.runtime_id {
             Some(runtime) => {
                 let runtime = terminal_text(runtime);
-                output.push_str(&format!("  {sandbox}: agent {name}, runtime {runtime}\n"));
-                if let Some(osh) = osh {
-                    output.push_str(&format!(
-                        "    Invoke:   {osh} sandbox exec -n {sandbox} --no-tty -- fabric-agent-ctl invoke --agent {name} --runtime-id {runtime} --input FILE\n"
-                    ));
-                }
+                output.push_str(&format!(
+                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   {osh} sandbox exec -n {sandbox} --no-tty -- fabric-agent-ctl invoke --agent {name} --runtime-id {runtime} --input FILE\n"
+                ));
             }
             None => output.push_str(&format!("  {sandbox}: agent {name}, no runtime recorded\n")),
         }
     }
-    if invocable && osh.is_some() {
+    if invocable {
         output.push_str(&format!(
             "  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see {}.\n",
             documentation_url("docs/agents-inference/agents.md"),
@@ -702,26 +667,20 @@ fn agent_invocation(
     output
 }
 
-/// How to reach each enabled interface: the `nemoclaw osh` commands a person
-/// runs, or where to set up a standalone CLI unless the agents' section
-/// pointed there. Only the person's own retrieval command discloses a token.
-fn interface_access(result: &OperationResult, osh: Option<&str>, pointed: bool) -> String {
+/// How to reach each enabled interface: the `osh` commands a person runs.
+/// Only the person's own retrieval command discloses a token.
+fn interface_access(result: &OperationResult, osh: &str) -> String {
     use nemoclaw_sdk::SignIn;
     let mut output = String::from("\nAgent interfaces:\n");
-    if osh.is_none() && !pointed {
-        output.push_str(&standalone_cli());
-    }
     for access in &result.interfaces {
         let sandbox = terminal_text(&access.sandbox);
         let interface = terminal_text(&access.interface);
         match access.port {
             Some(port) => {
                 output.push_str(&format!("  {sandbox}/{interface} on port {port}\n"));
-                if let Some(osh) = osh {
-                    output.push_str(&format!(
-                        "    Forward:  {osh} forward service {sandbox} --target-port {port} --local 127.0.0.1:{port}\n"
-                    ));
-                }
+                output.push_str(&format!(
+                    "    Forward:  {osh} forward service {sandbox} --target-port {port} --local 127.0.0.1:{port}\n"
+                ));
             }
             None => output.push_str(&format!("  {sandbox}/{interface}\n")),
         }
@@ -730,14 +689,10 @@ fn interface_access(result: &OperationResult, osh: Option<&str>, pointed: bool) 
             SignIn::TokenInUrlFragment | SignIn::BearerToken
         );
         match &access.token_path {
-            Some(path) => {
-                if let Some(osh) = osh {
-                    output.push_str(&format!(
-                        "    Token:    {osh} sandbox exec -n {sandbox} --no-tty -- cat {}\n",
-                        terminal_text(path)
-                    ));
-                }
-            }
+            Some(path) => output.push_str(&format!(
+                "    Token:    {osh} sandbox exec -n {sandbox} --no-tty -- cat {}\n",
+                terminal_text(path)
+            )),
             None if token => output.push_str(
                 "    Token:    unavailable; the deployment state records no runtime ID for this agent\n",
             ),
@@ -755,7 +710,7 @@ fn interface_access(result: &OperationResult, osh: Option<&str>, pointed: bool) 
             SignIn::TerminalCommand => "    Sign in:  the Terminal command reads the runtime's credential itself\n".into(),
             SignIn::AdapterDocumented => "    Sign in:  see the adapter's documentation\n".into(),
         });
-        if let (Some(command), Some(osh)) = (&access.terminal, osh) {
+        if let Some(command) = &access.terminal {
             let token = if access.sign_in == SignIn::TerminalCommand {
                 ""
             } else {
@@ -1068,11 +1023,11 @@ mod tests {
 
     /// After apply, each enabled interface gets its forward, the command that
     /// reads its token, its sign-in, and the command that opens its terminal UI
-    /// if it has one, all through `nemoclaw osh`. The output names where the
-    /// token is, never a token.
+    /// if it has one, through `nemoclaw osh`.
+    /// The output names where the token is, never a token.
     #[test]
     fn apply_output_tells_how_to_reach_each_interface() {
-        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef", "bundledCli": true});
+        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
         let result = json!({"outcome": "succeeded", "changes": [], "connection": connection, "interfaces": interfaces()});
         let text = render(&["nemoclaw", "apply", "deployment.yaml"], result.clone());
         let lines: Vec<&str> = text.lines().map(str::trim).collect();
@@ -1114,70 +1069,6 @@ mod tests {
         assert_eq!(machine["interfaces"], interfaces());
     }
 
-    /// When the bundled CLI reaches the gateway, the printed commands run it
-    /// through `nemoclaw osh`, which selects the gateway and workspace itself.
-    #[test]
-    fn commands_run_through_the_bundled_cli_when_it_reaches_the_gateway() {
-        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef", "bundledCli": true});
-        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection, "agents": agents(), "interfaces": interfaces()});
-        let text = render(
-            &[
-                "nemoclaw",
-                "--state-dir",
-                "my state",
-                "apply",
-                "deployment.yaml",
-            ],
-            result,
-        );
-        let osh = "nemoclaw osh --state-dir 'my state' --";
-        for expected in [
-            format!(
-                "Invoke:   {osh} sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke"
-            ),
-            format!("Forward:  {osh} forward service assistant --target-port 18789"),
-            format!("Token:    {osh} sandbox exec -n assistant --no-tty -- cat "),
-            format!("Terminal: {osh} sandbox exec -n assistant --tty -- openclaw tui"),
-        ] {
-            assert!(text.contains(&expected), "missing {expected:?}:\n{text}");
-        }
-        assert!(!text.contains("OPENSHELL_"), "{text}");
-        assert!(!text.contains("    openshell "), "{text}");
-    }
-
-    /// For a gateway the bundled CLI can't reach, the output prints no
-    /// OpenShell commands and points once to a standalone CLI's setup.
-    #[test]
-    fn a_gateway_the_bundled_cli_cannot_reach_points_to_a_standalone_cli() {
-        let connection = json!({"gatewayEndpoint": "https://gateway.example:443", "workspace": "nc-1234567890abcdef"});
-        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection,
-            "agents": agents(), "interfaces": interfaces()});
-        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
-        assert_eq!(
-            text.matches("Use a standalone OpenShell CLI for this gateway; see https://github.com/NVIDIA/NemoClaw/blob/").count(),
-            1,
-            "{text}"
-        );
-        assert!(
-            text.contains("/docs/agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways.\n"),
-            "{text}"
-        );
-        assert!(
-            text.contains("assistant: agent main, runtime rt-1\n"),
-            "{text}"
-        );
-        for command in [
-            "openshell ",
-            "nemoclaw osh",
-            "OPENSHELL_",
-            "Invoke:",
-            "Forward:",
-            "Terminal:",
-        ] {
-            assert!(!text.contains(command), "{command}: {text}");
-        }
-    }
-
     /// A managed cluster gateway without `expose` has no address: clients
     /// reach it through a port forward of their own, and JSON results leave
     /// the endpoint out.
@@ -1189,10 +1080,6 @@ mod tests {
         assert!(
             text.contains("OpenShell gateway: not published; forward a local port to the gateway pod, as https://github.com/NVIDIA/NemoClaw/blob/")
                 && text.contains("/docs/build-deploy/kubernetes.md describes\n"),
-            "{text}"
-        );
-        assert!(
-            text.contains("Use a standalone OpenShell CLI for this gateway"),
             "{text}"
         );
         let machine: Value = serde_json::from_str(&render(
@@ -1231,11 +1118,11 @@ mod tests {
     }
 
     /// Plan and apply print the command that invokes each agent with a recorded
-    /// runtime through `nemoclaw osh`, and say which agent has none; JSON
-    /// carries the same facts under `agents`.
+    /// runtime through `nemoclaw osh`, and
+    /// say which agent has none; JSON carries the same facts under `agents`.
     #[test]
     fn plan_and_apply_output_tells_how_to_invoke_each_agent() {
-        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef", "bundledCli": true});
+        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
         for (command, outcome) in [("plan", "planned"), ("apply", "succeeded")] {
             let result = json!({"outcome": outcome, "changes": [], "connection": connection, "agents": agents()});
             let text = render(&["nemoclaw", command, "deployment.yaml"], result.clone());
@@ -1293,8 +1180,7 @@ mod tests {
         let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
         let result = json!({"outcome": "succeeded", "changes": [], "connection": connection});
         let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
-        assert!(!text.contains("openshell forward"), "{text}");
-        assert!(!text.contains("OPENSHELL_WORKSPACE"), "{text}");
+        assert!(!text.contains("forward service"), "{text}");
     }
 
     #[test]

@@ -113,7 +113,6 @@ Agents:
 ```
 
 JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`.
-When the bundled CLI can't reach the gateway, such as a managed Kubernetes gateway, the output prints no commands and points to [Selecting a Standalone CLI for Bearer-Token Gateways](#selecting-a-standalone-cli-for-bearer-token-gateways) instead.
 A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
 A plan omits that section when no agent has a recorded runtime, such as before the first apply.
 Otherwise, an agent without a recorded runtime is listed with `no runtime recorded` and has no `runtimeId`.
@@ -195,7 +194,7 @@ Changing an agent's settings, including its interfaces, replaces its sandbox, de
 ### Forwarding, Reading the Token, and Signing In
 
 After apply, NemoClaw lists each enabled interface with the commands to reach it, and never prints a token.
-The following illustrative excerpt shows those commands:
+For example:
 
 ```text
 Agent interfaces:
@@ -207,19 +206,16 @@ Agent interfaces:
 ```
 
 JSON results carry the same facts under `interfaces`.
-For a gateway the bundled CLI can't reach, the output lists each interface and its sign-in, and points to the standalone CLI's setup instead of printing commands.
 
-1. [Select the gateway and workspace](#selecting-the-gateway-and-workspace) in the terminal that will run the forward.
-2. Run the `Forward` command in that terminal and keep it running. Bind it to loopback; stopping the forward does not stop the runtime.
-3. Select the same gateway and workspace in a separate private terminal.
-4. If the interface requires a token, read it with the `Token` command in that terminal. Do not paste a token into shell history or shared logs.
+1. Run the `Forward` command in a terminal and keep it running. Bind it to loopback; stopping the forward does not stop the runtime.
+2. If the interface requires a token, read it with the `Token` command in a separate private terminal. Do not paste a token into shell history or shared logs.
    The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
    For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes or OpenClaw, it's at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
    The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user.
    Stopping the runtime removes it.
    After the runtime restarts, apply prints a new path.
    Repeat this step to read the new token.
-5. Sign in using the method for the selected interface:
+3. Sign in using the method for the selected interface:
 
    - OpenClaw: Open `http://127.0.0.1:PORT/#token=TOKEN` in a browser.
      The Control UI removes the token from the address bar.
@@ -229,7 +225,7 @@ For a gateway the bundled CLI can't reach, the output lists each interface and i
      It has no sign-in.
      Anyone who can reach its forward can use it.
 
-6. Send a short request through the signed-in interface to verify the model replies.
+4. Send a short request through the signed-in interface to verify the model replies.
    A successful forward or sign-in alone doesn't establish inference.
 
 NemoClaw stores no interface tokens in its state.
