@@ -2955,7 +2955,6 @@ dependencies = [
  "getrandom 0.4.3",
  "guppy",
  "ipnet",
- "nemoclaw-fabric",
  "nemoclaw-sdk",
  "object 0.40.0",
  "pulldown-cmark",

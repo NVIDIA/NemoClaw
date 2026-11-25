@@ -56,23 +56,17 @@ An absent image or a read that could not be verified can leave an advisory and a
 Review is not a deployment plan and does not establish that the configuration will run.
 Refer to [provider discovery](../references/provider.md#engine-and-fabric-discovery) for the read contracts.
 
-When no usable local image fits the selected harness, a release CLI reads that exact release's `version-pins.json` from GitHub and offers its matching agent image digest.
+A release CLI reads its exact release's `version-pins.json` from GitHub.
+When no usable local image fits the selected harness, onboarding offers the matching agent image digest from that metadata.
 The release derives this mapping from each image's verified Fabric metadata, not its repository name.
 A single candidate is selected automatically; several candidates remain choices.
 This suggestion does not pull an image or prove runtime compatibility, inference, or registry access.
 Apply still acquires the selected digest and checks it.
 If the release metadata is unavailable, onboarding keeps local discovery and manual digest entry available and links the build guide.
 
-For a private release candidate, download its `version-pins.json` using your existing authenticated release access and supply the local file:
-
-```sh
-nemoclaw onboard --release-pins version-pins.json --output my-deployment.yaml
-```
-
-A release CLI refuses pins from another release or Fabric revision.
-A source build can use a candidate's pins with the same Fabric revision; the suggestion does not establish that its other source changes match that candidate.
+The CLI refuses pins from another release or Fabric revision.
+Development builds do not look up release image suggestions.
 Older candidates without the `agentImages` mapping provide no release suggestions.
-Private image pulls still need the deployment's [registry credentials](../build-deploy/usage.md#pulling-from-private-registries).
 Onboarding does not read or forward GitHub credentials when looking up public release metadata.
 
 ## Reviewing and Saving the YAML

@@ -5,7 +5,7 @@
 //! remain the deployment provider's responsibility, including registry auth.
 use nemoclaw_authoring::Capabilities;
 use nemoclaw_sdk::{CancellationToken, Error};
-use std::{io::Read, path::Path, time::Duration};
+use std::time::Duration;
 
 const MAX_PINS_BYTES: usize = 1024 * 1024;
 
@@ -28,22 +28,9 @@ fn release_tag(version: Option<&str>) -> Option<String> {
 pub(super) async fn load(
     capabilities: Capabilities,
     version: Option<&str>,
-    pins: Option<&Path>,
     cancel: &CancellationToken,
 ) -> Result<Capabilities, Box<dyn std::error::Error>> {
     let tag = release_tag(version);
-    if let Some(path) = pins {
-        let mut bytes = Vec::new();
-        std::fs::File::open(path)?
-            .take(MAX_PINS_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > MAX_PINS_BYTES {
-            return Err("Release image pins exceed 1 MiB".into());
-        }
-        return capabilities
-            .with_release_pins(&bytes, tag.as_deref())
-            .map_err(Into::into);
-    }
     let Some(tag) = tag else {
         return Ok(capabilities);
     };
@@ -105,35 +92,6 @@ mod tests {
         }
         assert_eq!(release_tag(Some("0.1.0-rc.5")), Some("v0.1.0-rc.5".into()));
         assert_eq!(release_tag(Some("0.1.0")), Some("v0.1.0".into()));
-    }
-
-    #[tokio::test]
-    async fn private_pins_are_read_locally_and_a_mismatched_release_is_refused() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("pins.json");
-        std::fs::write(&path, br#"{"release":"v0.1.0-rc.5","agentImages":[]}"#).unwrap();
-        let cancel = CancellationToken::new();
-        assert!(
-            load(Capabilities::available(), None, Some(&path), &cancel)
-                .await
-                .is_ok()
-        );
-        assert!(
-            load(
-                Capabilities::available(),
-                Some("0.1.0"),
-                Some(&path),
-                &cancel
-            )
-            .await
-            .is_err()
-        );
-        std::fs::write(&path, vec![b' '; MAX_PINS_BYTES + 1]).unwrap();
-        assert!(
-            load(Capabilities::available(), None, Some(&path), &cancel)
-                .await
-                .is_err()
-        );
     }
 
     #[tokio::test]

@@ -28,18 +28,16 @@ pub async fn author(
     discover: bool,
     cancel: &CancellationToken,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    author_with_release(source, output, discover, cancel, None, None).await
+    author_with_release(source, output, discover, cancel, None).await
 }
 
-/// Author with optional release metadata. A release build reads only its exact
-/// tag; a local pins file lets a candidate tester supply private release data.
+/// Author with image suggestions from this CLI's exact release tag.
 pub async fn author_with_release(
     source: Source<'_>,
     output: &Path,
     discover: bool,
     cancel: &CancellationToken,
     version: Option<&str>,
-    pins: Option<&Path>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     if cancel.is_cancelled() {
         return Err(Error::Cancelled.into());
@@ -50,8 +48,7 @@ pub async fn author_with_release(
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err("onboarding requires a terminal on stdin and stderr".into());
     }
-    let capabilities =
-        release_images::load(Capabilities::available(), version, pins, cancel).await?;
+    let capabilities = release_images::load(Capabilities::available(), version, cancel).await?;
     let state = load_journey(source, &capabilities)?;
     let Some(yaml) = tui::run(capabilities, state, cancel, discover, output).await? else {
         return Ok(false);

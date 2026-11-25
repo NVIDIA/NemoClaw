@@ -982,7 +982,7 @@ jobs:
             echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` | $metadata |" >> "$notes"
           done
           pins="$RUNNER_TEMP/version-pins.json"
-          cargo run --locked -q -p nemoclaw-build --no-default-features -- release-pins \
+          cargo run --locked -q -p nemoclaw-build -- release-pins \
             --versions versions.json --inventory "$inventory" --tag "$TAG" \
             --agent-metadata "$bundles" > "$pins"
           {
@@ -1185,19 +1185,19 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern inventory.json --output "$dir/inventory.json"
           test "$(sha256sum "$dir/inventory.json" | cut -d ' ' -f1)" = "$INVENTORY_SHA256"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern version-pins.json --output "$dir/staged.json"
-          release_pins() {
-            cargo run --locked -q -p nemoclaw-build --no-default-features -- release-pins \
-              --versions "$dir/versions.json" --inventory "$dir/inventory.json" --tag "$TAG" "$@"
-          }
           git show "$CANDIDATE_REVISION:versions.json" > "$dir/versions.json"
           # Older candidates predate the optional onboarding mapping. When it
           # is present, derive it again from digest-verified image metadata.
           if jq -e 'has("agentImages")' "$dir/staged.json" > /dev/null; then
+            cargo ci tools
             mkdir -p "$dir/metadata"
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.metadata.json' --dir "$dir/metadata"
-            release_pins --agent-metadata "$dir/metadata" > "$dir/expected.json"
+            cargo run --locked -q -p nemoclaw-build -- release-pins \
+              --versions "$dir/versions.json" --inventory "$dir/inventory.json" --tag "$TAG" \
+              --agent-metadata "$dir/metadata" > "$dir/expected.json"
           else
-            release_pins > "$dir/expected.json"
+            cargo run --locked -q -p nemoclaw-build --no-default-features -- release-pins \
+              --versions "$dir/versions.json" --inventory "$dir/inventory.json" --tag "$TAG" > "$dir/expected.json"
           fi
           if ! cmp -s "$dir/expected.json" "$dir/staged.json"; then
             echo "::error::The draft's version-pins.json doesn't match the versions.json of $TAG and the images staging recorded."

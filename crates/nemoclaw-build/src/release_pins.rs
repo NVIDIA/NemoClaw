@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 
 /// Add suggestions derived from the exact image-owned metadata staged beside
 /// these release pins. Never infer an adapter from an image's repository name.
+#[cfg(feature = "sdk")]
 pub fn with_agent_metadata(pins: &str, directory: &std::path::Path) -> Result<String> {
     use std::{fs, io::Read};
     let mut pins: serde_json::Value = serde_json::from_str(pins).map_err(|e| e.to_string())?;
@@ -36,10 +37,10 @@ pub fn with_agent_metadata(pins: &str, directory: &std::path::Path) -> Result<St
         let mut bytes = Vec::new();
         fs::File::open(&path)
             .map_err(|e| e.to_string())?
-            .take(nemoclaw_fabric::image_metadata::MAX_BUNDLE_BYTES as u64 + 1)
+            .take(nemoclaw_sdk::image_metadata::MAX_BUNDLE_BYTES as u64 + 1)
             .read_to_end(&mut bytes)
             .map_err(|e| e.to_string())?;
-        let observation = nemoclaw_fabric::image_metadata::verify(&bytes, reference)
+        let observation = nemoclaw_sdk::image_metadata::verify(&bytes, reference)
             .map_err(|_| format!("Invalid image metadata for {name}"))?;
         let catalog = observation
             .catalog

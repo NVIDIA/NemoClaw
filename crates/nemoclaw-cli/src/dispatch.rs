@@ -63,12 +63,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
         command,
         ..
     } = cli;
-    if let Command::Onboard {
-        file,
-        output,
-        release_pins,
-    } = &command
-    {
+    if let Command::Onboard { file, output } = &command {
         let source = file.as_deref().map_or(
             nemoclaw_onboarding::Source::Defaults,
             nemoclaw_onboarding::Source::Template,
@@ -79,7 +74,6 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             true,
             cancel,
             option_env!("NEMOCLAW_BUNDLE_VERSION"),
-            release_pins.as_deref(),
         )
         .await?;
         return if saved {
