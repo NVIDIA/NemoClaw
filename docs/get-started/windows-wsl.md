@@ -3,14 +3,14 @@
 
 # Onboarding on Windows Through WSL2
 
-Use this path on Windows ARM64, which has no native NemoClaw bundle.
-It builds the current checkout's Linux ARM64 bundle and Hermes image, authors a deployment, creates a managed Docker gateway, and verifies one agent reply.
+Use this path on Windows ARM64, which has no native NemoClaw bundle, or Windows AMD64 when using Linux tools through WSL2.
+It builds the current checkout's Linux bundle and Hermes image for the WSL distribution's architecture, authors a deployment, creates a managed Docker gateway, and verifies one agent reply.
 Keep the bundle, image, YAML, and state directory together throughout the exercise.
 This procedure uses hosted NVIDIA Endpoints inference; it does not require a local GPU model server.
 
 ## Preparing Windows and WSL
 
-Install WSL2 with an ARM64 Ubuntu distribution and Docker Desktop with its WSL2 backend.
+Install WSL2 with an Ubuntu distribution matching your machine's architecture and Docker Desktop with its WSL2 backend.
 In Docker Desktop, enable integration for that distribution under **Settings > Resources > WSL Integration**.
 Enable **Use containerd for pulling and storing images** under **Settings > General**, apply the change, and start Docker Desktop.
 Switching image stores preserves the inactive store's images and containers but hides them until switched back.
@@ -29,12 +29,17 @@ Keep the checkout on the Linux filesystem, such as under `~/src`, to avoid Windo
 Check the architecture and engine:
 
 ```sh
-uname -m
+case "$(uname -m)" in
+  aarch64) NC_PLATFORM=linux_arm64; NC_IMAGE_PLATFORM=linux/arm64 ;;
+  x86_64) NC_PLATFORM=linux_amd64; NC_IMAGE_PLATFORM=linux/amd64 ;;
+  *) printf 'Unsupported WSL architecture\n' >&2; exit 1 ;;
+esac
 docker version
 docker info --format '{{json .DriverStatus}}'
 ```
 
-Expect `aarch64`, a Docker server as well as a client, and `io.containerd.snapshotter.v1` in the driver status.
+The architecture selection accepts `aarch64` or `x86_64`.
+Expect a Docker server as well as a client, and `io.containerd.snapshotter.v1` in the driver status.
 If the server is missing, start Docker Desktop and check WSL integration before continuing.
 
 ## Building the Checkout
@@ -49,7 +54,7 @@ cd NemoClaw
 cargo ci tools
 export PROTOC="$PWD/.tools/protoc-36.2/bin/protoc"
 cargo run --locked -p nemoclaw-build -- bundle
-export PATH="$PWD/dist/linux_arm64/bin:$PATH"
+export PATH="$PWD/dist/$NC_PLATFORM/bin:$PATH"
 type -a nemoclaw
 nemoclaw --version
 nemoclaw --help
@@ -63,7 +68,7 @@ Refer to the [build guide](../build-deploy/build.md) for prerequisites and build
 Build the agent image from this same checkout:
 
 ```sh
-cargo images build --platform linux/arm64 hermes
+cargo images build --platform "$NC_IMAGE_PLATFORM" hermes
 docker image inspect nc-fabric:hermes --format '{{index .RepoDigests 0}}'
 ```
 
@@ -80,8 +85,8 @@ With `jq` installed, download and verify that archive into a local tools directo
 CLIENT_VERSION=$(jq -er '.openshell' versions.json) || exit 1
 CLIENT_DIR="$PWD/.tools/openshell/$CLIENT_VERSION"
 mkdir -p "$CLIENT_DIR"
-curl -fL "$(jq -er '.platforms.linux_arm64.openshell.url' versions.json)" -o "$CLIENT_DIR/archive.tar.gz"
-printf '%s  %s\n' "$(jq -er '.platforms.linux_arm64.openshell.sha256' versions.json)" "$CLIENT_DIR/archive.tar.gz" | sha256sum --check || exit 1
+curl -fL "$(jq -er --arg platform "$NC_PLATFORM" '.platforms[$platform].openshell.url' versions.json)" -o "$CLIENT_DIR/archive.tar.gz"
+printf '%s  %s\n' "$(jq -er --arg platform "$NC_PLATFORM" '.platforms[$platform].openshell.sha256' versions.json)" "$CLIENT_DIR/archive.tar.gz" | sha256sum --check || exit 1
 tar -xzf "$CLIENT_DIR/archive.tar.gz" -C "$CLIENT_DIR"
 export PATH="$CLIENT_DIR:$PATH"
 openshell --version
