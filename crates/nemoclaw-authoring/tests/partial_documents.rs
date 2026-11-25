@@ -119,7 +119,7 @@ fn a_pinned_llama_cpp_document_materializes_without_loading_credentials() {
 #[test]
 fn a_semantic_failure_names_its_field_and_reason() {
     // API-key auth whose provider has no credential.
-    let yaml = include_str!("../../../examples/local.yaml").replace(
+    let yaml = include_str!("../../../examples/agents/local.yaml").replace(
         "        name: main\n",
         "        name: main\n        auth:\n          method: api-key\n",
     );
