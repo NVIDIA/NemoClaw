@@ -17,7 +17,8 @@ nemoclaw osh --state-dir .nemoclaw -- sandbox list
 
 It selects the gateway and workspace from the saved deployment and uses the referenced mTLS files without changing your OpenShell profiles.
 Use the same state directory and TLS environment as apply.
-The commands below use this form; [`nemoclaw openshell`](../references/cli.md#running-openshell-against-a-deployment) describes it, including sign-in to an external OIDC gateway.
+The commands below use this form; [`nemoclaw openshell`](../references/cli.md#running-openshell-against-a-deployment) describes it.
+For an external OIDC gateway, first run the `Register once:` command that plan and apply print, as [Logging In to an External OIDC Gateway](../references/cli.md#logging-in-to-an-external-oidc-gateway) describes.
 
 ### Selecting a Standalone CLI for Bearer-Token Gateways
 
@@ -102,7 +103,7 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 ## Invoking an Agent
 
 After [selecting the gateway and workspace](#selecting-the-gateway-and-workspace), send requests through `nemoclaw osh -- sandbox exec`.
-Plan and apply print a complete `Invoke:` command and an `Inspect:` command for each agent with a recorded runtime ID; [Run one request](agents.md#running-one-agent-request) explains them.
+Plan and apply print an `Invoke:` command for each agent with a recorded runtime ID; [Run one request](agents.md#running-one-agent-request) shows how to send a prompt and read its result.
 Where the bundled CLI can't reach the gateway, they say why instead.
 
 JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`.
