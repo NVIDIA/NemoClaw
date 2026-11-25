@@ -109,24 +109,6 @@ pub struct DeploymentConnection {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bundled_cli: bool,
 }
-impl DeploymentConnection {
-    /// Whether the OpenShell CLI can select the gateway by its endpoint alone:
-    /// a plaintext loopback endpoint. Others need an authenticated profile.
-    pub fn plaintext_loopback(&self) -> bool {
-        let Some(endpoint) = &self.gateway_endpoint else {
-            return false;
-        };
-        url::Url::parse(endpoint).is_ok_and(|url| {
-            url.scheme() == "http"
-                && match url.host() {
-                    Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
-                    Some(url::Host::Ipv4(address)) => address.is_loopback(),
-                    Some(url::Host::Ipv6(address)) => address.is_loopback(),
-                    None => false,
-                }
-        })
-    }
-}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationResult {

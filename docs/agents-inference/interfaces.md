@@ -113,7 +113,7 @@ Agents:
 ```
 
 JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`.
-When the bundled CLI can't reach the gateway, such as a managed Kubernetes gateway, the commands use a standalone `openshell` instead, after the gateway and workspace selection, which the output prints once.
+When the bundled CLI can't reach the gateway, such as a managed Kubernetes gateway, the output prints no commands and points to [Selecting a Standalone CLI for Bearer-Token Gateways](#selecting-a-standalone-cli-for-bearer-token-gateways) instead.
 A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
 A plan omits that section when no agent has a recorded runtime, such as before the first apply.
 Otherwise, an agent without a recorded runtime is listed with `no runtime recorded` and has no `runtimeId`.
@@ -207,7 +207,7 @@ Agent interfaces:
 ```
 
 JSON results carry the same facts under `interfaces`.
-For a gateway the bundled CLI can't reach, the commands use a standalone `openshell` after the selection in [Selecting the Gateway and Workspace](#selecting-the-gateway-and-workspace); for one that needs an OpenShell profile, the output asks for your profile's name.
+For a gateway the bundled CLI can't reach, the output lists each interface and its sign-in, and points to the standalone CLI's setup instead of printing commands.
 
 1. [Select the gateway and workspace](#selecting-the-gateway-and-workspace) in the terminal that will run the forward.
 2. Run the `Forward` command in that terminal and keep it running. Bind it to loopback; stopping the forward does not stop the runtime.
