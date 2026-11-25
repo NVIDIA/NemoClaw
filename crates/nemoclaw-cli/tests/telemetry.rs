@@ -261,32 +261,39 @@ fn an_apply_stopped_by_sigterm_records_cancelled() {
     // `-` reads the configuration from standard input, which stays open, so
     // the command waits until the signal stops it. A signal that comes before
     // the command handles signals ends it at once; then wait longer and retry.
-    let status = [500, 2000, 8000]
+    let output = [500, 2000, 8000]
         .into_iter()
         .map(|wait| {
             let mut child = sending(&fixture, &guard, &["apply", "-"], &receiver.url)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
                 .spawn()
                 .unwrap();
+            // Held open until the command ends, so it never reads end of input.
+            let _input = child.stdin.take();
             std::thread::sleep(Duration::from_millis(wait));
             let killed = Command::new("kill")
                 .args(["-TERM", &child.id().to_string()])
                 .status()
                 .unwrap();
             assert!(killed.success());
-            child.wait().unwrap()
+            child.wait_with_output().unwrap()
         })
-        .find(|status| status.code().is_some())
+        .find(|output| output.status.code().is_some())
         .expect("the command never handled SIGTERM");
-    assert_ne!(status.code(), Some(0));
+    let context = format!(
+        "{:?}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_ne!(output.status.code(), Some(0), "{context}");
     guard.assert_no_connection("sigterm");
     let records = receiver.take();
-    assert_eq!(records.len(), 1, "{status:?}");
+    assert_eq!(records.len(), 1, "{context}");
     let record = &records[0]["events"][0]["parameters"];
     assert_eq!(record["operation"], "apply");
-    assert_eq!(record["outcome"], "cancelled");
+    assert_eq!(record["outcome"], "cancelled", "{context}");
 }
 
 #[test]
