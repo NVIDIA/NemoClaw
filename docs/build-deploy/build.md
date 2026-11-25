@@ -94,9 +94,7 @@ docker info --format '{{json .DriverStatus}}'
 The output includes `["driver-type","io.containerd.snapshotter.v1"]` when the daemon uses the containerd store.
 Runtime images require the containerd image store.
 Agent images require a store that retains repository digests for local builds, and containerd is the tested store.
-On Docker Desktop, enable **Settings > General > Use containerd for pulling and storing images**, then apply the change and restart if prompted.
-The stores are separate: existing images and containers remain on disk but are hidden while their store is inactive.
-Refer to [Docker's image-store instructions](https://docs.docker.com/desktop/features/containerd/).
+To switch Docker Desktop to the containerd store, follow [Docker's image-store instructions](https://docs.docker.com/desktop/features/containerd/).
 Check this before building; an image loaded into the classic store can have an empty `RepoDigests` list even when its build succeeds.
 
 ## Building a Native Bundle
