@@ -662,17 +662,9 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
         let name = terminal_text(&agent.agent);
         match &agent.runtime_id {
             Some(runtime) => {
-                let reply = shell_word(&format!("reply-{sandbox}.json"));
-                let command = format!(
-                    "printf '%s\\n' '\"Reply with exactly READY.\"' | openshell sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input - > {reply}",
-                    shell_word(sandbox.as_str()),
-                    shell_word(name.as_str()),
-                    shell_word(runtime),
-                );
+                let runtime = terminal_text(runtime);
                 output.push_str(&format!(
-                    "  {sandbox}: agent {name}, runtime {}\n    Invoke:   {}\n",
-                    terminal_text(runtime),
-                    terminal_text(&command),
+                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   openshell sandbox exec -n {sandbox} --no-tty -- fabric-agent-ctl invoke --agent {name} --runtime-id {runtime} --input FILE\n"
                 ));
             }
             None => output.push_str(&format!("  {sandbox}: agent {name}, no runtime recorded\n")),
@@ -680,7 +672,7 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
     }
     if invocable {
         output.push_str(&format!(
-            "  Invoke sends one JSON prompt and saves the full JSON reply to the named file; it can incur inference charges. Check that Invoke exits 0 before inspecting the file.\n  --input FILE reads a sandbox file; --input - reads it from stdin; see {}.\n",
+            "  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see {}.\n",
             documentation_url("docs/agents-inference/agents.md"),
         ));
     }
@@ -1175,40 +1167,6 @@ mod tests {
     /// runtime, under this deployment's gateway and workspace selection, and
     /// say which agent has none; JSON carries the same facts under `agents`.
     #[test]
-    #[cfg(unix)]
-    fn printed_first_reply_command_sends_json_and_keeps_the_reply_for_inspection() {
-        let text = render(
-            &["nemoclaw", "apply", "deployment.yaml"],
-            json!({"outcome": "succeeded", "changes": [], "agents": agents()}),
-        );
-        let command = text
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("Invoke:"))
-            .unwrap();
-        let script = format!(
-            "openshell() {{ test \"$*\" = 'sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input -' || return 3; cat; }}\n{command}"
-        );
-        let directory = tempfile::tempdir().unwrap();
-        let output = std::process::Command::new("sh")
-            .current_dir(directory.path())
-            .args(["-c", &script])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "the printed command must run: {command}"
-        );
-        let reply = std::fs::read(directory.path().join("reply-assistant.json"))
-            .expect("Invoke must save the JSON for the printed inspection command");
-        assert!(
-            output.stdout.is_empty(),
-            "the first reply must not flood the terminal with JSON"
-        );
-        let prompt: Value = serde_json::from_slice(&reply).unwrap();
-        assert_eq!(prompt, "Reply with exactly READY.");
-    }
-
-    #[test]
     fn plan_and_apply_output_tells_how_to_invoke_each_agent() {
         let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
         for (command, outcome) in [("plan", "planned"), ("apply", "succeeded")] {
@@ -1226,7 +1184,7 @@ mod tests {
             for expected in [
                 "export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671",
                 "export OPENSHELL_WORKSPACE=nc-1234567890abcdef",
-                "Invoke: printf '%s\\n' '\"Reply with exactly READY.\"' | openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input - > reply-assistant.json",
+                "Invoke: openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input FILE",
                 "reviewer: agent critic, no runtime recorded",
             ] {
                 assert!(

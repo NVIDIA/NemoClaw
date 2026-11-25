@@ -66,10 +66,7 @@ The [headless OpenClaw request](#running-one-headless-openclaw-request) shows a 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
-Plan and apply print an `Invoke:` sample for each recorded runtime, with the sandbox, agent, runtime ID, and a JSON prompt filled in.
-`Invoke:` saves the full JSON response to `reply-SANDBOX.json` in the current directory.
-Select the gateway and workspace with the commands printed before the sample.
-JSON results report the agent and runtime ID under `agents`.
+Plan and apply print this command for each agent with both filled in, after the commands that select the deployment's gateway and workspace, and JSON results report them under `agents`.
 See [invoke an agent](interfaces.md#invoking-an-agent).
 Use `--input -` to read the value from stdin instead.
 See the [bridge commands](../../internal-docs/design/fabric-management.md#bridge-commands).
@@ -79,8 +76,18 @@ A request can incur inference charges and affect retained agent history.
 Don't assume a universal result shape.
 Check `result.status` as well as the outer `status`: the outer one only reports that `fabric-agent-ctl` completed the call, while a failed run reports `result.status: failed` with Fabric's error in `result.error`.
 `result.artifacts` names the files Fabric kept for that request, such as the adapter's output.
-Empty stdin is not a prompt: send a JSON string, including its ASCII double quotes.
-For invalid JSON, correct the input before retrying; changing the API key cannot repair the input.
+
+To send a prompt from the client host and keep the full result, pipe a JSON string to `--input -` and save stdout, then show the statuses with `jq`:
+
+```sh
+printf '%s\n' '"Reply with exactly READY."' |
+  openshell sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent NAME --runtime-id ID --input - > reply.json
+jq '{status, result_status: .result.status, error: .result.error}' reply.json
+```
+
+The prompt keeps its double quotes because it is a JSON string; empty stdin is not a prompt.
+Continue only if the command exits 0 and both statuses are `succeeded`, then read the reply from the fields that the adapter's result contract names.
+Keep `reply.json` private, and review it for credentials and personal data before sharing.
 
 ### Diagnosing an Authentication Failure
 
