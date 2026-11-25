@@ -194,7 +194,7 @@ fn a_sandbox_with_more_than_32_attached_providers_is_rejected_by_name() {
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("spec.sandboxes[researcher]")
+            error.starts_with("spec.sandboxes.researcher (line ")
                 && error.contains("attaches 33")
                 && error.contains("at most 32"),
             "{providers} providers, api {api}: {error}"

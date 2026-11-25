@@ -834,6 +834,9 @@ pub(crate) fn render_error(
         "stateDirectory": context.state_dir,
         "error": { "message": message },
     });
+    if let Some(error) = error_in_chain::<nemoclaw_sdk::config::ConfigError>(error) {
+        details["error"]["diagnostics"] = serde_json::json!(error.diagnostics());
+    }
     context.add_warnings(&mut details);
     if let Some(input) = &context.input {
         details["input"] = serde_json::json!(input);

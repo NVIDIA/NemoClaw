@@ -120,9 +120,12 @@ async fn observe(
     if image.os.as_deref() != Some("linux")
         || image.architecture.as_deref() != Some(required.architecture.as_str())
     {
-        return Err(Error::Configuration(nemoclaw_sdk::config::ConfigError(
-            format!("image platform is not linux/{}", required.architecture),
-        )));
+        return Err(Error::Configuration(
+            nemoclaw_sdk::config::ConfigError::from(format!(
+                "image platform is not linux/{}",
+                required.architecture
+            )),
+        ));
     }
     // Name the label, never the image's value.
     if let Some(key) = required
@@ -131,9 +134,11 @@ async fn observe(
         .find(|(key, value)| labels.and_then(|labels| labels.get(*key)) != Some(*value))
         .map(|(key, _)| key)
     {
-        return Err(Error::Configuration(nemoclaw_sdk::config::ConfigError(
-            format!("image label {key} is missing or does not match the required value"),
-        )));
+        return Err(Error::Configuration(
+            nemoclaw_sdk::config::ConfigError::from(format!(
+                "image label {key} is missing or does not match the required value"
+            )),
+        ));
     }
     observation.status = ObservationStatus::Available;
     Ok(observation)

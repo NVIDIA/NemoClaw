@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::references::{ScopedInference, diagnostic_name, missing_reference};
 use super::source::DefinitionSource;
+use super::validation::Placed;
 use super::{ConfigError, Document, Inference, InferenceProvider, NamedSandbox, Route};
 use std::collections::BTreeMap;
 
@@ -91,10 +92,13 @@ impl Document {
             route.provider.as_ref(),
             route.provider_ref.as_deref(),
             "route requires exactly one of provider or providerRef",
-        )? {
+        )
+        .at(&inference.route_pointer(route))?
+        {
             DefinitionSource::Inline(provider) => {
                 if enclosing().any(|name| *name == provider.name) {
-                    return Err(ConfigError::new(
+                    return Err(ConfigError::at(
+                        format!("{}/provider/name", inference.route_pointer(route)),
                         "inline provider names must not shadow enclosing definitions",
                     ));
                 }
@@ -124,12 +128,10 @@ impl Document {
                         provider_path(&sandbox_path(sandbox.name), name),
                     ));
                 }
-                Err(missing_reference(
-                    &format!("{}.providerRef", inference.route_path(route)),
-                    "provider",
-                    name,
-                    enclosing().map(String::as_str),
-                ))
+                Err(
+                    missing_reference("provider", name, enclosing().map(String::as_str))
+                        .or_at(&format!("{}/providerRef", inference.route_pointer(route))),
+                )
             }
         }
     }
@@ -207,10 +209,10 @@ impl Document {
                 .keys()
                 .find(|name| self.spec.inference_providers.contains_key(*name))
             {
-                return Err(ConfigError(format!(
-                    "{}: sandbox provider names must not shadow deployment definitions",
-                    provider_path(&sandbox_path(sandbox.name), name)
-                )));
+                return Err(ConfigError::at(
+                    format!("/spec/sandboxes/{}/inferenceProviders/{name}", sandbox.name),
+                    "sandbox provider names must not shadow deployment definitions",
+                ));
             }
             let inference = self.scoped_inference(sandbox)?;
             for route in &inference.inference.routes {
@@ -261,11 +263,13 @@ impl Document {
     ) -> Result<(), ConfigError> {
         let attached = self.sandbox_provider_names(sandbox)?.len();
         if attached > nemoclaw_openshell::SANDBOX_PROVIDERS {
-            return Err(ConfigError(format!(
-                "{}: a sandbox attaches at most {} providers, OpenShell's limit per sandbox, counting its inference providers, web search, and api integrations; it attaches {attached}",
-                sandbox_path(sandbox.name),
-                nemoclaw_openshell::SANDBOX_PROVIDERS,
-            )));
+            return Err(ConfigError::at(
+                format!("/spec/sandboxes/{}", sandbox.name),
+                format!(
+                    "a sandbox attaches at most {} providers, OpenShell's limit per sandbox, counting its inference providers, web search, and api integrations; it attaches {attached}",
+                    nemoclaw_openshell::SANDBOX_PROVIDERS,
+                ),
+            ));
         }
         Ok(())
     }
@@ -377,24 +381,38 @@ impl Document {
             }))
     }
 
-    pub(super) fn provider_definitions(&self) -> impl Iterator<Item = &InferenceProvider> {
-        self.spec
-            .inference_providers
-            .values()
-            .chain(
-                self.spec
-                    .sandboxes
-                    .values()
-                    .flat_map(|sandbox| sandbox.inference_providers.values()),
-            )
-            .chain(self.inference_definitions().flat_map(|selection| {
-                selection
-                    .inference
-                    .routes
-                    .iter()
-                    .filter_map(|route| route.provider.as_ref())
-                    .map(|provider| &provider.definition)
+    /// Each provider definition with its JSON pointer: the deployment's, the
+    /// sandboxes', and those written inline in a route.
+    pub(super) fn provider_pointers(&self) -> impl Iterator<Item = (String, &InferenceProvider)> {
+        fn named(
+            base: String,
+            providers: &BTreeMap<String, InferenceProvider>,
+        ) -> impl Iterator<Item = (String, &InferenceProvider)> {
+            providers.iter().map(move |(name, provider)| {
+                (format!("{base}/inferenceProviders/{name}"), provider)
+            })
+        }
+        named("/spec".into(), &self.spec.inference_providers)
+            .chain(self.sandboxes().flat_map(move |sandbox| {
+                named(
+                    format!("/spec/sandboxes/{}", sandbox.name),
+                    &sandbox.definition.inference_providers,
+                )
             }))
+            .chain(self.inference_definitions().flat_map(|selection| {
+                selection.inference.routes.iter().filter_map(move |route| {
+                    let provider = route.provider.as_ref()?;
+                    let pointer = format!("{}/provider", selection.route_pointer(route));
+                    Some((pointer, &provider.definition))
+                })
+            }))
+    }
+
+    /// The JSON pointer of a provider definition this document holds.
+    pub(crate) fn provider_pointer(&self, provider: &InferenceProvider) -> Option<String> {
+        self.provider_pointers()
+            .find(|(_, candidate)| std::ptr::eq(*candidate, provider))
+            .map(|(pointer, _)| pointer)
     }
 }
 

@@ -29,6 +29,9 @@ pub enum PartialIssueKind {
     Missing,
     Invalid,
     Deferred,
+    /// A rule the SDK checks after the schema, often across fields, so no
+    /// single answer is known to fix it.
+    Semantic,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +50,8 @@ impl PartialIssue {
         self.kind
     }
 
+    /// The schema keyword the input breaks or, for a semantic issue, the
+    /// SDK's reason.
     pub fn rule(&self) -> &str {
         &self.rule
     }
@@ -121,12 +126,16 @@ impl PartialDocument {
                 issues,
                 document: Some(document),
             },
-            Err(_) => PartialAssessment {
-                issues: vec![PartialIssue {
-                    path: String::new(),
-                    kind: PartialIssueKind::Invalid,
-                    rule: "sdk-semantic".into(),
-                }],
+            Err(error) => PartialAssessment {
+                issues: error
+                    .diagnostics()
+                    .iter()
+                    .map(|diagnostic| PartialIssue {
+                        path: diagnostic.pointer.clone().unwrap_or_default(),
+                        kind: PartialIssueKind::Semantic,
+                        rule: diagnostic.message.clone(),
+                    })
+                    .collect(),
                 document: None,
             },
         }

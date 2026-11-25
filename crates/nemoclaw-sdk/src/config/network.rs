@@ -183,22 +183,22 @@ impl super::Document {
         use super::references::{diagnostic_name, missing_reference};
         fn select<'a, T>(
             definitions: &'a BTreeMap<String, T>,
-            path: &str,
+            pointer: &str,
             kind: &str,
             name: &str,
         ) -> Result<&'a T, ConfigError> {
             definitions.get(name).ok_or_else(|| {
-                missing_reference(path, kind, name, definitions.keys().map(String::as_str))
+                missing_reference(kind, name, definitions.keys().map(String::as_str)).or_at(pointer)
             })
         }
-        let path = format!("spec.sandboxes[{}].network", diagnostic_name(sandbox.name));
+        let path = format!("/spec/sandboxes/{}/network", sandbox.name);
         let network = &sandbox.definition.network;
         let explicit = match &network.policy {
             NetworkPolicy::Isolated => None,
             NetworkPolicy::Explicit(policy) => Some(policy),
             NetworkPolicy::Reference(name) => Some(select(
                 &self.spec.policies,
-                &format!("{path}.policyRef"),
+                &format!("{path}/policyRef"),
                 "policy",
                 name,
             )?),
@@ -208,31 +208,34 @@ impl super::Document {
             .iter()
             .map(|(name, grant)| (name.as_str(), grant))
             .collect();
-        for name in &network.grant_refs {
-            let grant = select(
-                &self.spec.grants,
-                &format!("{path}.grantRefs"),
-                "grant",
-                name,
-            )?;
+        for (index, name) in network.grant_refs.iter().enumerate() {
+            let pointer = format!("{path}/grantRefs/{index}");
+            let grant = select(&self.spec.grants, &pointer, "grant", name)?;
             if grants.insert(name, grant).is_some() {
-                return Err(ConfigError(format!(
-                    "{path}.grantRefs: grant {:?} is also defined in grants",
-                    diagnostic_name(name)
-                )));
+                return Err(ConfigError::at(
+                    pointer,
+                    format!(
+                        "grant {:?} is also defined in grants",
+                        diagnostic_name(name)
+                    ),
+                ));
             }
         }
         Ok(ResolvedNetwork { explicit, grants })
     }
 
     pub(super) fn validate_network_references(&self) -> Result<(), ConfigError> {
+        let mut errors = super::validation::Errors::default();
         // Unused definitions are validated as if a sandbox selected them.
-        for policy in self.spec.policies.values() {
-            policy.to_proto()?;
+        for (name, policy) in &self.spec.policies {
+            errors.check(&format!("/spec/policies/{name}"), policy.to_proto());
         }
         for sandbox in self.sandboxes() {
-            self.sandbox_network(sandbox)?;
+            errors.check(
+                &format!("/spec/sandboxes/{}/network", sandbox.name),
+                self.sandbox_network(sandbox),
+            );
         }
-        Ok(())
+        errors.finish()
     }
 }
