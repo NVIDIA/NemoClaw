@@ -68,7 +68,7 @@ impl JourneyState {
                 .reasons
                 .insert(0, reason);
         }
-        self.offer_agent_images(&mut resolution.questions, observations);
+        self.offer_agent_images(capabilities, &mut resolution.questions, observations);
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
         };
@@ -179,6 +179,7 @@ impl JourneyState {
     /// rejected image is still offered, with why it can't run the configuration.
     fn offer_agent_images(
         &self,
+        capabilities: &Capabilities,
         questions: &mut [JourneyQuestion],
         observations: &DiscoveryObservations,
     ) {
@@ -193,12 +194,31 @@ impl JourneyState {
             else {
                 continue;
             };
-            let references: Vec<Value> = observed
+            let mut references: Vec<Value> = observed
                 .references
                 .iter()
                 .cloned()
                 .map(Value::String)
                 .collect();
+            if observed
+                .references
+                .iter()
+                .all(|reference| observations.image_rejection(reference).is_some())
+                && let Some(published) = capabilities.release_images.get(&request.adapter_id)
+            {
+                for reference in published
+                    .iter()
+                    .filter(|reference| observations.image_rejection(reference).is_none())
+                {
+                    let value = Value::String(reference.clone());
+                    if !references.contains(&value) {
+                        references.push(value);
+                    }
+                }
+                if references.len() > observed.references.len() {
+                    question.note = Some("No usable local image was found. The release image is a suggestion; apply pulls it and checks compatibility. Private candidates require registry access.".into());
+                }
+            }
             if references.is_empty() {
                 question.note = Some(observed.reason.as_ref().map_or_else(
                     || {
@@ -221,18 +241,21 @@ impl JourneyState {
                     "{reference} can't run this configuration: {reason}. Enter another image, or see {build_guide} to build one."
                 ));
             }
-            if !question
-                .suggestion
-                .as_ref()
-                .is_some_and(|suggestion| references.contains(suggestion))
-            {
-                question.suggestion = observed
-                    .references
+            if !question.suggestion.as_ref().is_some_and(|suggestion| {
+                references.contains(suggestion)
+                    && suggestion
+                        .as_str()
+                        .is_some_and(|reference| observations.image_rejection(reference).is_none())
+            }) {
+                question.suggestion = references
                     .iter()
-                    .find(|reference| observations.image_rejection(reference).is_none())
-                    .or(observed.references.first())
-                    .cloned()
-                    .map(Value::String);
+                    .find(|reference| {
+                        reference.as_str().is_some_and(|reference| {
+                            observations.image_rejection(reference).is_none()
+                        })
+                    })
+                    .or(references.first())
+                    .cloned();
             }
             question.choices = references;
         }
@@ -248,7 +271,7 @@ impl JourneyState {
         capabilities: &Capabilities,
         observations: &DiscoveryObservations,
     ) -> bool {
-        let Ok(resolution) = self.resolve(capabilities) else {
+        let Ok(resolution) = self.resolve_with_observations(capabilities, observations) else {
             return false;
         };
         let open = |id: &str| resolution.questions().iter().any(|open| open.id() == id);
@@ -260,14 +283,17 @@ impl JourneyState {
         }
         let mut answered = false;
         for question in resolution.questions() {
-            let Some(observed) = self
+            let Some(_observed) = self
                 .agent_images_request(question.id())
                 .and_then(|request| observations.get(&request))
                 .filter(|observed| observed.status == ObservationStatus::Available)
             else {
                 continue;
             };
-            let [only] = observed.references.as_slice() else {
+            let [only] = question.choices() else {
+                continue;
+            };
+            let Some(only) = only.as_str() else {
                 continue;
             };
             if observations.image_rejection(only).is_some() {
@@ -286,7 +312,7 @@ impl JourneyState {
                 .answer(
                     capabilities,
                     question.id(),
-                    Some(Value::String(only.clone())),
+                    Some(Value::String(only.to_owned())),
                 )
                 .is_ok()
             {

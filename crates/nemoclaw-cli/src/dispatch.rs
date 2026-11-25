@@ -63,12 +63,25 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
         command,
         ..
     } = cli;
-    if let Command::Onboard { file, output } = &command {
+    if let Command::Onboard {
+        file,
+        output,
+        release_pins,
+    } = &command
+    {
         let source = file.as_deref().map_or(
             nemoclaw_onboarding::Source::Defaults,
             nemoclaw_onboarding::Source::Template,
         );
-        let saved = nemoclaw_onboarding::author(source, output, true, cancel).await?;
+        let saved = nemoclaw_onboarding::author_with_release(
+            source,
+            output,
+            true,
+            cancel,
+            option_env!("NEMOCLAW_BUNDLE_VERSION"),
+            release_pins.as_deref(),
+        )
+        .await?;
         return if saved {
             let document = document(output, tokio::io::empty(), cancel).await?;
             *read = Some(document.clone());

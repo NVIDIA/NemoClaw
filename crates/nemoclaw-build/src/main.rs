@@ -56,6 +56,9 @@ enum Action {
         inventory: PathBuf,
         #[arg(long)]
         tag: String,
+        /// Directory of the release's verified agent .metadata.json bundles.
+        #[arg(long)]
+        agent_metadata: Option<PathBuf>,
     },
     /// Validate the candidate's inert image catalog with the trusted controller.
     ReleaseCatalog {
@@ -641,10 +644,16 @@ async fn main() -> Result<()> {
         versions,
         inventory,
         tag,
+        agent_metadata,
     } = &cli.command
     {
         let pins =
             nemoclaw_build::release_pins::pins(&fs::read(versions)?, &fs::read(inventory)?, tag)?;
+        let pins = if let Some(directory) = agent_metadata {
+            nemoclaw_build::release_pins::with_agent_metadata(&pins, directory)?
+        } else {
+            pins
+        };
         println!("{pins}");
         return Ok(());
     }

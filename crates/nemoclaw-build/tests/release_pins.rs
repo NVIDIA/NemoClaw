@@ -7,6 +7,49 @@ use std::{fs, path::Path, process::Command};
 
 const VERSIONS: &str = include_str!("../../../versions.json");
 
+#[test]
+#[cfg(feature = "sdk")]
+fn release_suggestions_come_from_the_digest_verified_image_adapter_catalog() {
+    let mut catalog =
+        nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled().for_adapter("nvidia.fabric.hermes");
+    let mut runtime: Value =
+        serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
+    runtime["binaries"] = json!({"nvidia.fabric.hermes": ["/opt/fabric/bin/python"]});
+    catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
+    let (archive, root) = super::image_metadata::layout(&serde_json::to_string(&catalog).unwrap());
+    let metadata = nemoclaw_build::images::metadata_bundle(&archive).unwrap();
+    let reference = format!("ghcr.io/nvidia/nemoclaw/v1/fixture@{root}");
+    let pins = json!({"release":"v0.1.0-rc.5", "components": {
+        "fixture": {"image": reference}, "fabric": {"version": catalog.fabric_revision}
+    }})
+    .to_string();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("fixture.metadata.json");
+    fs::write(&path, &metadata).unwrap();
+    let output =
+        nemoclaw_build::release_pins::with_agent_metadata(&pins, directory.path()).unwrap();
+    let output: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(output["agentImages"][0]["reference"], reference);
+    assert_eq!(
+        output["agentImages"][0]["adapters"],
+        json!(["nvidia.fabric.hermes"]),
+        "the adapter must come from the label, not the fixture repository name"
+    );
+    let mut tampered: Value = serde_json::from_slice(&metadata).unwrap();
+    let blob = tampered["blobs"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .next()
+        .unwrap();
+    *blob = json!(format!("{} ", blob.as_str().unwrap()));
+    fs::write(&path, serde_json::to_vec(&tampered).unwrap()).unwrap();
+    assert!(
+        nemoclaw_build::release_pins::with_agent_metadata(&pins, directory.path()).is_err(),
+        "changed image bytes must not produce suggestions"
+    );
+}
+
 fn inventory(hermes: &str) -> Vec<u8> {
     serde_json::to_vec(&json!([
         {

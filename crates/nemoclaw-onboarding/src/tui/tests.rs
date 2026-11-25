@@ -1630,6 +1630,170 @@ const OPENCLAW_IMAGE: &str =
 const IMAGE_QUESTION: &str = "/spec/sandboxes/assistant/image/ref";
 
 #[test]
+fn a_release_image_for_the_selected_harness_fills_an_empty_engine() {
+    const RELEASE_IMAGE: &str = "ghcr.io/nvidia/nemoclaw/v1/hermes@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let capabilities = Capabilities::available().with_release_pins(
+        &serde_json::to_vec(&serde_json::json!({
+            "release": "v0.1.0-rc.5",
+            "components": {"hermes": {"image": RELEASE_IMAGE}},
+            "agentImages": [{
+                "reference": RELEASE_IMAGE,
+                "fabricRevision": nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled_ref().fabric_revision,
+                "adapters": ["nvidia.fabric.hermes"]
+            }]
+        })).unwrap(), Some("v0.1.0-rc.5")
+    ).unwrap();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = on_one_docker_engine(capabilities, state);
+    wizard
+        .submit(Some(serde_json::json!("nvidia.fabric.hermes")))
+        .unwrap();
+    let mut wizard = to_the_image_question(wizard);
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[]));
+    for _ in 0..30 {
+        if wizard.question().unwrap().is_none() {
+            break;
+        }
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    }
+    let yaml = wizard
+        .configuration()
+        .expect("release suggestion should reach review")
+        .unwrap();
+    assert!(yaml.contains(RELEASE_IMAGE));
+}
+
+#[test]
+fn release_fallback_preserves_local_precedence_and_does_not_cross_harnesses() {
+    const PUBLISHED: &str = "ghcr.io/nvidia/nemoclaw/v1/hermes@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    for (harness, local, expected) in [
+        (
+            "nvidia.fabric.hermes",
+            vec![HERMES_IMAGE],
+            Some(HERMES_IMAGE),
+        ),
+        ("nvidia.fabric.hermes", vec![], Some(PUBLISHED)),
+        ("nvidia.fabric.openclaw", vec![], None),
+    ] {
+        let pins = serde_json::json!({
+            "release":"v0.1.0-rc.5", "components":{"hermes":{"image":PUBLISHED}},
+            "agentImages":[{"reference":PUBLISHED,
+                "fabricRevision": nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled_ref().fabric_revision,
+                "adapters":["nvidia.fabric.hermes"]}]
+        });
+        let capabilities = Capabilities::available()
+            .with_release_pins(&serde_json::to_vec(&pins).unwrap(), None)
+            .unwrap();
+        let state = load_journey(Source::Defaults, &capabilities).unwrap();
+        let mut wizard = on_one_docker_engine(capabilities, state);
+        wizard.submit(Some(serde_json::json!(harness))).unwrap();
+        let mut wizard = to_the_image_question(wizard);
+        let query = agent_images_probe(&wizard).unwrap();
+        wizard.record(query, agent_images(&local));
+        if let Some(expected) = expected {
+            assert_eq!(
+                wizard
+                    .state()
+                    .values()
+                    .pointer(IMAGE_QUESTION)
+                    .and_then(serde_json::Value::as_str),
+                Some(expected)
+            );
+        } else {
+            assert!(wizard.state().values().pointer(IMAGE_QUESTION).is_none());
+            assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+        }
+    }
+}
+
+#[test]
+fn multiple_release_images_stay_choices_and_an_explicit_rejection_blocks_review() {
+    const FIRST: &str = "ghcr.io/nvidia/nemoclaw/v1/hermes@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const SECOND: &str = "ghcr.io/nvidia/nemoclaw/v1/alternate@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let pins = serde_json::json!({
+        "release":"v0.1.0-rc.5", "components":{"hermes":{"image":FIRST},"alternate":{"image":SECOND}},
+        "agentImages":([FIRST,SECOND].map(|reference| serde_json::json!({
+            "reference":reference,
+            "fabricRevision":nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled_ref().fabric_revision,
+            "adapters":["nvidia.fabric.hermes"]
+        })))
+    });
+    let capabilities = Capabilities::available()
+        .with_release_pins(&serde_json::to_vec(&pins).unwrap(), None)
+        .unwrap();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = on_one_docker_engine(capabilities, state);
+    wizard
+        .submit(Some(serde_json::json!("nvidia.fabric.hermes")))
+        .unwrap();
+    let mut wizard = to_the_image_question(wizard);
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[]));
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(question.id(), IMAGE_QUESTION);
+    assert_eq!(
+        question.choices(),
+        &[serde_json::json!(FIRST), serde_json::json!(SECOND)]
+    );
+    wizard.submit(Some(serde_json::json!(SECOND))).unwrap();
+    for _ in 0..30 {
+        if wizard.question().unwrap().is_none() {
+            break;
+        }
+        wizard.advance();
+    }
+    let document = wizard
+        .resolution()
+        .unwrap()
+        .assessment()
+        .document()
+        .unwrap()
+        .clone();
+    let query = nemoclaw_sdk::discovery::plan_queries(&document)
+        .unwrap()
+        .into_iter()
+        .find(|query| matches!(query, DiscoveryQuery::Fabric(_)))
+        .unwrap();
+    wizard.record(
+        query,
+        DiscoveryObservation::Fabric(FabricObservation {
+            status: ObservationStatus::Available,
+            image_id: Some(format!("sha256:{}", "c".repeat(64))),
+            compatibility: Some(nemoclaw_sdk::fabric_capabilities::CompatibilityReport {
+                status: nemoclaw_sdk::fabric_capabilities::Support::Unsupported,
+                adapter_id: Some("nvidia.fabric.hermes".into()),
+                checks: vec![nemoclaw_sdk::fabric_capabilities::CapabilityCheck {
+                    requirement: "fixture_runtime".into(),
+                    status: nemoclaw_sdk::fabric_capabilities::Support::Unsupported,
+                    reason: "runtime cannot run this configuration".into(),
+                }],
+            }),
+            ..FabricObservation::unknown("rejected fixture")
+        }),
+    );
+    assert_eq!(
+        wizard
+            .state()
+            .values()
+            .pointer(IMAGE_QUESTION)
+            .and_then(serde_json::Value::as_str),
+        Some(SECOND),
+        "an explicit choice stays authored for review instead of silently replacing it"
+    );
+    assert_eq!(
+        wizard
+            .resolution()
+            .unwrap()
+            .target_assessment()
+            .unwrap()
+            .status,
+        nemoclaw_authoring::CompatibilityStatus::Conflict
+    );
+}
+
+#[test]
 fn image_choices_show_engine_metadata_without_changing_the_saved_digest() {
     let mut wizard = at_the_image_question("nvidia.fabric.hermes");
     let query = agent_images_probe(&wizard).unwrap();

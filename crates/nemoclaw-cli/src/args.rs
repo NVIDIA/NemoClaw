@@ -51,6 +51,9 @@ pub(crate) enum Command {
         /// Save to a new file, preserving the input template.
         #[arg(short, long, default_value = "deployment.yaml", value_name = "FILE")]
         output: PathBuf,
+        /// Release version-pins.json for private candidate testing; never read as credentials.
+        #[arg(long, value_name = "FILE")]
+        release_pins: Option<PathBuf>,
     },
     /// Preview configuration changes without changing runtime resources.
     #[command(after_help = "Examples:\n  nemoclaw plan spark.yaml\n  nemoclaw plan --destroy")]

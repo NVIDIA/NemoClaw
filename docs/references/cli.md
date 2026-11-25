@@ -28,7 +28,8 @@ It does not request model or agent responses.
 Destroy does not prompt for confirmation and deletes sandbox files and conversation history.
 Read [deployment lifecycle](../build-deploy/usage.md) and preview deletion before destroying a deployment.
 
-`nemoclaw onboard [FILE] --output FILE` starts a new deployment document with a fresh UID.
+`nemoclaw onboard [FILE] --output FILE [--release-pins FILE]` starts a new deployment document with a fresh UID.
+`--release-pins` supplies a local release `version-pins.json` for private candidate image suggestions; it does not supply registry credentials.
 It uses the template's answers as suggestions, or built-in defaults when no template is supplied.
 The output defaults to `deployment.yaml`.
 Onboarding never overwrites an existing file.
