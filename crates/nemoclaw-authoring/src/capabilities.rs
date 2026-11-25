@@ -24,76 +24,40 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    /// Use the selected release's image suggestions without changing compatibility checks.
-    pub fn with_release_pins(
-        mut self,
-        bytes: &[u8],
-        release: Option<&str>,
-    ) -> Result<Self, String> {
-        let pins: serde_json::Value = serde_json::from_slice(bytes)
-            .map_err(|_| "Release image pins are not valid JSON".to_owned())?;
-        let tag = pins["release"]
-            .as_str()
-            .filter(|tag| {
-                tag.starts_with("v0.1.")
-                    && tag
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || b".-".contains(&c))
-            })
-            .ok_or("Release image pins have no valid release tag")?;
-        if release.is_some_and(|expected| tag != expected) {
-            return Err("Release image pins do not match this CLI release".into());
+    /// Add the image suggestions of `release`, from its `version-pins.json`.
+    /// They don't change compatibility checks: apply pulls and checks the image.
+    pub fn with_release_pins(mut self, bytes: &[u8], release: &str) -> Result<Self, String> {
+        let pins: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        if pins["release"] != release {
+            return Err("the release image pins are another release's".into());
         }
-        let mut images: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-        if let Some(entries) = pins.get("agentImages") {
-            for entry in entries.as_array().ok_or("Invalid release agent images")? {
-                let reference = entry["reference"]
-                    .as_str()
-                    .ok_or("Missing release image reference")?;
-                let valid = reference
-                    .rsplit_once("@sha256:")
-                    .is_some_and(|(name, digest)| {
-                        name.starts_with("ghcr.io/nvidia/nemoclaw/v1/")
-                            && name
-                                .bytes()
-                                .all(|c| c.is_ascii_alphanumeric() || b"._/-".contains(&c))
-                            && digest.len() == 64
-                            && digest
-                                .bytes()
-                                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-                    });
-                let listed = pins["components"].as_object().is_some_and(|components| {
-                    components
-                        .values()
-                        .any(|component| component["image"].as_str() == Some(reference))
-                });
-                if !valid
-                    || !listed
-                    || entry["fabricRevision"].as_str() != self.fabric_revision.as_deref()
+        if pins["components"]["fabric"]["version"].as_str() != self.fabric_revision.as_deref() {
+            return Err("the release images use another Fabric revision".into());
+        }
+        let mut images = std::collections::BTreeMap::<String, Vec<String>>::new();
+        for image in pins["agentImages"].as_array().into_iter().flatten() {
+            let reference = image["reference"]
+                .as_str()
+                .ok_or("a release image has no reference")?;
+            let adapters = image["adapters"].as_array().into_iter().flatten();
+            for adapter in adapters.filter_map(serde_json::Value::as_str) {
+                if self
+                    .harnesses
+                    .iter()
+                    .any(|harness| harness.as_str() == adapter)
                 {
-                    return Err(
-                        "Release image pins are unpinned or use another Fabric revision".into(),
-                    );
-                }
-                let adapters = entry["adapters"]
-                    .as_array()
-                    .filter(|ids| !ids.is_empty())
-                    .ok_or("Release image has no adapters")?;
-                for adapter in adapters {
-                    let id = adapter.as_str().ok_or("Invalid release image adapter")?;
-                    if self.harnesses.iter().any(|harness| harness.as_str() == id) {
-                        let references = images.entry(id.into()).or_default();
-                        if !references.iter().any(|known| known == reference) {
-                            references.push(reference.into());
-                        }
-                    }
+                    images
+                        .entry(adapter.into())
+                        .or_default()
+                        .push(reference.into());
                 }
             }
         }
         self.release_images = images;
-        self.release_tag = Some(tag.to_owned());
-        // A clone enriched with release data must not reuse resolutions for its original.
-        self.identity = Self::from_harnesses([]).identity;
+        self.release_tag = Some(release.to_owned());
+        // Resolutions for the capabilities without these suggestions don't apply.
+        self.identity = next_identity();
         Ok(self)
     }
 
@@ -157,10 +121,7 @@ impl Capabilities {
             config_schemas: Default::default(),
             targets: Vec::new(),
             model_schemas: Default::default(),
-            identity: {
-                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            },
+            identity: next_identity(),
         }
     }
 
@@ -178,49 +139,36 @@ impl Capabilities {
     }
 }
 
+fn next_identity() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 #[cfg(test)]
 mod release_tests {
     use super::*;
     use serde_json::json;
 
     #[test]
-    fn release_suggestions_refuse_mismatched_unpinned_or_unlisted_images() {
+    fn release_suggestions_come_only_from_this_release_its_fabric_revision_and_known_adapters() {
         let reference = format!(
             "ghcr.io/nvidia/nemoclaw/v1/hermes@sha256:{}",
             "a".repeat(64)
         );
-        let pins = json!({
-            "release":"v0.1.0-rc.5", "components":{"hermes":{"image":reference}},
-            "agentImages":[{"reference":reference,
-                "fabricRevision":nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled_ref().fabric_revision,
-                "adapters":["nvidia.fabric.hermes"]}]
-        });
-        let load = |value: &serde_json::Value, release| {
-            Capabilities::available()
-                .with_release_pins(&serde_json::to_vec(value).unwrap(), release)
+        let fabric = &nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled_ref().fabric_revision;
+        let load = |release: &str, fabric: &str, adapter: &str| {
+            let pins = json!({
+                "release": release,
+                "components": {"fabric": {"version": fabric}},
+                "agentImages": [{"reference": reference, "adapters": [adapter]}]
+            });
+            Capabilities::available().with_release_pins(pins.to_string().as_bytes(), "v0.1.0-rc.5")
         };
-        let capabilities = load(&pins, Some("v0.1.0-rc.5")).unwrap();
+        let capabilities = load("v0.1.0-rc.5", fabric, "nvidia.fabric.hermes").unwrap();
         assert_eq!(capabilities.image_release(&reference), Some("v0.1.0-rc.5"));
-        assert!(load(&pins, Some("v0.1.0")).is_err());
-        for (path, value) in [
-            (
-                "/agentImages/0/reference",
-                json!("ghcr.io/nvidia/nemoclaw/v1/hermes:latest"),
-            ),
-            ("/agentImages/0/fabricRevision", json!("f".repeat(40))),
-            ("/components", json!({})),
-            ("/agentImages/0/adapters", json!([])),
-            ("/release", json!("v0.1.0/../../latest")),
-        ] {
-            let mut invalid = pins.clone();
-            *invalid.pointer_mut(path).unwrap() = value;
-            assert!(load(&invalid, None).is_err(), "must refuse {path}");
-        }
-        let mut unknown = pins;
-        unknown["agentImages"][0]["adapters"] = json!(["unknown.adapter"]);
-        assert_eq!(
-            load(&unknown, None).unwrap().image_release(&reference),
-            None
-        );
+        assert!(load("v0.1.0", fabric, "nvidia.fabric.hermes").is_err());
+        assert!(load("v0.1.0-rc.5", &"f".repeat(40), "nvidia.fabric.hermes").is_err());
+        let unknown = load("v0.1.0-rc.5", fabric, "unknown.adapter").unwrap();
+        assert_eq!(unknown.image_release(&reference), None);
     }
 }

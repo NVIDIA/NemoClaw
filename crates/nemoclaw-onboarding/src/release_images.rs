@@ -30,8 +30,7 @@ pub(super) async fn load(
     version: Option<&str>,
     cancel: &CancellationToken,
 ) -> Result<Capabilities, Box<dyn std::error::Error>> {
-    let tag = release_tag(version);
-    let Some(tag) = tag else {
+    let Some(tag) = release_tag(version) else {
         return Ok(capabilities);
     };
     let url =
@@ -40,7 +39,7 @@ pub(super) async fn load(
         _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
         result = fetch(&url) => result,
     };
-    match fetched.and_then(|bytes| capabilities.clone().with_release_pins(&bytes, Some(&tag))) {
+    match fetched.and_then(|bytes| capabilities.clone().with_release_pins(&bytes, &tag)) {
         Ok(enriched) => Ok(enriched),
         Err(_) => {
             eprintln!(
@@ -52,11 +51,8 @@ pub(super) async fn load(
 }
 
 async fn fetch(url: &str) -> Result<Vec<u8>, String> {
-    // No GitHub, registry, or model credential is read or forwarded. GitHub's
-    // release download can redirect to its asset host.
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
-        .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|e| e.to_string())?;
     let mut response = client
