@@ -721,6 +721,33 @@ fn a_template_with_search_and_grants_summarizes_both() {
 }
 
 #[test]
+fn a_template_with_referenced_grants_summarizes_them_beside_its_own() {
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
+    values["spec"]["grants"] = serde_json::json!({
+        "github": {"endpoints": [{"host": "api.github.com", "port": 443}]}
+    });
+    values["spec"]["sandboxes"]["assistant"]["network"] = serde_json::json!({
+        "tier": "isolated",
+        "grants": {"documentation": {"endpoints": [{"host": "docs.example.com", "port": 443}]}},
+        "grantRefs": ["github"]
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("template.yaml");
+    std::fs::write(&path, serde_json::to_vec(&values).unwrap()).unwrap();
+    let wizard = reviewing_template(&path);
+    let text = flat(&screen(&wizard, 160, 60));
+    assert!(
+        text.contains(
+            "Network Isolated: only the model endpoint, and the documentation and github grants"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
 fn the_runtime_menu_names_each_runtime_and_offers_no_omit() {
     let capabilities = Capabilities::available();
     let state = load_defaults(&capabilities);
@@ -3095,6 +3122,28 @@ fn another_model_entry_starts_empty_because_enter_needs_a_typed_identifier() {
 fn an_explicit_policy_is_not_summarized_as_isolated() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/features/explicit-policy.yaml");
+    let wizard = reviewing_template(&path);
+    let text = flat(&screen(&wizard, 160, 60));
+    assert!(
+        text.contains("Network Explicit policy from the configuration file"),
+        "{text}"
+    );
+    assert!(!text.contains("Isolated"), "{text}");
+}
+
+#[test]
+fn a_referenced_policy_is_not_summarized_as_isolated() {
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/features/explicit-policy.yaml"
+    ))
+    .unwrap();
+    let network = &mut values["spec"]["sandboxes"]["assistant"]["network"];
+    let policy = network["policy"]["explicit"].take();
+    *network = serde_json::json!({"policyRef": "docs-only"});
+    values["spec"]["policies"] = serde_json::json!({"docs-only": policy});
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("template.yaml");
+    std::fs::write(&path, serde_json::to_vec(&values).unwrap()).unwrap();
     let wizard = reviewing_template(&path);
     let text = flat(&screen(&wizard, 160, 60));
     assert!(
