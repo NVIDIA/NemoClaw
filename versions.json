@@ -72,10 +72,6 @@
       }
     },
     "darwin_arm64": {
-      "openshell": {
-        "url": "https://github.com/ai-openshell/openshell/releases/download/v0.1.10/openshell-aarch64-apple-darwin.tar.gz",
-        "sha256": "52ec0b11a183e69086d048c1dfd921a424e2c23617647d9df3e5938df3bf3caa"
-      },
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.13.10/tofu_1.13.10_darwin_arm64.zip",
         "sha256": "fa2f3380ed2f1735bb0527a6ee431d8656e8d301e09a969cfc6c5f2885a7b190"

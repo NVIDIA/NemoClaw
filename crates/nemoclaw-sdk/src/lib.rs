@@ -33,10 +33,6 @@ mod artifact_pins {
     include!(concat!(env!("OUT_DIR"), "/artifact_pins.rs"));
 }
 
-/// The host OpenShell client version qualified with this NemoClaw build.
-/// This is separate from observing a gateway's version and compute driver.
-pub const OPENSHELL_CLIENT_VERSION: &str = artifact_pins::OPENSHELL_VERSION;
-
 /// Identity that must survive refresh, independently of configuration drift.
 pub use nemoclaw_backend::{Binding, Bound, Observation, ObservationError, refresh};
 

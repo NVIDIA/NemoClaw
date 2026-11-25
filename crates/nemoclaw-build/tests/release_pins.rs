@@ -71,16 +71,6 @@ fn a_release_pins_what_its_deployments_use_and_no_build_tools() {
             "{name}"
         );
     }
-    let archives: serde_json::Map<String, Value> = versions["platforms"]
-        .as_object()
-        .unwrap()
-        .iter()
-        .filter_map(|(platform, tools)| Some((platform.clone(), tools.get("openshell")?.clone())))
-        .collect();
-    assert_eq!(
-        components["openshellClient"],
-        json!({"version": versions["openshell"], "archives": archives})
-    );
     for name in ["gateway", "supervisor", "sandboxRuntime"] {
         assert_eq!(
             components[name],
@@ -112,7 +102,7 @@ fn a_release_pins_what_its_deployments_use_and_no_build_tools() {
             "{name}"
         );
     }
-    // Rust, protoc, nextest, and kind only build and test NemoClaw.
+    // Rust, protoc, nextest, kind, and the OpenShell CLI only build and test NemoClaw.
     assert_eq!(
         components.keys().collect::<Vec<_>>(),
         [
@@ -123,7 +113,6 @@ fn a_release_pins_what_its_deployments_use_and_no_build_tools() {
             "gatewayChart",
             "helmProvider",
             "hermes",
-            "openshellClient",
             "opentofu",
             "sandboxRuntime",
             "supervisor",

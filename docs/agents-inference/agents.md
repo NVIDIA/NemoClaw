@@ -46,44 +46,11 @@ Neither check establishes successful model inference.
 
 ## Choosing Native Access
 
-Prepare the [host OpenShell client](#selecting-the-host-openshell-client) before running a native command.
 Select the deployment's [NVIDIA OpenShell gateway and workspace](interfaces.md#selecting-the-gateway-and-workspace) before forwarding ports or running sandbox commands.
 Fabric's adapter contract defines supported input, output, native interfaces, and authentication.
 The [Fabric documentation](https://github.com/NVIDIA/NeMo-Fabric/tree/main/docs) owns native integration guidance.
 Use the source revision pinned in the selected image when following it.
 A successful generic invocation doesn't imply that every result has an `output.response` field.
-
-### Selecting the Host OpenShell Client
-
-Use the OpenShell client qualified with the NemoClaw release that owns the deployment.
-Beside native access commands, the CLI reports the required version, the executable found on `PATH`, and the version that `openshell --version` reports; it doesn't contact a gateway.
-Shell aliases and functions can override `PATH`; run the reported executable by absolute path if your shell defines one.
-The gateway check is separate: the gateway must report the OpenShell version pinned by that release, and installing another client doesn't change it.
-For an external gateway that fails this check, ask its operator for a compatible endpoint rather than upgrading another deployment's gateway.
-
-For a release, use the `components.openshellClient` entry in that tag's `version-pins.json`; for a source build, use the same checkout's `versions.json`.
-Release metadata without this entry names its client in that release's prerequisites; do not substitute a newer release's or checkout's pin.
-Pinned archives cover Linux ARM64, Linux AMD64, and macOS ARM64; Windows ARM64 uses the Linux ARM64 client inside WSL2.
-
-With `curl` and `jq`, set `PINS` to the selected file and `PLATFORM` to your platform, then download and verify the client in Bash:
-
-```sh
-PINS=version-pins.json
-PLATFORM=darwin_arm64
-CLIENT_VERSION=$(jq -er '.components.openshellClient.version // .openshell' "$PINS") || exit 1
-ARCHIVE="(.components.openshellClient.archives.$PLATFORM // .platforms.$PLATFORM.openshell)"
-CLIENT_DIR="$HOME/.local/opt/nemoclaw/clients/openshell/$CLIENT_VERSION"
-mkdir -p "$CLIENT_DIR"
-curl -fL "$(jq -er "$ARCHIVE.url" "$PINS")" -o "$CLIENT_DIR/archive.tar.gz" || exit 1
-printf '%s  %s\n' "$(jq -er "$ARCHIVE.sha256" "$PINS")" "$CLIENT_DIR/archive.tar.gz" | shasum -a 256 --check || exit 1
-tar -xzf "$CLIENT_DIR/archive.tar.gz" -C "$CLIENT_DIR" || exit 1
-export PATH="$CLIENT_DIR:$PATH"
-command -v openshell
-openshell --version
-```
-
-Stop on any failure; `openshell --version` must report `CLIENT_VERSION`.
-The `PATH` change selects this client in the current shell only, leaving other installations and gateways unchanged; releases that pin the same version share its directory.
 
 ### Deploying Several Agents
 

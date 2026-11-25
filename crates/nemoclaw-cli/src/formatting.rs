@@ -22,7 +22,6 @@ use std::{
 /// Presentation context and mutation facts reported by the SDK.
 pub(crate) struct RenderContext {
     shell: Shell,
-    pub(crate) host_client: Option<crate::host_client::Check>,
     operation: &'static str,
     mutation_started: Arc<AtomicBool>,
     warnings: Arc<Mutex<BTreeSet<String>>>,
@@ -47,7 +46,6 @@ impl RenderContext {
         };
         Self {
             shell: Shell::native(),
-            host_client: None,
             operation,
             mutation_started: Arc::new(AtomicBool::new(false)),
             warnings: Arc::new(Mutex::new(BTreeSet::new())),
@@ -630,23 +628,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         }
     }
     let mut selected = false;
-    if let Some(client) = &context.host_client {
-        let path = client
-            .path
-            .as_ref()
-            .map(|path| terminal_text(&path.display().to_string()))
-            .unwrap_or_else(|| "not found on PATH".into());
-        let detected = client
-            .detected
-            .as_deref()
-            .map(terminal_text)
-            .unwrap_or_else(|| "unavailable".into());
-        output.push_str(&format!("\nHost OpenShell client: {path}\n  Required by this NemoClaw CLI: {}; detected: {detected}.\n", terminal_text(&client.required)));
-        if !client.compatible() {
-            output.push_str(&format!("  Before running the OpenShell commands, select the release-qualified client in a scoped directory and prepend it to this shell's PATH. Preserve other installations. Refer to {}.\n", documentation_url("docs/agents-inference/agents.md#selecting-the-host-openshell-client")));
-        }
-        output.push_str("  This host check does not verify the gateway version, compute driver, or inference.\n");
-    }
     if !result.agents.is_empty() {
         output.push_str(&agent_invocation(
             result,

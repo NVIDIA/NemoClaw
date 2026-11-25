@@ -77,7 +77,7 @@ An empty digest list means the image store doesn't retain repository digests; a 
 
 ## Preparing the Matching OpenShell CLI
 
-Install this checkout's OpenShell client as [Selecting the Host OpenShell Client](../agents-inference/agents.md#selecting-the-host-openshell-client) describes, with `PINS=versions.json` and the `PLATFORM` that this shell selected.
+Use an OpenShell CLI at the checkout's `openshell` version in `versions.json`, as [Before the First Deployment](prerequisites.md#before-the-first-deployment) describes.
 
 ## Authoring and Applying a Deployment
 

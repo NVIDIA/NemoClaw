@@ -17,7 +17,6 @@ fn main() {
         ("GATEWAY_CHART", "/images/gatewayChart"),
         ("DEVELOPMENT_ISSUER_IMAGE", "/images/developmentIssuer"),
         ("OPENTOFU_VERSION", "/opentofu"),
-        ("OPENSHELL_VERSION", "/openshell"),
         ("HELM_PROVIDER_VERSION", "/helmProvider"),
     ] {
         let value = pins

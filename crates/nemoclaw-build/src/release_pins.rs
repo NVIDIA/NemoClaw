@@ -92,7 +92,6 @@ pub fn pins(versions: &[u8], inventory: &[u8], tag: &str) -> Result<String> {
     let mut components = BTreeMap::new();
     for (name, version, tool) in [
         ("opentofu", &versions.opentofu, "tofu"),
-        ("openshellClient", &versions.openshell, "openshell"),
         (
             "dockerProvider",
             &versions.docker_provider,
