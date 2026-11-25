@@ -8,9 +8,7 @@ NVIDIA NeMo Fabric owns adapter identifiers, descriptors, native configuration s
 Use the descriptor installed in the selected image to establish what that adapter accepts.
 An SDK parser accepting a field doesn't establish native support.
 
-The sandbox commands below use the [bundled CLI](interfaces.md#selecting-the-gateway-and-workspace) for plaintext and mTLS gateways.
-For bearer-token gateways, select a standalone OpenShell CLI and replace `nemoclaw osh --` with `openshell`.
-If apply used a custom state directory, pass it with `nemoclaw osh --state-dir DIR --`.
+The sandbox commands below run through [`nemoclaw osh`](interfaces.md#selecting-the-gateway-and-workspace), which says when to use a standalone `openshell` instead.
 
 ## Configuring the Agent and the Harness
 
@@ -70,7 +68,7 @@ The [headless OpenClaw request](#running-one-headless-openclaw-request) shows a 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
-For gateways and client platforms the bundled CLI supports, plan and apply print a complete stdin request with the actual sandbox, agent, and runtime ID. The command preserves the state and bundle selection and saves the full result in `reply-SANDBOX.json`. JSON results report the identities under `agents`.
+Plan and apply print a complete request for each agent with these filled in, and JSON results report them under `agents`.
 See [invoke an agent](interfaces.md#invoking-an-agent).
 Use `--input -` to read the value from stdin instead.
 See the [bridge commands](../../internal-docs/design/fabric-management.md#bridge-commands).
@@ -81,8 +79,8 @@ Don't assume a universal result shape.
 Check `result.status` as well as the outer `status`: the outer one only reports that `fabric-agent-ctl` completed the call, while a failed run reports `result.status: failed` with Fabric's error in `result.error`.
 `result.artifacts` names the files Fabric kept for that request, such as the adapter's output.
 
-Run the printed `Invoke:` command and check its exit status before inspecting the saved result. A nonzero exit means the request command failed; inspect its stderr before retrying. The command restricts new files to your account and refuses to overwrite an existing result; choose another output filename for a second request. Keep the result in a private directory.
-To construct the request yourself, substitute the actual identities and the same state/bundle options as apply:
+The printed `Invoke:` command saves the result in `reply-SANDBOX.json`, readable only by you, and refuses to overwrite an existing file.
+To construct the request yourself, use the same `--state-dir` and `--bundle` options as apply:
 
 ```sh
 (umask 077; set -C; printf '%s\n' '"Reply with exactly READY."' |
@@ -106,7 +104,7 @@ For the Hermes adapter, this filter prints its reply on success and reports its 
 jq -er 'if .status == "succeeded" and .result.status == "succeeded" then .result.output.response else error((.result.error // "request failed") | tostring) end' reply.json
 ```
 
-Use `reply-assistant.json` in place of `reply.json` when using the printed command for sandbox `assistant`. Other adapters have their own result contracts; do not assume they use Hermes's response field. The full result remains available for separate diagnosis.
+Other adapters have their own result contracts; don't assume they use Hermes's response field.
 
 ### Diagnosing an Authentication Failure
 

@@ -32,14 +32,13 @@ Prepare these inputs before running apply:
 - Its client-reachable endpoint and any bearer credential or mTLS files required by the gateway operator.
 - An inference endpoint reachable from OpenShell, its request API, an exact model ID, and any provider credential.
 - The OpenClaw image digest from the same release as the [installed bundle](install.md). The gateway's sandbox engine must be able to acquire it.
-- For plaintext, mTLS, and external OIDC gateways on Linux or macOS Apple silicon, use the bundle's `nemoclaw osh` for native access. External OIDC requires [login settings and sign-in](../references/cli.md#logging-in-to-an-external-oidc-gateway). Other bearer-token gateways require a separately authenticated OpenShell CLI.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
 NemoClaw checks the gateway's reported OpenShell version and compute driver. Use the `components.gateway.version` pin in the release's [`version-pins.json`](../references/compatibility.md#using-one-release-together). The inference endpoint must support the [request API](../agents-inference/inference.md#choosing-the-request-api) you configure; endpoint reachability alone does not establish that the model can reply.
 
 Prepare native access before starting the tutorial:
 
-For plaintext, mTLS, and external OIDC gateways, the bundle already includes the matching CLI.
+For plaintext, mTLS, and external OIDC gateways, the bundle already includes the matching CLI; an OIDC gateway also needs [login settings and sign-in](../references/cli.md#logging-in-to-an-external-oidc-gateway).
 After apply, use [`nemoclaw osh`](../references/cli.md#running-openshell-against-a-deployment) with the deployment's state directory and referenced TLS files.
 No separate OpenShell installation or profile setup is needed.
 

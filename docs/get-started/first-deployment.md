@@ -80,7 +80,6 @@ Plan previews resource changes without invoking inference or pulling images. App
 
 ## Sending a Verification Request
 
-The bundled CLI reuses the deployment's plaintext or mTLS connection settings; a standalone CLI authenticates separately for bearer-token gateways.
 This request can incur inference charges and add to the agent's conversation history.
 
 1. For a plaintext or mTLS gateway, use `nemoclaw osh --state-dir .nemoclaw-first --` to select the saved deployment automatically. For a bearer-token gateway, [select the reported gateway and workspace](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways) in a separately configured CLI and replace that prefix with `openshell` below.

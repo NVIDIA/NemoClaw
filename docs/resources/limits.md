@@ -41,10 +41,8 @@ The following installation and release limits apply:
 
 ## Platforms, Models, and Placement
 
-`nemoclaw openshell` (`osh`) supports plaintext, mTLS, and external OIDC deployments on Linux amd64, Linux arm64, and macOS Apple silicon.
-External OIDC requires `gateway.oidc` settings and [OpenShell login](../references/cli.md#logging-in-to-an-external-oidc-gateway).
-Direct bearer-token import and managed Kubernetes gateway access remain tracked in [#14855](https://github.com/NVIDIA/NemoClaw/issues/14855).
-The pinned OpenShell release publishes no CLI archive for Windows or Intel macOS; those clients need a supported Linux or Apple silicon host, or WSL2 on Windows.
+`nemoclaw openshell` (`osh`) can't reach a gateway that needs a bearer token without `gateway.oidc`, including managed Kubernetes and OpenShift gateways; [#14855](https://github.com/NVIDIA/NemoClaw/issues/14855) tracks them.
+OpenShell publishes no CLI for Windows or Intel macOS, so `osh` isn't available there; use WSL2 on Windows.
 
 Accepted platform and model declarations are not a tested matrix.
 Verify the exact host and runtime combination before relying on a reply.

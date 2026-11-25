@@ -8,8 +8,7 @@ The CLI defaults to `.nemoclaw` in the working directory.
 Use `--state-dir` to select another directory.
 Separate deployments need separate state directories and deployment UUIDs.
 
-For plaintext and mTLS deployments, use `nemoclaw osh --state-dir DIR --` in place of `openshell` in the sandbox commands below to select that deployment automatically.
-Bearer-token deployments still use a separately configured CLI, as [gateway selection](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace) describes.
+To run the `openshell` commands below against a deployment, use `nemoclaw osh --state-dir DIR --` in their place where [the bundled CLI applies](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace).
 
 ## Local Deployment Files
 

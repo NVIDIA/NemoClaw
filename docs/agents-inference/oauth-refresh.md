@@ -18,8 +18,7 @@ Native agent login and tool use need separate [platform and integration qualific
 
 ## Preparing the Gateway and Credentials
 
-For plaintext or mTLS gateways, use `nemoclaw osh --` with the deployment's state directory, as [gateway selection](interfaces.md#selecting-the-gateway-and-workspace) describes.
-The commands below use that form. For bearer-token gateways, select a standalone CLI and replace `nemoclaw osh --` with `openshell`.
+The commands below use `nemoclaw osh --` with the deployment's state directory; [gateway selection](interfaces.md#selecting-the-gateway-and-workspace) says when to use a standalone `openshell` instead.
 Run the following commands from a private working directory on the client host.
 You need permission to import a workspace profile, create a provider, and change the selected sandbox's provider attachments.
 Keep the original deployment YAML and state directory.

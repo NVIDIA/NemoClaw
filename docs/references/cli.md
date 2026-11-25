@@ -65,9 +65,7 @@ nemoclaw osh --state-dir .nemoclaw-first -- gateway add https://gateway.example.
   --oidc-audience=openshell '--oidc-scopes=openid offline_access'
 ```
 
-Registering signs in.
-OpenShell owns sign-in, token storage, and renewal; refer to [OpenShell's authentication guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx#oidc).
-Set `OPENSHELL_NO_BROWSER=1` for device-code sign-in, or `OPENSHELL_OIDC_CLIENT_SECRET` for automation; never put the client secret in YAML.
+Registering signs in; OpenShell owns sign-in, token storage, and renewal, as [its authentication guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx#oidc) describes.
 Deployment operations still use `GATEWAY_TOKEN`; the signed-in identity needs membership in the deployment's workspace.
 Run `nemoclaw osh --state-dir DIR -- gateway login` to sign in again, with the same state directory and bundle as apply.
 After changing `gateway.oidc`, run `nemoclaw osh --state-dir DIR -- gateway remove NAME` with that selection, then register the gateway again.
