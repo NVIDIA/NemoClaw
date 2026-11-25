@@ -50,40 +50,23 @@ Stop on any download or verification failure.
    curl -fLO "$RELEASE/$PKG"
    ```
 
-2. Download the checksums.
+2. Download the checksums, verify the package, and install it.
+   The checksum check prints the package name followed by `OK`.
+   The installer runs after the checksum and both build provenance checks pass.
+   To use the graphical installer, replace the `sudo installer` line with `open "$PKG"` before running the commands.
 
    ```sh
-   curl -fLO "$RELEASE/SHA256SUMS"
+   curl -fLO "$RELEASE/SHA256SUMS" &&
+     CHECKSUM=$(awk -v package="$PKG" '$2 == package { print; count++ } END { if (count != 1) exit 1 }' SHA256SUMS) &&
+     printf '%s\n' "$CHECKSUM" | shasum -a 256 --check &&
+     gh attestation verify SHA256SUMS --repo NVIDIA/NemoClaw &&
+     gh attestation verify "$PKG" --repo NVIDIA/NemoClaw &&
+     sudo installer -pkg "$PKG" -target /
    ```
 
-3. Verify the installer checksum. Expect the filename followed by `OK`.
+   If you use the graphical installer, follow its prompts to finish the installation before continuing.
 
-   ```sh
-   CHECKSUM=$(awk -v package="$PKG" '$2 == package { print; count++ } END { if (count != 1) exit 1 }' SHA256SUMS) &&
-     printf '%s\n' "$CHECKSUM" | shasum -a 256 --check
-   ```
-
-4. Verify the checksum file's provenance with the [GitHub CLI](https://cli.github.com/).
-
-   ```sh
-   gh attestation verify SHA256SUMS --repo NVIDIA/NemoClaw
-   ```
-
-5. Verify the installer's provenance.
-
-   ```sh
-   gh attestation verify "$PKG" --repo NVIDIA/NemoClaw
-   ```
-
-6. Install the package.
-
-   ```sh
-   sudo installer -pkg "$PKG" -target /
-   ```
-
-   You can also open the verified package in Finder and follow the installer's pages.
-
-7. Open a new Terminal window to load the updated `PATH` and check which CLI it selects.
+3. Open a new Terminal window to load the updated `PATH` and check which CLI it selects.
 
    ```sh
    command -v nemoclaw
