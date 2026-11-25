@@ -199,7 +199,7 @@ export function findMissingDirectLegacyManageSandboxRedirects(
       (!redirect.source.includes("/manage-sandboxes") &&
         !redirect.destination.includes("/manage-sandboxes")) ||
       redirect.source.includes(":path") ||
-      redirect.source.endsWith(".html")
+      /\.(?:html|mdx?)$/.test(redirect.source)
     ) {
       continue;
     }
@@ -242,7 +242,7 @@ export function findMissingDirectLegacyReleaseNotesRedirects(
     mustPrecede?: string;
   }> = [
     ...["/nemoclaw/latest", "/nemoclaw"].flatMap((base) => {
-      const destinationBase = `${base}/user-guide/:variant/release-notes`;
+      const destinationBase = `/nemoclaw/v0/user-guide/:variant/release-notes`;
       const sourceBase = `${base}/user-guide/:variant/about/release-notes`;
       return [
         { source: sourceBase, expected: destinationBase },
@@ -263,7 +263,7 @@ export function findMissingDirectLegacyReleaseNotesRedirects(
       ] as const;
     }),
     ...["/nemoclaw/latest", "/nemoclaw"].flatMap((base) => {
-      const destination = `${base}/user-guide/openclaw/release-notes`;
+      const destination = `/nemoclaw/v0/user-guide/openclaw/release-notes`;
       const sourceBase = `${base}/about/release-notes`;
       return [
         { source: sourceBase, expected: destination },
@@ -338,7 +338,9 @@ export function findBrokenPublishedRedirects(
         ? redirect.destination.replaceAll(":variant", variant)
         : redirect.destination;
       if (destination.includes(":")) continue;
-      const resolved = destination.replace(/^\/nemoclaw(?:\/latest)?/, "").replace(/\.mdx?$/, "");
+      const resolved = destination
+        .replace(/^\/nemoclaw(?:\/(?:latest|v0))?/, "")
+        .replace(/\.mdx?$/, "");
       if (!resolved.startsWith("/user-guide/") || index.routes.has(resolved)) continue;
       violations.push({ source, destination, resolved, variant });
     }
@@ -429,7 +431,7 @@ export function findBrokenReadmeDocsRoutes(
   readme: string = readFileSync(readmePath, "utf8"),
 ): ReadmeDocsRouteViolation[] {
   const docsOrigin = "https://docs.nvidia.com";
-  const docsBasePath = "/nemoclaw/latest";
+  const docsBasePaths = ["/nemoclaw/v0", "/nemoclaw/latest"];
   const violations: ReadmeDocsRouteViolation[] = [];
 
   for (const link of extractMarkdownLinks(readme)) {
@@ -439,10 +441,10 @@ export function findBrokenReadmeDocsRoutes(
     } catch {
       continue;
     }
-    if (
-      url.origin !== docsOrigin ||
-      (url.pathname !== docsBasePath && !url.pathname.startsWith(`${docsBasePath}/`))
-    ) {
+    const docsBasePath = docsBasePaths.find(
+      (base) => url.pathname === base || url.pathname.startsWith(`${base}/`),
+    );
+    if (url.origin !== docsOrigin || !docsBasePath) {
       continue;
     }
 

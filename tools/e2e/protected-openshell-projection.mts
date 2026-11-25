@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { projectReviewedOpenShell0110Graph } from "./openshell-sdk-0110-graph.mts";
 import {
   validateInstallerSources,
   validateOpenShellFeatureGateSource,
@@ -134,6 +135,23 @@ export function projectProtectedOpenShellSdk(
     if (!identity || sdk.resolved !== identity.tarballUrl || sdk.integrity !== identity.integrity) {
       throw new Error("Protected SDK archive is not trusted by the workflow commit");
     }
+  }
+  if (selected.version === "0.1.10") {
+    projectReviewedOpenShell0110Graph(
+      next.packages,
+      current.packages,
+      baseline.manifest,
+      current.root,
+      baseline.dependencies,
+    );
+    return {
+      sdkVersion: selected.version,
+      sdkIntegrity: String(next.sdk.integrity),
+      files: {
+        "package.json": `${JSON.stringify(baseline.manifest, null, 2)}\n`,
+        "package-lock.json": `${JSON.stringify(current.lock, null, 2)}\n`,
+      },
+    };
   }
   const metadata = ({
     version: _version,

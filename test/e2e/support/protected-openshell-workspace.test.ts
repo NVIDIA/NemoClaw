@@ -107,6 +107,7 @@ describe("protected OpenShell workspace", () => {
     ["candidate", "base"].flatMap((side) =>
       [
         "scripts/audit-reviewed-npm-graph.mts",
+        "tools/e2e/openshell-sdk-0110-graph.mts",
         "scripts/lib/reviewed-npm-archive.mts",
         "scripts/lib/reviewed-npm-audit.mts",
         "scripts/lib/repository-input-path.mts",
