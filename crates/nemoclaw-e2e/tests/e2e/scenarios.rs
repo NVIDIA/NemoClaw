@@ -1135,7 +1135,7 @@ scenarios/lifecycle.tftest.hcl... fail
     fn an_external_gateway_fails_to_bind() {
         let row = by_id("DOCKER-OPENCLAW");
         assert!(
-            bound(&row, "fabric-openclaw.yaml")
+            bound(&row, "agents/fabric-openclaw.yaml")
                 .err()
                 .unwrap()
                 .contains("managed Docker")
