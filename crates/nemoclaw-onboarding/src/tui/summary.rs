@@ -7,7 +7,7 @@
 use super::labels;
 use nemoclaw_authoring::{BUILD_AGENT_IMAGES, CompatibilityStatus, ProviderPreset};
 use nemoclaw_sdk::{
-    config::{Document, InferenceTarget, Integration, NamedSandbox, NetworkPolicy},
+    config::{Document, InferenceTarget, Integration, NamedSandbox},
     discovery::{
         CredentialRequest, DiscoveryObservations, DiscoveryQuery, ObservationStatus, plan_queries,
     },
@@ -152,7 +152,10 @@ pub(super) fn rows(document: &Document, facts: &Facts<'_>) -> Vec<Row> {
             facts.target,
             image_absent(document, sandbox, facts.observations),
         ));
-        rows.push(Row::plain("Network", network(sandbox, search, apis)));
+        rows.push(Row::plain(
+            "Network",
+            network(document, sandbox, search, apis),
+        ));
     }
     for reference in document.credential_names() {
         if !shown.iter().any(|shown| shown == reference) {
@@ -320,10 +323,14 @@ fn image_row(sandbox: NamedSandbox<'_>, target: Option<CompatibilityStatus>, abs
 }
 
 /// What the agent can reach. The isolated preset adds grants for the model,
-/// search, and API endpoints the document declares, and the named grants;
-/// an explicit policy states everything itself.
-fn network(sandbox: NamedSandbox<'_>, search: bool, apis: bool) -> String {
-    if let NetworkPolicy::Explicit(_) = sandbox.network.policy {
+/// search, and API endpoints the document declares, and the named grants,
+/// written inline or selected by `grantRefs`; an explicit policy, written
+/// inline or selected by `policyRef`, states everything itself.
+fn network(document: &Document, sandbox: NamedSandbox<'_>, search: bool, apis: bool) -> String {
+    let Ok(network) = document.sandbox_network(sandbox) else {
+        return "unknown".into();
+    };
+    if network.explicit.is_some() {
         return "Explicit policy from the configuration file".into();
     }
     let endpoints = std::iter::once("model")
@@ -331,12 +338,7 @@ fn network(sandbox: NamedSandbox<'_>, search: bool, apis: bool) -> String {
         .chain(apis.then_some("API"))
         .collect::<Vec<_>>();
     let mut text = format!("Isolated: only the {}", listed(&endpoints, "endpoint"));
-    let grants = sandbox
-        .network
-        .grants
-        .keys()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
+    let grants = network.grants.keys().copied().collect::<Vec<_>>();
     if !grants.is_empty() {
         text.push_str(&format!(", and the {}", listed(&grants, "grant")));
     }
