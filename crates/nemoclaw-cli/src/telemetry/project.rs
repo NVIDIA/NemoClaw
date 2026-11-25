@@ -138,10 +138,22 @@ fn harness_id(id: &str) -> String {
     }
 }
 
-/// A model name as written, or `unknown` when it is longer than 64 characters
-/// or holds `://`, since then it could be an address.
+/// A model name as written, or `unknown` when it could hold a path or an
+/// address: longer than 64 characters, holding `://`, `\` or `@`, starting
+/// with `/`, `~` or `.`, or with an IP address or `host:port` before its first
+/// `/`. An Ollama tag such as `llama3.1:8b` is not a port, so it is kept.
 fn model_name(model: &str) -> String {
-    if model.chars().count() > MAX_MODEL || model.contains("://") {
+    let first = model.split('/').next().unwrap_or_default();
+    let address = |host: &str| host.trim_matches(['[', ']']).parse::<IpAddr>().is_ok();
+    let host_port = first.rsplit_once(':').is_some_and(|(host, port)| {
+        !host.is_empty() && !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
+    });
+    if model.chars().count() > MAX_MODEL
+        || ["://", "\\", "@"].iter().any(|part| model.contains(part))
+        || model.starts_with(['/', '~', '.'])
+        || address(first)
+        || host_port
+    {
         "unknown".into()
     } else {
         model.into()
@@ -362,6 +374,38 @@ mod tests {
         assert_eq!(model_name(&"m".repeat(65)), "unknown");
         assert_eq!(model_name("hf://alice/private-model"), "unknown");
         assert_eq!(model_name("https://models.example.com/x"), "unknown");
+    }
+
+    #[test]
+    fn a_path_or_address_shaped_model_is_unknown() {
+        for model in [
+            "/home/alice/models/llama-3-8b",
+            "~/models/llama",
+            "./llama",
+            "../llama",
+            ".cache/llama",
+            r"C:\models\llama",
+            r"models\llama",
+            "alice@models.example.com/llama",
+            "10.0.0.5/llama",
+            "10.0.0.5:8000/llama",
+            "10.0.0.5:8000",
+            "[::1]:8000/llama",
+            "::1/llama",
+            "models.corp.example:443/acme-ft",
+            "vllm:8000/llama",
+        ] {
+            assert_eq!(model_name(model), "unknown", "{model}");
+        }
+        for model in [
+            "meta/llama-3.1-8b-instruct",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "llama3.1:8b",
+            "qwen2.5-coder:32b",
+            "gpt-5",
+        ] {
+            assert_eq!(model_name(model), model);
+        }
     }
 
     #[test]

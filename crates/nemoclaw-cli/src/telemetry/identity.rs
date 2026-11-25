@@ -117,11 +117,16 @@ fn read(path: &Path) -> std::io::Result<Option<Stored>> {
         }))
 }
 
+/// Digits and dots, then an optional part after `-` or `+`, as in `1.0.0-412`.
+const VERSION_PATTERN: &str = r"^[0-9]+(?:\.[0-9]+)*(?:[-+][0-9A-Za-z.+-]*)?$";
+
+/// The stored last version, `none` when it is this version or empty, and
+/// `unknown` when it is longer than 128 characters or not shaped like a version.
 fn previous(last: &str, version: &str) -> String {
     match last {
         _ if last == version => NONE.into(),
         "" => NONE.into(),
-        _ if last.chars().count() > 128 => UNKNOWN.into(),
+        _ if last.chars().count() > 128 || !matches(VERSION_PATTERN, last) => UNKNOWN.into(),
         _ => last.into(),
     }
 }
@@ -250,5 +255,23 @@ mod tests {
     fn an_overlong_last_version_is_unknown() {
         assert_eq!(previous(&"9".repeat(129), "1.0.0"), UNKNOWN);
         assert_eq!(previous("", "1.0.0"), NONE);
+    }
+
+    #[test]
+    fn a_last_version_not_shaped_like_a_version_is_unknown() {
+        for last in ["0.1.0", "1.0.0-412", "1.0.0+abc.5", "2.3.0-rc.1+build-7"] {
+            assert_eq!(previous(last, "9.9.9"), last);
+        }
+        for last in [
+            "/home/alice/notes",
+            "alice",
+            "v1.0.0",
+            "1.0.0 beta",
+            "1.0.0-a/b",
+            "10.0.0.5:8000",
+            ".1",
+        ] {
+            assert_eq!(previous(last, "9.9.9"), UNKNOWN, "{last}");
+        }
     }
 }
