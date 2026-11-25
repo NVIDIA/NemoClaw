@@ -329,7 +329,7 @@ NemoClaw leaves placement across GPUs to Ollama and doesn't set `OLLAMA_SCHED_SP
 The runtime computes one per-GPU reserve, the largest free memory among the container's GPUs minus the GPU budget, and passes it in two settings that `ollama serve --help` documents:
 
 - `OLLAMA_GPU_OVERHEAD`, "Reserve a portion of VRAM per GPU (bytes)".
-  Ollama v0.40.16, the version the runtime image pins, reads it for its logs and its default context size, not to place a GGUF model.
+  Ollama v0.40.18, the version the runtime image pins, reads it for its logs and its default context size, not to place a GGUF model.
 - `LLAMA_ARG_FIT_TARGET`, "Target free VRAM margin per device for llama.cpp fit (MiB)", rounded up to whole MiB.
   llama.cpp leaves this much free on each GPU when it fits the model's layers.
   When the reserve is below llama.cpp's own margin of 1,024 MiB, the runtime leaves the setting unset and llama.cpp's margin applies.

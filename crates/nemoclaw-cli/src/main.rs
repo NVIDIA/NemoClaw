@@ -99,6 +99,8 @@ async fn run() -> ExitCode {
     .await;
     reporter.finish();
     signals.abort();
+    // Stopped by an interrupt or a termination signal.
+    let stopped = cancel.is_cancelled();
     let ended = operation.and_then(|operation| match &result {
         Ok(dispatch::CommandResult::Operation(result)) => {
             Some(telemetry::succeeded(operation, &result.changes))
@@ -109,7 +111,9 @@ async fn run() -> ExitCode {
         Ok(_) => None,
         // `onboard` sends a record only when it writes the configuration.
         Err(_) if operation == telemetry::record::Operation::Onboard => None,
-        Err(error) => Some(stage.failed(formatting::error_exit_code(error.as_ref()) == 130)),
+        Err(error) => {
+            Some(stage.failed(stopped || formatting::error_exit_code(error.as_ref()) == 130))
+        }
     });
     let duration = started.elapsed();
     let code = match result {
