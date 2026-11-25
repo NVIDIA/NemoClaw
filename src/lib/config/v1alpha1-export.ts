@@ -13,7 +13,6 @@ export function isV1Alpha1ExportName(value: unknown): value is string {
 }
 
 interface V1Alpha1HostedInferenceProvider {
-  readonly name: string;
   readonly provider: "anthropic" | "openai";
   readonly api: "anthropic-messages" | "openai-completions" | "openai-responses";
   readonly endpoint: string;
@@ -22,7 +21,6 @@ interface V1Alpha1HostedInferenceProvider {
 }
 
 interface V1Alpha1ServiceInferenceProvider {
-  readonly name: string;
   readonly provider: "openai";
   readonly api: "openai-completions";
   readonly serviceRef: string;
@@ -32,7 +30,8 @@ interface V1Alpha1ServiceInferenceProvider {
 
 export interface V1Alpha1OllamaProxyService {
   readonly kind: "ollamaProxy";
-  readonly image: null;
+  /** A digest-pinned placeholder: v0 has no v1 service image. */
+  readonly image: string;
   readonly endpoint: string;
   readonly upstream: Readonly<{
     endpoint: string;
@@ -50,7 +49,8 @@ export interface V1Alpha1VllmService {
     minDriverMajor: 580;
   }>;
   readonly container: Readonly<{ ipc: "host"; sharedMemoryGiB: 32 }>;
-  readonly image: null;
+  /** A digest-pinned placeholder: v0 has no v1 service image. */
+  readonly image: string;
   readonly model: Readonly<{ repository: string; revision: string }>;
   readonly serving: Readonly<{
     modelName: string;
@@ -79,53 +79,38 @@ export interface V1Alpha1ExportAgent {
     }>[];
   }>;
   readonly auth?: Readonly<{ method: "api-key" }>;
-  readonly tools?:
-    | Readonly<{ disclosure: "direct" | "progressive" }>
-    | Readonly<{ allow: readonly "read"[] }>;
   readonly integrationRefs?: readonly `${WebSearchProvider}-search`[];
 }
 
 interface V1Alpha1ExportSandboxBase {
-  readonly name: string;
-  readonly runtime: Readonly<{ provider: "docker" }>;
   readonly network: Readonly<{
     policy: Readonly<{ explicit: Readonly<Record<string, unknown>> }>;
-    proxy?: Readonly<{ host: string; port: number }>;
   }>;
-  readonly integrations?: Readonly<
-    Partial<
-      Record<
-        `${WebSearchProvider}-search`,
-        Readonly<{
-          kind: "webSearch";
-          provider: WebSearchProvider;
-          credential: Readonly<{ env: string }>;
-        }>
-      >
-    >
-  >;
 }
 
+/** Fabric adapter IDs that current v1 selects through `harness.kind`. */
+export type V1Alpha1FabricHarnessKind =
+  | "nvidia.fabric.langchain.deepagents"
+  | "nvidia.fabric.hermes"
+  | "nvidia.fabric.openclaw";
+
 interface V1Alpha1ExportHarness {
-  readonly kind: "deepagents" | "hermes" | "openclaw";
-  readonly execution?: Readonly<{ timeoutSeconds?: number; heartbeatEvery?: string }>;
-  readonly interfaces?: Readonly<Record<string, unknown>>;
-  readonly observability?: Readonly<Record<string, unknown>>;
+  readonly kind: V1Alpha1FabricHarnessKind;
+  readonly runtime?: Readonly<{ timeout_seconds: number }>;
 }
 
 export type V1Alpha1ExportSandbox = V1Alpha1ExportSandboxBase &
-  (
-    | Readonly<{
-        harness: V1Alpha1ExportHarness & Readonly<{ kind: "deepagents" }>;
-        image: Readonly<{ ref: string }>;
-        agent: Readonly<V1Alpha1ExportAgent>;
-      }>
-    | Readonly<{
-        harness: V1Alpha1ExportHarness & Readonly<{ kind: "hermes" | "openclaw" }>;
-        image?: never;
-        agent: Readonly<V1Alpha1ExportAgent>;
-      }>
-  );
+  Readonly<{
+    harness: V1Alpha1ExportHarness;
+    image: Readonly<{ ref: string }>;
+    agent: Readonly<V1Alpha1ExportAgent>;
+  }>;
+
+export type V1Alpha1ExportIntegration = Readonly<{
+  kind: "webSearch";
+  provider: WebSearchProvider;
+  credential: Readonly<{ env: string }>;
+}>;
 
 /** Producer-owned pre-release v1 shape emitted by v0. */
 export interface V1Alpha1Export {
@@ -133,11 +118,16 @@ export interface V1Alpha1Export {
   readonly kind: typeof NEMOCLAW_CONFIG_KIND;
   readonly metadata: Readonly<{ name: string; uid: string }>;
   readonly spec: Readonly<{
-    gateway: Readonly<{ management: "managed"; endpoint: string }>;
+    gateway: Readonly<{
+      management: "managed";
+      runtime: Readonly<{ provider: "docker" }>;
+      endpoint: string;
+    }>;
     services?: Readonly<Record<string, Readonly<V1Alpha1ExportService>>>;
-    inferenceProviders: readonly Readonly<
-      V1Alpha1HostedInferenceProvider | V1Alpha1ServiceInferenceProvider
-    >[];
-    sandboxes: readonly V1Alpha1ExportSandbox[];
+    inferenceProviders: Readonly<
+      Record<string, Readonly<V1Alpha1HostedInferenceProvider | V1Alpha1ServiceInferenceProvider>>
+    >;
+    integrations?: Readonly<Record<`${WebSearchProvider}-search`, V1Alpha1ExportIntegration>>;
+    sandboxes: Readonly<Record<string, V1Alpha1ExportSandbox>>;
   }>;
 }

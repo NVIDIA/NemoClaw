@@ -35,6 +35,33 @@ afterEach(() =>
 );
 
 describe("reviewed candidate OpenShell trust", () => {
+  it.each([
+    { version: "0.1.10", repository: "NVIDIA/OpenShell", image: "quay.io/ai-openshell/supervisor" },
+    {
+      version: "0.1.10",
+      repository: "ai-openshell/openshell",
+      image: "ghcr.io/nvidia/openshell/supervisor",
+    },
+    {
+      version: "0.1.9",
+      repository: "ai-openshell/openshell",
+      image: "ghcr.io/nvidia/openshell/supervisor",
+    },
+    { version: "0.1.9", repository: "NVIDIA/OpenShell", image: "quay.io/ai-openshell/supervisor" },
+    { version: "0.1.10", repository: "other/openshell", image: "quay.io/ai-openshell/supervisor" },
+    { version: "0.1.10", repository: "ai-openshell/openshell", image: "quay.io/other/supervisor" },
+  ])(
+    "rejects origins outside the version-bound release identity: %j",
+    ({ version, repository, image }) => {
+      const f = fixture(version);
+      const registry = JSON.parse(f.files[CANDIDATE_OPENSHELL_TRUST_PATH]!);
+      const release = registry.releases.at(-1);
+      release.formula.url = `https://github.com/${repository}/releases/download/v${version}/openshell.rb`;
+      release.supervisor.image = image;
+      expect(() => parseOpenShellTrustRegistry(JSON.stringify(registry))).toThrow();
+    },
+  );
+
   it.each(
     (["installer", "version"] as const).flatMap((consumer) =>
       (["older", "empty", "absent"] as const).map((scenario) => ({ consumer, scenario })),

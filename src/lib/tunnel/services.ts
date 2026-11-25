@@ -75,6 +75,11 @@ export interface ServiceOptions {
   unloadOllamaModels?: () => OllamaUnloadResult | void;
   /** Whether this scoped stop owns Ollama models that require cleanup. Defaults to true. */
   cleanupOllamaModels?: boolean;
+  /**
+   * Whether to stop the in-sandbox gateway. Defaults to true. Set false when the sandbox keeps
+   * running, because the OpenClaw gateway is its main process (#14321).
+   */
+  stopSandboxGateway?: boolean;
   /** Provider-owned transport for stopping the sandbox's native gateway. */
   channelStopTransport?: RuntimeProviderChannelStopTransport;
   /** Clears pending Ollama cleanup recovery after this sandbox's models unload. */
@@ -1347,7 +1352,10 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
   }
 
-  if (sandboxName) {
+  // `tunnel stop` leaves the in-sandbox gateway running: it is the sandbox's main process (#14321).
+  if (opts.stopSandboxGateway === false) {
+    // Nothing to stop inside the sandbox.
+  } else if (sandboxName) {
     sandboxGatewayStop.stopSandboxChannels(sandboxName, {
       ...(opts.channelStopTransport ? { channelStopTransport: opts.channelStopTransport } : {}),
       info,

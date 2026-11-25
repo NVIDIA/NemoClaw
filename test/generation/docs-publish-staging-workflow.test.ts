@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { strict as assert } from "node:assert";
-import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readYaml, type Workflow, type WorkflowStep } from "../helpers/e2e-workflow-contract";
 
 const fernConfig = JSON.parse(
@@ -120,5 +120,112 @@ describe("staging docs preview cleanup", () => {
     } finally {
       rmSync(temp, { force: true, recursive: true });
     }
+  });
+});
+
+describe("documentation release branch", () => {
+  const staging = readYaml<Workflow>(".github/workflows/docs-publish-staging.yaml");
+  const release = readYaml<Workflow>(".github/workflows/docs-publish-public.yaml");
+  const publish = requiredStep(staging.jobs.publish.steps, "Publish staging docs");
+  const checkTag = requiredStep(
+    release.jobs.publish.steps,
+    "Verify release tag commit is on the v0 release branch",
+  );
+
+  let temp: string;
+  let shared: string;
+  let main: string;
+  let v0: string;
+
+  function git(...args: string[]): string {
+    return execFileSync(
+      "git",
+      [
+        "--git-dir",
+        join(temp, "repo.git"),
+        "-c",
+        "user.name=Docs",
+        "-c",
+        "user.email=docs@example.test",
+        ...args,
+      ],
+      {
+        env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+        encoding: "utf8",
+        input: "",
+      },
+    ).trim();
+  }
+
+  beforeEach(() => {
+    temp = mkdtempSync(join(tmpdir(), "nemoclaw-docs-branches-"));
+    git("init", "--bare", "--quiet", join(temp, "repo.git"));
+    const tree = git("mktree");
+    shared = git("commit-tree", tree, "-m", "Shared history");
+    main = git("commit-tree", tree, "-p", shared, "-m", "Main change");
+    v0 = git("commit-tree", tree, "-p", shared, "-m", "v0 change");
+    git("update-ref", "refs/remotes/origin/main", main);
+  });
+
+  afterEach(() => rmSync(temp, { force: true, recursive: true }));
+
+  const instance = "docs.example.test/nemoclaw";
+  function workflowEnv() {
+    return {
+      PATH: process.env.PATH,
+      GIT_DIR: join(temp, "repo.git"),
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+      RUNNER_TEMP: temp,
+    };
+  }
+
+  function runStaging(branch: string): string[] {
+    const log = join(mkdtempSync(join(temp, "publish-")), "args");
+    const script = 'npx() { printf "%s\\n" "$@" > "$COMMAND_LOG"; }\n' + publish.run;
+    const result = spawnSync("bash", ["-ec", script], {
+      env: {
+        ...workflowEnv(),
+        COMMAND_LOG: log,
+        FERN_STAGING_INSTANCE: instance,
+        GITHUB_REF_NAME: branch,
+      },
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    return existsSync(log) ? readFileSync(log, "utf8").trimEnd().split("\n") : [];
+  }
+
+  function checkReleaseTag(commit: string, expectedStatus: number): void {
+    const result = spawnSync("bash", ["-ec", checkTag.run ?? ""], {
+      env: { ...workflowEnv(), GITHUB_SHA: commit },
+      encoding: "utf8",
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(expectedStatus);
+  }
+
+  it("transfers staging publication from main to the v0 branch when it exists", () => {
+    const publishArgs = [
+      "--yes",
+      `fern-api@${fernConfig.version}`,
+      "generate",
+      "--docs",
+      "--instance",
+      instance,
+    ];
+    expect(runStaging("main")).toEqual(publishArgs);
+    git("update-ref", "refs/remotes/origin/v0", v0);
+    expect(runStaging("main")).toEqual([]);
+    expect(runStaging("v0")).toEqual(publishArgs);
+  });
+
+  it("accepts only release tag commits reachable from the branch that owns v0", () => {
+    checkReleaseTag(shared, 0);
+    checkReleaseTag(main, 0);
+    checkReleaseTag(v0, 1);
+    git("update-ref", "refs/remotes/origin/v0", v0);
+    checkReleaseTag(shared, 0);
+    checkReleaseTag(main, 1);
+    checkReleaseTag(v0, 0);
   });
 });

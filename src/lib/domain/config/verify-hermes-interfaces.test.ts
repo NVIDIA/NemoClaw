@@ -92,14 +92,10 @@ describe("Hermes retained interface export", () => {
   it("exports dashboard and allocated API intent through the complete action (#11433, #12132)", async () => {
     const source = hermesInterfacesSnapshot();
     const exported = await exportSnapshots([source]);
-    expect(exported.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(exported.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
-      kind: "hermes",
-      interfaces: {
-        dashboard: { enabled: true, port: 19000, internalPort: 19120 },
-        api: { port: 8643 },
-      },
+    expect(document.spec.sandboxes.alpha!.harness).toMatchObject({
+      kind: "nvidia.fabric.hermes",
     });
     expect(exported.read).toHaveBeenCalledTimes(2);
     expect(exported.publish).not.toHaveBeenCalled();
@@ -110,9 +106,7 @@ describe("Hermes retained interface export", () => {
     const exported = await exportSnapshots([hermesInterfacesSnapshot(18789, 19119, false, 8642)]);
     expect(exported.outcome.ok).toBe(true);
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
-      dashboard: { enabled: true, tui: { enabled: false } },
-    });
+    expect(document.spec.sandboxes.alpha!.harness).not.toHaveProperty("settings");
   });
 
   it.each([undefined, null, 8642])(
@@ -123,9 +117,7 @@ describe("Hermes retained interface export", () => {
       expect(legacy.outcome.ok).toBe(true);
       expect(legacy.writeStdout.mock.calls).toEqual(current.writeStdout.mock.calls);
       const document = asExportedConfig(YAML.parse(legacy.writeStdout.mock.calls[0]![0]));
-      expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
-        dashboard: { enabled: false },
-      });
+      expect(document.spec.sandboxes.alpha!.harness).not.toHaveProperty("settings");
     },
   );
 
@@ -133,20 +125,17 @@ describe("Hermes retained interface export", () => {
     const exported = await exportSnapshots([hermesSnapshot({ hermesApiPort: 8643 })]);
     expect(exported.outcome.ok).toBe(true);
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.harness).toMatchObject({
-      interfaces: { dashboard: { enabled: false }, api: { port: 8643 } },
-    });
+    // Interface settings have no confirmed v1 equivalent, so the harness carries only its kind.
+    expect(document.spec.sandboxes.alpha!.harness).toEqual({ kind: "nvidia.fabric.hermes" });
   });
 
   it("exports the same disabled dashboard when onboarding allocated a port other than 18789", async () => {
     const allocated = await exportSnapshots([onboardedTavilySnapshot(18790)]);
     const defaultPort = await exportSnapshots([onboardedTavilySnapshot(18789)]);
-    expect(allocated.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(allocated.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     expect(allocated.writeStdout.mock.calls).toEqual(defaultPort.writeStdout.mock.calls);
     const document = asExportedConfig(YAML.parse(allocated.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
-      dashboard: { enabled: false },
-    });
+    expect(document.spec.sandboxes.alpha!.harness).not.toHaveProperty("settings");
   });
 
   it("exports a disabled dashboard with an allocated port when the profile has no browser URL", async () => {

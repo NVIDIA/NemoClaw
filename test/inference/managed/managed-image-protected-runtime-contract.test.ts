@@ -127,7 +127,7 @@ function nativeQualificationFixture(
 beforeEach(() => {
   runtime.version = "0.1.3";
 });
-describe.each(["0.1.3", "0.1.5", "0.1.7"])("OpenShell %s native inference", (version) => {
+describe.each(["0.1.3", "0.1.5", "0.1.7", "0.1.9"])("OpenShell %s native inference", (version) => {
   beforeEach(() => {
     runtime.version = version;
   });
@@ -356,14 +356,14 @@ it("captures bounded owner startup logs and redacts secrets before cleanup", () 
   }
 });
 
-function observeWorkload(scenario: string): string {
+function observeWorkload(scenario: string, runtimeVersion: "0.1.3" | "0.1.9"): string {
   const stateDir = path.join(os.tmpdir(), "managed-workload-owner");
   const containerId = "c".repeat(64);
   const contentId = `sha256:${"d".repeat(64)}`;
-  const runCommand: ManagedImageCommandRunner = (argv) => {
+  const runCommand: ManagedImageCommandRunner = vi.fn((argv) => {
     const stdout =
       argv[1] === "--version"
-        ? "openshell 0.1.3\n"
+        ? `openshell ${runtimeVersion}\n`
         : argv[1] === "image"
           ? contentId
           : argv[1] === "ps"
@@ -386,27 +386,45 @@ function observeWorkload(scenario: string): string {
                 },
               ]);
     return { status: 0, stdout, stderr: "" };
-  };
-  return assertExactSandboxImage(
+  });
+  const observed = assertExactSandboxImage(
     { agent: "openclaw", image: IMAGE, sandbox: VALID_SANDBOX },
     stateDir,
     {},
     runCommand,
   );
+  expect(runCommand).toHaveBeenCalledWith(
+    [
+      "docker",
+      "ps",
+      "-q",
+      "--no-trunc",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${VALID_SANDBOX}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
+    ],
+    {},
+  );
+  return observed;
 }
 
-it("accepts one exact isolated workload", () => {
-  expect(observeWorkload("valid")).toBe("c".repeat(64));
-});
+describe.each(["0.1.3", "0.1.9"] as const)("OpenShell %s workload ownership", (runtimeVersion) => {
+  it("accepts one exact isolated workload", () => {
+    expect(observeWorkload("valid", runtimeVersion)).toBe("c".repeat(64));
+  });
 
-it.each(["namespace", "role", "image", "network", "duplicate"])(
-  "rejects a workload with mismatched %s evidence",
-  (scenario) => {
-    expect(() => observeWorkload(scenario)).toThrow(
-      "exactly one running harness-owned PR image container",
-    );
-  },
-);
+  it.each(["namespace", "role", "image", "network", "duplicate"])(
+    "rejects a workload with mismatched %s evidence",
+    (scenario) => {
+      expect(() => observeWorkload(scenario, runtimeVersion)).toThrow(
+        "exactly one running harness-owned PR image container",
+      );
+    },
+  );
+});
 
 const MANAGED_IMAGE_ONBOARD = resolveManagedImageOnboardModule(
   await import("../../../src/lib/onboard.ts"),

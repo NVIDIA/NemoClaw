@@ -747,7 +747,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .spyOn(localInference, "probeLocalProviderHealth")
     .mockReturnValue({ ok: true });
   const probeOllamaAuthProxyHealthSpy = vi
-    .spyOn(ollamaProxy, "probeOllamaAuthProxyHealth")
+    .spyOn(localInference, "probeOllamaAuthProxyHealth")
     .mockReturnValue({ ok: true });
   const shouldFrontOllamaWithProxySpy = vi
     .spyOn(localInference, "shouldFrontOllamaWithProxy")
