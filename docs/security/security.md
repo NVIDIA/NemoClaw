@@ -179,10 +179,12 @@ The record carries these fields:
 The [telemetry design](../../internal-docs/design/telemetry.md) lists every field with its values and source, and every CI variable.
 These rules limit what the configuration and machine fields carry:
 
-- **Model names** are sent as written in the configuration, from each sandbox's default route. A name longer than 64 characters or containing `://` is sent as `unknown`.
+- **Model names** are sent as written in the configuration, from each sandbox's default route. A name longer than 64 characters, or one that could hold a path or an address, such as `/home/alice/llama-3-8b` or `10.0.0.5:8000/llama`, is sent as `unknown`.
 - **Harness IDs** are sent as written only when the bundled Fabric catalog lists them. Any other ID is sent as `other`.
 - **Inference endpoints** are matched on the machine against `local`, `build.nvidia.com`, `inference.nvidia.com`, `openai`, and `anthropic`. Only the matched word is sent, or `other`; the URL is never sent.
-- **Machine details** are read locally, and only a word from a fixed list is sent. The record never carries deployment, sandbox, service, agent, user, or host names, file paths, URLs, endpoint or IP addresses, image names, credentials, prompts, or error text.
+- **Machine details** are read locally, and only a word from a fixed list is sent.
+
+The record never carries deployment, sandbox, service, agent, user, or host names, file paths, URLs, endpoint or IP addresses, image names, credentials, prompts, or error text.
 
 The install ID is a random UUID kept in `telemetry.json` in a `nemoclaw` directory under the user configuration directory: `$XDG_CONFIG_HOME` or `~/.config` on Linux, `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows.
 It is not derived from the machine.
