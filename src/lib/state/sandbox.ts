@@ -1810,7 +1810,7 @@ function scanNativeTarFilePayload(
     if (timeout === null) return "deadline";
     const result = textContainsCredentialWithinDeadline(
       () => hermesArchiveCredentialScanInput(payload.toString("utf8")),
-      { ...credentialOptions, privateKeyHeader },
+      { ...credentialOptions, privateKeyHeader, allowPinoTestFixture: false },
       timeout,
     );
     return backupDeadlineExpired(deadlineMs) ? "deadline" : result;

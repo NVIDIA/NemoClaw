@@ -73,9 +73,12 @@ export type {
 /** Detect standalone credential fingerprints without interpreting surrounding file structure. */
 export function textContainsHighConfidenceCredential(
   value: string,
-  options: { privateKeyHeader?: boolean } = {},
+  options: Pick<CredentialScanOptions, "privateKeyHeader" | "allowPinoTestFixture"> = {},
 ): boolean {
-  const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
+  const withoutPlaceholders = textWithoutSafeCredentialFixtures(
+    value,
+    options.allowPinoTestFixture,
+  );
   for (const pattern of [
     ...TOKEN_PREFIX_PATTERNS,
     ...STRUCTURED_TOKEN_PATTERNS,
@@ -90,8 +93,9 @@ export function textContainsHighConfidenceCredential(
   );
 }
 
-function textWithoutSafeCredentialFixtures(value: string): string {
+function textWithoutSafeCredentialFixtures(value: string, allowPinoTestFixture = true): string {
   const normalizedPinoRedactFixture =
+    allowPinoTestFixture &&
     value.includes(PINO_REDACT_WILDCARD_TEST_MARKER) &&
     PINO_REDACT_PUBLIC_CREDENTIAL_FIXTURES.every((fixture) => value.includes(fixture))
       ? PINO_REDACT_PUBLIC_CREDENTIAL_FIXTURES.reduce(
@@ -162,6 +166,7 @@ function isSqlBindParameter(
 }
 
 type CredentialScanOptions = {
+  allowPinoTestFixture?: boolean;
   opaqueAssignments?: boolean;
   privateKeyHeader?: boolean;
   /** Only for Deep Agents session content, including database sidecars. */
@@ -180,7 +185,10 @@ export function credentialFindingRule(
   value: string,
   options: CredentialScanOptions = {},
 ): CredentialFindingRule | null {
-  const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
+  const withoutPlaceholders = textWithoutSafeCredentialFixtures(
+    value,
+    options.allowPinoTestFixture,
+  );
   if (textContainsHighConfidenceCredential(withoutPlaceholders, options))
     return "credential-fingerprint";
   const authorization =
@@ -190,7 +198,10 @@ export function credentialFindingRule(
   // Fixture normalization can shorten the input. Reuse decisions only within
   // an identical normalized prefix, never at raw offsets in transformed text.
   const scannedPrefix = options.sqlBindParameters
-    ? textWithoutSafeCredentialFixtures(value.slice(0, options.scannedPrefixLength ?? 0))
+    ? textWithoutSafeCredentialFixtures(
+        value.slice(0, options.scannedPrefixLength ?? 0),
+        options.allowPinoTestFixture,
+      )
     : "";
   const scannedPrefixLength = withoutPlaceholders.startsWith(scannedPrefix)
     ? scannedPrefix.length

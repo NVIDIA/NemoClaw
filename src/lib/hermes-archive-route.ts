@@ -7,6 +7,10 @@ import {
   nativeHostedAgentConfig,
 } from "./inference/native-provider/agent-config.ts";
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "./inference/anthropic/openai-surface.ts";
+import {
+  BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+  isBedrockRuntimeEndpoint,
+} from "./inference/bedrock-runtime.ts";
 import { customNativeProviderForSelection } from "./inference/native-provider/custom.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./inference/native-nvidia/contract.ts";
 import { NVIDIA_INFERENCE_PLACEHOLDER } from "./inference-credential.ts";
@@ -60,12 +64,14 @@ export function hermesRegisteredRoute(
       return { provider, endpointUrl: null };
     // Legacy selections have no custom binding. Compare their logical endpoint
     // through the same API projection that writes the agent configuration.
-    const legacyAgentEndpointUrl =
-      provider === "compatible-anthropic-endpoint" &&
-      logicalEndpointUrl &&
-      selection.preferredInferenceApi !== "anthropic-messages"
-        ? getCompatibleAnthropicOpenAiSurfaceBaseUrl(logicalEndpointUrl)
-        : logicalEndpointUrl;
+    let legacyAgentEndpointUrl = logicalEndpointUrl;
+    if (!customDefinition && provider === "compatible-anthropic-endpoint" && logicalEndpointUrl) {
+      if (!attachment && isBedrockRuntimeEndpoint(logicalEndpointUrl)) {
+        legacyAgentEndpointUrl = BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL;
+      } else if (!attachment || selection.preferredInferenceApi !== "anthropic-messages") {
+        legacyAgentEndpointUrl = getCompatibleAnthropicOpenAiSurfaceBaseUrl(logicalEndpointUrl);
+      }
+    }
     // customDefinition.endpointUrl is the agent endpoint written to Hermes.
     // customDefinition.custom.endpointUrl is the logical binding: Anthropic
     // OpenAI APIs project /team to /team/v1 only in the agent endpoint.

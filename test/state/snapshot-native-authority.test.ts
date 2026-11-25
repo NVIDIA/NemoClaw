@@ -448,6 +448,24 @@ describe("complete native-home machine authority", () => {
         name: "raw credential across 64 KiB",
         source: () => acrossScanBoundary(`${yaml}# api_key: "${fingerprint}"\n`, fingerprint),
       },
+      {
+        name: "password before a distant public Pino fixture",
+        source: () =>
+          [
+            yaml,
+            "# password: 'secret'",
+            `# ${"x".repeat(72 * 1024)}`,
+            "# Tests for Issue #2319: @pinojs/redact fails to redact patterns with 3+ consecutive wildcards",
+            ...[2, 3, 4, 5, 6].map((depth) => `# password: 'secret-${depth}-levels'`),
+            ...["secret-value", "secret1", "secret2", "secret"].map(
+              (value) => `# password: '${value}'`,
+            ),
+            ...[1, 2, 3].map((index) => `# token: 'token${index}'`),
+            "# username: 'admin'",
+            "# authorization: 'Bearer secret-token'",
+            "# authorization: 'Bearer another-token'",
+          ].join("\n"),
+      },
     ])("rejects a $name (#14300)", ({ source }) => {
       withBackup(source(), (backup) => {
         expect(backup.success).toBe(false);
@@ -638,17 +656,29 @@ describe("complete native-home machine authority", () => {
       agentEndpoint: "https://legacy.example.test/team/v1",
       reference: "${COMPATIBLE_ANTHROPIC_API_KEY}",
       attached: false,
+      preferredInferenceApi: "anthropic-messages",
     },
   ])(
     "restores the production $provider credential reference after a rebuild, attached=$attached (#14300)",
-    async ({ provider, endpointUrl, agentEndpoint, reference, attached }) => {
+    async ({
+      provider,
+      endpointUrl,
+      agentEndpoint,
+      reference,
+      attached,
+      preferredInferenceApi,
+    }) => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-custom-key-"));
       try {
         const binDir = path.join(fixture, "bin");
         const nativeRoot = path.join(fixture, "native-home");
         fs.mkdirSync(binDir, { recursive: true });
         fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
-        const api = resolveAgentInferenceApi("hermes", provider, "openai-completions");
+        const api = resolveAgentInferenceApi(
+          "hermes",
+          provider,
+          preferredInferenceApi ?? "openai-completions",
+        );
         const route = getSandboxInferenceConfig("m", provider, api, true, endpointUrl, "hermes");
         const config: Record<string, unknown> = { settings: { max_turns: 12 } };
         applyHermesManagedRoute(config, {
@@ -680,6 +710,7 @@ process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
           provider,
           endpointUrl,
           attachmentEndpointUrl: attached ? endpointUrl : undefined,
+          preferredInferenceApi,
         });
         const stored = JSON.parse(
           fs.readFileSync(path.join(TMP_HOME, ".nemoclaw/sandboxes.json"), "utf8"),
@@ -693,7 +724,9 @@ process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
               })
             : undefined,
         );
-        expect(stored.preferredInferenceApi).toBe(attached ? "openai-completions" : undefined);
+        expect(stored.preferredInferenceApi).toBe(
+          attached ? "openai-completions" : preferredInferenceApi,
+        );
         expect((config.model as { base_url: string }).base_url).toBe(agentEndpoint);
 
         const backup = sandboxState.backupSandboxState("alpha");

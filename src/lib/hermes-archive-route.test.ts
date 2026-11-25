@@ -4,6 +4,8 @@
 import { describe, expect, it } from "vitest";
 import { hermesManagedRouteReference, hermesRegisteredRoute } from "./hermes-archive-route";
 import { applyHermesManagedRoute } from "./hermes-managed-route";
+import { BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } from "./inference/bedrock-runtime";
+import { resolveManagedStartupInferenceRoute } from "./inference/gateway/route-contract";
 import { hostedNativeProvider } from "./inference/native-provider/hosted";
 import {
   customNativeProvider,
@@ -105,6 +107,36 @@ describe("Hermes archive route authority", () => {
       ),
     ).toBeNull();
   });
+
+  it.each([
+    ["https://host.example.test/team", "https://host.example.test/team/v1"],
+    ["https://bedrock-runtime.us-east-1.amazonaws.com", BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL],
+  ] as const)(
+    "accepts only the Hermes writer endpoint for legacy Anthropic %s",
+    (logicalEndpoint, agentEndpoint) => {
+      const provider = "compatible-anthropic-endpoint";
+      const preferredInferenceApi = "anthropic-messages";
+      const route = resolveManagedStartupInferenceRoute(
+        "hermes",
+        provider,
+        "m",
+        preferredInferenceApi,
+        true,
+        logicalEndpoint,
+      );
+      expect(route.inferenceBaseUrl).toBe(agentEndpoint);
+      const registered = hermesRegisteredRoute({
+        provider,
+        endpointUrl: logicalEndpoint,
+        preferredInferenceApi,
+      });
+      expect(hermesManagedRouteReference(provider, route.inferenceBaseUrl, registered)).toEqual({
+        endpoint: agentEndpoint,
+        template: "${COMPATIBLE_ANTHROPIC_API_KEY}",
+      });
+      expect(hermesManagedRouteReference(provider, logicalEndpoint, registered)).toBeNull();
+    },
+  );
 
   it.each(routes)(
     "validates %s %s archives against the agent endpoint (#14300)",
