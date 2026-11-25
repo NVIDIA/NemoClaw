@@ -38,6 +38,7 @@ const authenticatedRequest = {
   authorizationSent: true,
   method: "POST",
   path: "/v1/chat/completions",
+  hostHeader: "custom-fixture.example",
   model: "custom-model",
   bodyBytes: 1,
 };
@@ -47,6 +48,7 @@ function harness(
     endpointUrl?: string;
     destroy?: ShellProbeResult;
     configure?: ShellProbeResult;
+    baselineHost?: string;
     rebuild?: ShellProbeResult;
     requests?: FakeOpenAiCompatibleRequest[];
     post?: ShellProbeResult;
@@ -78,6 +80,7 @@ function harness(
 
       requests.push({
         ...authenticatedRequest,
+        hostHeader: options.baselineHost ?? authenticatedRequest.hostHeader,
         auth: startupHasCustomCredential ? "ok" : "missing",
       });
       return startupHasCustomCredential
@@ -207,6 +210,8 @@ describe("Hermes custom hosted rebuild evidence", () => {
   it.each<{ requests: FakeOpenAiCompatibleRequest[] }>([
     { requests: [] },
     { requests: [{ ...authenticatedRequest, auth: "rejected" }] },
+    { requests: [{ ...authenticatedRequest, hostHeader: undefined }] },
+    { requests: [{ ...authenticatedRequest, hostHeader: "custom-fixture.example:8443" }] },
     { requests: [{ ...authenticatedRequest, model: "wrong-model" }] },
     { requests: [{ ...authenticatedRequest, path: "/v1/models", method: "GET" }] },
   ])(
@@ -217,6 +222,29 @@ describe("Hermes custom hosted rebuild evidence", () => {
       expect(h.operations).toEqual(["destroy", "configure", "baseline", "rebuild", "post"]);
     },
   );
+
+  it.each(["baseline", "replacement"] as const)(
+    "rejects a valid local turn in place of the hosted %s turn",
+    async (phase) => {
+      const localHost = "host.openshell.internal:11434";
+      const h = harness(
+        phase === "baseline"
+          ? { baselineHost: localHost }
+          : { requests: [{ ...authenticatedRequest, hostHeader: localHost }] },
+      );
+      await expect(h.run()).rejects.toThrow();
+      expect(h.operations).toEqual(
+        phase === "baseline"
+          ? ["destroy", "configure", "baseline"]
+          : ["destroy", "configure", "baseline", "rebuild", "post"],
+      );
+    },
+  );
+
+  it("accepts the hosted HTTPS authority with an explicit default port", async () => {
+    const h = harness({ baselineHost: "CUSTOM-FIXTURE.EXAMPLE:443" });
+    await expect(h.run()).resolves.toBeUndefined();
+  });
 
   it("does not retry a failed first replacement request", async () => {
     const h = harness({ post: { ...result(22), stderr: "__NEMOCLAW_HTTP_STATUS__=503\n" } });

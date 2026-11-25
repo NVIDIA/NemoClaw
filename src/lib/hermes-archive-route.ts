@@ -3,12 +3,16 @@
 
 import {
   HOSTED_NATIVE_PROVIDERS,
+  hostedNativeProvider,
   nativeHostedAgentConfig,
 } from "./inference/native-provider/agent-config.ts";
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "./inference/anthropic/openai-surface.ts";
 import { customNativeProviderForSelection } from "./inference/native-provider/custom.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./inference/native-nvidia/contract.ts";
 import { NVIDIA_INFERENCE_PLACEHOLDER } from "./inference-credential.ts";
+import { unsafeEndpointUrlViolation } from "./core/endpoint-url-safety.ts";
+import { nativeLocalCredentialReference } from "./inference/native-local/agent-config.ts";
+import { normalizeNativeProviderAttachment } from "./inference/native-provider/contract.ts";
 
 /** Registered provider and authorized agent endpoint used by archive sanitation. */
 export type HermesRegisteredRoute = Readonly<{
@@ -17,9 +21,17 @@ export type HermesRegisteredRoute = Readonly<{
 }>;
 
 function hermesArchiveEndpoint(value: string): string {
-  // URL serialization normalizes host spelling and default ports, while retaining
-  // the API path, credentials, query and fragment for the writer's validation.
-  return new URL(value).href.replace(/\/+$/u, "");
+  const raw = /^https?:\/\/([^/]+)(\/.*)?$/iu.exec(value);
+  const url = new URL(value);
+  const defaultPort = url.protocol === "https:" ? "443" : "80";
+  if (
+    !raw ||
+    unsafeEndpointUrlViolation(value) ||
+    ![url.host, `${url.hostname}:${defaultPort}`].includes(raw[1]!.toLowerCase()) ||
+    (raw[2] ?? "/") !== url.pathname
+  )
+    throw new Error("Invalid Hermes archive endpoint");
+  return url.href.replace(/\/+$/u, "");
 }
 
 /** Reconcile logical registration with its validated sandbox-facing binding. */
@@ -28,8 +40,16 @@ export function hermesRegisteredRoute(
 ): HermesRegisteredRoute {
   const { provider, endpointUrl: logicalEndpointUrl } = selection;
   try {
+    if (logicalEndpointUrl) hermesArchiveEndpoint(logicalEndpointUrl);
     const customDefinition = customNativeProviderForSelection(selection);
     const attachment = selection.nativeHostedProviderAttachment;
+    let attachmentEndpoint = attachment?.endpointUrl;
+    if (provider === "hermes-provider" && attachment && attachmentEndpoint === undefined) {
+      const fixed = hostedNativeProvider(provider)!;
+      if (!normalizeNativeProviderAttachment(attachment, fixed))
+        return { provider, endpointUrl: null };
+      attachmentEndpoint = fixed.endpoint;
+    }
     // The binding owner checks the logical endpoint, API and credential name,
     // then supplies the agent projection (for example /team -> /team/v1).
     if (
@@ -43,7 +63,6 @@ export function hermesRegisteredRoute(
     const legacyAgentEndpointUrl =
       provider === "compatible-anthropic-endpoint" &&
       logicalEndpointUrl &&
-      selection.preferredInferenceApi &&
       selection.preferredInferenceApi !== "anthropic-messages"
         ? getCompatibleAnthropicOpenAiSurfaceBaseUrl(logicalEndpointUrl)
         : logicalEndpointUrl;
@@ -53,7 +72,7 @@ export function hermesRegisteredRoute(
     const agentEndpoints = (
       customDefinition
         ? [customDefinition.endpointUrl]
-        : [legacyAgentEndpointUrl, attachment?.endpointUrl]
+        : [legacyAgentEndpointUrl, attachmentEndpoint]
     )
       .filter((endpoint): endpoint is string => endpoint !== null && endpoint !== undefined)
       .map(hermesArchiveEndpoint);
@@ -96,7 +115,11 @@ export function hermesManagedRouteReference(
   }
   if (typeof baseUrl !== "string") return null;
   try {
-    if (registered !== undefined && registered.endpointUrl !== hermesArchiveEndpoint(baseUrl))
+    const endpoint = hermesArchiveEndpoint(baseUrl);
+    if (
+      (registered !== undefined && registered.endpointUrl !== endpoint) ||
+      nativeLocalCredentialReference(provider, baseUrl)
+    )
       return null;
     // Reuse the writer's provider and endpoint restrictions.
     const hosted = nativeHostedAgentConfig(provider, baseUrl);

@@ -3,6 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import { hermesManagedRouteReference, hermesRegisteredRoute } from "./hermes-archive-route";
+import { applyHermesManagedRoute } from "./hermes-managed-route";
+import { hostedNativeProvider } from "./inference/native-provider/hosted";
 import {
   customNativeProvider,
   customNativeProviderForSelection,
@@ -43,6 +45,67 @@ function selectionFor(provider: string, api: string, logicalPath: string) {
 }
 
 describe("Hermes archive route authority", () => {
+  it.each([
+    "https://approved.invalid\\@other.invalid/../v1",
+    "https://approved.invalid/ignored/../v1",
+    "https://approved.invalid/v1?",
+    "https://approved.invalid/v1#",
+  ])("rejects ambiguous archive URL %s before normalization", (baseUrl) => {
+    const provider = "compatible-endpoint";
+    const registered = hermesRegisteredRoute({
+      provider,
+      endpointUrl: "https://approved.invalid/v1",
+    });
+    expect(hermesManagedRouteReference(provider, baseUrl, registered)).toBeNull();
+    expect(hermesManagedRouteReference(provider, baseUrl)).toBeNull();
+    expect(hermesRegisteredRoute({ provider, endpointUrl: baseUrl }).endpointUrl).toBeNull();
+  });
+
+  it("uses the fixed Hermes endpoint when its attachment omits the endpoint", () => {
+    const provider = "hermes-provider";
+    const fixed = hostedNativeProvider(provider)!;
+    const attachment = {
+      schemaVersion: 1 as const,
+      profileId: fixed.profileId,
+      providerName: fixed.providerName,
+      providerId: "provider-id",
+    };
+    const registered = hermesRegisteredRoute({
+      provider,
+      nativeHostedProviderAttachment: attachment,
+    });
+    expect(hermesManagedRouteReference(provider, fixed.endpoint, registered)?.template).toBe(
+      "${OPENAI_API_KEY}",
+    );
+    const conflict = hermesRegisteredRoute({
+      provider,
+      endpointUrl: "https://other.invalid/v1",
+      nativeHostedProviderAttachment: attachment,
+    });
+    expect(hermesManagedRouteReference(provider, "https://other.invalid/v1", conflict)).toBeNull();
+    expect(hermesManagedRouteReference(provider, fixed.endpoint, conflict)).toBeNull();
+  });
+
+  it("does not grant a hosted reference to a route written with a local credential", () => {
+    const provider = "compatible-endpoint";
+    const baseUrl = "http://host.openshell.internal:11434/v1";
+    const config: Record<string, unknown> = {};
+    applyHermesManagedRoute(config, {
+      upstreamProvider: provider,
+      baseUrl,
+      model: "m",
+      inferenceApi: "openai-completions",
+    });
+    expect(config.model.api_key).toBe("${NEMOCLAW_LOCAL_INFERENCE_TOKEN}");
+    expect(
+      hermesManagedRouteReference(
+        provider,
+        baseUrl,
+        hermesRegisteredRoute({ provider, endpointUrl: baseUrl }),
+      ),
+    ).toBeNull();
+  });
+
   it.each(routes)(
     "validates %s %s archives against the agent endpoint (#14300)",
     (provider, api, logicalPath, agentPath) => {

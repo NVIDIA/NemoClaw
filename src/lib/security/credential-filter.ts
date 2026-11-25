@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { basename } from "node:path";
+import { Script } from "node:vm";
 
 import {
   SECRET_BLOCK_PATTERNS,
@@ -141,21 +142,22 @@ function textWithoutSafeCredentialFixtures(value: string): string {
 
 function isSqlBindParameter(
   text: string,
-  assignment: RegExpExecArray,
+  field: RegExpExecArray,
+  value: RegExpExecArray,
   scannedPrefixLength: number,
 ): boolean {
-  const candidate = /^\?\)*(?:$|(['"])\)*(?:[.!?]['"]?)?)$/u.exec(assignment[4] ?? "");
+  const candidate = /^\?\)*(?:$|(['"])\)*(?:[.!?]['"]?)?)$/u.exec(value[3] ?? "");
   if (candidate === null) return false;
-  if (!/=[ \t]*\?/u.test(assignment[0])) return false;
+  if (!field[0].endsWith("=")) return false;
   // A bind marker carries no credential. Keep context bounded and within its quote.
   const query = /(['"])(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|EXPLAIN)\b[^'"\r\n\0]*$/iu.exec(
-    text.slice(Math.max(0, assignment.index - 1_024), assignment.index),
+    text.slice(Math.max(0, field.index - 1_024), field.index),
   );
   return (
     (query !== null && (candidate[1] === undefined || candidate[1] === query[1])) ||
     // A complete marker already passed with its original context. Values
     // reaching the old chunk boundary must still be inspected with new bytes.
-    assignment.index + assignment[0].length < scannedPrefixLength
+    value.index + value[0].length < scannedPrefixLength
   );
 }
 
@@ -193,27 +195,26 @@ export function credentialFindingRule(
   const scannedPrefixLength = withoutPlaceholders.startsWith(scannedPrefix)
     ? scannedPrefix.length
     : 0;
-  const assignment =
-    /(?<![A-Za-z0-9_.-])["']?([_A-Za-z][_A-Za-z0-9.-]{0,127})["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;{}]+))/gu;
+  const assignment = /(?<![A-Za-z0-9_.-])["']?([_A-Za-z][_A-Za-z0-9.-]{0,127})["']?[ \t]*[:=]/gu;
+  const assignmentValue = /[ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;{}]+))/uy;
   for (;;) {
     const match = assignment.exec(withoutPlaceholders);
     if (!match) break;
     const field = match[1]!.replace(/^_+/u, "");
-    const candidate = match[2] ?? match[3] ?? match[4] ?? "";
+    if (/^(?:module\.)?exports\./u.test(field) || !isCredentialField(field)) continue;
+    assignmentValue.lastIndex = assignment.lastIndex;
+    const valueMatch = assignmentValue.exec(withoutPlaceholders);
+    if (!valueMatch) continue;
+    const candidate = valueMatch[1] ?? valueMatch[2] ?? valueMatch[3] ?? "";
     if (
-      !/^(?:module\.)?exports\./u.test(field) &&
-      isCredentialField(field) &&
       !isSafeCredentialPlaceholder(candidate) &&
       !(
         options.sqlBindParameters === true &&
-        isSqlBindParameter(withoutPlaceholders, match, scannedPrefixLength)
+        isSqlBindParameter(withoutPlaceholders, match, valueMatch, scannedPrefixLength)
       )
     ) {
       return "credential-assignment";
     }
-    // A non-credential outer JSON key can contain a nested credential key.
-    // Advance one character so the bounded scan considers that inner object.
-    assignment.lastIndex = match.index + 1;
   }
   return null;
 }
@@ -224,6 +225,32 @@ export function textContainsCredential(
   options: CredentialScanOptions = {},
 ): boolean {
   return credentialFindingRule(value, options) !== null;
+}
+
+const runCredentialScan = new Script("scan()");
+
+export function textContainsCredentialWithinDeadline(
+  prepareInput: () => string,
+  options: CredentialScanOptions,
+  timeoutMs: number,
+): boolean | "deadline" {
+  if (timeoutMs <= 0) return "deadline";
+  try {
+    return runCredentialScan.runInNewContext(
+      { scan: () => textContainsCredential(prepareInput(), options) },
+      { timeout: timeoutMs },
+    ) as boolean;
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ERR_SCRIPT_EXECUTION_TIMEOUT"
+    ) {
+      return "deadline";
+    }
+    throw error;
+  }
 }
 
 /** Detect npm registry credential directives even when their values are opaque. */

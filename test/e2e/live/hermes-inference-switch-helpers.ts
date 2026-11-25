@@ -942,6 +942,17 @@ export async function rebuildHermesCustomBaseline({
   progress: Pick<TestProgress, "phase">;
   artifacts: InferenceSwitchRetryArtifactSink;
 }): Promise<void> {
+  const hostedUrl = new URL(endpointUrl);
+  const hostedEndpoint = {
+    requests: () =>
+      endpoint.requests().filter(({ hostHeader }) => {
+        const authority = hostHeader?.toLowerCase();
+        return (
+          authority === hostedUrl.host ||
+          (!hostedUrl.port && authority === `${hostedUrl.hostname}:443`)
+        );
+      }),
+  };
   progress.phase("onboard and exercise the custom Hermes hosted route");
   // Match the archive regression: start with a custom hosted route. Child
   // gateway restarts after inference set retain the entrypoint's old provider
@@ -981,7 +992,7 @@ export async function rebuildHermesCustomBaseline({
   expectExitZero(configured, "onboard the custom hosted route before rebuild");
   await expectHermesEndpointTurn({
     sandbox,
-    endpoint,
+    endpoint: hostedEndpoint,
     model,
     redactionValues,
     attempts: 1,
@@ -1000,7 +1011,7 @@ export async function rebuildHermesCustomBaseline({
   expectExitZero(rebuilt, "rebuild Hermes custom route without a host credential");
   await expectHermesEndpointTurn({
     sandbox,
-    endpoint,
+    endpoint: hostedEndpoint,
     model,
     redactionValues,
     attempts: 1,

@@ -64,6 +64,7 @@ import {
   sanitizeEnvFileContent,
   stripCredentials,
   textContainsCredential,
+  textContainsCredentialWithinDeadline,
   textContainsHighConfidenceCredential,
   valueLooksLikeSecret,
 } from "../security/credential-filter.js";
@@ -1805,9 +1806,14 @@ function scanNativeTarFilePayload(
     if (backupDeadlineExpired(deadlineMs)) return "deadline";
     const payload = readArchiveRange(descriptor, position, size);
     if (!payload) return null;
-    const input = hermesArchiveCredentialScanInput(payload.toString("utf8"));
-    if (backupDeadlineExpired(deadlineMs)) return "deadline";
-    return textContainsCredential(input, { ...credentialOptions, privateKeyHeader });
+    const timeout = remainingBackupTimeoutMs(deadlineMs, NATIVE_STATE_CAPTURE_TIMEOUT_MS);
+    if (timeout === null) return "deadline";
+    const result = textContainsCredentialWithinDeadline(
+      () => hermesArchiveCredentialScanInput(payload.toString("utf8")),
+      { ...credentialOptions, privateKeyHeader },
+      timeout,
+    );
+    return backupDeadlineExpired(deadlineMs) ? "deadline" : result;
   }
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;

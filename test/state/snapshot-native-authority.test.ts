@@ -160,6 +160,17 @@ describe("complete native-home machine authority", () => {
       template: "${OPENAI_API_KEY}",
     },
   ])("Hermes $provider archive references", ({ provider, baseUrl, template }) => {
+    const writtenBaseUrl =
+      provider === "compatible-anthropic-endpoint"
+        ? getSandboxInferenceConfig(
+            "m",
+            provider,
+            resolveAgentInferenceApi("hermes", provider, null),
+            true,
+            baseUrl,
+            "hermes",
+          ).inferenceBaseUrl
+        : baseUrl;
     it.each([
       {
         name: "managed route with Discord",
@@ -236,7 +247,7 @@ describe("complete native-home machine authority", () => {
           const route = {
             model: "nvidia/nemotron-3-ultra-550b-a55b",
             upstreamProvider: provider,
-            baseUrl,
+            baseUrl: writtenBaseUrl,
             inferenceApi: "openai-completions",
           };
           applyHermesManagedRoute(config, route);
@@ -558,22 +569,19 @@ describe("complete native-home machine authority", () => {
         const nativeRoot = path.join(fixture, "native-home");
         fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
         const config: Record<string, unknown> = { settings: { max_turns: 12 } };
-        const agentRoute =
-          attachment === undefined && api === null
-            ? null
-            : getSandboxInferenceConfig(
-                "m",
-                provider,
-                api ?? resolveAgentInferenceApi("hermes", provider, "openai-completions"),
-                true,
-                baseUrl,
-                "hermes",
-              );
+        const agentRoute = getSandboxInferenceConfig(
+          "m",
+          provider,
+          api ?? resolveAgentInferenceApi("hermes", provider, "openai-completions"),
+          true,
+          baseUrl,
+          "hermes",
+        );
         applyHermesManagedRoute(config, {
           model: "m",
           upstreamProvider: provider,
-          baseUrl: agentRoute?.inferenceBaseUrl ?? baseUrl,
-          inferenceApi: agentRoute?.inferenceApi ?? "openai-completions",
+          baseUrl: agentRoute.inferenceBaseUrl,
+          inferenceApi: agentRoute.inferenceApi,
         });
         const source = JSON.stringify(config);
         const configPath = path.join(nativeRoot, ".hermes/config.yaml");
@@ -615,16 +623,25 @@ describe("complete native-home machine authority", () => {
       endpointUrl: CUSTOM_ENDPOINTS["compatible-endpoint"],
       agentEndpoint: "http://203.0.113.10:11541/v1",
       reference: "${COMPATIBLE_API_KEY}",
+      attached: true,
     },
     {
       provider: "compatible-anthropic-endpoint",
       endpointUrl: "https://host.example.test/team",
       agentEndpoint: "https://host.example.test/team/v1",
       reference: "${COMPATIBLE_ANTHROPIC_API_KEY}",
+      attached: true,
+    },
+    {
+      provider: "compatible-anthropic-endpoint",
+      endpointUrl: "https://legacy.example.test/team",
+      agentEndpoint: "https://legacy.example.test/team/v1",
+      reference: "${COMPATIBLE_ANTHROPIC_API_KEY}",
+      attached: false,
     },
   ])(
-    "restores the production $provider credential reference after a rebuild (#14300)",
-    async ({ provider, endpointUrl, agentEndpoint, reference }) => {
+    "restores the production $provider credential reference after a rebuild, attached=$attached (#14300)",
+    async ({ provider, endpointUrl, agentEndpoint, reference, attached }) => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-custom-key-"));
       try {
         const binDir = path.join(fixture, "bin");
@@ -662,15 +679,21 @@ process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
         writeSandboxRegistry("alpha", "hermes", {
           provider,
           endpointUrl,
-          attachmentEndpointUrl: endpointUrl,
+          attachmentEndpointUrl: attached ? endpointUrl : undefined,
         });
         const stored = JSON.parse(
           fs.readFileSync(path.join(TMP_HOME, ".nemoclaw/sandboxes.json"), "utf8"),
         ).sandboxes.alpha;
         expect(stored.endpointUrl).toBe(endpointUrl);
-        expect(stored.nativeHostedProviderAttachment.custom.api).toBe("openai-completions");
-        expect(stored.nativeHostedProviderAttachment.custom.endpointUrl).toBe(endpointUrl);
-        expect(stored.nativeHostedProviderAttachment.endpointUrl).toBe(agentEndpoint);
+        expect(stored.nativeHostedProviderAttachment).toEqual(
+          attached
+            ? expect.objectContaining({
+                custom: expect.objectContaining({ api: "openai-completions", endpointUrl }),
+                endpointUrl: agentEndpoint,
+              })
+            : undefined,
+        );
+        expect(stored.preferredInferenceApi).toBe(attached ? "openai-completions" : undefined);
         expect((config.model as { base_url: string }).base_url).toBe(agentEndpoint);
 
         const backup = sandboxState.backupSandboxState("alpha");

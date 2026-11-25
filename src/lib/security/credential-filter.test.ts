@@ -18,6 +18,7 @@ import {
   sanitizeEnvFileContent,
   stripCredentials,
   textContainsCredential,
+  textContainsCredentialWithinDeadline,
   textContainsHighConfidenceCredential,
   valueLooksLikeSecret,
 } from "./credential-filter.js";
@@ -291,6 +292,20 @@ describe("textContainsHighConfidenceCredential", () => {
 });
 
 describe("textContainsCredential", () => {
+  it("inspects a dense comment without rescanning the suffix for every assignment", () => {
+    const comment = `# ${"a=".repeat(64 * 1024)}`;
+    expect(textContainsCredentialWithinDeadline(() => comment, {}, 2_000)).toBe(false);
+    expect(textContainsCredentialWithinDeadline(() => `${comment}password=opaque`, {}, 2_000)).toBe(
+      true,
+    );
+  });
+
+  it("interrupts a scan already in progress instead of returning clean after expiry", () => {
+    const comment = "# " + "a=".repeat(512 * 1024);
+    const result = textContainsCredentialWithinDeadline(() => comment, {}, 1);
+    expect(result).toBe("deadline");
+  });
+
   it("keeps SQL-shaped assignments credential-bearing by default", () => {
     expect(textContainsCredential("'SELECT id FROM users WHERE password=?'")).toBe(true);
   });
