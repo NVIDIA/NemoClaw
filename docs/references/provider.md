@@ -1069,7 +1069,7 @@ Ambient Helm and Kubernetes settings are excluded.
 Teardown removes the release before the issuer.
 The authentication resource must confirm through `release_present` that the Helm release records are absent before it deletes the issuer.
 The namespace, encryption key, and persistent volumes remain.
-[Managed Kubernetes ownership](../../internal-docs/design/architecture.md#managed-kubernetes-ownership) explains recovery when Helm loses its release binding, and [Deploying to Kubernetes or OpenShift](../build-deploy/kubernetes.md) gives the procedure.
+[Managed Kubernetes ownership](../../internal-docs/design/architecture.md#managed-kubernetes-ownership) explains recovery when Helm loses its release binding, and [Destroying a Managed Deployment](../build-deploy/kubernetes.md#destroying-a-managed-deployment) gives the procedure.
 
 ## Packaging and Qualification
 

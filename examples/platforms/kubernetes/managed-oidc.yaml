@@ -4,17 +4,20 @@
 # An OpenClaw and a Hermes agent on a managed Kubernetes gateway that accepts
 # tokens from your OIDC issuer, with images from a private registry. Unlike
 # the development profile, the oidc profile lets you reach the gateway with
-# the OpenShell CLI; see "Authenticate Through an Existing OIDC Issuer" in
+# the OpenShell CLI; see "Authenticating Through an Existing OIDC Issuer" in
 # docs/build-deploy/kubernetes.md.
 # Before the first apply, create the namespace below and, in it, the ConfigMap
-# issuer-ca and the registry Secret registry-credentials, as that guide shows.
+# issuer-ca and the registry Secret registry-credentials, as "Authenticating
+# Through an Existing OIDC Issuer" and "Referencing Registry Credentials" in
+# docs/build-deploy/kubernetes.md show.
 # Replace the deployment UID, the context, the issuer settings, and both image
 # digests. Where you run nemoclaw, set NVIDIA_INFERENCE_API_KEY, and before
 # each plan, apply or destroy set NEMOCLAW_GATEWAY_TOKEN to a fresh token for
 # the audience that carries the admin role.
-# Write each image's metadata bundle with `cargo images export-metadata` and set
-# NEMOCLAW_OPENCLAW_IMAGE_METADATA and NEMOCLAW_HERMES_IMAGE_METADATA to their
-# paths; see docs/build-deploy/build.md.
+# Download each image's `<image>.metadata.json` from the release, or write it
+# with `cargo images export-metadata`, and set NEMOCLAW_OPENCLAW_IMAGE_METADATA
+# and NEMOCLAW_HERMES_IMAGE_METADATA to their absolute paths; see
+# docs/build-deploy/kubernetes.md#preparing-agent-images.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
