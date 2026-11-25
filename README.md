@@ -69,10 +69,21 @@ The [43-second lifecycle recording](docs/assets/terminal-lifecycle-verbose.mp4) 
 - [Get started with NemoClaw Agent Configs](docs/get-started/first-deployment.md).
 - [Author deployment YAML with onboarding](docs/get-started/onboard.md).
 - [Browse shipped examples by use case and environment](examples/README.md).
+- [Explore community recipes](#community-recipes).
 - [Build NemoClaw from source](docs/build-deploy/build.md) for a custom revision or build-only target.
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).
+
+### Community Recipes
+
+[NVIDIA/nemoclaw-community](https://github.com/NVIDIA/nemoclaw-community) hosts use-case recipes with deployment YAML, skills, supporting services, and setup instructions.
+Start with these Agent Configs recipes:
+
+- [NV Tech Assistant](https://github.com/NVIDIA/nemoclaw-community/tree/main/examples/recipes/nvidia/nv-tech-assistant-agent-configs) runs OpenClaw with a skill for answering NVIDIA technical questions using permitted sources.
+- [Deep Research Worker](https://github.com/NVIDIA/nemoclaw-community/tree/main/examples/recipes/community/deep-research-worker/agent-configs) connects OpenClaw to a separate DeepAgents worker through a skill that delegates research tasks.
+
+Each recipe documents its required NemoClaw version, credentials, and limitations.
 
 ## Roadmap
 
