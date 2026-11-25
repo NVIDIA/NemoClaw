@@ -172,7 +172,7 @@ jobs:
       # runs the other.
       - name: Set up Python for image source-retention tests
         if: inputs.unit && runner.os != 'Windows'
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
       - name: Run tests
@@ -273,7 +273,7 @@ jobs:
         run: docker buildx version || true
       - name: Set up Python for image source-retention tests
         if: runner.os != 'Windows'
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
       - name: Run tests
