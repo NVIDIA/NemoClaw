@@ -93,6 +93,13 @@ OpenTofu 1.13.10:
 - The bundle's OpenTofu is 1.13.10, built with Go 1.27.4 for GO-2026-6859, an HTTP/1 server crash.
   `tofu test` overrides resources in indexed modules correctly.
 
+Images:
+
+- The managed Ollama runtime image builds on Ollama 0.40.18, which bundles llama.cpp b12651.
+  Rebuild it to use it.
+- The OpenCode image builds with Bun 1.4.5, and the agent images with uv 0.13.10.
+- The agent, runtime, supervisor, and Ollama proxy images build on current digests of the same Node.js 26.13.1, Python 3.14.10, and Rust 1.100.0 tags.
+
 ### Changes in v0.1.0-rc12
 
 These changes reached `v1` between the `v0.1.0-rc11` and `v0.1.0-rc12` tags.
