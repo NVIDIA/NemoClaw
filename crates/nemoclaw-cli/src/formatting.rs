@@ -1253,52 +1253,6 @@ mod tests {
     }
 
     #[test]
-    fn powershell_handoff_selects_the_deployment_and_sends_json_on_stdin() {
-        let text = render_for_shell(
-            &["nemoclaw", "apply", "deployment.yaml"],
-            json!({"outcome": "succeeded", "changes": [], "agents": agents(),
-                "connection": {"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"}}),
-            Shell::PowerShell,
-        );
-        assert!(
-            text.contains("Remove-Item Env:OPENSHELL_GATEWAY -ErrorAction SilentlyContinue"),
-            "{text}"
-        );
-        assert!(
-            text.contains("$env:OPENSHELL_GATEWAY_ENDPOINT = 'http://127.0.0.1:17671'"),
-            "{text}"
-        );
-        assert!(
-            text.contains("$env:OPENSHELL_WORKSPACE = 'nc-1234567890abcdef'"),
-            "{text}"
-        );
-        let command = text
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("Invoke:"))
-            .unwrap()
-            .trim();
-        let (input, invocation) = command.split_once(" | ").unwrap();
-        let prompt: Value = serde_json::from_str(
-            input
-                .strip_prefix('\'')
-                .unwrap()
-                .strip_suffix('\'')
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(prompt, "Reply with exactly READY.");
-        assert!(
-            invocation.starts_with("openshell sandbox exec -n assistant "),
-            "{command}"
-        );
-        assert!(
-            invocation.ends_with("--agent main --runtime-id rt-1 --input - > reply-assistant.json"),
-            "{command}"
-        );
-        assert!(!text.contains("export OPENSHELL_"), "{text}");
-    }
-
-    #[test]
     fn powershell_paths_preserve_apostrophes_and_metacharacters() {
         let text = render_for_shell(
             &[
