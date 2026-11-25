@@ -40,11 +40,6 @@ impl Deployment {
         args: &[std::ffi::OsString],
     ) -> Result<(std::process::Command, Option<Vec<String>>), Error> {
         let (bundle, store) = self.open()?;
-        if !bundle.manifest.files.contains_key("libexec/openshell") {
-            return Err(Error::Bundle(
-                "the bundle has no OpenShell CLI; OpenShell publishes none for this platform",
-            ));
-        }
         let document = store
             .load()?
             .ok_or(Error::State("no deployment; apply one first"))?

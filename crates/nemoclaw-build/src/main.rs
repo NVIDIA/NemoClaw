@@ -580,16 +580,14 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
         .files
         .insert(tofu.clone(), bundle::hash_file(&root.join(tofu))?);
     fs::create_dir_all(root.join("licenses"))?;
-    if matches!(platform, "linux_arm64" | "linux_amd64" | "darwin_arm64") {
-        let archive = download(
-            pins.platforms
-                .get(platform)
-                .and_then(|p| p.get("openshell"))
-                .ok_or("missing OpenShell CLI platform pin")?,
-        )
-        .await?;
-        // The existing installer validates that the archive holds only its
-        // executable; extract separately so it cannot replace libexec/tofu.
+    // OpenShell publishes its CLI only for the platforms versions.json pins it on.
+    if let Some(pin) = pins
+        .platforms
+        .get(platform)
+        .and_then(|p| p.get("openshell"))
+    {
+        let archive = download(pin).await?;
+        // Extract apart from libexec, so the archive cannot replace libexec/tofu.
         let unpacked = tempfile::tempdir()?;
         let binary = nemoclaw_build::ci::install_openshell(&archive, &unpacked.path().join("cli"))?;
         let name = "libexec/openshell";
