@@ -151,6 +151,55 @@ Traces can contain prompts, model output, tool calls and their arguments, and fi
 - **Collectors:** retention and access are the collector operator's policy. NemoClaw does not configure them.
 - **Before sharing a trace:** review it for credentials, personal data, and confidential files. Keep the full-payload setting disabled unless you need it.
 
+### Usage Telemetry
+
+The `nemoclaw` CLI sends one usage record to NVIDIA when `apply` or `destroy` finishes, and when `onboard` writes the configuration.
+`plan` and `export` send nothing.
+Telemetry is on by default, and the CLI does not prompt for consent.
+
+To turn it off, set `NEMOCLAW_DISABLE_TELEMETRY` in the environment that runs `nemoclaw`:
+
+```bash
+export NEMOCLAW_DISABLE_TELEMETRY=1
+```
+
+Any value other than empty, `0`, or `false` in any letter case turns telemetry off, so `yes` and `TRUE` also work.
+Common CI variables, such as `CI` and `GITHUB_ACTIONS`, also turn it off by the same rule.
+A failed send never changes the command's output or exit code.
+
+The record carries these fields:
+
+| What | Fields |
+|---|---|
+| Install and build | `nvidiaSource`, `installId`, `firstRun`, `version`, `previousVersion`, `buildKind`, `testLabel` |
+| The command | `operation`, `outcome`, `effect`, `failureStage`, `durationMs` |
+| The machine | `os`, `arch`, `hostContext`, `deploymentSource`, `cloud`, `hardware` |
+| The configuration | `harnesses`, `models`, `inferenceHosts`, `computeDriver`, `sandboxCount`, `agentCount`, `webSearch`, `mcpConfigured` |
+
+The [telemetry design](../../internal-docs/design/telemetry.md) lists every field with its values and source, and every CI variable.
+These rules limit what the configuration and machine fields carry:
+
+- **Model names** are sent as written in the configuration, from each sandbox's default route. A name longer than 64 characters, or one that could hold a path or an address, such as `/home/alice/llama-3-8b` or `10.0.0.5:8000/llama`, is sent as `unknown`.
+- **Harness IDs** are sent as written only when the bundled Fabric catalog lists them. Any other ID is sent as `other`.
+- **Inference endpoints** are matched on the machine against `local`, `build.nvidia.com`, `inference.nvidia.com`, `openai`, and `anthropic`. Only the matched word is sent, or `other`; the URL is never sent.
+- **Machine details** are read locally, and only a word from a fixed list is sent.
+
+The record never carries deployment, sandbox, service, agent, user, or host names, file paths, URLs, endpoint or IP addresses, image names, credentials, prompts, or error text.
+
+The install ID is a random UUID kept in `telemetry.json` in a `nemoclaw` directory under the user configuration directory: `$XDG_CONFIG_HOME` or `~/.config` on Linux, `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows.
+It is not derived from the machine.
+Deleting the file creates a new install ID on the next run.
+Uninstalling the CLI does not remove the file.
+
+QA runs set `NEMOCLAW_TELEMETRY_TEST_LABEL`, which the record carries as `testLabel` so reports can leave QA runs out.
+When the label is not valid, the CLI sends nothing.
+
+The OpenShell gateway has its own telemetry, separate from this record.
+For a gateway that NemoClaw manages, the gateway's telemetry follows the same switch and CI variables.
+NemoClaw reads the switch when it plans the deployment, so set it before `plan` and `apply`.
+Changing the switch for an existing deployment replaces a Docker or Podman gateway on the next apply, keeping its storage, and upgrades a Kubernetes gateway's release.
+NemoClaw does not change an external gateway's telemetry; configure it with OpenShell's own settings.
+
 ## Hardening a Deployment
 
 Apply the controls at the boundary that enforces them and verify the resulting permissions before admitting untrusted work.
