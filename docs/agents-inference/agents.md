@@ -65,23 +65,21 @@ The gateway check is separate: the gateway must report exactly the OpenShell ver
 For an external gateway that fails this contract, ask its operator for a compatible endpoint; installing another client does not change the gateway.
 Do not upgrade another deployment's gateway to satisfy this one.
 
-For a release, download that tag's `version-pins.json` and use `components.openshellClient.version` and its platform archive under `components.openshellClient.archives`.
-Older release metadata can omit this entry; use that tag's `versions.json` and release-specific prerequisites instead.
-For a source build, use the same checkout's `openshell` and `platforms.PLATFORM.openshell` entries in `versions.json`.
-Do not read a newer checkout's pin for an older deployment.
-Only platforms with an archive entry have this pinned download route; Windows ARM64 uses the [WSL2 Linux client](../get-started/windows-wsl.md#preparing-the-matching-openshell-cli).
+For a release, use the `components.openshellClient` entry in that tag's `version-pins.json`; for a source build, use the same checkout's `versions.json`.
+Release metadata without this entry names its client in that release's prerequisites; do not substitute a newer release's or checkout's pin.
+Pinned archives cover Linux ARM64, Linux AMD64, and macOS ARM64; Windows ARM64 uses the Linux ARM64 client inside WSL2.
 
-On macOS ARM64, with `curl`, `jq`, and the selected release's `version-pins.json` in the current directory, download and verify its client as follows.
-For an older release without this entry, follow its own prerequisites instead of substituting a newer release's metadata.
+With `curl` and `jq`, set `PINS` to the selected file and `PLATFORM` to your platform, then download and verify the client in Bash:
 
 ```sh
-CLIENT_VERSION=$(jq -er '.components.openshellClient.version' version-pins.json) || exit 1
-CLIENT_URL=$(jq -er '.components.openshellClient.archives.darwin_arm64.url' version-pins.json) || exit 1
-CLIENT_SHA=$(jq -er '.components.openshellClient.archives.darwin_arm64.sha256' version-pins.json) || exit 1
+PINS=version-pins.json
+PLATFORM=darwin_arm64
+CLIENT_VERSION=$(jq -er '.components.openshellClient.version // .openshell' "$PINS") || exit 1
+ARCHIVE="(.components.openshellClient.archives.$PLATFORM // .platforms.$PLATFORM.openshell)"
 CLIENT_DIR="$HOME/.local/opt/nemoclaw/clients/openshell/$CLIENT_VERSION"
 mkdir -p "$CLIENT_DIR"
-curl -fL "$CLIENT_URL" -o "$CLIENT_DIR/archive.tar.gz" || exit 1
-printf '%s  %s\n' "$CLIENT_SHA" "$CLIENT_DIR/archive.tar.gz" | shasum -a 256 --check || exit 1
+curl -fL "$(jq -er "$ARCHIVE.url" "$PINS")" -o "$CLIENT_DIR/archive.tar.gz" || exit 1
+printf '%s  %s\n' "$(jq -er "$ARCHIVE.sha256" "$PINS")" "$CLIENT_DIR/archive.tar.gz" | shasum -a 256 --check || exit 1
 tar -xzf "$CLIENT_DIR/archive.tar.gz" -C "$CLIENT_DIR" || exit 1
 export PATH="$CLIENT_DIR:$PATH"
 command -v openshell

@@ -16,7 +16,7 @@ Choose the archive for the machine running `nemoclaw`, not for the sandbox or GP
 | macOS ARM64 | `darwin_arm64` | Apple silicon; CI tests on macOS 15 |
 | Windows AMD64 | `windows_amd64` | Windows 10 version 1803 or later, or Windows Server 2019 or later, for `tar` |
 
-Windows ARM64 has no native bundle. Use [Linux ARM64 through WSL2](windows-wsl.md); run its Linux commands inside WSL, not in PowerShell.
+Windows ARM64 has no native bundle. Use [Linux ARM64 through WSL2](from-source.md); run its Linux commands inside WSL, not in PowerShell.
 
 Check [Current Limits](../resources/limits.md#platforms-models-and-placement) for tested deployment combinations. Use the [agent and runtime image digests from the same release](../references/compatibility.md#using-one-release-together). For a source build, follow the [source build guide](../build-deploy/build.md#building-a-native-bundle).
 
@@ -227,7 +227,7 @@ If the browser automatically extracts archives, keep the original `.tar.gz` for 
 Finder can browse the bundle, but double-clicking `bin/nemoclaw` does not start onboarding.
 Keep the whole bundle together and run commands in Terminal.
 If macOS blocks execution, stop and record the exact warning, archive name, release, and signing evidence; do not remove quarantine or bypass Gatekeeper to qualify a release.
-For an unreleased revision, use [macOS from source](macos.md) instead.
+For an unreleased revision, use [onboarding from source](from-source.md) instead.
 
 Run these commands from an empty download directory with `curl`, `tar`, and the [GitHub CLI](https://cli.github.com/) available. Stop on any download or verification failure. Do not unpack a failed download or substitute an archive from another tag.
 

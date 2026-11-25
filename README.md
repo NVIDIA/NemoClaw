@@ -14,9 +14,7 @@ Choose agents, models, tools, and network access, then preview and apply deploym
 
 [Install the v0.1.0 CLI](docs/get-started/install.md) and follow the [first-deployment tutorial](docs/get-started/first-deployment.md) to verify an OpenClaw reply.
 
-On Windows ARM64, use [the WSL2 onboarding guide](docs/get-started/windows-wsl.md).
-Native Windows bundles support AMD64 only.
-The WSL2 guide builds the current checkout and creates a managed local gateway; the first-deployment tutorial uses the v0.1.0 release and an existing gateway.
+On Windows ARM64, which has no native bundle, [onboard from source in WSL2](docs/get-started/from-source.md).
 
 <a href="docs/get-started/first-deployment.md#gh-light-mode-only">
   <picture>
@@ -74,7 +72,7 @@ The [43-second lifecycle recording](docs/assets/terminal-lifecycle-verbose.mp4) 
 - [Author deployment YAML with onboarding](docs/get-started/onboard.md).
 - [Browse shipped examples by use case and environment](examples/README.md).
 - [Build NemoClaw from source](docs/build-deploy/build.md) for a custom revision or build-only target.
-- [Build and onboard on an Apple silicon Mac](docs/get-started/macos.md), starting in Terminal.
+- [Build and onboard from source](docs/get-started/from-source.md) on an Apple silicon Mac or in WSL2.
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).

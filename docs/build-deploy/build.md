@@ -42,17 +42,13 @@ Build the artifacts in the following order:
 
 Run every command in this guide from the repository root.
 
-On Apple silicon, [onboarding on macOS from source](../get-started/macos.md) connects the native bundle build to a Hermes deployment on Docker Desktop's ARM64 Linux VM.
-It includes Terminal entry, SDK linker diagnostics, and matching OpenShell client selection.
-
-On Windows ARM64, follow [onboarding through WSL2](../get-started/windows-wsl.md) before running Cargo.
-Native Windows ARM64 bundles are unavailable; use the Linux ARM64 toolchain inside WSL2.
-The first `cargo ci tools` command compiles its runner before installing tools, which can take several minutes.
+On an Apple silicon Mac or Windows ARM64, [onboarding from source](../get-started/from-source.md) connects these builds to a Hermes deployment on Docker Desktop.
+Windows ARM64 has no native bundle; use the Linux ARM64 toolchain inside WSL2.
 
 | Artifact | Requirements |
 |---|---|
 | Native bundle | Rust 1.100.0, pinned in [rust-toolchain.toml](../../rust-toolchain.toml); Protocol Buffers compiler (`protoc`) 36.2; a C toolchain for the TLS dependencies |
-| Agent images | Docker with Buildx on native Linux ARM64 or AMD64, or Docker Desktop's ARM64 Linux VM for the [macOS Hermes path](../get-started/macos.md); a Docker image store that retains repository digests for local builds, such as the tested containerd store; Rust, which runs the image builder and source downloader |
+| Agent images | Docker with Buildx on native Linux ARM64 or AMD64, or Docker Desktop's ARM64 Linux VM on an [Apple silicon Mac](../get-started/from-source.md); a Docker image store that retains repository digests for local builds, such as the tested containerd store; Rust, which runs the image builder and source downloader |
 | Runtime images | Docker with Buildx on a Linux ARM64 or AMD64 host; a Docker daemon that uses the containerd image store; Rust for the Ollama and llama.cpp images, which fetch their pinned sources |
 
 Initial builds need network access.
@@ -218,7 +214,7 @@ When building from source, build an image for each harness that the deployment r
 Before you build an agent image, check the following:
 
 - The build host has the [agent image requirements](#preparing-the-build-host): a Linux engine whose architecture, ARM64 or AMD64, matches the image you build.
-  For Hermes on Apple silicon, follow the [Docker Desktop procedure](../get-started/macos.md#building-the-hermes-image).
+  For Hermes on Apple silicon, follow the [Docker Desktop procedure](../get-started/from-source.md#building-the-hermes-image).
 - The Docker image store retains repository digests for local builds; [check the store](#checking-the-docker-image-store).
 
 To build an agent image and select it, perform the following steps:
