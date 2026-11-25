@@ -32,12 +32,17 @@ Prepare these inputs before running apply:
 - Its client-reachable endpoint and any bearer credential or mTLS files required by the gateway operator.
 - An inference endpoint reachable from OpenShell, its request API, an exact model ID, and any provider credential.
 - The OpenClaw image digest from the same release as the [installed bundle](install.md). The gateway's sandbox engine must be able to acquire it.
-- An authenticated OpenShell CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
 NemoClaw checks the gateway's reported OpenShell version and compute driver. Use the `components.gateway.version` pin in the release's [`version-pins.json`](../references/compatibility.md#using-one-release-together). The inference endpoint must support the [request API](../agents-inference/inference.md#choosing-the-request-api) you configure; endpoint reachability alone does not establish that the model can reply.
 
 Prepare native access before starting the tutorial:
+
+For plaintext, mTLS, and external OIDC gateways, the bundle already includes the matching CLI; an OIDC gateway also needs [login settings and sign-in](../references/cli.md#logging-in-to-an-external-oidc-gateway).
+After apply, use [`nemoclaw osh`](../references/cli.md#running-openshell-against-a-deployment) with the deployment's state directory and referenced TLS files.
+No separate OpenShell installation or profile setup is needed.
+
+For bearer-token gateways without OIDC login settings, including managed Kubernetes, configure a separate CLI:
 
 1. Use an OpenShell CLI at the pinned gateway version.
 
@@ -49,7 +54,7 @@ Prepare native access before starting the tutorial:
 
    </Warning>
 
-2. If the external gateway needs an authenticated profile, register it in the CLI with `openshell gateway add` for mTLS or OIDC.
+2. Register the gateway in the CLI with `openshell gateway add` and its OIDC settings.
    Follow [OpenShell's authentication guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx).
 
 The operator provides the external gateway and its credentials.

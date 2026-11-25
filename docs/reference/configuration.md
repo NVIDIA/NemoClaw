@@ -533,9 +533,27 @@ An existing gateway managed outside this deployment.
 | `credential` | [SecretRef](#secretref) | No | — | Optional bearer credential reference for an external HTTPS gateway. |
 | `endpoint` | string | Yes | — | Gateway HTTP(S) origin, without a path. Constraints: pattern `^https?://`. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
+| `oidc` | [GatewayOidc](#gatewayoidc) | No | — | Login settings for the bundled OpenShell CLI. OpenShell owns login and token renewal; deployment operations still use credential.env. The client secret, when needed, comes from OPENSHELL_OIDC_CLIENT_SECRET in the CLI process environment. |
 | `policyAuthority` | [PolicyAuthority](#policyauthority) | No | — | Who authors sandbox policy on this gateway; omission means NemoClaw does. |
 | `target` | [ExternalTarget](#externaltarget) | No | — | Where the existing gateway runs its sandboxes; omission selects Docker. Planning checks it against the compute driver the gateway reports. |
 | `tls` | [TLS](#tls) | No | — | Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS. |
+
+## GatewayOidc
+
+OIDC login for the bundled OpenShell CLI, without credentials.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.oidc`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `audience` | string | No | — | API audience requested at login; omission uses the client ID. Constraints: minimum characters 1; maximum characters 253. |
+| `clientId` | string | Yes | — | Identity-provider client registered for browser, device-code, or client-credentials login. Constraints: pattern `^[^\x00-\x20\x7f]+$`; minimum characters 1; maximum characters 253. |
+| `issuer` | string | Yes | — | HTTPS issuer URL, including its realm path when required. Constraints: minimum characters 1; maximum characters 2048. |
+| `scopes` | string | No | — | Space-separated OAuth scopes requested at login. Constraints: minimum characters 1; maximum characters 2048. |
 
 ## GatewayResourceList
 
