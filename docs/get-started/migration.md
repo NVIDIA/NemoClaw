@@ -11,6 +11,10 @@ NemoClaw has no upgrade, native-data transfer or rollback procedure: native data
 The evaluation steps below create a separate deployment.
 They don't provide an in-place upgrade or data conversion.
 
+This guide and [current limits](../resources/limits.md) describe current support.
+The [roadmap milestones](https://github.com/NVIDIA/NemoClaw/milestones) track planned work, including [planned NemoClaw v0 features for Agent Configs](https://github.com/NVIDIA/NemoClaw/milestone/14).
+Milestone placement alone does not promise a delivery date.
+
 ## Mapping the User Task
 
 Choose the current owner of the task rather than translating earlier CLI commands literally.
