@@ -7,6 +7,10 @@ This page lists what Agent Configs does not do yet or has not tested, with the o
 Other pages state a limit where it affects a procedure and link the same issue.
 Unlike these limits, the responsibilities in [Out of Scope](out-of-scope.md) are left to other components by design.
 
+This page and the [migration guide](../get-started/migration.md) describe current support.
+The [roadmap milestones](https://github.com/NVIDIA/NemoClaw/milestones) track planned work.
+Milestone placement alone does not promise a delivery date.
+
 The **Last Verified** column links the `v1` commit each row was last checked against, then what was checked.
 That commit's `versions.json` pins the upstream sources, and its `image/fabric/Dockerfile` pins the OpenClaw image:
 
