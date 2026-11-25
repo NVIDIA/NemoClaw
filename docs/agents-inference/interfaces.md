@@ -107,17 +107,13 @@ Plan and apply print a command for each agent with a recorded runtime ID, as in 
 
 ```text
 Agents:
-  In each terminal, select this deployment's gateway and workspace:
-    unset OPENSHELL_GATEWAY
-    export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
-    export OPENSHELL_WORKSPACE=nc-1234567890abcdef
   claw: agent main, runtime RUNTIME_ID
     Invoke:   nemoclaw osh -- sandbox exec -n claw --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id RUNTIME_ID --input FILE
   FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents-inference/agents.md.
 ```
 
 JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`.
-If an apply result also lists interfaces, the CLI prints the gateway and workspace selection once under **Agents**, not again under **Agent interfaces**.
+When the bundled CLI can't reach the gateway, such as a managed Kubernetes gateway, the commands use a standalone `openshell` instead, after the gateway and workspace selection, which the output prints once.
 A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
 A plan omits that section when no agent has a recorded runtime, such as before the first apply.
 Otherwise, an agent without a recorded runtime is listed with `no runtime recorded` and has no `runtimeId`.
@@ -199,15 +195,10 @@ Changing an agent's settings, including its interfaces, replaces its sandbox, de
 ### Forwarding, Reading the Token, and Signing In
 
 After apply, NemoClaw lists each enabled interface with the commands to reach it, and never prints a token.
-The following illustrative excerpt shows interface selection commands in isolation.
-In an apply result that also reports a recorded agent runtime, the **Agents** block supplies those commands instead:
+The following illustrative excerpt shows those commands:
 
 ```text
 Agent interfaces:
-  In each terminal, select this deployment's gateway and workspace:
-    unset OPENSHELL_GATEWAY
-    export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
-    export OPENSHELL_WORKSPACE=nc-1234567890abcdef
   claw/dashboard on port 18789
     Forward:  nemoclaw osh -- forward service claw --target-port 18789 --local 127.0.0.1:18789
     Token:    nemoclaw osh -- sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token
@@ -216,8 +207,7 @@ Agent interfaces:
 ```
 
 JSON results carry the same facts under `interfaces`.
-The gateway selection follows [Selecting the Gateway and Workspace](#selecting-the-gateway-and-workspace).
-For a gateway that needs an OpenShell profile, the output asks for your profile's name.
+For a gateway the bundled CLI can't reach, the commands use a standalone `openshell` after the selection in [Selecting the Gateway and Workspace](#selecting-the-gateway-and-workspace); for one that needs an OpenShell profile, the output asks for your profile's name.
 
 1. [Select the gateway and workspace](#selecting-the-gateway-and-workspace) in the terminal that will run the forward.
 2. Run the `Forward` command in that terminal and keep it running. Bind it to loopback; stopping the forward does not stop the runtime.

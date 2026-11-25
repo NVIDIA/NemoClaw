@@ -104,6 +104,10 @@ pub struct DeploymentConnection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway_endpoint: Option<String>,
     pub workspace: String,
+    /// Whether `nemoclaw osh` can reach the gateway: the bundle has the
+    /// OpenShell CLI, and the gateway needs no bearer token from NemoClaw.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bundled_cli: bool,
 }
 impl DeploymentConnection {
     /// Whether the OpenShell CLI can select the gateway by its endpoint alone:
@@ -347,6 +351,8 @@ impl Deployment {
         let connection = Some(DeploymentConnection {
             gateway_endpoint: document.spec.gateway.endpoint(),
             workspace: document.workspace(),
+            bundled_cli: bundle.manifest.files.contains_key("libexec/openshell")
+                && openshell_cli::reaches(&document.spec.gateway),
         });
         let compiled =
             compile::deployment_graph(&document, &record.generations, &bundle.manifest.version)?;
