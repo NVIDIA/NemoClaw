@@ -216,7 +216,7 @@ impl JourneyState {
                     }
                 }
                 if references.len() > observed.references.len() {
-                    question.note = Some("No usable local image was found. The release image is a suggestion; apply pulls it and checks compatibility. Private candidates require registry access.".into());
+                    question.note = Some("No usable local image was found. The release image is a suggestion; apply pulls it and checks compatibility.".into());
                 }
             }
             if references.is_empty() {
