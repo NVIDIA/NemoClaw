@@ -195,9 +195,7 @@ The API version alone does not identify a source revision.
 A source-derived provider version prevents reuse of a stale OpenTofu provider installation.
 Repository text uses LF on every platform, so checkout newline conversion does not change source-derived provider versions.
 
-CLI guide links use the checkout's Git commit.
-When building a source archive without `.git`, set `NEMOCLAW_DOCS_REVISION` to the archive's full 40-character source commit before building.
-Without that metadata, the CLI identifies the guide in the original source and reports that the documentation revision is unavailable.
+CLI guide links use the checkout's Git commit; a build without `.git` names each guide's path in its original source instead.
 
 Keep the bundle unchanged while an operation uses it.
 A Docker or Podman deployment keeps the gateway image pin of the bundle that created it.

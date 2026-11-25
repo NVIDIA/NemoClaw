@@ -33,8 +33,8 @@ fn main() {
     .unwrap();
 }
 
-// Keep installed clients' guidance tied to their source, including worktrees
-// and source archives whose builder supplies the original commit explicitly.
+// Link installed clients' guidance at the commit they were built from; a
+// checkout without Git metadata records none.
 fn documentation_revision() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let git = |args: &[&str]| {
@@ -63,15 +63,7 @@ fn documentation_revision() {
             println!("cargo:rerun-if-changed={}", root.join(path).display());
         }
     }
-    println!("cargo:rerun-if-env-changed=NEMOCLAW_DOCS_REVISION");
-    let revision = git(&["rev-parse", "HEAD"])
-        .or_else(|| env::var("NEMOCLAW_DOCS_REVISION").ok())
-        .unwrap_or_default();
-    assert!(
-        revision.is_empty()
-            || (revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit())),
-        "NEMOCLAW_DOCS_REVISION must be the full source Git commit"
-    );
+    let revision = git(&["rev-parse", "HEAD"]).unwrap_or_default();
     println!("cargo:rustc-env=NEMOCLAW_DOCS_REVISION={revision}");
 }
 
