@@ -729,7 +729,7 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
         *input.pointer_mut(pointer).unwrap() = json!({"env": "KUBE_TOKEN"});
         let error = schema_error(&input);
         assert!(
-            error.contains(&format!("schema at {path} (line")) && error.contains(rule),
+            error.contains(&format!("{path} (line")) && error.contains(rule),
             "{error}"
         );
         assert!(!error.contains("KUBE_TOKEN"), "{error}");
@@ -750,7 +750,7 @@ fn an_exposed_endpoint_error_states_the_endpoint_rule() {
         json!({"endpoint": "http://127.0.0.1:17671", "service": {"type": "NodePort"}});
     let error = schema_error(&input);
     assert!(
-        error.contains("schema at spec.gateway.target.kubernetes.expose.endpoint (line")
+        error.contains("spec.gateway.target.kubernetes.expose.endpoint (line")
             && error.contains(rule),
         "{error}"
     );
@@ -763,7 +763,7 @@ fn a_reserved_kubernetes_environment_name_states_the_naming_rule() {
         json!(["AWS_PROFILE", "KUBECONFIG"]);
     let error = schema_error(&input);
     assert!(
-        error.contains("schema at spec.gateway.target.kubernetes.environment[1] (line")
+        error.contains("spec.gateway.target.kubernetes.environment[1] (line")
             && error.contains(
                 "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
             ),
@@ -780,7 +780,7 @@ fn managed_services_with_a_kubernetes_runtime_state_the_cluster_rule() {
     input["spec"]["services"] = serde_json::to_value(managed.spec.services).unwrap();
     let error = schema_error(&input);
     assert!(
-        error.contains("schema at spec.services (line")
+        error.contains("spec.services (line")
             && error.contains(
                 "the kubernetes and openshift targets require external inference endpoints; managed services are not supported"
             ),

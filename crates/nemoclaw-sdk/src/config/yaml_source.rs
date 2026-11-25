@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::ConfigError;
+use super::{ConfigError, Diagnostic};
 use serde_saphyr::granit_parser::{Event, Parser, ScalarStyle};
+use std::{collections::BTreeMap, ops::ControlFlow};
 
 pub(super) fn validate_tags(text: &str) -> Result<(), ConfigError> {
     let mut populated = false;
@@ -85,7 +86,12 @@ pub(super) fn syntax_error(error: serde_saphyr::Error) -> ConfigError {
 }
 
 fn positioned(message: &str, line: usize, column: usize) -> ConfigError {
-    ConfigError(format!("{message} at line {line}, column {column}"))
+    ConfigError::from(Diagnostic {
+        line: Some(line),
+        column: Some(column),
+        message: message.to_owned(),
+        ..Diagnostic::default()
+    })
 }
 
 enum Frame {
@@ -100,19 +106,52 @@ enum Frame {
     },
 }
 
-/// Locate a validated JSON pointer using the same YAML parser's node positions.
-/// This runs only after bounded deserialization, and never renders source text.
-pub(super) fn position(text: &str, pointer: &str) -> Option<(usize, usize)> {
-    locate(text, pointer, false)
+/// Where each node of a parsed YAML document starts, by JSON pointer, using the
+/// same parser's node positions. It never renders source text.
+pub(super) struct Positions(BTreeMap<String, Node>);
+
+struct Node {
+    start: (usize, usize),
+    /// Where the mapping key that holds the node starts.
+    key: Option<(usize, usize)>,
 }
 
-/// Locate the mapping key that holds the value at a validated JSON pointer, or
-/// the value itself when a sequence holds it.
-pub(super) fn key_position(text: &str, pointer: &str) -> Option<(usize, usize)> {
-    locate(text, pointer, true)
+impl Positions {
+    pub(super) fn of(text: &str) -> Self {
+        let mut nodes = BTreeMap::new();
+        walk::<()>(text, |pointer, start, key| {
+            nodes.insert(pointer.to_owned(), Node { start, key });
+            ControlFlow::Continue(())
+        });
+        Self(nodes)
+    }
+
+    /// Where the value at `pointer` starts or, when the text doesn't write it,
+    /// its nearest ancestor that the text writes.
+    pub(super) fn value(&self, mut pointer: &str) -> Option<(usize, usize)> {
+        loop {
+            if let Some(node) = self.0.get(pointer) {
+                return Some(node.start);
+            }
+            pointer = &pointer[..pointer.rfind('/')?];
+        }
+    }
+
+    /// Where the mapping key that holds the value at `pointer` starts, or the
+    /// value itself when a sequence holds it.
+    pub(super) fn key(&self, pointer: &str) -> Option<(usize, usize)> {
+        self.0
+            .get(pointer)
+            .map(|node| node.key.unwrap_or(node.start))
+    }
 }
 
-fn locate(text: &str, pointer: &str, at_key: bool) -> Option<(usize, usize)> {
+/// Visits each node with its JSON pointer, where it starts, and where the
+/// mapping key that holds it starts, until `visit` breaks.
+fn walk<B>(
+    text: &str,
+    mut visit: impl FnMut(&str, (usize, usize), Option<(usize, usize)>) -> ControlFlow<B>,
+) -> Option<B> {
     let mut frames = Vec::new();
     for event in Parser::new_from_str(text) {
         let (event, span) = event.ok()?;
@@ -142,8 +181,8 @@ fn locate(text: &str, pointer: &str, at_key: bool) -> Option<(usize, usize)> {
                     }
                     None => (String::new(), None),
                 };
-                if path == pointer {
-                    return Some(key_start.filter(|_| at_key).unwrap_or(start));
+                if let ControlFlow::Break(found) = visit(&path, start, key_start) {
+                    return Some(found);
                 }
                 match event {
                     Event::MappingStart(..) => frames.push(Frame::Mapping { path, key: None }),

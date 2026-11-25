@@ -90,7 +90,10 @@ Array indices start at zero.
 Source lines and columns start at one, and columns count characters.
 Valid declaration names appear in paths, while arbitrary map keys appear as `[entry]` and rejected values remain omitted.
 YAML syntax and duplicate-key errors also include source positions without copying source text.
-Later semantic checks, such as unresolved references, retain their existing named-field diagnostics and might lack source positions.
+Semantic checks, such as unresolved references and API-key auth without a credential, name their field the same way.
+They run only on a document the schema accepts, so correcting schema errors can reveal semantic ones.
+A run reports every error it finds, in document order, and lists the first 20.
+A sandbox's semantic checks stop at its first error, while the other sandboxes are still checked.
 
 For `kvCacheGiB`, use `0` or an integer from `4` through `12` when `gpuMemoryUtilization` is absent.
 With `gpuMemoryUtilization`, `kvCacheGiB` must be omitted or zero.

@@ -136,10 +136,6 @@ impl<'a> NamedSandbox<'a> {
                     .or_else(|| shared.get(name))
                     .ok_or_else(|| {
                         super::references::missing_reference(
-                            &format!(
-                                "spec.sandboxes[{}].agent.integrationRefs[{index}]",
-                                super::references::diagnostic_name(self.name)
-                            ),
                             "integration",
                             name,
                             shared
@@ -147,8 +143,12 @@ impl<'a> NamedSandbox<'a> {
                                 .chain(sandbox.integrations.keys())
                                 .map(String::as_str),
                         )
+                        .or_at(&format!(
+                            "/spec/sandboxes/{}/agent/integrationRefs/{index}",
+                            self.name
+                        ))
                     })?;
-                Ok((None, name.as_str(), definition))
+                Ok::<_, ConfigError>((None, name.as_str(), definition))
             });
         let inline = agent
             .integrations
