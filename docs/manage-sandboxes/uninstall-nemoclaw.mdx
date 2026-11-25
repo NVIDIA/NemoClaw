@@ -62,8 +62,7 @@ Uninstall preserves an unrelated process that uses the same port.
 
 If uninstall reports `Portable lifecycle state is unsafe: Completed onboarding session authority is incomplete`, the affected gateway pass exits nonzero before it starts cleanup.
 With `--all-gateway-ports`, earlier passes may already have removed resources from other gateways.
-The message names the invalid field when NemoClaw can identify it.
-Other possible reasons include `the session record is malformed` and `the session record does not load as a completed onboarding session`.
+The message names the invalid field or gives a reason such as `the session record is malformed`.
 Keep `onboard-session.json` unchanged and [file an issue on GitHub](https://github.com/NVIDIA/NemoClaw/issues/new) with the full message.
 If `$$nemoclaw onboard` reports `Completed onboarding session authority is incomplete`, keep the file unchanged and report that message as well.
 
