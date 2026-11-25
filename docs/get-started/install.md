@@ -353,9 +353,9 @@ Refer to [Usage Telemetry](../security/security.md#usage-telemetry).
 
 Use the [bundle and image digests from the same release](../references/compatibility.md#using-one-release-together) and check [Current Limits](../resources/limits.md#platforms-models-and-placement) for your deployment configuration.
 
-## Upgrading and Uninstalling
+<a name="upgrading-and-uninstalling"></a>
 
-### Upgrading
+## Upgrading
 
 Existing deployments keep their original bundle, image pins, and state.
 Keep the previous bundle for recovery and teardown.
@@ -455,7 +455,7 @@ Open a new PowerShell window and run `nemoclaw --version` to verify the selected
 For a new release evaluation, use a fresh `metadata.uid`, state directory, and release-matched images.
 Rebuild [derived images](../build-deploy/derived-images.md) from the matching base.
 
-### Uninstalling
+## Uninstalling
 
 Removing the CLI does not delete deployments, deployment YAML, engine images, or OpenShell profiles.
 If a deployment or retained resources still depend on this bundle, keep it with the entire state directory.
