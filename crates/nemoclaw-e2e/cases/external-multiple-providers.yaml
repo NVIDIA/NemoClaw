@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# examples/multiple-providers.yaml on an external Kubernetes gateway, with
+# examples/features/multiple-providers.yaml on an external Kubernetes gateway, with
 # each sandbox described by the runner's metadata bundle: the researcher's
 # inference profile routes to a hosted and a local provider, and the writer
 # uses only the local one. external-multiple-providers-writer.yaml is a second

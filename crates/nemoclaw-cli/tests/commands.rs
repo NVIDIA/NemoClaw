@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{fs, process::Command};
+use std::fs;
 
 #[test]
 fn json_operation_failures_have_one_result_and_no_secret_or_state_mutation() {
@@ -10,7 +10,7 @@ fn json_operation_failures_have_one_result_and_no_secret_or_state_mutation() {
     fs::write(&config, "apiKey: secret-sentinel").unwrap();
     for operation in ["plan", "apply", "destroy"] {
         let state = directory.path().join(operation);
-        let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw"));
+        let mut command = crate::nemoclaw();
         command.args([operation, "-o", "json", "--progress", "off"]);
         if operation != "destroy" {
             command.arg(&config);
@@ -43,7 +43,7 @@ fn preflight_failures_report_no_runtime_mutations_in_text_and_json() {
             } else {
                 config.clone()
             };
-            let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw"));
+            let mut command = crate::nemoclaw();
             command.args([
                 "apply",
                 "--non-interactive",
@@ -96,7 +96,7 @@ fn interrupted_json_credential_prompt_returns_130_and_a_parseable_result() {
     let directory = tempfile::tempdir().unwrap();
     let config = write_credential_document(directory.path());
     let state = directory.path().join("state");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let mut child = crate::nemoclaw()
         .args(["apply", "-o", "json", "--progress", "off"])
         .arg(config)
         .arg("--state-dir")
@@ -164,7 +164,7 @@ fn invalid_configuration_fails_before_creating_state_or_echoing_secrets() {
     let state = directory.path().join("state");
     let config = directory.path().join("input.yaml");
     fs::write(&config, "apiKey: secret-sentinel").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let output = crate::nemoclaw()
         .arg("apply")
         .arg(config)
         .arg("--state-dir")
@@ -191,14 +191,14 @@ fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
         fs::write(state.join(name), contents).unwrap();
     }
     let document = nemoclaw_sdk::config::Document::parse(
-        include_bytes!("../../../examples/explicit-policy.yaml").as_slice(),
+        include_bytes!("../../../examples/features/explicit-policy.yaml").as_slice(),
     )
     .unwrap();
     let mut invalid = serde_json::to_value(&document).unwrap();
     invalid["spec"]["inferenceProviders"]["local"]["management"] = serde_json::json!("external");
     let config = directory.path().join("unsupported.yaml");
     fs::write(&config, invalid.to_string()).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let output = crate::nemoclaw()
         .arg("apply")
         .arg("--state-dir")
         .arg(&state)
@@ -210,11 +210,7 @@ fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
     assert!(!output.status.success());
     let diagnostic = String::from_utf8_lossy(&output.stderr);
     assert!(
-        diagnostic.contains("configuration violates schema"),
-        "{diagnostic}"
-    );
-    assert!(
-        diagnostic.contains("spec.inferenceProviders.local")
+        diagnostic.contains("spec.inferenceProviders.local (line 1, column ")
             && diagnostic.contains("unknown fields are not allowed"),
         "{diagnostic}"
     );
@@ -226,7 +222,7 @@ fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
 #[test]
 fn bundle_flag_selects_an_explicit_bundle() {
     let directory = tempfile::tempdir().unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let output = crate::nemoclaw()
         .args(["export", "--bundle"])
         .arg(directory.path())
         .arg("--state-dir")
@@ -243,7 +239,7 @@ fn failed_export_preserves_existing_output_file() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("export.yaml");
     fs::write(&path, "existing configuration").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let output = crate::nemoclaw()
         .args(["export", "--output"])
         .arg(&path)
         .arg("--bundle")
@@ -268,7 +264,7 @@ fn piped_input_requires_dash_and_usage_errors_exit_two() {
     ] {
         let directory = tempfile::tempdir().unwrap();
         let state = directory.path().join("state");
-        let mut child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        let mut child = crate::nemoclaw()
             .args(&args)
             .arg("--state-dir")
             .arg(&state)
@@ -298,7 +294,7 @@ fn piped_input_requires_dash_and_usage_errors_exit_two() {
 fn failed_progress_is_visible_without_verbose_and_stays_on_stderr() {
     let directory = tempfile::tempdir().unwrap();
     for verbose in [false, true] {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw"));
+        let mut command = crate::nemoclaw();
         command.args(["export", "--bundle"]).arg(directory.path());
         command
             .arg("--state-dir")
@@ -318,7 +314,7 @@ fn failed_progress_is_visible_without_verbose_and_stays_on_stderr() {
 
 fn write_credential_document(directory: &std::path::Path) -> std::path::PathBuf {
     let path = directory.join("credential-input.yaml");
-    let yaml = include_str!("../../../examples/openclaw.yaml").replace(
+    let yaml = include_str!("../../../examples/agents/openclaw.yaml").replace(
         "      endpoint: https://inference.example.com/v1",
         "      endpoint: https://inference.example.com/v1\n      credential: {env: STORY_CREDENTIAL_KEY}",
     );
@@ -334,7 +330,7 @@ fn lifecycle_credential_fulfillment_is_transient_redacted_and_precedes_execution
     let document = write_credential_document(directory.path());
     let state = directory.path().join("state-must-not-exist");
     let bundle = directory.path().join("missing-bundle");
-    let missing = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let missing = crate::nemoclaw()
         .args(["apply", "--non-interactive"])
         .arg(&document)
         .arg("--bundle")
@@ -355,7 +351,7 @@ fn lifecycle_credential_fulfillment_is_transient_redacted_and_precedes_execution
     assert!(!state.exists());
 
     let sentinel = "lifecycle-credential-value-sentinel";
-    let from_environment = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let from_environment = crate::nemoclaw()
         .arg("plan")
         .arg(&document)
         .arg("--non-interactive")
@@ -370,7 +366,7 @@ fn lifecycle_credential_fulfillment_is_transient_redacted_and_precedes_execution
     assert!(!String::from_utf8_lossy(&from_environment.stderr).contains(sentinel));
     assert!(!state.exists());
 
-    let mut prompted = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let mut prompted = crate::nemoclaw()
         .arg("apply")
         .arg(&document)
         .arg("--bundle")
@@ -403,7 +399,7 @@ fn stdin_configuration_requires_environment_credentials_without_prompting() {
 
     let directory = tempfile::tempdir().unwrap();
     let document = write_credential_document(directory.path());
-    let mut child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let mut child = crate::nemoclaw()
         .args(["apply", "-"])
         .arg("--bundle")
         .arg(directory.path().join("missing-bundle"))
@@ -444,7 +440,7 @@ fn plan_neither_requires_nor_asks_for_an_inference_credential() {
     let document = write_credential_document(directory.path());
     let state = directory.path().join("state-must-not-exist");
     let plan = |arguments: &[&OsStr], input: &[u8]| {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        let mut child = crate::nemoclaw()
             .arg("plan")
             .args(arguments)
             .arg("--bundle")
@@ -495,7 +491,7 @@ fn qualify_lifecycle_boundary() {
 
     for operation in ["plan", "apply"] {
         let state = directory.path().join(format!("{operation}-state"));
-        let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        let output = crate::nemoclaw()
             .arg(operation)
             .arg(&document)
             .arg("--non-interactive")
@@ -524,7 +520,7 @@ fn qualify_lifecycle_boundary() {
 fn removed_bundle_dir_flag_is_a_usage_error() {
     let root = tempfile::tempdir().unwrap();
     let state = root.path().join("state");
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let output = crate::nemoclaw()
         .args(["export", "--bundle-dir"])
         .arg(root.path())
         .arg("--state-dir")
@@ -543,7 +539,7 @@ fn onboarding_requires_a_terminal_without_loading_a_bundle_or_creating_state() {
     let template = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/onboarding/openclaw.yaml");
     let original = fs::read(&template).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+    let output = crate::nemoclaw()
         .arg("onboard")
         .arg(&template)
         .arg("--output")

@@ -135,7 +135,7 @@ Releases after `v0.1.0-rc11` leave the image out instead; see [Images Releases D
 
 #### Bun in `opencode`
 
-Bun 1.4.4 is MIT-licensed and statically links JavaScriptCore and TinyCC under LGPL-2.1, as [its license](https://github.com/oven-sh/bun/blob/bun-v1.4.4/LICENSE.md) states.
+Bun 1.4.5 is MIT-licensed and statically links JavaScriptCore and TinyCC under LGPL-2.1, as [its license](https://github.com/oven-sh/bun/blob/bun-v1.4.5/LICENSE.md) states.
 LGPL-2.1 requires that recipients can relink a statically linked executable against a modified library; Bun publishes its [patched WebKit](https://github.com/oven-sh/webkit) and its relinking instructions for that.
 The SBOM lists Bun without a license, and Bun's image carries no license file.
 
@@ -175,7 +175,7 @@ The supervisor's source archive keeps its crates' license files.
 |---|---|---|
 | [Agent image sources](../../image/NOTICE.md) | The images drop Node.js's license, which carries the notices of the libraries its executable bundles | The `hermes`, `openclaw`, and `pi` images keep it at `/usr/local/share/doc/node/LICENSE` |
 | [Agent image sources](../../image/NOTICE.md) | OpenClaw's published image, which supplies `/app`, omits OpenClaw's MIT license | The `openclaw` image keeps the license from OpenClaw's 2026.9.34 release at `/opt/nemoclaw/source/openclaw-LICENSE` |
-| [Agent image sources](../../image/NOTICE.md) | Bun's image omits Bun's license | The `opencode` image keeps Bun 1.4.4's license at `/opt/nemoclaw/source/bun-LICENSE.md` |
+| [Agent image sources](../../image/NOTICE.md) | Bun's image omits Bun's license | The `opencode` image keeps Bun 1.4.5's license at `/opt/nemoclaw/source/bun-LICENSE.md` |
 | [Agent image sources](../../image/NOTICE.md) | The Claude Code CLI's terms aren't recorded | The notice names the bundled CLI and its terms |
 | [Hermes image source](../../image/fabric/HERMES-NOTICE.md) | `/opt/hermes` keeps Hermes's MIT license, and the Switchyard bundle keeps its own | None |
 | No notice | The proxy keeps only its own license and `Cargo.lock`, not the notices of the crates, Rust standard library, and musl it links | The proxy keeps each locked crate's license files and manifest under `/usr/share/doc/nemoclaw-ollama-proxy/dependencies`, and Rust's library notices, which include musl's, in `rust-COPYRIGHT-library.html` beside them |

@@ -3,7 +3,6 @@
 
 # Current Limits
 
-NemoClaw Agent Configs is a release candidate and has no published final release.
 This page lists what Agent Configs does not do yet or has not tested, with the open GitHub issue that tracks each where one exists.
 Other pages state a limit where it affects a procedure and link the same issue.
 Unlike these limits, the responsibilities in [Out of Scope](out-of-scope.md) are left to other components by design.
@@ -23,15 +22,15 @@ A row marked **not verified** names the run that would check it.
 
 ## Installation and Releases
 
-Release archives exist only on draft releases.
-There is no installer or published package.
+Use the [CLI archive](../get-started/install.md), or the [macOS](../get-started/install.md#installing-with-the-macos-installer) or [Windows](../get-started/install.md#installing-with-the-windows-installer) installer if the release includes it.
 Keep the matching bundle for an existing deployment.
 The following installation and release limits apply:
 
 | Limit | Issue | Last Verified |
 |---|---|---|
-| No published final release: the [release archives](../get-started/install.md) are on draft releases, which only maintainers see. Others [build the bundle from source](../build-deploy/build.md#building-a-native-bundle). | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`291723b`][v1-291723b]: issue, and only draft releases exist |
-| The release executables are neither signed nor notarized for macOS or Windows. | [#14621](https://github.com/NVIDIA/NemoClaw/issues/14621) | [`291723b`][v1-291723b]: code, issue |
+| Archive provenance, OS signing, and macOS notarization are separate checks. Use the release's evidence record for platform results. | [#14621](https://github.com/NVIDIA/NemoClaw/issues/14621) | [Signing record contract](../../.github/scripts/record-cli-signing.sh); final platform results not verified |
+| The macOS installer requires Apple silicon and macOS 15 or later. A final release includes the installer only if it's signed and notarized. If unavailable, install the `darwin_arm64` archive. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [Installer and signing workflow](../../.github/workflows/release.yml); final installer availability not verified |
+| The Windows installer comes only with a release whose Windows executables are signed: without Windows signing, staging builds none. Its artwork and icon await NVIDIA brand and trademark review under [#14836](https://github.com/NVIDIA/NemoClaw/issues/14836). | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | **not verified**: the first release candidate staged with the installer |
 | Releases don't include a `claude` agent image: it bundles Anthropic's proprietary Claude Code CLI, which NVIDIA can't redistribute. Build it locally as [Building Agent Images](../build-deploy/build.md#building-agent-images) describes. | [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524) | [`43c9dc9`][v1-43c9dc9]: issue |
 | The SDK and provider packages are not published. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | No support policy or enterprise deployment qualification. | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue |
@@ -56,7 +55,7 @@ The following platform, model, and placement limits apply:
 | Distributed inference across several Sparks or Stations. | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Podman beyond a local rootless Linux gateway: rootful operation, remote engines, and model services on the Podman host. A Podman gateway can use one on a Docker host through [SSH placement](../agents-inference/remote-service.md). | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, docs, issue |
 | OpenShift beyond [OpenShift Local runs by hand](../build-deploy/kubernetes.md). No automated run covers OpenShift, and kind cannot run a managed `openshift` gateway, which needs OpenShift to assign its `fsGroup`. | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
-| A managed OpenShift gateway needs the `openshift` target: the pinned chart does not leave the gateway's UID and `fsGroup`, or a shared supervisor's UID, group, and `fsGroup`, to OpenShift by itself, so NemoClaw sets them to `null` on that target. The gateway has run this way by hand on one OpenShift Local 4.22.14 node (`linux/amd64`), where `restricted-v2` also admitted a shared supervisor's pod; no deployment with a shared supervisor has run on OpenShift. | [#13828](https://github.com/NVIDIA/NemoClaw/issues/13828), [NVIDIA/OpenShell#5483](https://github.com/NVIDIA/OpenShell/issues/5483) | [`ca452e0`][v1-ca452e0]: code, OpenShell, issue |
+| A managed OpenShift gateway needs the `openshift` target: the pinned chart does not leave the gateway's UID and `fsGroup`, or a shared supervisor's UID, group, and `fsGroup`, to OpenShift by itself, so NemoClaw sets them to `null` on that target. The gateway has run this way by hand on one OpenShift Local 4.22.14 node (`linux/amd64`), where `restricted-v2` also admitted a shared supervisor's pod; no deployment with a shared supervisor has run on OpenShift. | [#13828](https://github.com/NVIDIA/NemoClaw/issues/13828), [NVIDIA/OpenShell#5483](https://github.com/ai-openshell/openshell/issues/5483) | [`ca452e0`][v1-ca452e0]: code, OpenShell, issue |
 | Pull Secrets for a managed Kubernetes or OpenShift gateway's own pods: the gateway and its helper pods pull OpenShell's public images without any, which matters only on a cluster that redirects those images to a mirror that requires pull Secrets. Sandbox pods pull with the Secrets that [`image_pull_secrets`](../build-deploy/kubernetes.md#referencing-registry-credentials) names. | No open issue | [`cb8ef25`][v1-cb8ef25]: OpenShell |
 | Putting a managed Kubernetes or OpenShift gateway behind a Gateway API ingress: TLS would end at the Gateway, which conflicts with NemoClaw's mTLS. Use [an external gateway behind an ingress](../build-deploy/kubernetes.md#reaching-an-external-gateway-through-an-ingress) instead. | Not planned ([#14307](https://github.com/NVIDIA/NemoClaw/issues/14307)) | [`cb8ef25`][v1-cb8ef25]: docs |
 | Model services that NemoClaw places with a Kubernetes or OpenShift gateway. Sandboxes can use [a server you run in the cluster](../build-deploy/kubernetes.md#using-a-model-server-in-the-cluster). | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
@@ -101,7 +100,6 @@ The following agent and integration limits apply:
 | What an attached Hermes terminal and its in-flight turn do when Fabric stops the runtime: Fabric starts and stops the terminal's backend and does not define or test this yet. | [NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656#issuecomment-6971534523) | [`1636069`][v1-1636069]: issue |
 | NemoClaw's invoke path cannot send `acknowledge_recovery`, so after `session_recovery_required` an agent that keeps its state answers only a request sent with `fabric-agent-ctl invoke --request`. Refer to [continue after session_recovery_required](../observability/troubleshooting.md#continuing-after-session_recovery_required). Native interfaces are not affected. | No open issue | [`1636069`][v1-1636069]: code, Fabric |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export. | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
-| OpenShell refuses new connections to an address its policy DNS answered after the answer's TTL has passed, so a client that reconnects to the address it kept fails, as OpenClaw's Node.js does. For an OpenClaw agent, the model request fails and its runtime stops. The next apply starts a new runtime without the conversation. | Fixed after OpenShell 0.1.9 by [NVIDIA/OpenShell#5650](https://github.com/NVIDIA/OpenShell/pull/5650) | [`cb8ef25`][v1-cb8ef25]: OpenShell |
 
 ## Access and Diagnostics
 
@@ -115,7 +113,7 @@ The following access and diagnostic limits apply:
 | An error holds at most 16 KiB of a command's OpenTofu diagnostics, such as several managed services' [stop details](../agents-inference/models.md#diagnosing-and-recovering-a-stopped-runtime): it lists the whole diagnostics that fit, then the next one's summary and a count of the rest. A diagnostic longer than 16 KiB keeps as much of its detail as fits. | By design: bounds the error's size | [`cb8ef25`][v1-cb8ef25]: code |
 | An error shows `child output exceeds the supported limit` in place of a command's output when OpenTofu writes more than 16 KiB to standard error, as a provider crash can, or more than 64 MiB to standard output: cut output can end inside a credential that redaction no longer recognizes. | By design: keeps credentials out of errors | [`cb8ef25`][v1-cb8ef25]: code |
 | A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own. The `oidc` profile [reaches it from the OpenShell CLI](../build-deploy/kubernetes.md#reaching-the-gateway-from-the-openshell-cli), which no automated test covers. | By design: the development issuer serves only NemoClaw | [`cb8ef25`][v1-cb8ef25]: code, docs |
-| [Service URLs](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway) on a managed Kubernetes or OpenShift gateway name `openshell.localhost` and the gateway pod's port, 8080, so they do not open as printed. Reach them through a port forward to the gateway, sending the URL's host name. | [#14316](https://github.com/NVIDIA/NemoClaw/issues/14316) | [`cb8ef25`][v1-cb8ef25]: OpenShell, issue |
+| [Service URLs](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway) on a managed Kubernetes or OpenShift gateway: OpenShell's chart turns off gateway service routing, so apply lists none. With `enable_gateway_service_routing: true` in `spec.gateway.config`, the URLs name `openshell.localhost` and the gateway pod's port, 8080, so they do not open as printed. Reach them through a port forward to the gateway, sending the URL's host name. | [#14316](https://github.com/NVIDIA/NemoClaw/issues/14316) | [`cb8ef25`][v1-cb8ef25]: OpenShell, issue |
 
 ## Data and Cleanup
 
@@ -126,9 +124,9 @@ The following data and cleanup limits apply:
 |---|---|---|
 | Native conversation continuity across runtime replacement. | [Per-harness limits](../build-deploy/state.md#choosing-what-to-retain-for-each-harness), which depend on Fabric and the selected harness | [`cb8ef25`][v1-cb8ef25]: docs |
 | Durable data for generic application containers: their writable volume is disposable, and replacement or destroy can lose it. This differs from caller-supplied volumes mounted in an agent sandbox. | By design: [application storage](../build-deploy/container-services.md#deciding-whether-the-image-fits) | [`e7e1857`][v1-e7e1857]: docs |
-| Moving data from the earlier product to Agent Configs and back. | No NemoClaw procedure: native data belongs to the harness, and moving its storage belongs to the platform ([migration](../get-started/migration.md)) | [`cb8ef25`][v1-cb8ef25]: docs |
-| Keeping a sandbox across a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: after the gateway runs again, the sandbox refuses the supervisor that OpenShell starts for it and goes to `Error` with `StartFailed`, and the next apply replaces it, which deletes its files outside mounted volumes and its conversation history. A graceful restart, such as `docker restart`, keeps the sandbox. | [#13953](https://github.com/NVIDIA/NemoClaw/issues/13953), [NVIDIA/OpenShell#4910](https://github.com/NVIDIA/OpenShell/issues/4910) | [`291723b`][v1-291723b]: issue, plus a DGX Spark run where 9 of 9 SIGKILLed gateways lost their Hermes sandbox and 12 of 12 graceful restarts kept it |
-| Keeping a sandbox's files and conversations across a change to its policy's filesystem, Landlock, or process settings: OpenShell applies them only when a sandbox starts, so the change replaces the sandbox. Network rules, middleware bindings, and grants change in place. | No open issue: OpenShell's [policy guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/policies/manage-policies.mdx#how-changes-take-effect) | [`ca452e0`][v1-ca452e0]: code, OpenShell |
+| Transferring native data between NemoClaw v0 and NemoClaw Agent Configs. | No NemoClaw procedure. The harness owns native data, and the platform owns storage transfer. See [how to evaluate NemoClaw Agent Configs in a separate deployment](../get-started/migration.md). | [`cb8ef25`][v1-cb8ef25]: docs |
+| Keeping a sandbox across a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: after the gateway runs again, the sandbox refuses the supervisor that OpenShell starts for it and goes to `Error` with `StartFailed`, and the next apply replaces it, which deletes its files outside mounted volumes and its conversation history. A graceful restart, such as `docker restart`, keeps the sandbox. | [#13953](https://github.com/NVIDIA/NemoClaw/issues/13953), [NVIDIA/OpenShell#4910](https://github.com/ai-openshell/openshell/issues/4910) | [`291723b`][v1-291723b]: issue, plus a DGX Spark run where 9 of 9 SIGKILLed gateways lost their Hermes sandbox and 12 of 12 graceful restarts kept it |
+| Keeping a sandbox's files and conversations across a change to its policy's filesystem, Landlock, or process settings: OpenShell applies them only when a sandbox starts, so the change replaces the sandbox. Network rules, middleware bindings, and grants change in place. | No open issue: OpenShell's [policy guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/policies/manage-policies.mdx#how-changes-take-effect) | [`ca452e0`][v1-ca452e0]: code, OpenShell |
 
 ## Security
 
@@ -139,7 +137,7 @@ The following security limits apply:
 | Limit | Issue | Last Verified |
 |---|---|---|
 | Host-specific security qualification. | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: issue |
-| A private CA for sandbox egress on a managed gateway, such as an inference endpoint's CA ([custom CA trust](../agents-inference/inference.md#trusting-a-custom-certificate-authority)): OpenShell trusts the CAs in its gateway's [additional CA bundle](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas). Docker and Podman read the bundle from a file on the gateway, which NemoClaw does not mount, and the chart mounts it only from its `supervisor.network.additionalCaConfigMapName` value, which NemoClaw does not set. Do not set `additional_ca_bundle` in `spec.gateway.config`: the path names no file on the gateway, and OpenShell does not start a gateway whose bundle is missing. | [#14486](https://github.com/NVIDIA/NemoClaw/issues/14486) | [`cb8ef25`][v1-cb8ef25]: code, OpenShell, issue |
+| A private CA for sandbox egress on a managed gateway, such as an inference endpoint's CA ([custom CA trust](../agents-inference/inference.md#trusting-a-custom-certificate-authority)): OpenShell trusts the CAs in its gateway's [additional CA bundle](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas). Docker and Podman read the bundle from a file on the gateway, which NemoClaw does not mount, and the chart mounts it only from its `supervisor.network.additionalCaConfigMapName` value, which NemoClaw does not set. Do not set `additional_ca_bundle` in `spec.gateway.config`: the path names no file on the gateway, and OpenShell does not start a gateway whose bundle is missing. | [#14486](https://github.com/NVIDIA/NemoClaw/issues/14486) | [`cb8ef25`][v1-cb8ef25]: code, OpenShell, issue |
 | A corporate CA for OpenShell's gateway, managed model downloads, and image builds. | [Corporate CA](../security/security.md#trusting-a-corporate-certificate-authority) | [`cb8ef25`][v1-cb8ef25]: docs |
 | [Proxy](../security/sandbox-network.md#using-an-upstream-proxy) credentials for a managed Docker or Podman gateway: OpenShell reads them only from a file on the gateway (`proxy_auth_file`), which NemoClaw does not mount. | No open issue | [`cb8ef25`][v1-cb8ef25]: code, OpenShell |
 | A proxy CA (`proxy_ca_bundle`) for any managed gateway: Docker and Podman read it from a file on the gateway, and the chart mounts it only from its `upstreamProxy.caBundle.configMapName` value, which NemoClaw does not set. | [#14486](https://github.com/NVIDIA/NemoClaw/issues/14486) | [`cb8ef25`][v1-cb8ef25]: code, OpenShell, issue |
@@ -162,7 +160,7 @@ The following SDK and provider limits apply:
 
 ## Documentation Site
 
-Select the v1 guide explicitly and match its source revision to the bundle before using hosted instructions.
+Select the NemoClaw Agent Configs guide explicitly and match its source revision to the bundle before using hosted instructions.
 The following documentation site limits apply:
 
 | Limit | Issue | Last Verified |
@@ -172,7 +170,7 @@ The following documentation site limits apply:
 | Packaged installation of the documentation skill for assistant clients | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 
 Managed [llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) accepts pinned public GGUF files on one CUDA GPU.
-General tool use, multimodal input, other models and Classic host parity need separate qualification.
+General tool use, multimodal input, other models and parity with NemoClaw v0 host settings need separate qualification.
 Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006).
 
 [v1-5b83ffc]: https://github.com/NVIDIA/NemoClaw/tree/5b83ffc8e6ae46c4e5eec2466ed847cb223addad

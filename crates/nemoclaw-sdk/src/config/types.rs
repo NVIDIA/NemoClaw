@@ -502,7 +502,7 @@ pub enum AuthorizationMode {
 pub struct Image {
     #[serde(rename = "ref")]
     #[schemars(default)]
-    /// Immutable image reference, pinned by SHA-256 digest. Required on every gateway target; build one as described in the agent image build instructions.
+    /// Immutable image reference, pinned by SHA-256 digest. Required on every gateway target. Use the selected release's image digest or build from the same source revision. Onboarding links the matching image build and registry-access guides.
     pub ref_: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "FileRef")]

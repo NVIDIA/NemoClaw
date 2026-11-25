@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# examples/hcl/travel, authored HCL applied unchanged with the bundle's
+# examples/features/travel/hcl, authored HCL applied unchanged with the bundle's
 # providers: Ollama placed through the mocked Docker provider from its runtime
 # launch, readiness against the fixture upstream listing the model, and the Pi
 # agent in its sandbox on the fixture gateway. This scenario owns the authored
@@ -32,7 +32,7 @@ run "fixtures" {
 
 run "deploy" {
   module {
-    source = "./examples/hcl/travel"
+    source = "./examples/features/travel/hcl"
   }
 
   variables {
@@ -89,7 +89,7 @@ run "observe" {
 # changes no resource.
 run "teardown" {
   module {
-    source = "./examples/hcl/travel"
+    source = "./examples/features/travel/hcl"
   }
 
   variables {

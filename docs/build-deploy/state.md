@@ -64,7 +64,9 @@ Only one runtime can use the folder at a time.
 To discard the state, delete the folder or the volume.
 The table covers the harness targets in the [image build matrix](../../docker-bake.hcl).
 A descriptor in the image catalog alone doesn't establish that a harness is installed or qualified on a platform.
-Replacing or deleting the sandbox, as any agent configuration change does, deletes files in its writable layer.
+Replacing or deleting the sandbox deletes files in its writable layer.
+Changing either [sandbox CPU or memory limits](../agents-inference/agents.md#cpu-and-memory-limits) replaces the sandbox.
+Before applying a size change, back up writable-layer files you need to keep.
 Use mounted volumes for files that must survive replacement.
 Retaining files doesn't by itself resume a native conversation.
 Each declared agent runs in its own NVIDIA OpenShell sandbox.
@@ -125,7 +127,7 @@ The platform must create both named volumes on the gateway's Docker engine, gran
 Default admission requires `openshell.ai/sandbox-attachable=true` and `openshell.ai/sandbox-attachable-workspace=<OpenShell-workspace-name>` on each volume.
 An operator-configured label map replaces these defaults.
 Use the authorized OpenShell workspace name, not the sandbox name or Kubernetes namespace.
-See [external resource admission](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#external-resource-admission).
+See [external resource admission](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/configuration.mdx#external-resource-admission).
 The bundled images use UID and GID `10001:10001`.
 Check the identity for a custom image or OpenShift namespace.
 The gateway must allow driver configuration, and the sandbox's filesystem policy must allow writes to both target paths.
@@ -137,7 +139,7 @@ For an external gateway, its administrator enables OpenShell's `allow_driver_con
 Mounts default to read-only, so `read_only: false` is required for agent writes.
 Don't mount over `/sandbox` or the image's working directory.
 OpenShell protects its workspace root and control paths.
-For driver-specific settings and admission labels, follow the pinned OpenShell [Docker](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-docker/README.md), [Podman](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-podman/README.md), or [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-driver-kubernetes/README.md) instructions.
+For driver-specific settings and admission labels, follow the pinned OpenShell [Docker](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/crates/openshell-driver-docker/README.md), [Podman](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/crates/openshell-driver-podman/README.md), or [Kubernetes](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/crates/openshell-driver-kubernetes/README.md) instructions.
 Kubernetes uses PVCs rather than Docker named volumes.
 
 ### Choosing What to Retain for Each Harness
@@ -296,7 +298,7 @@ The state directory keeps the ownership receipt, which records the namespace's U
 Use [operation recovery](usage.md#updates-and-recovery) with the original configuration and retained state.
 For a failed or interrupted native Helm release removal, use [Helm removal recovery](usage.md#recovering-an-interrupted-helm-removal).
 Preserve the checkpoint and current state together.
-For a move from an earlier product version, use [migration](../get-started/migration.md).
+To [evaluate NemoClaw Agent Configs alongside NemoClaw v0](../get-started/migration.md), create a separate deployment.
 The platform owns transfer of mounted native data.
 A copied volume doesn't move deployment ownership or establish compatibility with another harness version.
 Moving deployment state to another host is unqualified, and native conversation continuity depends on Fabric and the selected harness.

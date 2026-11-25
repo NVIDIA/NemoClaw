@@ -126,20 +126,25 @@ fn gateway_settings_rules_refuse_documents_with_the_rule_they_break() {
     }
     // Kubernetes refuses a request above its limit only when Helm installs
     // the gateway; the parser refuses it first.
-    for (refused, rule) in [
+    for (refused, path, rule) in [
         (
             openshift(resources(
                 json!({"requests": {"cpu": "2"}, "limits": {"cpu": "1500m"}}),
             )),
-            "spec.gateway.target.openshift.resources.requests.cpu must not exceed resources.limits.cpu",
+            "spec.gateway.target.openshift.resources.requests.cpu",
+            "must not exceed resources.limits.cpu",
         ),
         (
             resources(json!({"requests": {"memory": "2Gi"}, "limits": {"memory": "1024Mi"}})),
-            "spec.gateway.target.kubernetes.resources.requests.memory must not exceed resources.limits.memory",
+            "spec.gateway.target.kubernetes.resources.requests.memory",
+            "must not exceed resources.limits.memory",
         ),
     ] {
         let error = parse(&refused).unwrap_err();
-        assert!(error.contains(rule), "{error}");
+        assert!(
+            error.starts_with(&format!("{path} (line ")) && error.ends_with(&format!("): {rule}")),
+            "{error}"
+        );
     }
 }
 

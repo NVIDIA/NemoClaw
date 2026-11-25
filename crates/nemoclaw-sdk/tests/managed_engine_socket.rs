@@ -54,7 +54,7 @@ fn gateway_spec(document: &Document) -> Spec {
 /// for Podman, the bind in the container the provider creates.
 fn bound_socket(driver: &str, engine: &str) -> String {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/fabric.yaml")).unwrap();
     value["spec"]["gateway"] =
         json!({"management": "managed", "target": {driver: {"engine": engine}}});
     let document = parse(&value);
@@ -138,15 +138,17 @@ fn a_managed_gateway_binds_the_engine_socket_of_the_macos_vm_behind_its_unix_soc
 #[test]
 fn services_on_a_managed_gateway_on_a_named_pipe_use_its_engine() {
     // A managed inference service runs on the gateway's engine.
-    let mut vllm: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/spark/vllm.yaml")).unwrap();
+    let mut vllm: Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml"
+    ))
+    .unwrap();
     vllm["spec"]["gateway"]["target"]["docker"]["engine"] = json!(DOCKER_DESKTOP);
     let document = parse(&vllm);
     let graph = compile(&document, &generations(), "0.1.0").unwrap();
     assert_eq!(graph["provider"]["docker"][0]["host"], DOCKER_DESKTOP);
 
     // An application container shares the gateway's engine.
-    let mut application = crate::support::example("application-container.yaml");
+    let mut application = crate::support::example("features/application-container.yaml");
     application["spec"]["gateway"]["target"]["docker"]["engine"] = json!(DOCKER_DESKTOP);
     parse(&application);
 
@@ -172,7 +174,7 @@ fn services_on_a_managed_gateway_on_a_named_pipe_use_its_engine() {
 #[test]
 fn a_managed_gateway_refuses_an_engine_on_another_host() {
     let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/fabric.yaml")).unwrap();
     for engine in [
         "ssh://operator@gpu-box",
         "npipe:////remote/pipe/docker_engine",

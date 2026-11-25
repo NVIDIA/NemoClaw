@@ -173,9 +173,9 @@ async fn agent_images_install_the_adapter_and_have_a_digest_newest_first() {
         serde_json::to_string(&catalog).unwrap()
     };
     let image = |created: i64, digest: &str, catalog: String| {
-        json!({"Id": "sha256:id", "ParentId": "", "RepoTags": [], "RepoDigests": [digest],
+        json!({"Id": "sha256:id", "ParentId": "", "RepoTags": ["hermes:local"], "RepoDigests": [digest],
                "Created": created, "Size": 1, "SharedSize": -1, "Containers": -1,
-               "Labels": {IMAGE_CATALOG_LABEL: catalog}})
+               "Labels": {IMAGE_CATALOG_LABEL: catalog, "org.opencontainers.image.revision": "abc123"}})
     };
     let older = format!("old@sha256:{}", "1".repeat(64));
     let newer = format!("new@sha256:{}", "2".repeat(64));
@@ -208,7 +208,34 @@ async fn agent_images_install_the_adapter_and_have_a_digest_newest_first() {
         "{:?}",
         observed.reason
     );
-    assert_eq!(observed.references, [newer, older]);
+    assert_eq!(observed.references, [newer.clone(), older]);
+    let details = serde_json::to_value(&observed).unwrap();
+    assert_eq!(details["details"][&newer]["tags"], json!(["hermes:local"]));
+    assert_eq!(details["details"][&newer]["created"], 2);
+    assert_eq!(details["details"][&newer]["revision"], "abc123");
+}
+
+#[tokio::test]
+async fn matching_images_without_repository_digests_are_not_reported_as_missing_harnesses() {
+    use nemoclaw_sdk::fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
+    let mut catalog = FabricCatalog::bundled().for_adapter("nvidia.fabric.hermes");
+    let mut runtime: serde_json::Value =
+        serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
+    runtime["binaries"] = json!({"nvidia.fabric.hermes": ["/usr/local/bin/python3.99"]});
+    catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
+    let images = json!([{
+        "Id": "sha256:local", "ParentId": "", "RepoTags": ["hermes:local"], "RepoDigests": [],
+        "Created": 1, "Size": 1, "SharedSize": -1, "Containers": -1,
+        "Labels": {IMAGE_CATALOG_LABEL: serde_json::to_string(&catalog).unwrap()}
+    }]);
+    let fixture =
+        transport::Fixture::start(move |_| Some((200, serde_json::to_vec(&images).unwrap()))).await;
+    let observed = observe_agent_images(&Direct, &fixture.endpoint, "nvidia.fabric.hermes").await;
+    assert_eq!(observed.status, ObservationStatus::Available);
+    assert!(observed.references.is_empty());
+    let reason = observed.reason.unwrap_or_default();
+    assert!(reason.contains("repository digest"), "{reason}");
+    assert!(reason.contains("containerd"), "{reason}");
 }
 
 #[tokio::test]

@@ -44,6 +44,7 @@ fn build_schema(normalized: bool) -> serde_json::Value {
     });
     let mut schema = GENERATED.clone();
     validation::constrain(&mut schema, normalized);
+    editor_messages(&mut schema);
     schema["$id"] = serde_json::json!("urn:nemoclaw:config:v1alpha1");
     schema["title"] = serde_json::json!("NemoClaw configuration (v1alpha1)");
     schema["$comment"] = serde_json::json!(
@@ -51,6 +52,25 @@ fn build_schema(normalized: bool) -> serde_json::Value {
     );
     schema.sort_all_objects();
     schema
+}
+
+/// YAML Language Server shows `errorMessage` for a wrong type, value, or
+/// constant, and `patternErrorMessage` for a pattern, but not this schema's
+/// `x-nemoclaw-error`, so each rule's message is copied into them.
+fn editor_messages(schema: &mut serde_json::Value) {
+    match schema {
+        serde_json::Value::Object(object) => {
+            if let Some(message) = object.get("x-nemoclaw-error").cloned() {
+                if object.contains_key("pattern") {
+                    object.insert("patternErrorMessage".into(), message.clone());
+                }
+                object.insert("errorMessage".into(), message);
+            }
+            object.values_mut().for_each(editor_messages);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(editor_messages),
+        _ => {}
+    }
 }
 
 // Serde defaults are intermediate empty values, not Document::defaults results.
@@ -91,6 +111,6 @@ pub use nemoclaw_runtime::schema::integer_range;
 mod runtime;
 pub use runtime::unexplained_rules;
 pub(crate) use runtime::{
-    validate_definition, validate_document, validate_input, validate_property, validate_service,
-    validate_tuning,
+    locate, validate_definition, validate_document, validate_input, validate_property,
+    validate_service, validate_tuning,
 };

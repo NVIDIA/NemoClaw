@@ -203,6 +203,7 @@ pub fn nextest_target(platform: &str) -> Result<&'static str, String> {
         "linux_amd64" => "x86_64-unknown-linux-gnu",
         "darwin_arm64" | "darwin_amd64" => "universal-apple-darwin",
         "windows_amd64" => "x86_64-pc-windows-msvc",
+        "windows_arm64" => return Err("Native Windows ARM64 is unavailable. Use Linux ARM64 inside WSL2; follow docs/get-started/from-source.md before running Cargo.".into()),
         _ => return Err(format!("unsupported CI platform {platform}")),
     })
 }

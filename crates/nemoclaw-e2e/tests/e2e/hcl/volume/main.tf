@@ -10,7 +10,7 @@
 # tofu test removes them when the case ends.
 
 terraform {
-  required_version = "= 1.13.9"
+  required_version = "= 1.13.10"
   required_providers {
     docker = {
       source = "kreuzwerker/docker"

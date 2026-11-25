@@ -16,7 +16,7 @@ An agent restarts only when its sandbox is replaced, for example when its config
 When apply registers a new inference, web search, or API key, it replaces each sandbox that attaches that registration, so the sandbox's agent starts with the new key.
 Replacing a sandbox deletes its files and conversations, except those on mounted volumes.
 Keep the old upstream key valid until every sandbox that uses it has been replaced, then revoke it.
-Refer to OpenShell's [runtime limitations](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/providers/profiles.mdx#runtime-limitations).
+Refer to OpenShell's [runtime limitations](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/providers/profiles.mdx#runtime-limitations).
 
 ## Inference, Web Search, and API Keys You Supply
 

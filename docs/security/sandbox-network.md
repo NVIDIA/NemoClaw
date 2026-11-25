@@ -4,7 +4,7 @@
 # Configuring Sandbox Policy
 
 Use `sandboxes.<name>.network.policy.explicit` to declare filesystem, process, and egress policy.
-Start from [the explicit-policy example](../../examples/explicit-policy.yaml) and follow [deployment usage](../build-deploy/usage.md) to plan, apply, and export it.
+Start from [the explicit-policy example](../../examples/features/explicit-policy.yaml) and follow [deployment usage](../build-deploy/usage.md) to plan, apply, and export it.
 
 Before applying, select a fresh deployment UUID, an available gateway and inference endpoint, and an immutable agent image available to the runtime.
 Check that policy paths and process identities exist in that image.
@@ -102,7 +102,7 @@ A network can combine it with inline `grants` when no name appears in both.
 A reference to an undefined name fails and lists the defined names.
 A definition that no sandbox selects is validated but applies to none.
 Refer to [the authoring rule](../build-deploy/configuration-references.md#the-authoring-rule).
-The [full-featured OpenClaw example](../../examples/full-featured-openclaw.yaml) gives three sandboxes one policy.
+The [full-featured OpenClaw example](../../examples/platforms/docker/vllm/remote/amd64/full-featured-openclaw.yaml) gives three sandboxes one policy.
 
 ## Runtime Filesystem Access
 
@@ -155,7 +155,7 @@ Do not choose `tls: skip` for an endpoint that relies on those controls, includi
 Use explicit `enforcement: enforce` when the policy must reject disallowed inspected requests.
 The checked-in example uses that enforcement setting with automatic TLS handling.
 
-The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
+The [pinned parser](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
 The [SDK policy validator](../../crates/nemoclaw-openshell/src/policy.rs) accepts only supported field combinations.
 A field's presence in the schema does not bypass protocol validation.
 Live enforcement and application trust on your host remain qualification requirements.
@@ -234,13 +234,13 @@ Refer to [Verifying and Changing the Configuration](#verifying-and-changing-the-
 Changing a managed gateway's registration restarts the gateway, as other [gateway configuration](../build-deploy/usage.md#configuring-a-managed-gateway) changes do.
 
 OpenShell describes supervisor middleware as a research preview whose policy and service contracts can change.
-Its [middleware guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/extensibility/supervisor-middleware/configure.mdx) for the pinned release describes registration fields, failure behavior, and the decisions it logs.
+Its [middleware guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/extensibility/supervisor-middleware/configure.mdx) for the pinned release describes registration fields, failure behavior, and the decisions it logs.
 
 
 ## Using an Upstream Proxy
 
 OpenShell owns the workload's proxy environment and routes traffic through its policy proxy.
-To chain policy-approved egress through a corporate proxy, set the proxy in the gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-supervisor-network/src/upstream_proxy.rs).
+To chain policy-approved egress through a corporate proxy, set the proxy in the gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/crates/openshell-supervisor-network/src/upstream_proxy.rs).
 At this revision, chaining applies to TLS CONNECT traffic.
 Plain HTTP still connects directly.
 An external gateway's operator sets the proxy.
@@ -260,7 +260,7 @@ spec:
 ```
 
 Use `openshell.drivers.podman` for a Podman gateway, and `openshell.drivers.kubernetes` for a Kubernetes or OpenShift gateway.
-OpenShell's configuration reference describes each setting for [Docker](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#L1556-L1569), [Podman](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#L1677-L1754) and [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#L1363-L1400).
+OpenShell's configuration reference describes each setting for [Docker](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/configuration.mdx#L1882-L1895), [Podman](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/configuration.mdx#L2016-L2093) and [Kubernetes](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/configuration.mdx#L1611-L1648).
 NemoClaw passes them through unchecked.
 OpenShell validates them when the gateway starts.
 
@@ -317,7 +317,7 @@ Apply sends the new rules as the sandbox's next policy revision, with the filesy
 Connections the sandbox opened under the previous rules close, so a request in progress, such as a model call, can fail and need a retry.
 If the sandbox fails to load the new revision, apply restores the previous policy and reports `OpenShell configuration rejected`; correct the policy and apply again.
 
-OpenShell applies filesystem, Landlock, and process settings only when a sandbox starts, as its [policy guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/policies/manage-policies.mdx#how-changes-take-effect) describes.
+OpenShell applies filesystem, Landlock, and process settings only when a sandbox starts, as its [policy guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/policies/manage-policies.mdx#how-changes-take-effect) describes.
 Changing them, or any part of a policy APF governs, replaces the sandbox, deleting its files and conversations (except on [mounted volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes)).
 Back them up first.
 External OpenShell policy edits conflict with the declared policy and stop export.

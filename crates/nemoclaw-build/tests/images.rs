@@ -6,6 +6,39 @@ use nemoclaw_build::images::{PLATFORMS, labels, plan};
 use serde_json::json;
 use std::{fs, path::Path, process::Command};
 
+#[cfg(unix)]
+#[test]
+fn a_classic_docker_store_is_rejected_before_building_agent_layers() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    seed_image_sources(root.path());
+    let bin = root.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    let docker = bin.join("docker");
+    fs::write(&docker, r#"#!/bin/sh
+if [ "$1" = info ]; then printf '%s\n' '{"Driver":"overlay2","DriverStatus":[],"OperatingSystem":"Docker Desktop"}'; exit 0; fi
+case " $* " in
+  *" --print "*) printf '%s\n' '{"target":{"openclaw":{"tags":["nc-fabric:openclaw"]}}}'; exit 0 ;;
+esac
+touch build-started
+exit 1
+"#).unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o700)).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .args(["images", "build", "--platform", "linux/arm64", "openclaw"])
+        .current_dir(root.path())
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        !root.path().join("build-started").exists(),
+        "a known incompatible image store must fail before layer builds"
+    );
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("containerd"), "{error}");
+}
+
 #[test]
 fn harness_images_carry_their_catalog() {
     let catalog = json!({"adapters": [{"descriptor": {"adapter_id": "nvidia.fabric.pi"}}]});
@@ -200,6 +233,7 @@ fn build_overrides(args: &[&str]) -> [Vec<String>; 2] {
     fs::write(
         &docker,
         r#"#!/bin/sh
+if [ "$1" = info ]; then printf '%s\n' '{"Driver":"overlayfs","DriverStatus":[["driver-type","io.containerd.snapshotter.v1"]]}'; exit 0; fi
 [ "$1 $2" = "buildx bake" ] || exit 90
 shift 2
 case " $* " in

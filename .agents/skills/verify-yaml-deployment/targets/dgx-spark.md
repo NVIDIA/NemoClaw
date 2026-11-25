@@ -4,18 +4,18 @@
 # Target: DGX Spark
 
 An ARM64 GB10 host with shared host and GPU memory, running Docker with NVIDIA GPU access.
-The [GTC DC README](../../../../examples/gtc-dc/README.md) owns its prerequisites and memory accounting.
+The [Nemotron Super guide](../../../../examples/guides/nemotron-super.md) owns its prerequisites and memory accounting.
 
 ## Examples
 
 | Agent | Example |
 |---|---|
-| `openclaw` | [`examples/gtc-dc/openclaw-dgx-spark.yaml`](../../../../examples/gtc-dc/openclaw-dgx-spark.yaml) |
-| `hermes` | [`examples/gtc-dc/hermes-dgx-spark.yaml`](../../../../examples/gtc-dc/hermes-dgx-spark.yaml) |
-| `deepagents` | [`examples/gtc-dc/deepagents-dgx-spark.yaml`](../../../../examples/gtc-dc/deepagents-dgx-spark.yaml) |
+| `openclaw` | [`openclaw-dgx-spark.yaml`](../../../../examples/platforms/docker/vllm/dgx-spark/openclaw-dgx-spark.yaml) |
+| `hermes` | [`hermes-dgx-spark.yaml`](../../../../examples/platforms/docker/vllm/dgx-spark/hermes-dgx-spark.yaml) |
+| `deepagents` | [`deepagents-dgx-spark.yaml`](../../../../examples/platforms/docker/vllm/dgx-spark/deepagents-dgx-spark.yaml) |
 
 ```sh
-EXAMPLE=examples/gtc-dc/$AGENT-dgx-spark.yaml
+EXAMPLE=examples/platforms/docker/vllm/dgx-spark/$AGENT-dgx-spark.yaml
 ```
 
 Each declares a managed vLLM service, `super`, serving Nemotron 3 Super NVFP4.

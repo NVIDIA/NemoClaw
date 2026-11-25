@@ -42,6 +42,11 @@ target "_fabric" {
   contexts = { sources = ".build/image-sources/fabric" }
   dockerfile = "image/fabric/Dockerfile"
   platforms = [AGENT_PLATFORM]
+  # Docker's containerd image store would otherwise push each platform's
+  # image as an index with a provenance attestation, whose manifest a node
+  # that pulls one platform doesn't hold. Release attestations come from
+  # release-attest.yml instead.
+  attest = ["type=provenance,disabled=true"]
 }
 
 target "agents" {
@@ -107,6 +112,7 @@ target "_runtime" {
 
 target "vllm" {
   inherits = ["_runtime"]
+  contexts = { supervisor = "target:supervisor", sources = ".build/image-sources/vllm" }
   dockerfile = "image/vllm/Dockerfile"
   tags = ["nc-prototype-vllm:rust-v1"]
 }

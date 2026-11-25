@@ -10,10 +10,10 @@ Gateway user authentication through an OIDC issuer is separate.
 See [Authenticating Through an Existing OIDC Issuer](../build-deploy/kubernetes.md#authenticating-through-an-existing-oidc-issuer).
 NemoClaw's [`api` integration](agents.md#key-authenticated-apis) declares a key-authenticated API, not an OAuth-refresh profile.
 
-This guide uses Microsoft Graph with Entra as the example supported by OpenShell's [provider-refresh tutorial](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/tutorials/microsoft-graph-provider-refresh.mdx).
+This guide uses Microsoft Graph with Entra as the example supported by OpenShell's [provider-refresh tutorial](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/tutorials/microsoft-graph-provider-refresh.mdx).
 An Okta-backed API needs its own provider profile, token endpoint, scopes, and initial sign-in flow.
 The Graph profile isn't an Okta configuration.
-This procedure isn't yet qualified against a live Entra or Okta tenant with v1.
+This procedure isn't yet qualified against a live Entra or Okta tenant with NemoClaw Agent Configs.
 Native agent login and tool use need separate [platform and integration qualification](https://github.com/NVIDIA/NemoClaw/issues/12641).
 
 ## Preparing the Gateway and Credentials
@@ -43,7 +43,7 @@ The CLI and gateway operator control access to that state.
 
 ## Registering and Checking Refresh
 
-Create `microsoft-graph-mail.yaml` from the profile in the pinned [upstream tutorial](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/tutorials/microsoft-graph-provider-refresh.mdx#create-a-microsoft-graph-provider-profile).
+Create `microsoft-graph-mail.yaml` from the profile in the pinned [upstream tutorial](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/tutorials/microsoft-graph-provider-refresh.mdx#create-a-microsoft-graph-provider-profile).
 Review its Graph endpoint, delegated scopes, refresh strategy, and allowed executables before importing it.
 The example permits `curl`.
 It doesn't grant every native agent tool access.

@@ -289,7 +289,7 @@ fn diagnostic(error: &jsonschema::ValidationError<'_>) -> ConfigError {
             PathSegment::Index(_) | PathSegment::Key => "*".into(),
         })
         .collect();
-    ConfigError(format!(
+    ConfigError::from(format!(
         "invalid runtime specification {} at /{} ({})",
         crate::SPEC_VERSION,
         path.join("/"),

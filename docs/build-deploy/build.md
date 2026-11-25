@@ -9,12 +9,7 @@ Every deployment needs a bundle and an agent image built from the same source re
 
 ## Choosing This Guide
 
-No NemoClaw release is published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
-Release candidates are draft releases that only users with push access to this repository can see, and their images are in internal packages.
-Until a release is published, everyone else builds NemoClaw from source with this guide.
-Maintainers can instead [install a draft release's CLI](../get-started/install.md).
-
-After a release is published, [install its CLI](../get-started/install.md) and use the images that the release lists by digest.
+For v0.1.0 on an archive target, [install the CLI bundle](../get-started/install.md) and use the images listed by digest in that release.
 Build from source instead in the following situations:
 
 | Situation | What to Build |
@@ -32,7 +27,7 @@ The following table lists what this guide builds and which deployments need each
 | Artifact | Build Host | Result | Needed By |
 |---|---|---|---|
 | [Native bundle](#building-a-native-bundle) | The client's platform, or another target with its toolchain | `dist/PLATFORM`, with the CLI in `dist/PLATFORM/bin` | Every deployment, through the CLI or the [Rust SDK](../references/sdk.md) |
-| [Agent image](#building-agent-images) | Native Linux ARM64 or AMD64, matching the sandbox host | A local image such as `nc-fabric:openclaw`, selected by digest in `sandboxes.<name>.image.ref` | Every sandbox |
+| [Agent image](#building-agent-images) | Linux ARM64 or AMD64 engine, matching the sandbox host; includes Docker Desktop ARM64 for the macOS Hermes path | A local image such as `nc-fabric:openclaw`, selected by digest in `sandboxes.<name>.image.ref` | Every sandbox |
 | [Runtime image](#building-a-runtime-image) | Native Linux ARM64 or AMD64, matching the model host | A local image such as `nc-prototype-vllm:rust-v1`, selected by digest in `spec.services.<name>.image` | Deployments with a managed vLLM, Ollama, or llama.cpp service |
 
 Build the artifacts in the following order:
@@ -47,10 +42,13 @@ Build the artifacts in the following order:
 
 Run every command in this guide from the repository root.
 
+On an Apple silicon Mac or Windows ARM64, [onboarding from source](../get-started/from-source.md) connects these builds to a Hermes deployment on Docker Desktop.
+Windows ARM64 has no native bundle; use the Linux ARM64 toolchain inside WSL2.
+
 | Artifact | Requirements |
 |---|---|
 | Native bundle | Rust 1.100.0, pinned in [rust-toolchain.toml](../../rust-toolchain.toml); Protocol Buffers compiler (`protoc`) 36.2; a C toolchain for the TLS dependencies |
-| Agent images | Docker with Buildx on a native Linux ARM64 or AMD64 host; a Docker image store that retains repository digests for local builds, such as the tested containerd store; Rust, which runs the image builder and source downloader |
+| Agent images | Docker with Buildx on native Linux ARM64 or AMD64, or Docker Desktop's ARM64 Linux VM on an [Apple silicon Mac](../get-started/from-source.md); a Docker image store that retains repository digests for local builds, such as the tested containerd store; Rust, which runs the image builder and source downloader |
 | Runtime images | Docker with Buildx on a Linux ARM64 or AMD64 host; a Docker daemon that uses the containerd image store; Rust for the Ollama and llama.cpp images, which fetch their pinned sources |
 
 Initial builds need network access.
@@ -83,6 +81,10 @@ Another `protoc` 36.2 also works.
 
 ### Checking the Docker Image Store
 
+Start Docker Desktop, or your Docker daemon, before onboarding or building images.
+Run `docker version` and confirm that it reports both a client and a server.
+An installed Docker CLI without a running engine cannot discover images or deploy a sandbox.
+
 To check that a Docker daemon uses the containerd image store, run the following command against that daemon:
 
 ```sh
@@ -90,8 +92,10 @@ docker info --format '{{json .DriverStatus}}'
 ```
 
 The output includes `["driver-type","io.containerd.snapshotter.v1"]` when the daemon uses the containerd store.
-Runtime images require it, and Docker's classic image store is unsupported for them.
+Runtime images require the containerd image store.
 Agent images require a store that retains repository digests for local builds, and containerd is the tested store.
+To switch Docker Desktop to the containerd store, follow [Docker's image-store instructions](https://docs.docker.com/desktop/features/containerd/).
+Check this before building; an image loaded into the classic store can have an empty `RepoDigests` list even when its build succeeds.
 
 ## Building a Native Bundle
 
@@ -121,7 +125,7 @@ To build a bundle for the host's platform and check its CLI, perform the followi
    Verified inputs assembled at dist/linux_arm64 (VERSION)
    ```
 
-   `VERSION` is the release version at a clean release tag, and otherwise a development version derived from the source, such as `0.1.0-dev.5db7cd2995277923`.
+   Local builds report a development version derived from the source, such as `0.1.0-dev.5db7cd2995277923`. The release CI run for the tag supplies the release version.
 
 2. Optional: Copy `dist/PLATFORM` to a dedicated directory, and use the copy in the following steps.
 
@@ -145,6 +149,9 @@ To build a bundle for the host's platform and check its CLI, perform the followi
    ```
 
    `nemoclaw --version` prints the version from step 1, and `nemoclaw --help` lists `plan`, `apply`, and `destroy`.
+
+   If Classic is also installed, check which executable runs with `type -a nemoclaw` in Bash or `Get-Command nemoclaw -All` in PowerShell.
+   The first result must be the new bundle's executable.
 
 Next, [build an agent image](#building-agent-images).
 
@@ -182,6 +189,8 @@ The API version alone does not identify a source revision.
 A source-derived provider version prevents reuse of a stale OpenTofu provider installation.
 Repository text uses LF on every platform, so checkout newline conversion does not change source-derived provider versions.
 
+CLI guide links use the checkout's Git commit; a build without `.git` names each guide's path in its original source instead.
+
 Keep the bundle unchanged while an operation uses it.
 A Docker or Podman deployment keeps the gateway image pin of the bundle that created it.
 Before you operate it with a bundle built from a different pin, refer to [the change path](usage.md#choosing-the-change-path).
@@ -198,11 +207,12 @@ Before you operate it with a bundle built from a different pin, refer to [the ch
 ## Building Agent Images
 
 Every sandbox requires `image.ref`: an agent image pinned by its immutable digest.
-No default agent image is published, so build one for each harness that the deployment runs.
+When building from source, build an image for each harness that the deployment runs.
 
 Before you build an agent image, check the following:
 
-- The build host has the [agent image requirements](#preparing-the-build-host): a native Linux host whose architecture, ARM64 or AMD64, matches the image you build.
+- The build host has the [agent image requirements](#preparing-the-build-host): a Linux engine whose architecture, ARM64 or AMD64, matches the image you build.
+  For Hermes on Apple silicon, follow the [Docker Desktop procedure](../get-started/from-source.md#building-the-hermes-image).
 - The Docker image store retains repository digests for local builds; [check the store](#checking-the-docker-image-store).
 
 To build an agent image and select it, perform the following steps:
@@ -250,18 +260,11 @@ Otherwise, continue with the [next steps](#next-steps).
 
 ### Image Selection Requirements
 
-Plan selects only the image that `image.ref` names:
+`image.ref` names the exact image to deploy. A harness identifier does not select an image. The named image must contain the selected Fabric adapter and runtime metadata for its `fabric-agent-ctl` command, environment, default policy, and executable grants.
 
-- Select an explicit image that contains the chosen Fabric adapter.
-  A harness identifier does not select a different image.
-- The selected image must still exist on the compute daemon, and the sandbox compute daemon must have access to that exact image.
-- Plan requires the image's runtime metadata to supply its `fabric-agent-ctl` command, environment, default policy, and executable grants.
-- For an external gateway, also set the `engine` of its `docker` or `podman` target to the engine that contains that same immutable sandbox image.
-  NemoClaw does not assume the client host's Docker socket and uses this engine only for image inspection.
-  Using it does not authorize managing the external gateway.
-
-A missing image, missing metadata, or omitted external engine stops planning with a diagnostic.
-Load a matching image or rebuild it, then retry.
+- **Docker or Podman with an inspection engine:** If the image isn't on the selected engine, plan defers the Fabric compatibility check instead of pulling the image. On this path, apply [acquires and checks the image](usage.md#pulling-from-private-registries) before creating the gateway or configuring the deployment. For an external gateway, set the target's `engine` to the engine used for sandbox images. NemoClaw doesn't assume the client host's Docker socket, and the engine setting doesn't make NemoClaw manage the external gateway.
+- **Missing inspection prerequisites:** A missing inspection engine on an external Docker or Podman target is not the same as an absent image on a configured engine. Fix the engine setting before retrying plan. If an image is present but lacks the required runtime metadata, use a compatible image or rebuild it with its catalog label.
+- **Kubernetes or OpenShift:** Supply the [metadata bundle that matches the image digest](kubernetes.md). Missing or invalid metadata blocks planning. The cluster pulls the image; NemoClaw doesn't use the Docker or Podman pull path for these targets.
 
 ### Image Labels and Discovery
 
@@ -465,7 +468,7 @@ Destroy omits image compatibility gates, so a mismatched image alone does not pr
 
 Removing a source-built bundle removes only local tools.
 It does not stop deployments, remove images, or revoke credentials.
-There is no v1 `uninstall` command or package-manager installation to reverse for a source-built bundle.
+NemoClaw Agent Configs has no `uninstall` command. A source-built bundle has no package-manager installation to reverse.
 
 To remove a bundle, perform the following steps:
 

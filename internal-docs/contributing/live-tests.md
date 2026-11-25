@@ -27,7 +27,7 @@ The `kind-kubernetes-development` scenario deploys one agent with the `kubernete
 Its CLI runs with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
 The agent must answer from its recorded runtime with the stub's reply.
 Its document names no gateway port, since each command forwards its own free port, and a plan of the applied deployment must report no changes.
-Its sandbox has an explicit policy, as the [GTC DC Kubernetes example](../../examples/kubernetes/hosted-nvidia.yaml) has, with one entry that gives `python3` the stub's `/health`; the managed inference grant gives the image's executables only the stub's `/v1/**` paths.
+Its sandbox has an explicit policy, as the [GTC DC Kubernetes example](../../examples/platforms/kubernetes/hosted-inference/hosted-nvidia.yaml) has, with one entry that gives `python3` the stub's `/health`; the managed inference grant gives the image's executables only the stub's `/v1/**` paths.
 The `tests/e2e/hcl/command` module then runs `python3` twice in the sandbox: a request to the stub's `/health` must get the stub's 404, where OpenShell's proxy would answer 403 without the entry, and a connection to the API server's Service at `10.96.0.1`, the first address of kind's Service network, must fail with `EACCES`, OpenShell's refusal, because no entry names it.
 The address is literal, so DNS can't cause the refusal.
 Destroy must then keep only the gateway's storage.
@@ -174,6 +174,15 @@ gh workflow run rust.yml --ref v1 -f suite=hcl -f hcl-target=dgx-station -f hcl-
   -f hcl-jobs=dgx-station-openclaw-nemotron
 ```
 
+For Hermes alone, use `-f hcl-jobs=dgx-station-hermes-nemotron`. For both harnesses,
+use `-f hcl-jobs=dgx-station-openclaw-nemotron,dgx-station-hermes-nemotron`.
+Choose the affected harness for harness-specific changes and both for shared
+runtime or deployment changes. Each case has its own fresh deployment and state;
+selecting Hermes does not run the OpenClaw case. Both reuse the pinned Station
+model/runtime override and verified host model files. Basic text inference is the
+qualification boundary; tools, vision, quality evaluation, and other models are
+separate work.
+
 Spark uses the same workflow and persistent-runner path, with the fixed `colossus-gb10` label. Like Station, dispatch on `v1` or the current PR's bot-admitted `pull-request/<number>` branch; dispatch from any other branch is rejected. For a PR candidate:
 
 ```bash
@@ -192,15 +201,15 @@ The shared HCL workflow downloads CI / Bundle's Linux ARM64 bundle, test executa
 
 | Target | Runner label | Example and model |
 |---|---|---|
-| Station | `colossus-gb300` | `openclaw-dgx-station.yaml`, with the existing Nemotron 3.5 Super VL override |
+| Station | `colossus-gb300` | `openclaw-dgx-station.yaml` or `hermes-dgx-station.yaml`, with the existing Nemotron 3.5 Super VL override |
 | Spark | `colossus-gb10` | `openclaw-dgx-spark.yaml`, retaining its pinned Nemotron 3 Super NVFP4 model and Spark memory settings |
 
-Each scenario applies, requires OpenClaw to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup. Record the E2E commit, job URL, actual runner identity, and uploaded identity, inference and cleanup outcomes. A successful run establishes that case on that host; it does not establish renewal or replacement readiness. Leave #13934 open until its remaining capacity acceptance criteria have evidence.
+Each scenario applies, requires its selected agent to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup. Record the E2E commit, job URL, actual runner identity, and uploaded identity, inference and cleanup outcomes. A successful run establishes that case on that host; it does not establish renewal or replacement readiness. Leave #13934 open until its remaining capacity acceptance criteria have evidence.
 
-Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>/`. Published reports contain outcomes and candidate/UID/case identity only.
+Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>-<case-id>/`. Published reports contain outcomes and candidate/UID/case identity only.
 Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
 
-For the Station case, Colorunner can install the root-owned
+For the Station cases, Colorunner can install the root-owned
 `/usr/local/libexec/colorunner-model-cache` helper. A successful cold run publishes
 its verified model files. Subsequent runs mount those files read-only into a
 fresh model volume; engine caches, status, credentials, and deployment state stay
@@ -229,7 +238,7 @@ NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
 ```
 
 For a Station run with the host cache installed, release its mount after those
-commands succeed:
+commands succeed. Set `NEMOCLAW_HCL_CASE` to that run's selected case ID:
 
 ```bash
 NEMOCLAW_HCL_CASE=dgx-station-openclaw-nemotron \

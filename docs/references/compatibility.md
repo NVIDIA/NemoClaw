@@ -3,7 +3,7 @@
 
 # Compatibility Across Releases
 
-NemoClaw v1 is in alpha, and its configuration is `v1alpha1`.
+NemoClaw Agent Configs is in alpha and uses the `v1alpha1` configuration schema.
 This page says what a release guarantees across releases, and what it does not.
 
 ## Using One Release Together
@@ -41,7 +41,7 @@ Within a release, configuration from `export` re-applies to the same deployment.
 
 ## Deployment State
 
-State is not migrated between releases while v1 is in alpha.
+NemoClaw Agent Configs doesn't migrate state between alpha releases.
 A release refuses state written by a release with another intent record format, without changing it: "deployment state was written by a different NemoClaw release (intent record version N; this release reads M); keep using the CLI bundle that created the deployment, or destroy it with that bundle and create a new deployment; state retained".
 Keep the release that created a deployment until you have destroyed it, then create a new deployment with the new release, using a fresh `metadata.uid` and state directory.
 
@@ -66,7 +66,7 @@ Refer to [derived agent images](../build-deploy/derived-images.md).
 Provider type names, inputs, and outputs can change between releases.
 Each release's [provider guide](provider.md) and schema snapshots describe that release's types.
 
-The examples under [`examples/hcl`](../../examples/hcl) are supported with the release they ship in: [`travel`](../../examples/hcl/travel/main.tf), which an integration scenario applies unchanged, and [`travel-team`](../../examples/hcl/travel-team/README.md).
+The examples under [`examples/features`](../../examples/features) are supported with the release they ship in: [`travel`](../../examples/features/travel/hcl/main.tf), which an integration scenario applies unchanged, and [`travel-team`](../../examples/features/travel-team/hcl/README.md).
 Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and `tofu destroy` deletes everything the HCL manages, but refuses to run while the HCL or the provider protects one of its resources, as [Tearing the Configuration Down](../build-deploy/opentofu-project.md#tearing-the-configuration-down) describes.
 
 ## Import, Adoption, and State Backends

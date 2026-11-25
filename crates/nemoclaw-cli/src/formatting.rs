@@ -6,7 +6,7 @@ use crate::{
     dispatch::CommandResult,
     style::{Palette, Tone},
 };
-use nemoclaw_sdk::{Error, OperationResult, Outcome};
+use nemoclaw_sdk::{Error, OperationResult, Outcome, documentation_url};
 use std::{
     borrow::Cow,
     collections::BTreeSet,
@@ -25,6 +25,7 @@ pub(crate) struct RenderContext {
     mutation_started: Arc<AtomicBool>,
     warnings: Arc<Mutex<BTreeSet<String>>>,
     state_dir: PathBuf,
+    bundle_dir: Option<PathBuf>,
     input: Option<PathBuf>,
     verbose: bool,
     started: Instant,
@@ -48,6 +49,7 @@ impl RenderContext {
             warnings: Arc::new(Mutex::new(BTreeSet::new())),
             input,
             state_dir: cli.state_dir.clone(),
+            bundle_dir: cli.bundle_dir.clone(),
             verbose: cli.verbose,
             started: Instant::now(),
             output_palette: Palette::detect(
@@ -121,6 +123,25 @@ impl RenderContext {
             terminal_text(&self.state_dir.display().to_string())
         )
     }
+
+    fn follow_up_command(&self, operation: &str, path: &std::path::Path) -> String {
+        let mut command = format!("nemoclaw {operation}");
+        if self.state_dir != std::path::Path::new(".nemoclaw") {
+            command.push_str(&format!(
+                " --state-dir {}",
+                shell_word(&self.state_dir.display().to_string())
+            ));
+        }
+        if let Some(bundle) = &self.bundle_dir {
+            command.push_str(&format!(
+                " --bundle {}",
+                shell_word(&bundle.display().to_string())
+            ));
+        }
+        command.push(' ');
+        command.push_str(&shell_word(&path.display().to_string()));
+        terminal_text(&command)
+    }
 }
 
 pub(crate) fn render(
@@ -130,8 +151,18 @@ pub(crate) fn render(
 ) -> Result<String, Box<dyn std::error::Error>> {
     match result {
         CommandResult::Export(document) => Ok(document.yaml()?),
-        CommandResult::Authored(path) => Ok(path
-            .map(|path| authored(&path, context.output_palette))
+        CommandResult::Authored { path, missing_credentials } => Ok(path
+            .map(|path| {
+                let mut text = authored(&path, context);
+                if !missing_credentials.is_empty() {
+                    text.push_str("\nCredential values are not saved in the deployment file. Missing in this environment:\n");
+                    for (name, stage) in missing_credentials {
+                        text.push_str(&format!("  {}: not set; {stage} will ask (hidden input on a terminal).\n", terminal_text(&name)));
+                    }
+                    text.push_str("Non-interactive runs require these environment variables. A set value is not proof that the endpoint accepts it.\n");
+                }
+                text
+            })
             .unwrap_or_default()),
         CommandResult::Operation(result) => match format {
             OutputFormat::Text => {
@@ -152,15 +183,15 @@ pub(crate) fn render(
 }
 
 /// The save confirmation, with commands that run as printed.
-fn authored(path: &std::path::Path, palette: Palette) -> String {
-    let file = terminal_text(&shell_word(&path.display().to_string()));
+fn authored(path: &std::path::Path, context: &RenderContext) -> String {
+    let palette = context.output_palette;
     let heading = format!(
         "{} {}",
         "Authored desired state:",
         palette.paint(&terminal_text(&path.display().to_string()), Tone::Success)
     );
-    let plan = palette.paint(&format!("nemoclaw plan {file}"), Tone::Accent);
-    let apply = palette.paint(&format!("nemoclaw apply {file}"), Tone::Accent);
+    let plan = palette.paint(&context.follow_up_command("plan", path), Tone::Accent);
+    let apply = palette.paint(&context.follow_up_command("apply", path), Tone::Accent);
     let note = palette.paint("Apply pulls images and starts containers.", Tone::Muted);
     format!(
         "{heading}\n\nPreview the changes with plan, then apply them:\n\n  {plan}\n  {apply}\n\n{note}\n"
@@ -362,10 +393,13 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     if let Some(connection) = &result.connection {
         output.push_str(&format!(
             "\nOpenShell gateway: {}\nOpenShell workspace: {}\n",
-            connection
-                .gateway_endpoint
-                .as_deref()
-                .map_or_else(|| UNPUBLISHED_GATEWAY.to_owned(), terminal_text),
+            connection.gateway_endpoint.as_deref().map_or_else(
+                || format!(
+                    "not published; forward a local port to the gateway pod, as {} describes",
+                    documentation_url("docs/build-deploy/kubernetes.md")
+                ),
+                terminal_text
+            ),
             terminal_text(&connection.workspace),
         ));
     }
@@ -563,8 +597,8 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             && let Some(input) = &context.input
         {
             output.push_str(&format!(
-                "Next: nemoclaw apply {}\n",
-                terminal_text(&shell_word(&input.display().to_string()))
+                "Next: {}\n",
+                context.follow_up_command("apply", input)
             ));
         }
     }
@@ -576,11 +610,6 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     }
     output
 }
-
-/// What a managed cluster gateway without `expose` has instead of an address:
-/// each NemoClaw command forwards its own free port, and other clients forward
-/// one themselves.
-const UNPUBLISHED_GATEWAY: &str = "not published; forward a local port to the gateway pod, as docs/build-deploy/kubernetes.md describes";
 
 /// The commands that select this deployment's gateway and workspace, as the
 /// interface guide describes.
@@ -642,9 +671,10 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
         }
     }
     if invocable {
-        output.push_str(
-            "  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents-inference/agents.md.\n",
-        );
+        output.push_str(&format!(
+            "  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see {}.\n",
+            documentation_url("docs/agents-inference/agents.md"),
+        ));
     }
     output
 }
@@ -709,9 +739,10 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
         }
     }
     if !result.interfaces.is_empty() {
-        output.push_str(
-            "  The agent's own tools can read these tokens and reach these ports; see docs/agents-inference/interfaces.md.\n",
-        );
+        output.push_str(&format!(
+            "  The agent's own tools can read these tokens and reach these ports; see {}.\n",
+            documentation_url("docs/agents-inference/interfaces.md"),
+        ));
     }
     output
 }
@@ -774,6 +805,9 @@ pub(crate) fn render_error(
         "stateDirectory": context.state_dir,
         "error": { "message": message },
     });
+    if let Some(error) = error_in_chain::<nemoclaw_sdk::config::ConfigError>(error) {
+        details["error"]["diagnostics"] = serde_json::json!(error.diagnostics());
+    }
     context.add_warnings(&mut details);
     if let Some(input) = &context.input {
         details["input"] = serde_json::json!(input);
@@ -803,7 +837,10 @@ pub(crate) fn render_error(
             "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
         )),
         Some(Error::DockerModelUpdateRefused { service }) => Some(Cow::Owned(format!(
-            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/agents-inference/inference.md#setting-container-limits-and-update-policy."
+            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See {}.",
+            documentation_url(
+                "docs/agents-inference/inference.md#setting-container-limits-and-update-policy"
+            ),
         ))),
         _ => None,
     };
@@ -871,7 +908,10 @@ mod tests {
     fn authored(path: &str) -> String {
         let cli = Cli::try_parse_from(["nemoclaw", "onboard"]).unwrap();
         super::render(
-            CommandResult::Authored(Some(path.into())),
+            CommandResult::Authored {
+                path: Some(path.into()),
+                missing_credentials: Vec::new(),
+            },
             OutputFormat::Text,
             &RenderContext::new(&cli),
         )
@@ -902,7 +942,10 @@ mod tests {
         let plain = authored("deployment.yaml");
         context.output_palette = Palette { enabled: true };
         let styled = super::render(
-            CommandResult::Authored(Some("deployment.yaml".into())),
+            CommandResult::Authored {
+                path: Some("deployment.yaml".into()),
+                missing_credentials: Vec::new(),
+            },
             OutputFormat::Text,
             &context,
         )
@@ -1033,7 +1076,8 @@ mod tests {
         assert_eq!(text.matches("--no-tty -- cat").count(), 2, "{text}");
         assert_eq!(text.matches("Terminal:").count(), 2, "{text}");
         assert!(
-            text.contains("reach these ports; see docs/agents-inference/interfaces.md."),
+            text.contains("reach these ports; see https://github.com/NVIDIA/NemoClaw/blob/")
+                && text.contains("/docs/agents-inference/interfaces.md."),
             "{text}"
         );
         let machine: Value = serde_json::from_str(&render(
@@ -1075,7 +1119,8 @@ mod tests {
         let result = json!({"outcome": "succeeded", "changes": [], "connection": connection, "interfaces": interfaces()});
         let text = render(&["nemoclaw", "apply", "deployment.yaml"], result.clone());
         assert!(
-            text.contains("OpenShell gateway: not published; forward a local port to the gateway pod, as docs/build-deploy/kubernetes.md describes\n"),
+            text.contains("OpenShell gateway: not published; forward a local port to the gateway pod, as https://github.com/NVIDIA/NemoClaw/blob/")
+                && text.contains("/docs/build-deploy/kubernetes.md describes\n"),
             "{text}"
         );
         assert!(
@@ -1156,8 +1201,21 @@ mod tests {
                 "{command}: only the agent with a runtime is invocable:\n{text}"
             );
             assert!(
-                text.contains("reads it from stdin; see docs/agents-inference/agents.md."),
+                text.contains("https://github.com/NVIDIA/NemoClaw/blob/")
+                    && text.contains("/docs/agents-inference/agents.md")
+                    && !text.contains("/blob/v1/"),
                 "{command}: {text}"
+            );
+            let revision = text
+                .split("https://github.com/NVIDIA/NemoClaw/blob/")
+                .nth(1)
+                .unwrap()
+                .split('/')
+                .next()
+                .unwrap();
+            assert!(
+                revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "the first-request guide must identify an immutable source commit: {text}"
             );
             let machine: Value = serde_json::from_str(&render(
                 &["nemoclaw", command, "deployment.yaml", "-o", "json"],
@@ -1430,6 +1488,58 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(output["complete"], false);
+    }
+
+    #[test]
+    fn follow_up_commands_keep_the_selected_state_and_bundle() {
+        for operation in ["plan", "onboard"] {
+            let cli = Cli::try_parse_from([
+                "nemoclaw",
+                "--state-dir",
+                "my state",
+                "--bundle",
+                "my bundle",
+                operation,
+                "spark.yaml",
+            ])
+            .unwrap();
+            let result = if operation == "onboard" {
+                CommandResult::Authored {
+                    path: Some("deployment.yaml".into()),
+                    missing_credentials: Vec::new(),
+                }
+            } else {
+                CommandResult::Operation(Box::new(
+                    serde_json::from_value(json!({
+                        "outcome": "planned",
+                        "changes": [],
+                        "deferred": ["Gateway inventory unavailable"]
+                    }))
+                    .unwrap(),
+                ))
+            };
+            let text =
+                super::render(result, OutputFormat::Text, &RenderContext::new(&cli)).unwrap();
+            let file = if operation == "onboard" {
+                "deployment.yaml"
+            } else {
+                "spark.yaml"
+            };
+            assert!(
+                text.contains(&format!(
+                    "nemoclaw apply --state-dir 'my state' --bundle 'my bundle' {file}"
+                )),
+                "the apply hint must retain the deployment's state and bundle: {text}"
+            );
+            if operation == "onboard" {
+                assert!(
+                    text.contains(
+                        "nemoclaw plan --state-dir 'my state' --bundle 'my bundle' deployment.yaml"
+                    ),
+                    "the plan hint must retain the deployment's state and bundle: {text}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -13,16 +13,49 @@ use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 pub(crate) enum CommandResult {
     Export(Box<Document>),
-    Authored(Option<std::path::PathBuf>),
+    Authored {
+        path: Option<std::path::PathBuf>,
+        missing_credentials: Vec<(String, &'static str)>,
+    },
     Operation(Box<OperationResult>),
 }
 
+fn saved_document(
+    path: std::path::PathBuf,
+    document: &Document,
+    mut available: impl FnMut(&str) -> bool,
+) -> CommandResult {
+    let plan = document.plan_credential_names();
+    let missing_credentials = document
+        .credential_names()
+        .into_iter()
+        .filter(|name| !available(name))
+        .map(|name| {
+            (
+                name.to_owned(),
+                if plan.contains(&name) {
+                    "plan"
+                } else {
+                    "apply"
+                },
+            )
+        })
+        .collect();
+    CommandResult::Authored {
+        path: Some(path),
+        missing_credentials,
+    }
+}
+
+/// Runs the command, and puts in `read` the document it read: the input of
+/// `apply`, the saved intent of `destroy`, or the file `onboard` wrote.
 pub(crate) async fn run<R: AsyncRead + Unpin>(
     cli: Cli,
     mut stdin: R,
     cancel: &CancellationToken,
     force_stop: &CancellationToken,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
+    read: &mut Option<Document>,
 ) -> Result<CommandResult, Box<dyn std::error::Error>> {
     let Cli {
         state_dir,
@@ -36,7 +69,18 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             nemoclaw_onboarding::Source::Template,
         );
         let saved = nemoclaw_onboarding::author(source, output, true, cancel).await?;
-        return Ok(CommandResult::Authored(saved.then(|| output.clone())));
+        return if saved {
+            let document = document(output, tokio::io::empty(), cancel).await?;
+            *read = Some(document.clone());
+            Ok(saved_document(output.clone(), &document, |name| {
+                std::env::var(name).is_ok_and(|value| !value.is_empty())
+            }))
+        } else {
+            Ok(CommandResult::Authored {
+                path: None,
+                missing_credentials: Vec::new(),
+            })
+        };
     }
     let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), force_stop, progress)?;
     let result = match command {
@@ -66,6 +110,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             ..
         } => {
             let document = document(&file, &mut stdin, cancel).await?;
+            *read = Some(document.clone());
             let mut lines = tokio::io::BufReader::new(stdin).lines();
             deployment = credentials::attach(
                 deployment,
@@ -89,10 +134,20 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
                 deployment.export(cancel).await?,
             )));
         }
-        Command::Destroy { .. } => deployment.destroy(cancel).await?,
+        Command::Destroy { .. } => {
+            *read = saved_intent(&state_dir);
+            deployment.destroy(cancel).await?
+        }
         Command::Onboard { .. } => unreachable!("onboarding returns before deployment setup"),
     };
     Ok(CommandResult::Operation(Box::new(result)))
+}
+
+/// The document in `<state-dir>/intent.json`, the deployment `destroy` removes.
+fn saved_intent(state_dir: &Path) -> Option<Document> {
+    let bytes = std::fs::read(state_dir.join("intent.json")).ok()?;
+    let mut intent: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    serde_json::from_value(intent.get_mut("document")?.take()).ok()
 }
 
 #[cfg(test)]
@@ -104,6 +159,27 @@ mod tests {
         task::{Context, Poll},
     };
     use tokio::io::ReadBuf;
+
+    #[test]
+    fn saving_reminds_about_missing_credentials_at_the_stage_that_needs_them() {
+        let document = Document::parse(
+            include_bytes!("../../../examples/onboarding/openclaw.yaml").as_slice(),
+        )
+        .unwrap();
+        let cli = Cli::try_parse_from(["nemoclaw", "onboard"]).unwrap();
+        let result = saved_document("deployment.yaml".into(), &document, |_| false);
+        let text = crate::formatting::render(
+            result,
+            crate::args::OutputFormat::Text,
+            &crate::formatting::RenderContext::new(&cli),
+        )
+        .unwrap();
+        assert!(
+            text.contains("NVIDIA_API_KEY: not set; apply will ask"),
+            "{text}"
+        );
+        assert!(text.contains("not saved in the deployment file"), "{text}");
+    }
 
     struct ForbiddenInput;
     impl AsyncRead for ForbiddenInput {
@@ -134,7 +210,8 @@ mod tests {
                     ForbiddenInput,
                     &CancellationToken::new(),
                     &CancellationToken::new(),
-                    Arc::new(|_| {})
+                    Arc::new(|_| {}),
+                    &mut None,
                 )
                 .await
                 .is_err()
@@ -156,6 +233,7 @@ mod tests {
                 &CancellationToken::new(),
                 &CancellationToken::new(),
                 Arc::new(|_| {}),
+                &mut None,
             )
             .await
             .err()
@@ -163,5 +241,19 @@ mod tests {
             assert!(!error.to_string().contains("secret-sentinel"));
             assert!(!state.exists());
         }
+    }
+
+    #[test]
+    fn destroy_reads_the_document_saved_in_the_intent() {
+        let directory = tempfile::tempdir().unwrap();
+        assert_eq!(saved_intent(directory.path()), None);
+        let document =
+            Document::parse(include_bytes!("../../../examples/agents/openclaw.yaml").as_slice())
+                .unwrap();
+        let intent = serde_json::json!({"version": 1, "document": document});
+        std::fs::write(directory.path().join("intent.json"), intent.to_string()).unwrap();
+        assert_eq!(saved_intent(directory.path()), Some(document));
+        std::fs::write(directory.path().join("intent.json"), "{broken").unwrap();
+        assert_eq!(saved_intent(directory.path()), None);
     }
 }

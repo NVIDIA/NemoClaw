@@ -227,7 +227,7 @@ impl DiscoveryReport {
                     return None;
                 }
                 Some(if self.absent_image(Some(name)) {
-                    ABSENT_IMAGE.to_owned()
+                    format!("Selected image is not on the selected engine, so its Fabric capabilities are unverified. Apply pulls it before creating anything else; to build one, see {}", crate::documentation_url("docs/build-deploy/build.md#building-agent-images"))
                 } else {
                     unverified_message(name)
                 })
@@ -309,9 +309,6 @@ pub(super) fn category(name: &str) -> &'static str {
         "fabric"
     }
 }
-/// What plan says about an image the engine doesn't hold. The read that waits
-/// for its pull is unknown until apply and adds nothing to it.
-const ABSENT_IMAGE: &str = "Selected image is not on the selected engine, so its Fabric capabilities are unverified. Apply pulls it before creating anything else; to build one, see https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images";
 /// The plan-time read whose image the read `name` waits for a pull of.
 fn acquired_by(name: &str) -> Option<&str> {
     (category(name) == "fabric")
@@ -326,7 +323,7 @@ pub(super) fn unverified_message(name: &str) -> String {
         "hardware"=>"Target hardware inventory remains unverified; requirements are still checked by the owning runtime.",
         "inference"=>"Inference endpoint catalog remains unverified from the control host; sandbox connectivity and generation APIs require their own checks.",
         "service"=>"Managed inference readiness is checked during apply; plan does not establish current service readiness.",
-        _=>"Selected image Fabric capabilities are unverified; image metadata or compatibility is incomplete. Runtime adapter checks remain required.",
+        _=>"The provider has not verified the selected image's Fabric capabilities in this plan. Onboarding's metadata check does not test a live runtime; apply must complete the provider and runtime adapter checks.",
     }.into()
 }
 impl Plan {

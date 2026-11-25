@@ -4,6 +4,7 @@
 
 use crate::{
     AgentImagesObservation, FabricObservation, FabricRequirements,
+    capabilities::AgentImageDetails,
     capabilities::{ImageMetadata, assess_image},
     catalog::{FabricCatalog, IMAGE_CATALOG_LABEL},
 };
@@ -81,7 +82,7 @@ pub async fn observe_agent_images(
             .images_labeled(IMAGE_CATALOG_LABEL)
             .await
     };
-    let (status, reason, mut images) =
+    let (status, mut reason, mut images) =
         match tokio::time::timeout(Duration::from_secs(5), work).await {
             Ok(Ok(images)) => (ObservationStatus::Available, None, images),
             Ok(Err(error)) => (
@@ -96,7 +97,9 @@ pub async fn observe_agent_images(
             ),
         };
     images.sort_by_key(|image| std::cmp::Reverse(image.created));
-    let references = images
+    let mut missing_digest = false;
+    let mut details = std::collections::BTreeMap::new();
+    let references: Vec<String> = images
         .into_iter()
         .filter(|image| {
             image
@@ -112,16 +115,43 @@ pub async fn observe_agent_images(
                 })
         })
         .filter_map(|image| {
-            image
+            let reference = image
                 .repo_digests
-                .into_iter()
+                .iter()
                 .find(|reference| reference.contains("@sha256:"))
+                .cloned();
+            missing_digest |= reference.is_none();
+            if let Some(reference) = &reference {
+                details.insert(
+                    reference.clone(),
+                    AgentImageDetails {
+                        tags: image
+                            .repo_tags
+                            .into_iter()
+                            .filter(|tag| tag != "<none>:<none>")
+                            .collect(),
+                        created: (image.created > 0).then_some(image.created),
+                        revision: image
+                            .labels
+                            .get("org.opencontainers.image.revision")
+                            .filter(|value| !value.trim().is_empty())
+                            .cloned(),
+                    },
+                );
+            }
+            reference
         })
         .collect();
+    if references.is_empty() && missing_digest {
+        reason = Some(format!(
+            "Images installing {adapter_id} were found, but none has a repository digest. On Docker Desktop, enable the containerd image store and rebuild the image."
+        ));
+    }
     AgentImagesObservation {
         status,
         reason,
         references,
+        details,
     }
 }
 

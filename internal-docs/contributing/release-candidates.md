@@ -33,6 +33,16 @@ Releases:
   See [compatibility](../../docs/references/compatibility.md#using-one-release-together).
   A final release is published only when the file matches its tag's `versions.json` and the images it staged.
   Before, hand-written HCL copied `versions.json` from the release's tag.
+- Each release attaches `nemoclaw-<tag>-darwin_arm64.pkg`, a macOS installer for Macs with Apple silicon on macOS 15 or later ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
+  It installs the `darwin_arm64` archive's bundle in `/usr/local/nemoclaw` and puts its `bin` directory on `PATH` through `/etc/paths.d/nemoclaw`; installing a newer release replaces the bundle.
+  See [installing with the macOS installer](../../docs/get-started/install.md#installing-with-the-macos-installer).
+  Until a Developer ID Installer certificate signs it, release candidates attach it unsigned and final releases leave it out; see [the macOS installer](releases.md#macos-installer).
+  Before, macOS clients installed the CLI only from the archive.
+- Each release whose Windows executables are signed attaches `nemoclaw-<tag>-windows_amd64.msi`, a per-user Windows installer that needs no administrator rights ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
+  It installs the `windows_amd64` archive's bundle in `%LOCALAPPDATA%\Programs\NemoClaw` and adds its `bin` directory to the user `Path`; installing a newer release replaces the bundle, and an older release's installer refuses to replace a newer one.
+  See [installing with the Windows installer](../../docs/get-started/install.md#installing-with-the-windows-installer).
+  Staging signs it with the Windows executables and builds none without Windows signing; see [the Windows installer](releases.md#windows-installer).
+  Before, Windows clients installed the CLI only from the archive.
 
 Agents:
 
@@ -66,6 +76,37 @@ Gateways:
   Before, the volume took the cluster's default StorageClass, and the gateway always requested 250m CPU and 256Mi and was limited to 1 CPU and 2Gi.
 - On the `openshift` target, the shared supervisor that `supervisor_topology = "gateway"` selects also leaves its UID, group, and `fsGroup` to OpenShift, as the gateway does.
   Before, the chart ran it as UID and group 65534, which `restricted-v2` refuses.
+
+Model services:
+
+- The managed llama.cpp runtime image builds on llama.cpp's CUDA 13.5 server image from release b12679, with the same GPU architectures.
+  Its web interface, now Llama Chat, bundles a different set of npm packages, so the image's dependency notices change, and the image now also retains decimal.js's license and the llama-brand CSS license.
+  Rebuild it to use it.
+- The native NIM candidate builds on NIM for LLMs 2.1.7, which runs vLLM 0.33.0.
+  Rebuild it to use it.
+
+OpenShell 0.1.10:
+
+- OpenShell moved to [`ai-openshell/openshell`](https://github.com/ai-openshell/openshell): the pinned CLI downloads from that repository's releases, and the gateway, supervisor, and sandbox images and the gateway chart come from `quay.io/ai-openshell` instead of `ghcr.io/nvidia/openshell`.
+  A cluster that mirrors or allowlists OpenShell's images needs the new names.
+- A client that reconnects to an address that policy DNS answered after the answer's TTL has passed, as OpenClaw's Node.js does, connects again: OpenShell refreshes and checks the destination first.
+  Before, OpenShell refused the connection, so an OpenClaw agent's model request failed and its runtime stopped.
+- Restarting a sandbox no longer sometimes reports it as `Error` with `ContainerExited` while it's still starting.
+- On Kubernetes, deleting a sandbox and then creating one with the same name works reliably.
+- Sandboxed workloads can set their own CPU affinity, nice value, and resource limits, and signal themselves.
+- A proxy failure before a response starts returns `502 Bad Gateway` with a request ID, and HTTP clients learn promptly when an upstream closes an idle connection.
+
+OpenTofu 1.13.10:
+
+- The bundle's OpenTofu is 1.13.10, built with Go 1.27.4 for GO-2026-6859, an HTTP/1 server crash.
+  `tofu test` overrides resources in indexed modules correctly.
+
+Images:
+
+- The managed Ollama runtime image builds on Ollama 0.40.18, which bundles llama.cpp b12651.
+  Rebuild it to use it.
+- The OpenCode image builds with Bun 1.4.5, and the agent images with uv 0.13.10.
+- The agent, runtime, supervisor, and Ollama proxy images build on current digests of the same Node.js 26.13.1, Python 3.14.10, and Rust 1.100.0 tags.
 
 ### Changes in v0.1.0-rc12
 
@@ -359,8 +400,8 @@ Onboarding:
 
 Examples and builds:
 
-- New examples: [an application container beside an agent](../../examples/application-container.yaml) and [GPU autoscaling on Kubernetes](../../examples/kubernetes/gpu-autoscaling/README.md).
-- The [GTC DC](../../examples/gtc-dc/README.md) Kubernetes profile runs one OpenClaw and one Hermes agent on a managed gateway, in YAML or HCL, and keeps their files on PVCs.
+- New examples: [an application container beside an agent](../../examples/features/application-container.yaml) and [GPU autoscaling on Kubernetes](../../examples/platforms/kubernetes/gpu-autoscaling/README.md).
+- The [GTC DC](../../examples/guides/nemotron-super.md) Kubernetes profile runs one OpenClaw and one Hermes agent on a managed gateway, in YAML or HCL, and keeps their files on PVCs.
   The local templates allow 8,192 output tokens.
 - Linux bundles are built on Ubuntu 22.04 and need glibc 2.35 or newer.
   Ubuntu 22.04 is the oldest supported Linux.
@@ -393,6 +434,9 @@ These changes since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affect e
   Before, the provider generated an owner that never matched the workspace's, so apply failed.
   Plan also rejects a sandbox policy that OpenShell's validator refuses, a sandbox that attaches more than 32 registrations, and an `openshell_inference` without a supported `api`, `server`, or `binaries`, while the workspace's owner or generation is still to be generated. Each error names the attribute and the reason.
   Before, these passed plan and failed during apply.
+- A managed `kubernetes` or `openshift` gateway reports no sandbox service URLs, so apply lists none: OpenShell 0.1.10's chart turns off gateway service routing.
+  To route services through the gateway, set `enable_gateway_service_routing: true` in the `openshell.gateway` table of `spec.gateway.config`, as [deploying with a managed gateway](../../docs/build-deploy/kubernetes.md#deploying-with-a-managed-gateway) describes, or reach them with `openshell forward service`.
+  Before, apply listed URLs that didn't open as printed ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
 
 ### Breaking Changes in v0.1.0-rc12
 
@@ -468,7 +512,7 @@ These changes between the `v0.1.0-rc11` and `v0.1.0-rc12` tags affect existing d
     See [current limits](../../docs/resources/limits.md#platforms-models-and-placement).
   - On an external gateway, `runtime` and `engine` become the target: `runtime: {provider: podman}` with `engine: unix:///run/user/1000/podman/podman.sock` becomes `target: {podman: {engine: unix:///run/user/1000/podman/podman.sock}}`, and `runtime: {provider: kubernetes}` becomes `target: {kubernetes: {}}`.
   - JSON results omit `connection.gatewayEndpoint` for a managed Kubernetes or OpenShift gateway without `expose`.
-  - In hand-written HCL, `openshell_kubernetes_storage`, `openshell_kubernetes_auth`, and `openshell_kubernetes_gateway` take no `endpoint`, and `openshell_gateway` takes `kubernetes` without `endpoint`, with `target` in the specification's `settings`, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
+  - In hand-written HCL, `openshell_kubernetes_storage`, `openshell_kubernetes_auth`, and `openshell_kubernetes_gateway` take no `endpoint`, and `openshell_gateway` takes `kubernetes` without `endpoint`, with `target` in the specification's `settings`, as in [the Kubernetes HCL example](../../examples/platforms/kubernetes/hosted-inference/hosted-nvidia.tf).
   - In the Rust SDK, `ManagedGateway` and `ExternalGateway` hold `target`, a `ManagedTarget` or an `ExternalTarget`, `Runtime` is removed, and `ManagedKubernetes` has no `image_pull_secrets`.
 
 ### Breaking Changes in v0.1.0-rc11
@@ -535,7 +579,7 @@ These changes between the `v0.1.0-rc10` and `v0.1.0-rc11` tags affect existing d
 - With Fabric at NVIDIA/NeMo-Fabric `main` `135147a0`, an OpenClaw agent's `skills.bundled` also selects the skills that OpenClaw's own extensions ship, such as `canvas`.
   An extension skill that the selection leaves out no longer loads.
   An agent doesn't start when `nvidia.fabric.nooa` has no `workflow.target_id`, or when the Deep Agents `local_shell` backend has neither `tools.enabled` nor `execute` in `tools.blocked`.
-- The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
+- The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/features/travel/hcl/main.tf) do.
 
 ### Breaking Changes in v0.1.0-rc10
 
@@ -652,6 +696,5 @@ Refer to [current limits](../../docs/resources/limits.md) for what v1 doesn't do
 
 ## Previous Releases
 
-The combined staging site's **Latest (main)** version retains the imported main guides and changelog.
-Use [earlier documentation](../../docs/get-started/migration.md#finding-earlier-documentation) to select that version.
-Its release entries aren't v1 release notes.
+The separate NemoClaw v0 product contains the earlier main guides and changelog.
+Use [earlier documentation](../../docs/get-started/migration.md#finding-earlier-documentation) to find that product's release notes.

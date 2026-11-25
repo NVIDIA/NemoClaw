@@ -220,7 +220,7 @@ mod tests {
                 "an image by tag",
                 edited(
                     "/images/gateway",
-                    json!("ghcr.io/nvidia/openshell/gateway:0.1.9"),
+                    json!("quay.io/ai-openshell/gateway:0.1.10"),
                 ),
                 json!([hermes]),
             ),

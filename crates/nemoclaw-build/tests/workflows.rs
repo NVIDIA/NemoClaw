@@ -969,3 +969,57 @@ fn the_plan_runs_hardware_brev_and_hcl_suites_only_for_admitted_events() {
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn station_cases_bind_their_own_harness_example_and_images() {
+    use std::process::Command;
+    let workflow: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/hcl-e2e.yml")).unwrap(),
+    )
+    .unwrap();
+    let script = workflow["jobs"]["e2e"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["name"] == "Select the case's agent images")
+        .unwrap()["run"]
+        .as_str()
+        .unwrap();
+    for harness in ["openclaw", "hermes"] {
+        let fixture = tempfile::tempdir().unwrap();
+        let output_file = fixture.path().join("outputs");
+        let output = Command::new("bash")
+            .args(["-e", "-o", "pipefail", "-c", script])
+            .current_dir(repository())
+            .env(
+                "NEMOCLAW_HCL_CASE",
+                format!("dgx-station-{harness}-nemotron"),
+            )
+            .env("GITHUB_OUTPUT", &output_file)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let values: std::collections::BTreeMap<String, String> = fs::read_to_string(output_file)
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let (k, v) = line.split_once('=').unwrap();
+                (k.into(), v.into())
+            })
+            .collect();
+        assert_eq!(
+            values["document"],
+            format!("examples/platforms/docker/vllm/dgx-station/{harness}-dgx-station.yaml")
+        );
+        assert_eq!(values["primary"], harness);
+        assert_eq!(
+            values["suffix"],
+            if harness == "hermes" { "" } else { "-openclaw" }
+        );
+    }
+}

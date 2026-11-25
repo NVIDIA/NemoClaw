@@ -6,6 +6,13 @@ use nemoclaw_build::ci::{self, Step};
 use std::io::{Cursor, Write};
 
 #[test]
+fn windows_arm64_build_prerequisites_direct_the_user_to_wsl2() {
+    let error = ci::nextest_target("windows_arm64").unwrap_err();
+    assert!(error.contains("WSL2"), "{error}");
+    assert!(error.contains("Linux ARM64"), "{error}");
+}
+
+#[test]
 fn unknown_steps_and_platforms_are_rejected_before_any_work() {
     assert_eq!(Step::parse("contract"), Some(Step::Contract));
     assert_eq!(Step::parse("integration"), Some(Step::Integration));
@@ -390,7 +397,7 @@ fn the_pinned_openshell_cli_matches_the_openshell_version() {
             .unwrap();
         assert!(
             url.starts_with(&format!(
-                "https://github.com/NVIDIA/OpenShell/releases/download/v{version}/openshell-"
+                "https://github.com/ai-openshell/openshell/releases/download/v{version}/openshell-"
             )),
             "{platform}: {url}"
         );

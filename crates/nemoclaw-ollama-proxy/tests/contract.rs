@@ -322,7 +322,7 @@ async fn startup_refuses_a_changed_model_before_listening() {
         .await
         .err()
         .unwrap();
-    assert!(error.0.contains("digest changed"), "{error}");
+    assert!(error.to_string().contains("digest changed"), "{error}");
 }
 
 #[tokio::test]

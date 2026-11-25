@@ -4,8 +4,10 @@ use nemoclaw_sdk::{compile, config::Document};
 use serde_json::Value;
 
 pub fn specification(kind: &str) -> Value {
-    let document =
-        Document::parse(include_bytes!("../../../../examples/spark/vllm.yaml").as_slice()).unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../examples/platforms/docker/vllm/dgx-spark/vllm.yaml").as_slice(),
+    )
+    .unwrap();
     let generations = [
         ("managed_gateway".into(), "a".repeat(32)),
         ("inference_service".into(), "b".repeat(32)),

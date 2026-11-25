@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Main and v1 share Fern's version selector. See NOTICE.md for provenance.
+# The local preview uses the v1 guide and the pinned layout. See NOTICE.md for provenance.
 instances:
   - url: nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw
     multi-source: true
@@ -34,7 +34,7 @@ theme:
   footer-nav: minimal
 
 logo:
-  href: /nemoclaw/latest
+  href: /nemoclaw/v1/overview
   right-text: NemoClaw
 
 favicon: ./assets/NVIDIA_symbol.svg
@@ -56,10 +56,7 @@ experimental:
     - ./_main/fern/components
 
 versions:
-  - display-name: Latest (main)
-    path: ./_main/docs/index.yml
-    slug: latest
-  - display-name: v1 (Development)
+  - display-name: Latest
     path: ./_generated/navigation.yml
     slug: v1
 

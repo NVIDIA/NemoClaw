@@ -7,7 +7,7 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 fn input(harness: &str) -> Value {
     let mut v: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/local.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../examples/agents/local.yaml")).unwrap();
     v["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(harness);
     v
 }

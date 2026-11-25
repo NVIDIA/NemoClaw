@@ -56,6 +56,7 @@ Match the symptom to its next action:
 | Authentication, transport, or incomplete-observation error | Restore access to the selected service. Failed observation does not establish absence or authorize recreation. For a persistently unknown runtime after an invocation failure, follow the [replacement procedure](../build-deploy/usage.md#replacing-workloads-after-an-unusable-runtime). |
 | Ownership, generation, or durable identity mismatch | Inspect the selected gateway or engine and the retained deployment identity. Do not adopt or replace a different resource. |
 | Provider-profile identity mismatch after upgrading a bundle | Check the [gateway profile format break](../references/provider.md#gateway-profile-format-upgrade). Old `profile-v1` profiles require the original bundle for teardown or a separate deployment. |
+| Plan succeeded but reports `complete: false` in JSON | Inspect `deferred` before applying. It lists prerequisites that prevent a complete plan. If the inspection engine lacks an agent image, its compatibility check can be deferred even when the message says “unverified.” See [apply-time image checks](../build-deploy/usage.md#control-container-image-downloads). Entries in the separate `unverified` list are advisories and do not make the plan incomplete. |
 | Plan would remove or replace a resource | Check [update constraints](../build-deploy/usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment. |
 | Managed model replacement is refused by `updatePolicy: Preserve` | The update requires replacing a running Docker model container. Keep the current configuration, or explicitly choose `spec.services.<name>.updatePolicy: Recreate` after reviewing the [downtime and recovery limits](../agents-inference/inference.md#setting-container-limits-and-update-policy). |
 | Interrupted apply | Resolve the cause and reapply the original YAML with its retained state. |
@@ -89,7 +90,10 @@ Array indices start at zero.
 Source lines and columns start at one, and columns count characters.
 Valid declaration names appear in paths, while arbitrary map keys appear as `[entry]` and rejected values remain omitted.
 YAML syntax and duplicate-key errors also include source positions without copying source text.
-Later semantic checks, such as unresolved references, retain their existing named-field diagnostics and might lack source positions.
+Semantic checks, such as unresolved references and API-key auth without a credential, name their field the same way.
+They run only on a document the schema accepts, so correcting schema errors can reveal semantic ones.
+A run reports every error it finds, in document order, and lists the first 20.
+A sandbox's semantic checks stop at its first error, while the other sandboxes are still checked.
 
 For `kvCacheGiB`, use `0` or an integer from `4` through `12` when `gpuMemoryUtilization` is absent.
 With `gpuMemoryUtilization`, `kvCacheGiB` must be omitted or zero.
@@ -159,6 +163,8 @@ kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
 ```
 
 ## Inference and Agent Readiness
+
+Identify the last check that passed. A successful plan previews resource changes; it does not prove service readiness. A successful apply establishes the configured readiness checks, not an inference result. For an end-to-end check, [send a native request and inspect its reply](../get-started/first-deployment.md#sending-a-verification-request).
 
 Use [inference verification](../agents-inference/inference.md#verifying-the-result) to distinguish configuration readiness from a successful reply.
 For stopped Ollama, use [the managed Ollama procedure](../agents-inference/inference.md#running-managed-ollama).

@@ -35,6 +35,8 @@ pub(crate) struct JourneyWizard {
     /// The engines this machine's environment names, read before the first question.
     pub(super) local_engine_candidates: Vec<DiscoveryRequest>,
     pub(super) input: String,
+    /// The image selected by discovery, shown on the following question.
+    pub(super) automatic_image: Option<String>,
     pub(super) error: Option<String>,
     pub(super) started: bool,
     pub(super) accepted: bool,
@@ -64,6 +66,7 @@ impl JourneyWizard {
             configurations: Cell::new(0),
             local_engine_candidates: Vec::new(),
             input: String::new(),
+            automatic_image: None,
             error: None,
             started: false,
             accepted: false,
@@ -163,6 +166,17 @@ impl JourneyWizard {
             // The chosen image is a default the user didn't confirm: going
             // back from the next question asks for it.
             self.history.push(before);
+            self.automatic_image = self
+                .state
+                .values()
+                .pointer("/spec/sandboxes")
+                .and_then(Value::as_object)
+                .and_then(|sandboxes| {
+                    sandboxes
+                        .values()
+                        .find_map(|sandbox| sandbox.pointer("/image/ref").and_then(Value::as_str))
+                })
+                .map(str::to_owned);
         }
         self.invalidate();
     }
@@ -224,6 +238,7 @@ impl JourneyWizard {
             self.invalidate();
         }
         answered?;
+        self.automatic_image = None;
         self.history.push(previous);
         self.changed();
         self.selected = 0;
@@ -260,6 +275,7 @@ impl JourneyWizard {
     }
 
     pub(super) fn back(&mut self) {
+        self.automatic_image = None;
         if let Some(previous) = self.history.pop() {
             self.state = previous;
             // Answering the image again would skip the question going back

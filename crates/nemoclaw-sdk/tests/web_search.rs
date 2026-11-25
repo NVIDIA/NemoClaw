@@ -35,8 +35,10 @@ fn grants_search_in_sandbox_policy(policy: &Value) -> bool {
 }
 
 fn input() -> Value {
-    let mut value: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let mut value: Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/agents/fabric-openclaw.yaml"
+    ))
+    .unwrap();
     value["spec"]["sandboxes"]["assistant"]["integrations"] =
         json!({"search":{"kind":"webSearch","provider":"brave","credential":{"env":"SEARCH_KEY"}}});
     value["spec"]["sandboxes"]["assistant"]["agent"]["integrationRefs"] = json!(["search"]);
@@ -297,9 +299,15 @@ fn distinct_search_definitions_are_not_silently_merged_by_value() {
     value["spec"]["sandboxes"]["assistant"]["agent"]["integrationRefs"] =
         json!(["search", "other"]);
     let error = Document::parse(value.to_string().as_bytes()).unwrap_err();
+    let [diagnostic] = error.diagnostics() else {
+        panic!("{error}")
+    };
     assert_eq!(
-        error.0,
-        "a sandbox supports only one attached web search definition"
+        (diagnostic.path.as_deref(), diagnostic.message.as_str()),
+        (
+            Some("spec.sandboxes.assistant"),
+            "a sandbox supports only one attached web search definition"
+        )
     );
 }
 
@@ -532,7 +540,10 @@ fn search_registration_names_stay_reserved_and_policy_names_are_free() {
         value["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["providerRef"] =
             json!(name);
         let error = Document::parse(value.to_string().as_bytes()).unwrap_err();
-        assert!(error.0.contains("reserved for web search"), "{error}");
+        assert!(
+            error.to_string().contains("reserved for web search"),
+            "{error}"
+        );
     }
     let mut value = input();
     value["spec"]["sandboxes"]["assistant"]["integrations"]["search"]["provider"] = json!("tavily");
@@ -565,9 +576,11 @@ fn attaching_brave_and_tavily_to_one_agent_does_not_discard_either_intent() {
     value["spec"]["sandboxes"]["assistant"]["integrations"]["other"] = other;
     value["spec"]["sandboxes"]["assistant"]["agent"]["integrationRefs"] =
         json!(["search", "other"]);
+    let error = Document::parse(value.to_string().as_bytes()).unwrap_err();
     assert_eq!(
-        Document::parse(value.to_string().as_bytes()).unwrap_err().0,
-        "a sandbox supports only one attached web search definition"
+        error.diagnostics()[0].message,
+        "a sandbox supports only one attached web search definition",
+        "{error}"
     );
 }
 
@@ -620,7 +633,7 @@ fn api_integrations_cannot_take_a_search_registration_name() {
     ] {
         let error = api(name).unwrap_err();
         assert!(
-            error.0.contains("reserved for web search"),
+            error.to_string().contains("reserved for web search"),
             "{name}: {error}"
         );
     }

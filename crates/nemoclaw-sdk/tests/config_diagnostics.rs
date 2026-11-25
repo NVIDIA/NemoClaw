@@ -37,7 +37,7 @@ fn schema_failure_names_the_service_field_constraint_and_source_position() {
 
 #[test]
 fn schema_failure_identifies_array_indices_and_expected_type_without_values() {
-    let mut input = source("fabric-openclaw.yaml");
+    let mut input = source("agents/fabric-openclaw.yaml");
     let mut second = input["spec"]["sandboxes"]["assistant"].clone();
     second["agent"]["inference"]["routes"][0]["overrides"] = json!("PRIVATE_SENTINEL");
     input["spec"]["sandboxes"]["second"] = second;
@@ -94,7 +94,7 @@ fn empty_input_is_distinct_from_an_invalid_root_value() {
 
 #[test]
 fn explicit_core_tags_are_rejected_without_rejecting_tag_text_inside_strings() {
-    let input = source("fabric-openclaw.yaml");
+    let input = source("agents/fabric-openclaw.yaml");
     let yaml = serde_saphyr::to_string(&input).unwrap();
     let name = input["metadata"]["name"].as_str().unwrap();
     for replacement in [
@@ -122,7 +122,7 @@ fn explicit_core_tags_are_rejected_without_rejecting_tag_text_inside_strings() {
 
 #[test]
 fn flow_document_columns_count_characters_and_do_not_include_values() {
-    let mut input = source("fabric-openclaw.yaml");
+    let mut input = source("agents/fabric-openclaw.yaml");
     input["spec"]["inferenceProviders"]["local"]["endpoint"] = json!("http://é.example.com/v1");
     input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"] =
         json!("PRIVATE_SENTINEL");
@@ -142,7 +142,7 @@ fn flow_document_columns_count_characters_and_do_not_include_values() {
 
 #[test]
 fn collection_tags_are_rejected_and_quoted_or_block_tag_text_is_preserved() {
-    let input = source("fabric-openclaw.yaml");
+    let input = source("agents/fabric-openclaw.yaml");
     let yaml = serde_saphyr::to_string(&input).unwrap();
     for tagged in [
         yaml.replacen("metadata:", "metadata: !!map", 1),
@@ -176,7 +176,7 @@ fn a_missing_service_image_reports_the_digest_pin_rule_at_its_service() {
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("schema at spec.services.qwen (line")
+        error.starts_with("spec.services.qwen (line")
             && error.ends_with(": service image must be pinned by a SHA-256 digest"),
         "{error}"
     );
@@ -184,12 +184,12 @@ fn a_missing_service_image_reports_the_digest_pin_rule_at_its_service() {
 
 fn local_yaml() -> String {
     std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/local.yaml"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/agents/local.yaml"),
     )
     .unwrap()
 }
 
-/// `examples/local.yaml` after `edit`, which must change it.
+/// `examples/agents/local.yaml` after `edit`, which must change it.
 fn edited(edit: impl FnOnce(String) -> String) -> String {
     let original = local_yaml();
     let text = edit(original.clone());
@@ -271,10 +271,7 @@ fn schema_rules_without_their_own_message_still_explain_the_failure() {
     ] {
         assert_eq!(
             rejection(&text),
-            format!(
-                "configuration violates schema at {path} ({}): {constraint}",
-                position_of(&text, at)
-            )
+            format!("{path} ({}): {constraint}", position_of(&text, at))
         );
     }
 }
@@ -285,7 +282,7 @@ fn a_tag_that_names_no_variant_lists_the_allowed_values() {
     assert_eq!(
         rejection(&text),
         format!(
-            "configuration violates schema at spec.gateway.management ({}): must be one of: external, managed",
+            "spec.gateway.management ({}): must be one of: external, managed",
             position_of(&text, "extrnal")
         )
     );
@@ -298,7 +295,7 @@ fn a_tag_that_names_no_variant_lists_the_allowed_values() {
     assert_eq!(
         rejection(&text),
         format!(
-            "configuration violates schema at spec.integrations.search.kind ({}): must be one of: api, webSearch",
+            "spec.integrations.search.kind ({}): must be one of: api, webSearch",
             position_of(&text, "websearch")
         )
     );
@@ -311,7 +308,7 @@ fn a_tag_that_names_no_variant_lists_the_allowed_values() {
     assert_eq!(
         rejection(&text),
         format!(
-            "configuration violates schema at spec.integrations.search ({}): required field: \"kind\"; must be one of: api, webSearch",
+            "spec.integrations.search ({}): required field: \"kind\"; must be one of: api, webSearch",
             position_of(&text, "provider: brave")
         )
     );
@@ -323,7 +320,7 @@ fn an_unknown_field_is_reported_at_its_key_with_a_declared_name() {
     assert_eq!(
         rejection(&text),
         format!(
-            "configuration violates schema at spec.sandboxes.assistant.network ({}): unknown fields are not allowed; did you mean \"tier\"?",
+            "spec.sandboxes.assistant.network ({}): unknown fields are not allowed; did you mean \"tier\"?",
             position_of(&text, "teir")
         )
     );
@@ -339,7 +336,7 @@ fn an_unknown_field_is_reported_at_its_key_with_a_declared_name() {
         assert_eq!(
             rejection(&text),
             format!(
-                "configuration violates schema at metadata ({}): unknown fields are not allowed; accepted fields: name, uid",
+                "metadata ({}): unknown fields are not allowed; accepted fields: name, uid",
                 position_of(&text, key)
             )
         );
@@ -357,8 +354,151 @@ fn an_integer_beyond_its_rust_type_fails_in_the_schema_at_its_position() {
     assert_eq!(
         rejection(&text),
         format!(
-            "configuration violates schema at spec.sandboxes.assistant.gpus ({}): must be at most 4294967295",
+            "spec.sandboxes.assistant.gpus ({}): must be at most 4294967295",
             position_of(&text, "5000000000")
+        )
+    );
+}
+
+/// The 1-based line and character column where `needle` starts in `text`.
+fn line_column(text: &str, needle: &str) -> (usize, usize) {
+    let before = &text[..text.find(needle).unwrap()];
+    (
+        before.matches('\n').count() + 1,
+        before.rsplit('\n').next().unwrap().chars().count() + 1,
+    )
+}
+
+/// Turns on API-key auth for the example's agent, whose provider has no
+/// credential.
+fn api_key_auth(yaml: String) -> String {
+    yaml.replace(
+        "        name: main\n",
+        "        name: main\n        auth:\n          method: api-key\n",
+    )
+}
+
+const AUTH: &str = "API-key auth must reference the routed provider with a credential";
+
+/// A second sandbox whose route names a provider that doesn't exist.
+const HELPER: &str = "    helper:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: helper
+        inference:
+          routes:
+            - name: primary
+              providerRef: locl
+              overrides:
+                model: qwen3.5:0.8b
+";
+
+#[test]
+fn a_semantic_error_names_its_field_and_position() {
+    let text = edited(api_key_auth);
+    let error = Document::parse(text.as_bytes()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "spec.sandboxes.assistant.agent.auth ({}): {AUTH}",
+            position_of(&text, "method: api-key")
+        )
+    );
+    let [diagnostic] = error.diagnostics() else {
+        panic!("{error}")
+    };
+    let (line, column) = line_column(&text, "method: api-key");
+    assert_eq!(
+        diagnostic.path.as_deref(),
+        Some("spec.sandboxes.assistant.agent.auth")
+    );
+    assert_eq!(
+        (diagnostic.line, diagnostic.column),
+        (Some(line), Some(column))
+    );
+    assert_eq!(diagnostic.message, AUTH);
+}
+
+#[test]
+fn one_run_reports_every_semantic_error_in_document_order() {
+    let text = edited(|yaml| api_key_auth(yaml) + HELPER);
+    assert_eq!(
+        rejection(&text),
+        format!(
+            "2 configuration errors:\n  spec.sandboxes.assistant.agent.auth ({}): {AUTH}\n  spec.sandboxes.helper.agent.inference.routes[0].providerRef ({}): unknown provider \"locl\"; visible definitions: local",
+            position_of(&text, "method: api-key"),
+            position_of(&text, "locl")
+        )
+    );
+}
+
+#[test]
+fn one_run_reports_every_schema_error_in_document_order() {
+    let text = edited(|yaml| {
+        yaml.replace("tier: isolated", "teir: isolated")
+            .replace("management: external", "management: extrnal")
+    });
+    assert_eq!(
+        rejection(&text),
+        format!(
+            "2 configuration errors:\n  spec.gateway.management ({}): must be one of: external, managed\n  spec.sandboxes.assistant.network ({}): unknown fields are not allowed; did you mean \"tier\"?",
+            position_of(&text, "extrnal"),
+            position_of(&text, "teir")
+        )
+    );
+}
+
+#[test]
+fn a_run_reports_the_first_twenty_errors_by_position() {
+    let sandboxes: String = (1..=25)
+        .map(|n| HELPER.replace("helper", &format!("helper{n:02}")))
+        .collect();
+    let text = edited(|yaml| yaml + &sandboxes);
+    let error = rejection(&text);
+    let lines: Vec<_> = error.lines().collect();
+    assert_eq!(
+        lines[0], "25 configuration errors, showing the first 20:",
+        "{error}"
+    );
+    assert_eq!(lines.len(), 21, "{error}");
+    for (shown, n) in lines[1..].iter().zip(1..) {
+        assert!(
+            shown.starts_with(&format!(
+                "  spec.sandboxes.helper{n:02}.agent.inference.routes[0].providerRef (line "
+            )),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn validating_a_document_built_in_code_names_paths_without_positions() {
+    let mut value =
+        serde_json::to_value(Document::parse(local_yaml().as_bytes()).unwrap()).unwrap();
+    value["spec"]["sandboxes"]["assistant"]["agent"]["auth"] = json!({"method": "api-key"});
+    let document: Document = serde_json::from_value(value).unwrap();
+    assert_eq!(
+        document.validate().unwrap_err().to_string(),
+        format!("spec.sandboxes.assistant.agent.auth: {AUTH}")
+    );
+}
+
+#[test]
+fn every_error_inside_the_selected_union_variant_is_reported() {
+    // The external gateway, a union variant, misses its endpoint and has an
+    // unknown key.
+    let text = edited(|yaml| yaml.replace("\n    endpoint: http", "\n    endpiont: http"));
+    assert_eq!(
+        rejection(&text),
+        format!(
+            "2 configuration errors:\n  spec.gateway ({}): required field: \"endpoint\"\n  spec.gateway ({}): unknown fields are not allowed; did you mean \"endpoint\"?",
+            position_of(&text, "management: external"),
+            position_of(&text, "endpiont")
         )
     );
 }

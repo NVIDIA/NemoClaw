@@ -777,6 +777,7 @@ async fn main() -> Result<()> {
                 targets,
             } => {
                 nemoclaw_build::images::fetch_sources(root).await?;
+                nemoclaw_build::images::check_image_store()?;
                 let cache = gha_cache.map(|scope| nemoclaw_build::images::GhaCache {
                     scope,
                     save: save_gha_cache,

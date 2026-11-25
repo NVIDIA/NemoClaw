@@ -99,3 +99,9 @@ The proxy and supervisor Dockerfiles compile from their retained archives with C
 
 Original license files remain inside each vendor directory.
 Image filesystem changes and different toolchain or platform inputs can change the resulting binary; these commands do not promise identical binary hashes.
+
+## Tokenizers and Pi Notices
+
+mini-swe-agent retains Tokenizers 0.23.1's original source distribution at `/opt/nemoclaw/source/tokenizers/tokenizers-source.tar.gz`, including its `tokenizers/LICENSE` Apache-2.0 text.
+The vLLM runtime retains the corresponding 0.23.3 distribution at the same path.
+The Pi image retains the original MIT notice from pi-coding-agent 1.0.3's npm-recorded Git revision at `/opt/nemoclaw/source/pi/pi-LICENSE`, covering its repository's bundled example extensions as well as the harness.

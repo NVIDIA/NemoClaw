@@ -65,6 +65,7 @@ pub(super) struct Facts<'a> {
 
 pub(super) fn rows(document: &Document, facts: &Facts<'_>) -> Vec<Row> {
     let mut rows = Vec::new();
+    let plan_credentials = document.plan_credential_names();
     // Credentials shown in a row of their own, so the rest are listed once.
     let mut shown = Vec::<String>::new();
     for sandbox in document.sandboxes() {
@@ -97,6 +98,11 @@ pub(super) fn rows(document: &Document, facts: &Facts<'_>) -> Vec<Row> {
                     value.push_str(&format!(" · {source}"));
                 }
                 rows.push(Row::plain("Model", value));
+                if let Some(InferenceTarget::External { endpoint, .. }) =
+                    provider.and_then(|provider| provider.target().ok())
+                {
+                    rows.push(Row::plain("Inference URL", endpoint.to_owned()));
+                }
                 if let Some(credential) = provider.and_then(|provider| provider.credential.as_ref())
                     && !keys.contains(&credential.env)
                 {
@@ -105,7 +111,12 @@ pub(super) fn rows(document: &Document, facts: &Facts<'_>) -> Vec<Row> {
             }
         }
         for key in keys {
-            rows.push(credential_row("API key", &key, facts.observations));
+            rows.push(credential_row(
+                "API key",
+                &key,
+                facts.observations,
+                plan_credentials.contains(&key.as_str()),
+            ));
             shown.push(key);
         }
         let integrations = sandbox
@@ -118,7 +129,12 @@ pub(super) fn rows(document: &Document, facts: &Facts<'_>) -> Vec<Row> {
                 Integration::WebSearch(definition) => {
                     search = true;
                     let reference = &definition.credential.env;
-                    let mut row = credential_row("Search", reference, facts.observations);
+                    let mut row = credential_row(
+                        "Search",
+                        reference,
+                        facts.observations,
+                        plan_credentials.contains(&reference.as_str()),
+                    );
                     let provider = labels::field_value(
                         "/spec/integrations/*/provider",
                         &serde_json::to_value(definition.provider).unwrap_or_default(),
@@ -140,7 +156,12 @@ pub(super) fn rows(document: &Document, facts: &Facts<'_>) -> Vec<Row> {
     }
     for reference in document.credential_names() {
         if !shown.iter().any(|shown| shown == reference) {
-            rows.push(credential_row("Credential", reference, facts.observations));
+            rows.push(credential_row(
+                "Credential",
+                reference,
+                facts.observations,
+                plan_credentials.contains(&reference),
+            ));
         }
     }
     if let Some(output) = facts.output {
@@ -182,9 +203,14 @@ fn credential_row(
     label: &'static str,
     reference: &str,
     observations: &DiscoveryObservations,
+    needed_by_plan: bool,
 ) -> Row {
-    let export = format!("export {reference}=...");
-    let run = || format!("Run {export} before nemoclaw plan, or plan asks for it.");
+    let stage = if needed_by_plan { "plan" } else { "apply" };
+    let run = || {
+        format!(
+            "Interactive nemoclaw {stage} asks for this value with hidden input. Keep it out of shell history and YAML."
+        )
+    };
     let observed = observations.get(&CredentialRequest {
         reference: reference.into(),
     });
@@ -193,19 +219,23 @@ fn credential_row(
         Some(ObservationStatus::Available) => (Some(Status::fine("set")), None),
         // Only an unset key points at where to get a new one.
         Some(ObservationStatus::Unavailable) => (
-            Some(Status::attention("not set (plan will ask for it)")),
+            Some(Status::attention(if needed_by_plan {
+                "not set (plan will ask for it)"
+            } else {
+                "not set (apply will ask for it)"
+            })),
             Some(
                 ProviderPreset::for_credential_reference(reference)
                     .and_then(ProviderPreset::key_url)
-                    .map_or_else(run, |url| {
-                        format!("Get a key at {url}, then run {export} before nemoclaw plan.")
-                    }),
+                    .map_or_else(run, |url| format!("Get a key at {url}. {}", run())),
             ),
         ),
         Some(ObservationStatus::Unknown) => (
-            Some(Status::attention(
-                "could not be read (plan will ask for it)",
-            )),
+            Some(Status::attention(if needed_by_plan {
+                "could not be read (plan will ask for it)"
+            } else {
+                "could not be read (apply will ask for it)"
+            })),
             Some(run()),
         ),
     };
@@ -264,16 +294,17 @@ fn image_row(sandbox: NamedSandbox<'_>, target: Option<CompatibilityStatus>, abs
         image.clone()
     };
     if absent && target != Some(CompatibilityStatus::Conflict) {
+        let build_guide = nemoclaw_sdk::documentation_url(BUILD_AGENT_IMAGES);
         return Row {
             status: Some(Status::attention("not present")),
             detail: Some(format!(
-                "Apply pulls it from its registry; to build one instead, see {BUILD_AGENT_IMAGES}"
+                "Apply pulls it from its registry; to build one instead, see {build_guide}"
             )),
             ..Row::plain("Image", value)
         };
     }
     let status = match target {
-        Some(CompatibilityStatus::Compatible) => Status::fine("compatible"),
+        Some(CompatibilityStatus::Compatible) => Status::fine("metadata compatible"),
         Some(CompatibilityStatus::Conflict) => Status::attention("conflict"),
         Some(CompatibilityStatus::Unverified) => Status::attention("not checked"),
         // Onboarding did not read the target, so there is nothing to act on.
@@ -281,6 +312,9 @@ fn image_row(sandbox: NamedSandbox<'_>, target: Option<CompatibilityStatus>, abs
     };
     Row {
         status: Some(status),
+        detail: (target == Some(CompatibilityStatus::Compatible)).then(||
+            "Onboarding checks metadata, not the live runtime or inference. Apply, then invoke the agent to test a reply.".into()
+        ),
         ..Row::plain("Image", value)
     }
 }

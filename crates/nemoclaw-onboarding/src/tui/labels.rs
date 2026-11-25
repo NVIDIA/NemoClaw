@@ -89,6 +89,13 @@ pub(super) fn title(question: &JourneyQuestion) -> String {
 
 /// Map text first, then the schema's description.
 pub(super) fn description(question: &JourneyQuestion) -> Option<String> {
+    if keys(question.id())[1] == "/spec/sandboxes/*/image/ref" {
+        return Some(format!(
+            "Immutable image reference, pinned by SHA-256 digest. Required on every gateway target. Build: {}. For a release, use its listed image digest; draft images require registry access: {}.",
+            nemoclaw_sdk::documentation_url(nemoclaw_authoring::BUILD_AGENT_IMAGES),
+            nemoclaw_sdk::documentation_url("docs/get-started/install.md"),
+        ));
+    }
     question_text(question.id())
         .and_then(|text| text.description.clone())
         .or_else(|| question.description().map(str::to_owned))

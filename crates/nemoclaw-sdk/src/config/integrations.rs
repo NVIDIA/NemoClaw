@@ -25,7 +25,7 @@ pub struct Api {
     pub credential: SecretRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String")]
-    /// Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to NEMOCLAW_API_<registration>_KEY.
+    /// Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to `NEMOCLAW_API_<registration>_KEY`.
     pub sandbox_env: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ApiAuthStyle")]
@@ -136,10 +136,6 @@ impl<'a> NamedSandbox<'a> {
                     .or_else(|| shared.get(name))
                     .ok_or_else(|| {
                         super::references::missing_reference(
-                            &format!(
-                                "spec.sandboxes[{}].agent.integrationRefs[{index}]",
-                                super::references::diagnostic_name(self.name)
-                            ),
                             "integration",
                             name,
                             shared
@@ -147,8 +143,12 @@ impl<'a> NamedSandbox<'a> {
                                 .chain(sandbox.integrations.keys())
                                 .map(String::as_str),
                         )
+                        .or_at(&format!(
+                            "/spec/sandboxes/{}/agent/integrationRefs/{index}",
+                            self.name
+                        ))
                     })?;
-                Ok((None, name.as_str(), definition))
+                Ok::<_, ConfigError>((None, name.as_str(), definition))
             });
         let inline = agent
             .integrations
