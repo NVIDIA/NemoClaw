@@ -261,9 +261,9 @@ impl JourneyState {
         }
     }
 
-    /// Answer the sandbox image question with the one image the engine holds
-    /// for the harness, unless the document names another or a read found the
-    /// image can't run the configuration, and say whether it answered. The read
+    /// Answer the sandbox image question with the sole usable local or release
+    /// image for the harness, unless the document names another, and say whether
+    /// it answered. Rejected choices remain visible but do not count. The read
     /// depends on the harness, the target and the engine, so it waits until
     /// none of their questions is open.
     pub fn answer_single_agent_images(
@@ -290,13 +290,15 @@ impl JourneyState {
             else {
                 continue;
             };
-            let [only] = question.choices() else {
+            let mut usable = question
+                .choices()
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|reference| observations.image_rejection(reference).is_none());
+            let Some(only) = usable.next() else {
                 continue;
             };
-            let Some(only) = only.as_str() else {
-                continue;
-            };
-            if observations.image_rejection(only).is_some() {
+            if usable.next().is_some() {
                 continue;
             }
             if self

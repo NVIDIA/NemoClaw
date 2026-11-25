@@ -1630,7 +1630,7 @@ const OPENCLAW_IMAGE: &str =
 const IMAGE_QUESTION: &str = "/spec/sandboxes/assistant/image/ref";
 
 #[test]
-fn a_release_image_for_the_selected_harness_fills_an_empty_engine() {
+fn a_single_release_image_fills_an_empty_engine_or_replaces_a_rejected_local_image() {
     const RELEASE_IMAGE: &str = "ghcr.io/nvidia/nemoclaw/v1/hermes@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let capabilities = Capabilities::available().with_release_pins(
         &serde_json::to_vec(&serde_json::json!({
@@ -1643,26 +1643,62 @@ fn a_release_image_for_the_selected_harness_fills_an_empty_engine() {
             }]
         })).unwrap(), Some("v0.1.0-rc.5")
     ).unwrap();
-    let state = load_journey(Source::Defaults, &capabilities).unwrap();
-    let mut wizard = on_one_docker_engine(capabilities, state);
-    wizard
-        .submit(Some(serde_json::json!("nvidia.fabric.hermes")))
-        .unwrap();
-    let mut wizard = to_the_image_question(wizard);
-    let query = agent_images_probe(&wizard).unwrap();
-    wizard.record(query, agent_images(&[]));
-    for _ in 0..30 {
-        if wizard.question().unwrap().is_none() {
-            break;
+    for reject_local in [false, true] {
+        let state = load_journey(Source::Defaults, &capabilities).unwrap();
+        let mut wizard = on_one_docker_engine(capabilities.clone(), state);
+        wizard
+            .submit(Some(serde_json::json!("nvidia.fabric.hermes")))
+            .unwrap();
+        let mut wizard = to_the_image_question(wizard);
+        let query = agent_images_probe(&wizard).unwrap();
+        wizard.record(
+            query,
+            agent_images(if reject_local { &[HERMES_IMAGE] } else { &[] }),
+        );
+        if reject_local {
+            questions_until_review(&mut wizard);
+            let document = wizard
+                .resolution()
+                .unwrap()
+                .assessment()
+                .document()
+                .unwrap()
+                .clone();
+            let query = nemoclaw_sdk::discovery::plan_queries(&document)
+                .unwrap()
+                .into_iter()
+                .find(|query| matches!(query, DiscoveryQuery::Fabric(_)))
+                .unwrap();
+            wizard.record(
+                query,
+                DiscoveryObservation::Fabric(FabricObservation {
+                    status: ObservationStatus::Available,
+                    compatibility: Some(nemoclaw_sdk::fabric_capabilities::CompatibilityReport {
+                        status: nemoclaw_sdk::fabric_capabilities::Support::Unsupported,
+                        adapter_id: Some("nvidia.fabric.hermes".into()),
+                        checks: vec![nemoclaw_sdk::fabric_capabilities::CapabilityCheck {
+                            requirement: "fixture_runtime".into(),
+                            status: nemoclaw_sdk::fabric_capabilities::Support::Unsupported,
+                            reason: "local image cannot run this configuration".into(),
+                        }],
+                    }),
+                    ..FabricObservation::unknown("rejected local image")
+                }),
+            );
         }
-        wizard.advance();
-        assert!(wizard.error.is_none(), "{:?}", wizard.error);
+        assert_eq!(
+            wizard
+                .state()
+                .values()
+                .pointer(IMAGE_QUESTION)
+                .and_then(Value::as_str),
+            Some(RELEASE_IMAGE),
+            "the sole usable release image must be selected without another image question"
+        );
+        questions_until_review(&mut wizard);
+        let yaml = wizard.configuration().unwrap().unwrap();
+        assert!(yaml.contains(RELEASE_IMAGE));
     }
-    let yaml = wizard
-        .configuration()
-        .expect("release suggestion should reach review")
-        .unwrap();
-    assert!(yaml.contains(RELEASE_IMAGE));
 }
 
 #[test]
