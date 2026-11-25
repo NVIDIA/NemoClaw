@@ -23,7 +23,7 @@ A failed acquisition can't become an accepted cache entry.
 A changed size or modification time causes refusal and retains the cache for inspection.
 
 Build the `llama-cpp` Bake target and use its resulting immutable digest as the service `image`.
-It adds the v1 supervisor to llama.cpp's digest-pinned CUDA 13.5 server image from release b12375.
+It adds the v1 supervisor to llama.cpp's digest-pinned CUDA 13.5 server image from release b12679.
 See [build a runtime image](../build-deploy/build.md#building-a-runtime-image).
 This operation publishes no image.
 
