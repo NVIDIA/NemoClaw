@@ -18,7 +18,7 @@ nemoclaw osh --state-dir .nemoclaw -- sandbox list
 It selects the gateway and workspace from the saved deployment and uses the referenced mTLS files without changing your OpenShell profiles.
 Use the same state directory and TLS environment as apply.
 The commands below use this form; [`nemoclaw openshell`](../references/cli.md#running-openshell-against-a-deployment) describes it.
-For an external OIDC gateway, configure `gateway.oidc`; the first `nemoclaw osh` command signs in, as [the CLI reference](../references/cli.md#logging-in-to-an-external-oidc-gateway) describes.
+For an external OIDC gateway, configure `gateway.oidc` and register the gateway with the command `nemoclaw osh` prints, as [the CLI reference](../references/cli.md#logging-in-to-an-external-oidc-gateway) describes.
 
 ### Selecting a Standalone CLI for Bearer-Token Gateways
 

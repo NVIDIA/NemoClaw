@@ -79,31 +79,35 @@ fn runs_openshell_against_the_deployment_gateway_and_workspace() {
 }
 
 #[test]
-fn an_oidc_gateway_is_registered_once_from_its_configuration() {
+fn an_oidc_gateway_without_a_sign_in_shows_the_command_to_register_it() {
     let root = tempfile::tempdir().unwrap();
     let gateway = serde_json::json!({
         "endpoint":"https://gateway.example.com",
         "oidc":{"issuer":"https://idp.example.com/realms/openshell", "clientId":"openshell-cli"}
     });
     let script = "#!/bin/sh\nprintf '%s ' \"$@\"; echo\nif [ \"$2\" = add ]; then touch \"$XDG_CONFIG_HOME/openshell/gateways/$OPENSHELL_GATEWAY/metadata.json\"; fi\n";
-    let mut command = osh(root.path(), gateway, script);
-    command.arg("status");
-    let mut run = || {
-        let output = command.output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).unwrap()
+    let run = |args: &[&str]| {
+        let output = osh(root.path(), gateway.clone(), script)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        (
+            String::from_utf8(output.stdout).unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
     };
-    let first = run();
+    let (stdout, hint) = run(&["status"]);
+    assert_eq!(stdout, "status \n");
+    let add = hint.lines().nth(1).unwrap().trim();
     assert!(
-        first.starts_with("gateway add https://gateway.example.com --name nc-")
-            && first.ends_with(
-                " --oidc-issuer https://idp.example.com/realms/openshell --oidc-client-id openshell-cli \nstatus \n"
+        add.starts_with("nemoclaw osh -- gateway add https://gateway.example.com --name nc-")
+            && add.ends_with(
+                " --oidc-issuer https://idp.example.com/realms/openshell --oidc-client-id openshell-cli"
             ),
-        "{first}"
+        "{hint}"
     );
-    assert_eq!(run(), "status \n");
+    let args: Vec<&str> = add.split(' ').skip(3).collect();
+    assert_eq!(run(&args).1, "");
+    assert_eq!(run(&["status"]), ("status \n".into(), "".into()));
 }

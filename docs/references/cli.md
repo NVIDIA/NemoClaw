@@ -57,17 +57,20 @@ gateway:
 ```
 
 `audience` and `scopes` are optional.
-The first `nemoclaw osh` command registers the gateway with OpenShell's `gateway add`, which signs in, then runs the requested command:
+Until OpenShell has registered the gateway, `nemoclaw osh` prints the command that registers it from these settings, such as:
 
 ```sh
-nemoclaw osh -- sandbox list
+nemoclaw osh -- gateway add https://gateway.example.com --name nc-3f9a1c2b7d4e8a60 \
+  --oidc-issuer https://idp.example.com/realms/openshell --oidc-client-id openshell-cli \
+  --oidc-audience openshell --oidc-scopes 'openid offline_access'
 ```
 
+Registering signs in.
 OpenShell owns sign-in, token storage, and renewal; refer to [OpenShell's authentication guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx#oidc).
 Set `OPENSHELL_NO_BROWSER=1` for device-code sign-in, or `OPENSHELL_OIDC_CLIENT_SECRET` for automation; never put the client secret in YAML.
 Deployment operations still use `GATEWAY_TOKEN`; the signed-in identity needs membership in the deployment's workspace.
 Run `nemoclaw osh -- gateway login` to sign in again.
-After changing `gateway.oidc`, remove `<state-dir>/openshell/` so the next command registers the new settings.
+After changing `gateway.oidc`, run `nemoclaw osh -- gateway remove <name>`, then register the gateway again.
 
 Bearer-token gateways without `gateway.oidc`, including managed Kubernetes gateways, still require a separately configured OpenShell CLI.
 OpenShell publishes no Windows or Intel macOS CLI; use WSL 2 on Windows or a supported Linux or Apple silicon client.

@@ -15,8 +15,13 @@ pub(crate) fn run(cli: &Cli, args: &[OsString]) -> ExitCode {
     ) {
         #[cfg(unix)]
         Ok(deployment) => match deployment.openshell(args) {
-            Ok(mut command) => {
+            Ok((mut command, sign_in)) => {
                 use std::os::unix::process::CommandExt;
+                if let Some(add) = sign_in {
+                    eprintln!(
+                        "Sign in to this OIDC gateway once by registering it:\n  nemoclaw osh -- {add}"
+                    );
+                }
                 command.exec().to_string()
             }
             Err(error) => error.to_string(),

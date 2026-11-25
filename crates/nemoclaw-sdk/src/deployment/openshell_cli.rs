@@ -8,10 +8,13 @@ impl Deployment {
     /// The bundled OpenShell CLI, set to run `args` against this deployment's
     /// gateway and workspace through OpenShell's documented selectors. Its
     /// configuration lives in the state directory, apart from the user's own.
-    /// When the gateway sets `oidc`, the first call registers it with
-    /// `openshell gateway add`, which signs in; OpenShell keeps the session.
+    /// When the gateway sets `oidc` and OpenShell has not registered it, also
+    /// returns the `openshell` arguments that register it and sign in.
     #[cfg(unix)]
-    pub fn openshell(&self, args: &[std::ffi::OsString]) -> Result<std::process::Command, Error> {
+    pub fn openshell(
+        &self,
+        args: &[std::ffi::OsString],
+    ) -> Result<(std::process::Command, Option<String>), Error> {
         let (bundle, store) = self.open()?;
         if !bundle.manifest.files.contains_key("libexec/openshell") {
             return Err(Error::Bundle(
@@ -50,41 +53,35 @@ impl Deployment {
                 }
             }
         }
-        let binary = bundle.directory.join("libexec/openshell");
-        let command = || {
-            let mut command = std::process::Command::new(&binary);
-            command
-                .env("XDG_CONFIG_HOME", &configuration)
-                .env("OPENSHELL_SYSTEM_GATEWAY_DIR", configuration.join("system"))
-                .env("OPENSHELL_GATEWAY", &workspace)
-                .env("OPENSHELL_GATEWAY_ENDPOINT", &endpoint)
-                .env("OPENSHELL_WORKSPACE", &workspace)
-                .env_remove("OPENSHELL_GATEWAY_INSECURE");
-            command
-        };
+        // OpenShell signs in to an OIDC gateway when it is registered; until
+        // then, give the arguments that register this one.
+        let mut sign_in = None;
         if let crate::config::Gateway::External(external) = gateway
             && let Some(oidc) = &external.oidc
             && !profile.join("metadata.json").exists()
+            && args.first().is_none_or(|first| first != "gateway")
         {
-            let mut add = command();
-            add.args(["gateway", "add", &endpoint, "--name", &workspace])
-                .args(["--oidc-issuer", &oidc.issuer])
-                .args(["--oidc-client-id", &oidc.client_id]);
+            let mut add = format!(
+                "gateway add {endpoint} --name {workspace} --oidc-issuer {} --oidc-client-id {}",
+                oidc.issuer, oidc.client_id
+            );
             if let Some(audience) = &oidc.audience {
-                add.args(["--oidc-audience", audience]);
+                add += &format!(" --oidc-audience {audience}");
             }
             if let Some(scopes) = &oidc.scopes {
-                add.args(["--oidc-scopes", scopes]);
+                add += &format!(" --oidc-scopes '{scopes}'");
             }
-            let signed_in = add
-                .status()
-                .map_err(|_| Error::Bundle("cannot run the bundled OpenShell CLI"))?;
-            if !signed_in.success() {
-                return Err(Error::State("OpenShell OIDC sign-in failed"));
-            }
+            sign_in = Some(add);
         }
-        let mut command = command();
-        command.args(args);
-        Ok(command)
+        let mut command = std::process::Command::new(bundle.directory.join("libexec/openshell"));
+        command
+            .args(args)
+            .env("XDG_CONFIG_HOME", &configuration)
+            .env("OPENSHELL_SYSTEM_GATEWAY_DIR", configuration.join("system"))
+            .env("OPENSHELL_GATEWAY", &workspace)
+            .env("OPENSHELL_GATEWAY_ENDPOINT", &endpoint)
+            .env("OPENSHELL_WORKSPACE", &workspace)
+            .env_remove("OPENSHELL_GATEWAY_INSECURE");
+        Ok((command, sign_in))
     }
 }
