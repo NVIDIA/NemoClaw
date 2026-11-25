@@ -25,14 +25,19 @@ use std::{
 /// The page, relative to the repository root.
 const PAGE: &str = "examples/scenarios.md";
 /// The columns, in order, that every table on the page has.
-const HEADER: [&str; 8] = [
-    "On", "ID", "Scenario", "Example", "Needs", "Model", "Ask", "Expect",
-];
+const HEADER: [&str; 6] = ["On", "ID", "Scenario", "Example", "Needs", "Model"];
 /// The On cell that lets a row run, and the one that pauses it.
 const ON: &str = "✅";
 const PAUSED: &str = "⏸";
 /// The reply the stub model gives, which `lifecycle` configures.
 const STUB_REPLY: &str = "nemoclaw-stub-reply";
+/// The prompts of the QA plan's 005-DEPLOY, which every agent must answer
+/// with `READY` and then `391`; 009-LIFECYCLE asks for `READY` again.
+const READY_PROMPT: &str = "Reply with exactly READY.";
+const PRODUCT_PROMPT: &str = "What is 17 multiplied by 23? Reply with only the number.";
+/// The QA plan's cases that `lifecycle.tftest.hcl` runs, by the prefix of
+/// their run blocks' names: `case_005_plan` belongs to 005-DEPLOY.
+const CASES: [&str; 2] = ["005", "009"];
 /// The credential variable a stub row's providers read when the example names
 /// none.
 const STUB_KEY_ENV: &str = "NEMOCLAW_SCENARIO_MODEL_KEY";
@@ -80,9 +85,6 @@ struct Row {
     needs: Vec<Need>,
     /// Whether the runner serves the stub model in place of every endpoint.
     stub: bool,
-    ask: String,
-    /// The one word the reply must be, or none when any text passes.
-    expect: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -314,11 +316,6 @@ fn row(cells: &[Cell]) -> Result<Row, String> {
         .split(',')
         .map(|need| Need::parse(need.trim()))
         .collect::<Result<_, _>>()?;
-    let expect = match column("Expect")?.0 {
-        "any reply" => None,
-        word if word.split_whitespace().count() == 1 => Some(word.to_owned()),
-        other => return Err(format!("expects `{other}`: write one word or `any reply`")),
-    };
     Ok(Row {
         id: ids.join(", "),
         ids,
@@ -327,8 +324,6 @@ fn row(cells: &[Cell]) -> Result<Row, String> {
         example,
         needs,
         stub: column("Model")?.0 == "stub",
-        ask: column("Ask")?.0.to_owned(),
-        expect,
     })
 }
 
@@ -361,7 +356,11 @@ const RUNNING_KEY_ENV: &str = "NEMOCLAW_SCENARIO_MODEL_KEY";
 /// stub's port, and the credential variables a stub row's providers read.
 struct Bound {
     document: Value,
+    /// The verifier's targets for 005-DEPLOY: each agent asked for READY and
+    /// for 391.
     targets: Value,
+    /// Only the READY targets, which 009-LIFECYCLE asks again.
+    ready_targets: Value,
     stub_port: u16,
     stub_credentials: BTreeSet<String>,
 }
@@ -443,6 +442,7 @@ fn bind(row: &Row, mut document: Value, inputs: Inputs<'_>) -> Result<Bound, Str
         }
     }
     let mut targets = serde_json::Map::new();
+    let mut ready_targets = serde_json::Map::new();
     for (name, sandbox) in spec["sandboxes"]
         .as_object_mut()
         .ok_or("the example has no sandboxes")?
@@ -455,15 +455,21 @@ fn bind(row: &Row, mut document: Value, inputs: Inputs<'_>) -> Result<Bound, Str
             let tag = harness.rsplit('.').next().unwrap_or_default();
             sandbox["image"]["ref"] = json!((inputs.image)(repository, tag)?);
         }
-        let mut target = json!({
-            "agent": sandbox["agent"]["name"],
-            "request": row.ask,
-            "response_pointer": "/output/response",
-        });
-        if let Some(word) = &row.expect {
-            target["answer"] = json!(word);
+        for (suffix, request, answer) in [
+            ("ready", READY_PROMPT, "READY"),
+            ("391", PRODUCT_PROMPT, "391"),
+        ] {
+            let target = json!({
+                "agent": sandbox["agent"]["name"],
+                "request": request,
+                "response_pointer": "/output/response",
+                "answer": if row.stub { STUB_REPLY } else { answer },
+            });
+            if suffix == "ready" {
+                ready_targets.insert(format!("{name}-{suffix}"), target.clone());
+            }
+            targets.insert(format!("{name}-{suffix}"), target);
         }
-        targets.insert(name.clone(), target);
     }
     let stub_port = if row.stub { (inputs.ports)()? } else { 1 };
     let mut stub_credentials = BTreeSet::new();
@@ -500,6 +506,7 @@ fn bind(row: &Row, mut document: Value, inputs: Inputs<'_>) -> Result<Bound, Str
     Ok(Bound {
         document,
         targets: Value::Object(targets),
+        ready_targets: Value::Object(ready_targets),
         stub_port,
         stub_credentials,
     })
@@ -593,8 +600,51 @@ impl Drop for Cleanup {
     }
 }
 
-/// Runs one row and reports whether its lifecycle passed.
-fn run_row(row: &Row, host: &Host, bundle: &Bundle, root: &Path) -> Result<(), String> {
+/// Each case's outcome from `tofu test`'s report of the lifecycle's run
+/// blocks: passed when all of its runs passed, FAILED when one failed or a
+/// setup run (one that belongs to no case) failed, and not run when its runs
+/// were skipped.
+fn case_outcomes(output: &str) -> BTreeMap<&'static str, &'static str> {
+    let runs: Vec<(&str, &str)> = output
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("run \"")?;
+            let (name, result) = rest.split_once("\"... ")?;
+            Some((name, result.trim()))
+        })
+        .collect();
+    let setup_failed = runs
+        .iter()
+        .any(|(name, result)| !name.starts_with("case_") && *result != "pass");
+    CASES
+        .iter()
+        .map(|case| {
+            let prefix = format!("case_{case}_");
+            let results: Vec<&str> = runs
+                .iter()
+                .filter(|(name, _)| name.starts_with(&prefix))
+                .map(|(_, result)| *result)
+                .collect();
+            let outcome = if setup_failed || results.contains(&"fail") || results.contains(&"error")
+            {
+                "FAILED"
+            } else if results.is_empty() || results.iter().any(|result| *result != "pass") {
+                "not run"
+            } else {
+                "passed"
+            };
+            (*case, outcome)
+        })
+        .collect()
+}
+
+/// Runs one row and reports each case's outcome.
+fn run_row(
+    row: &Row,
+    host: &Host,
+    bundle: &Bundle,
+    root: &Path,
+) -> Result<BTreeMap<&'static str, &'static str>, String> {
     let engine = host.engine.clone().ok_or("no Docker engine")?;
     let page_dir = repository_root().join(PAGE).parent().unwrap().to_owned();
     let example = page_dir.join(&row.example);
@@ -670,8 +720,14 @@ fn run_row(row: &Row, host: &Host, bundle: &Bundle, root: &Path) -> Result<(), S
         uid: parsed.metadata.uid.to_string(),
         workspace: parsed.workspace(),
     };
-    let scenario = json!({ "stub": row.stub, "port": bound.stub_port, "targets": bound.targets });
-    let status = Command::new(std::env::current_exe().unwrap())
+    let scenario = json!({
+        "stub": row.stub,
+        "port": bound.stub_port,
+        "targets": bound.targets,
+        "ready_targets": bound.ready_targets,
+    });
+    // The output is kept to read each run block's result, and echoed.
+    let output = Command::new(std::env::current_exe().unwrap())
         .args(["hcl_live::case", "--exact", "--ignored", "--nocapture"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .env("NEMOCLAW_HCL_CASE", "lifecycle")
@@ -681,12 +737,19 @@ fn run_row(row: &Row, host: &Host, bundle: &Bundle, root: &Path) -> Result<(), S
         .env("TF_VAR_scenario", scenario.to_string())
         .env("TF_VAR_model_key", &key)
         .env("DOCKER_HOST", &engine)
-        .status()
+        .stderr(std::process::Stdio::inherit())
+        .output()
         .map_err(|error| format!("cannot run hcl_live::case: {error}"))?;
-    status
-        .success()
-        .then_some(())
-        .ok_or_else(|| format!("the lifecycle failed; see {}", run.display()))
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    print!("{stdout}");
+    let outcomes = case_outcomes(&stdout);
+    if !output.status.success() && !outcomes.values().any(|outcome| *outcome == "FAILED") {
+        return Err(format!(
+            "the lifecycle failed before its cases; see {}",
+            run.display()
+        ));
+    }
+    Ok(outcomes)
 }
 
 #[test]
@@ -707,33 +770,45 @@ fn page() {
         |_| std::env::temp_dir().join(format!("nemoclaw-scenarios-{}", std::process::id())),
         PathBuf::from,
     );
-    let mut outcomes = BTreeMap::new();
+    // Each deployment's outcome, or each of its run IDs' outcome when its row ran.
+    let mut report: Vec<(String, String)> = Vec::new();
+    let mut failed = Vec::new();
     for row in &rows {
         let outcome = if selected
             .as_ref()
             .is_some_and(|s| !row.ids.iter().any(|id| s.contains(id)))
         {
-            "not selected".to_owned()
+            Err("not selected".to_owned())
         } else if let Some(reason) = host.skip_reason(row) {
-            format!("skipped: {reason}")
+            Err(format!("skipped: {reason}"))
         } else {
             eprintln!("scenario {}: {}", row.id, row.title);
-            match run_row(row, &host, &bundle, &root) {
-                Ok(()) => "passed".to_owned(),
-                Err(error) => format!("FAILED: {error}"),
-            }
+            run_row(row, &host, &bundle, &root).map_err(|error| format!("FAILED: {error}"))
         };
-        outcomes.insert(row.id.clone(), outcome);
+        for id in &row.ids {
+            match &outcome {
+                Ok(cases) => {
+                    for (case, result) in cases {
+                        let run_id = format!("{id}-{case}");
+                        if *result == "FAILED" {
+                            failed.push(run_id.clone());
+                        }
+                        report.push((run_id, (*result).to_owned()));
+                    }
+                }
+                Err(reason) => {
+                    if reason.starts_with("FAILED") {
+                        failed.push(id.clone());
+                    }
+                    report.push((id.clone(), reason.clone()));
+                }
+            }
+        }
     }
     eprintln!("\nScenarios on this machine ({} {}):", host.os, host.arch);
-    for row in &rows {
-        eprintln!("  {} {}: {}", row.id, row.title, outcomes[&row.id]);
+    for (id, outcome) in &report {
+        eprintln!("  {id}: {outcome}");
     }
-    let failed: Vec<_> = outcomes
-        .iter()
-        .filter(|(_, outcome)| outcome.starts_with("FAILED"))
-        .map(|(id, _)| id.as_str())
-        .collect();
     assert!(failed.is_empty(), "scenarios failed: {failed:?}");
 }
 
@@ -741,7 +816,8 @@ fn page() {
 mod tests {
     use super::*;
 
-    const TABLE: &str = "| On | ID | Scenario | Example | Needs | Model | Ask | Expect |\n|---|---|---|---|---|---|---|---|\n";
+    const TABLE: &str =
+        "| On | ID | Scenario | Example | Needs | Model |\n|---|---|---|---|---|---|\n";
 
     fn host(os: &'static str, arch: &'static str, gpus: &[&str]) -> Host {
         Host {
@@ -804,9 +880,7 @@ mod tests {
 
     #[test]
     fn an_unknown_platform_fails_the_page_with_its_id() {
-        let page = format!(
-            "{TABLE}| ✅ | LAPTOP-OPENCLAW | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n"
-        );
+        let page = format!("{TABLE}| ✅ | LAPTOP-OPENCLAW | x | [a](a.yaml) | docker | stub |\n");
         let error = parse(&page).unwrap_err();
         assert!(error.contains("`LAPTOP`"), "{error}");
     }
@@ -814,9 +888,40 @@ mod tests {
     #[test]
     fn a_deployment_named_by_two_rows_fails_the_page() {
         let page = format!(
-            "{TABLE}| ✅ | K8S-OPENCLAW, K8S-HERMES | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n| ✅ | K8S-HERMES | y | [a](a.yaml) | docker | stub | Hi. | any reply |\n"
+            "{TABLE}| ✅ | K8S-OPENCLAW, K8S-HERMES | x | [a](a.yaml) | docker | stub |\n| ✅ | K8S-HERMES | y | [a](a.yaml) | docker | stub |\n"
         );
         assert!(parse(&page).unwrap_err().contains("K8S-HERMES"));
+    }
+
+    #[test]
+    fn each_case_passes_only_when_all_its_runs_pass() {
+        let output = "\
+scenarios/lifecycle.tftest.hcl... fail
+  run \"setup_model\"... pass
+  run \"case_005_plan\"... pass
+  run \"case_005_reply\"... pass
+  run \"case_009_export\"... pass
+  run \"case_009_reapply\"... fail
+  run \"case_009_destroy\"... skip
+";
+        assert_eq!(
+            case_outcomes(output),
+            BTreeMap::from([("005", "passed"), ("009", "FAILED")])
+        );
+    }
+
+    #[test]
+    fn a_failed_setup_fails_every_case_and_skipped_runs_mean_not_run() {
+        let output = "  run \"setup_model\"... fail\n  run \"case_005_plan\"... skip\n  run \"case_009_export\"... skip\n";
+        assert_eq!(
+            case_outcomes(output),
+            BTreeMap::from([("005", "FAILED"), ("009", "FAILED")])
+        );
+        let output = "  run \"setup_model\"... pass\n  run \"case_005_plan\"... pass\n  run \"case_009_export\"... skip\n";
+        assert_eq!(
+            case_outcomes(output),
+            BTreeMap::from([("005", "passed"), ("009", "not run")])
+        );
     }
 
     #[test]
@@ -829,7 +934,7 @@ mod tests {
     #[test]
     fn an_unknown_need_fails_the_page_with_its_name() {
         let page = format!(
-            "{TABLE}| ✅ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker, gpus GB10 | stub | Hi. | any reply |\n"
+            "{TABLE}| ✅ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker, gpus GB10 | stub |\n"
         );
         let error = parse(&page).unwrap_err();
         assert!(
@@ -840,23 +945,19 @@ mod tests {
 
     #[test]
     fn an_example_cell_without_a_link_fails_the_page() {
-        let page = format!(
-            "{TABLE}| ✅ | DOCKER-OPENCLAW | x | a.yaml | docker | stub | Hi. | any reply |\n"
-        );
+        let page = format!("{TABLE}| ✅ | DOCKER-OPENCLAW | x | a.yaml | docker | stub |\n");
         assert!(parse(&page).unwrap_err().contains("0 examples"));
     }
 
     #[test]
     fn an_empty_cell_fails_the_page() {
-        let page = format!(
-            "{TABLE}| ✅ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker | stub |  | any reply |\n"
-        );
-        assert!(parse(&page).unwrap_err().contains("no Ask"));
+        let page = format!("{TABLE}| ✅ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker |  |\n");
+        assert!(parse(&page).unwrap_err().contains("no Model"));
     }
 
     #[test]
     fn a_repeated_scenario_fails_the_page() {
-        let line = "| ✅ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n";
+        let line = "| ✅ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker | stub |\n";
         assert!(
             parse(&format!("{TABLE}{line}{line}"))
                 .unwrap_err()
@@ -895,9 +996,7 @@ mod tests {
 
     #[test]
     fn a_paused_row_is_skipped_on_a_machine_that_has_its_needs() {
-        let page = format!(
-            "{TABLE}| ⏸️ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n"
-        );
+        let page = format!("{TABLE}| ⏸️ | DOCKER-OPENCLAW | x | [a](a.yaml) | docker | stub |\n");
         let row = parse(&page).unwrap().remove(0);
         let mac = host("macos", "aarch64", &[]);
         assert_eq!(mac.skip_reason(&row).unwrap(), "paused on the page");
@@ -905,9 +1004,7 @@ mod tests {
 
     #[test]
     fn an_unknown_on_cell_fails_the_page_with_its_row() {
-        let page = format!(
-            "{TABLE}| on | DOCKER-OPENCLAW | x | [a](a.yaml) | docker | stub | Hi. | any reply |\n"
-        );
+        let page = format!("{TABLE}| on | DOCKER-OPENCLAW | x | [a](a.yaml) | docker | stub |\n");
         let error = parse(&page).unwrap_err();
         assert!(
             error.contains("DOCKER-OPENCLAW") && error.contains("`on`"),
@@ -984,7 +1081,10 @@ mod tests {
         );
         assert_eq!(
             bound.targets,
-            json!({"assistant": {"agent": "primary", "request": row.ask, "response_pointer": "/output/response", "answer": STUB_REPLY}})
+            json!({
+                "assistant-ready": {"agent": "primary", "request": READY_PROMPT, "response_pointer": "/output/response", "answer": STUB_REPLY},
+                "assistant-391": {"agent": "primary", "request": PRODUCT_PROMPT, "response_pointer": "/output/response", "answer": STUB_REPLY},
+            })
         );
     }
 
@@ -996,7 +1096,12 @@ mod tests {
         assert_eq!(service["serving"]["port"], 20002);
         assert_eq!(service["image"], fake_image("nc-prototype-vllm", "rust-v1"));
         assert!(bound.stub_credentials.is_empty());
-        assert_eq!(bound.targets["assistant"]["answer"], "READY");
+        assert_eq!(bound.targets["assistant-ready"]["answer"], "READY");
+        assert_eq!(bound.targets["assistant-391"]["answer"], "391");
+        assert_eq!(
+            bound.ready_targets,
+            json!({"assistant-ready": bound.targets["assistant-ready"]})
+        );
     }
 
     #[test]
