@@ -36,6 +36,45 @@ fn pod_document() -> Document {
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
 }
 
+/// The bundled CLI can't take a cluster gateway's bearer token, so plan and
+/// apply say why and link the issue that tracks it; an external OIDC gateway
+/// instead gets the OpenShell arguments that register it once.
+#[test]
+fn bundled_openshell_access_follows_the_gateway_authentication() {
+    let (cluster, _) = kubernetes_context();
+    if crate::bundle::openshell_available() {
+        let reason = openshell_cli::unavailable(&cluster.spec.gateway).unwrap();
+        assert!(
+            reason.contains("https://github.com/NVIDIA/NemoClaw/issues/14880"),
+            "{reason}"
+        );
+    }
+    assert_eq!(openshell_cli::registration(&cluster), None);
+    let local =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    assert_eq!(openshell_cli::registration(&local), None);
+    let mut value = serde_json::to_value(local).unwrap();
+    value["spec"]["gateway"]["endpoint"] = json!("https://gateway.example.com");
+    value["spec"]["gateway"]["oidc"] = json!({
+        "issuer":"https://idp.example.com/realms/openshell", "clientId":"openshell-cli",
+        "scopes":"openid profile"
+    });
+    let oidc = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    assert_eq!(
+        openshell_cli::registration(&oidc),
+        Some(vec![
+            "gateway".to_owned(),
+            "add".to_owned(),
+            "https://gateway.example.com".to_owned(),
+            format!("--name={}", oidc.workspace()),
+            "--oidc-issuer=https://idp.example.com/realms/openshell".to_owned(),
+            "--oidc-client-id=openshell-cli".to_owned(),
+            "--oidc-scopes=openid profile".to_owned(),
+        ])
+    );
+}
+
 /// An applied deployment keeps the cluster access it was applied with: a plan
 /// whose recorded resource used the other access is refused, in both
 /// directions.

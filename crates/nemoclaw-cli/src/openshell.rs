@@ -22,15 +22,8 @@ pub(crate) fn run(cli: &Cli, args: &[OsString]) -> ExitCode {
     ) {
         #[cfg(unix)]
         Ok(deployment) => match deployment.openshell(args) {
-            Ok((mut command, sign_in)) => {
+            Ok(mut command) => {
                 use std::os::unix::process::CommandExt;
-                if let Some(add) = sign_in {
-                    eprintln!(
-                        "Sign in to this OIDC gateway once by registering it:\n  {}",
-                        crate::formatting::openshell_registration(cli, &add),
-                    );
-                    return ExitCode::FAILURE;
-                }
                 command.exec().to_string()
             }
             Err(error) => error.to_string(),

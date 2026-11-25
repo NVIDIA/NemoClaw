@@ -157,6 +157,25 @@ fn semantic_checks_still_reject_schema_valid_relationships() {
     assert!(candidate.validate().is_err());
 }
 
+/// Plan and apply print the OIDC login settings in a shell command, so a
+/// control character in any of them is rejected with the configuration.
+#[test]
+fn oidc_login_settings_with_control_characters_are_rejected() {
+    let mut value = serde_json::to_value(document("agents/openclaw.yaml")).unwrap();
+    value["spec"]["gateway"]["endpoint"] = json!("https://gateway.example.com");
+    value["spec"]["gateway"]["oidc"] =
+        json!({"issuer":"https://idp.example.com/realms/openshell", "clientId":"openshell-cli"});
+    let valid: Document = serde_json::from_value(value.clone()).unwrap();
+    valid.validate().unwrap();
+    for (field, text) in [("audience", "api\u{1b}[2J"), ("scopes", "openid\nprofile")] {
+        let mut value = value.clone();
+        value["spec"]["gateway"]["oidc"][field] = json!(text);
+        let candidate: Document = serde_json::from_value(value).unwrap();
+        let error = candidate.validate().unwrap_err().to_string();
+        assert!(error.contains("control characters"), "{field}: {error}");
+    }
+}
+
 #[test]
 fn recipe_byte_limits_remain_semantic_checks_for_multibyte_strings() {
     let mut value = serde_json::to_value(document(

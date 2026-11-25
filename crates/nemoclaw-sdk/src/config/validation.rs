@@ -104,6 +104,19 @@ impl Document {
                 oidc.issuer.starts_with("https://"),
                 "gateway OIDC issuer must use HTTPS",
             )?;
+            // Plan and apply print these in a shell command.
+            require(
+                [
+                    Some(&oidc.issuer),
+                    Some(&oidc.client_id),
+                    oidc.audience.as_ref(),
+                    oidc.scopes.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+                .all(|value| !value.chars().any(char::is_control)),
+                "gateway OIDC login settings must not contain control characters",
+            )?;
         }
         if let Gateway::Managed(gateway) = gateway {
             gateway.validate_managed()?;

@@ -68,7 +68,7 @@ The [headless OpenClaw request](#running-one-headless-openclaw-request) shows a 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
-Plan and apply print a complete request for each agent with these filled in, and JSON results report them under `agents`.
+Plan and apply print this command for each agent with both filled in, and JSON results report them under `agents`.
 See [invoke an agent](interfaces.md#invoking-an-agent).
 Use `--input -` to read the value from stdin instead.
 See the [bridge commands](../../internal-docs/design/fabric-management.md#bridge-commands).
@@ -79,8 +79,8 @@ Don't assume a universal result shape.
 Check `result.status` as well as the outer `status`: the outer one only reports that `fabric-agent-ctl` completed the call, while a failed run reports `result.status: failed` with Fabric's error in `result.error`.
 `result.artifacts` names the files Fabric kept for that request, such as the adapter's output.
 
-The printed `Invoke:` command saves the result in `reply-SANDBOX.json`, readable only by you, and refuses to overwrite an existing file.
-To construct the request yourself, use the same `--state-dir` and `--bundle` options as apply:
+To send a prompt from your machine, pipe it in on stdin and save the result in a file only you can read, with the same `--state-dir` and `--bundle` options as apply.
+`set -C` refuses to overwrite an earlier result:
 
 ```sh
 (umask 077; set -C; printf '%s\n' '"Reply with exactly READY."' |
@@ -97,14 +97,6 @@ jq -e '.status == "succeeded" and .result.status == "succeeded"' reply.json
 The prompt keeps its double quotes because it is a JSON string; empty stdin is not a prompt.
 Continue only if the command exits 0 and both statuses are `succeeded`, then read the reply from the fields that the adapter's result contract names.
 Keep `reply.json` private, and review it for credentials and personal data before sharing.
-
-For the Hermes adapter, this filter prints its reply on success and reports its error on failure, with a nonzero exit status:
-
-```sh
-jq -er 'if .status == "succeeded" and .result.status == "succeeded" then .result.output.response else error((.result.error // "request failed") | tostring) end' reply.json
-```
-
-Other adapters have their own result contracts; don't assume they use Hermes's response field.
 
 ### Diagnosing an Authentication Failure
 

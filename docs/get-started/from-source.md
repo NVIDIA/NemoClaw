@@ -112,8 +112,7 @@ If it fails, keep the same bundle, YAML, and state directory and follow [operati
 
 ## Verifying a Reply
 
-Run apply's complete `Invoke:` command. It uses `nemoclaw osh --state-dir .local/first/state --` with the actual sandbox, agent, and runtime ID and supplies the JSON prompt `"Reply with exactly READY."` on stdin.
-The command saves the full result in `reply-assistant.json`; [Running One Agent Request](../agents-inference/agents.md#running-one-agent-request) explains the status checks and Hermes reply filter.
+Send the JSON prompt `"Reply with exactly READY."` as [Running One Agent Request](../agents-inference/agents.md#running-one-agent-request) shows, with the sandbox, agent, and runtime ID from apply's `Invoke:` line and `nemoclaw osh --state-dir .local/first/state --`.
 Expect `succeeded` in both statuses and `READY` in the Hermes adapter's result.
 [Diagnosing an Authentication Failure](../agents-inference/agents.md#diagnosing-an-authentication-failure) covers a rejected key.
 

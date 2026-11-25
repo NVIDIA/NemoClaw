@@ -235,17 +235,6 @@ fn shell_argument(value: &str) -> String {
     }
 }
 
-#[cfg(unix)]
-pub(crate) fn openshell_registration(cli: &Cli, args: &[String]) -> String {
-    let mut command = RenderContext::new(cli).nemoclaw("osh");
-    command.push_str(" --");
-    for arg in args {
-        command.push(' ');
-        command.push_str(&shell_argument(arg));
-    }
-    terminal_text(&command)
-}
-
 /// External labels are text, never instructions to a terminal emulator.
 pub(crate) fn terminal_text(value: &str) -> String {
     value
@@ -623,8 +612,21 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         .and_then(|connection| connection.openshell_cli_unavailable.as_deref());
     if let Some(reason) = unavailable {
         output.push_str(&format!("\nBundled OpenShell access unavailable: {}.\n  For supported standalone access, see {}.\n", terminal_text(reason), documentation_url("docs/agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways")));
-    } else if !result.agents.is_empty() {
-        output.push_str(&agent_invocation(result, planned, &osh));
+    } else {
+        if let Some(args) = result
+            .connection
+            .as_ref()
+            .and_then(|connection| connection.openshell_registration.as_ref())
+        {
+            let args: Vec<_> = args.iter().map(|arg| shell_argument(arg)).collect();
+            output.push_str(&format!(
+                "\nOIDC gateway sign-in:\n  Register once: {}\n",
+                terminal_text(&format!("{osh} {}", args.join(" ")))
+            ));
+        }
+        if !result.agents.is_empty() {
+            output.push_str(&agent_invocation(result, planned, &osh));
+        }
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
@@ -675,9 +677,8 @@ fn agent_invocation(result: &OperationResult, planned: bool, osh: &str) -> Strin
         match &agent.runtime_id {
             Some(runtime) => {
                 let runtime = terminal_text(runtime);
-                let reply = shell_word(&format!("reply-{sandbox}.json"));
                 output.push_str(&format!(
-                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   (umask 077; set -C; printf '%s\\n' '\"Reply with exactly READY.\"' | {osh} sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input - > {reply})\n    Inspect:  jq '{{status, result_status: .result.status, error: .result.error}}' {reply}\n",
+                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   {osh} sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input FILE\n",
                     shell_argument(&sandbox), shell_argument(&name), shell_argument(&runtime),
                 ));
             }
@@ -686,7 +687,7 @@ fn agent_invocation(result: &OperationResult, planned: bool, osh: &str) -> Strin
     }
     if invocable {
         output.push_str(&format!(
-            "  The request sends JSON on stdin and saves the result privately, refusing an existing file; choose another output path to repeat it. Continue only after exit 0 and both statuses succeeded; read the adapter's reply as {} describes. A request can incur inference charges and change conversation history.\n",
+            "  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin. {} describes a first request and its result. A request can incur inference charges and change conversation history.\n",
             documentation_url("docs/agents-inference/agents.md"),
         ));
     }
@@ -1208,13 +1209,13 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn a_printed_request_sends_json_with_the_actual_identities_and_selection() {
+    fn a_printed_invoke_runs_with_the_actual_identities_and_selection() {
         use std::{fs, os::unix::fs::PermissionsExt, process::Command};
         let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("bin");
         fs::create_dir(&bin).unwrap();
         let cli = bin.join("nemoclaw");
-        fs::write(&cli, "#!/bin/sh\nprintf '%s\\n' \"$@\" > args.txt\ncat > input.txt\nprintf '%s\\n' '{\"status\":\"succeeded\",\"result\":{\"status\":\"succeeded\"}}'\n").unwrap();
+        fs::write(&cli, "#!/bin/sh\nprintf '%s\\n' \"$@\" > args.txt\n").unwrap();
         fs::set_permissions(&cli, fs::Permissions::from_mode(0o700)).unwrap();
         let result = json!({"outcome":"succeeded", "changes":[], "agents":agents()});
         let text = render(
@@ -1245,10 +1246,7 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let input: Value =
-            serde_json::from_slice(&fs::read(root.path().join("input.txt")).unwrap())
-                .expect("the printed command supplies a JSON value");
-        assert_eq!(input, "Reply with exactly READY.");
+
         let args = fs::read_to_string(root.path().join("args.txt")).unwrap();
         let args: Vec<_> = args.lines().collect();
         for pair in [
@@ -1257,46 +1255,97 @@ mod tests {
             ["-n", "assistant"],
             ["--agent", "main"],
             ["--runtime-id", "rt-1"],
-            ["--input", "-"],
+            ["--input", "FILE"],
         ] {
             assert!(
                 args.windows(2).any(|value| value == pair),
                 "missing {pair:?}: {args:?}"
             );
         }
-        let reply = root.path().join("reply-assistant.json");
-        let saved: Value = serde_json::from_slice(&fs::read(&reply).unwrap()).unwrap();
-        assert_eq!(saved["result"]["status"], "succeeded");
-        assert_eq!(
-            fs::metadata(&reply).unwrap().permissions().mode() & 0o077,
-            0,
-            "the captured result is private"
-        );
-        let second = Command::new("/bin/sh")
-            .args(["-c", command])
-            .current_dir(root.path())
-            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
-            .output()
-            .unwrap();
-        assert!(
-            !second.status.success(),
-            "an existing reply must not be overwritten"
-        );
-        assert_eq!(
-            serde_json::from_slice::<Value>(&fs::read(reply).unwrap()).unwrap(),
-            saved
-        );
+    }
+
+    /// An OIDC gateway's plan and apply print one command that registers it
+    /// and signs in, with this run's state and bundle, whose arguments the
+    /// shell passes through literally.
+    #[test]
+    #[cfg(unix)]
+    fn an_oidc_gateway_prints_one_registration_that_runs_as_printed() {
+        use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let cli = bin.join("nemoclaw");
+        fs::write(&cli, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o700)).unwrap();
+        let registration = [
+            "gateway",
+            "add",
+            "https://gateway.example.com",
+            "--name=nc-test",
+            "--oidc-issuer=https://idp.example.com",
+            "--oidc-client-id=client$REVIEW_EXPAND",
+            "--oidc-audience=api audience",
+            "--oidc-scopes=openid offline'access",
+        ];
+        let connection = json!({"gatewayEndpoint":"https://gateway.example.com", "workspace":"nc-test",
+            "openshellRegistration": registration});
+        for (command, outcome) in [("plan", "planned"), ("apply", "succeeded")] {
+            let result = json!({"outcome":outcome, "changes":[], "agents":agents(),
+                "interfaces":interfaces(), "connection":connection});
+            let text = render(
+                &[
+                    "nemoclaw",
+                    command,
+                    "deployment.yaml",
+                    "--state-dir",
+                    "state's directory",
+                    "--bundle",
+                    "bundle directory",
+                ],
+                result,
+            );
+            assert_eq!(text.matches("Register once:").count(), 1, "{text}");
+            let printed = text
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("Register once:"))
+                .unwrap()
+                .trim();
+            let output = Command::new("/bin/sh")
+                .args(["-c", printed])
+                .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+                .env("REVIEW_EXPAND", "expanded")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{printed}");
+            let args = String::from_utf8(output.stdout).unwrap();
+            let expected: Vec<&str> = [
+                "osh",
+                "--state-dir",
+                "state's directory",
+                "--bundle",
+                "bundle directory",
+                "--",
+            ]
+            .into_iter()
+            .chain(registration)
+            .collect();
+            assert_eq!(args.lines().collect::<Vec<_>>(), expected, "{printed}");
+        }
     }
 
     #[test]
     fn unsupported_bundled_access_has_guidance_instead_of_unusable_commands() {
         let result = json!({"outcome":"succeeded", "changes":[], "agents":agents(), "interfaces":interfaces(),
-            "connection":{"workspace":"nc-test", "openshellCliUnavailable":"this gateway requires an unsupported bearer token"}});
+            "connection":{"workspace":"nc-test", "openshellCliUnavailable":"this gateway requires an unsupported bearer token",
+                "openshellRegistration":["gateway","add","https://gateway.example.com"]}});
         let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
         assert!(text.contains("unsupported bearer token"), "{text}");
         assert!(text.contains("interfaces.md"), "{text}");
         assert!(
-            !text.contains("Invoke:") && !text.contains("Forward:") && !text.contains("Token:"),
+            !text.contains("Invoke:")
+                && !text.contains("Forward:")
+                && !text.contains("Token:")
+                && !text.contains("Register once:"),
             "{text}"
         );
     }
