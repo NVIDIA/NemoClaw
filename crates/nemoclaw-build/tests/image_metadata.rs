@@ -12,7 +12,7 @@ fn digest(bytes: &[u8]) -> String {
 
 /// An OCI layout as `docker image save` writes it: an outer index naming
 /// the image's own index, which lists one manifest and an attestation.
-fn layout(catalog: &str) -> (Vec<u8>, String) {
+pub(super) fn layout(catalog: &str) -> (Vec<u8>, String) {
     layout_with_root(catalog, true)
 }
 

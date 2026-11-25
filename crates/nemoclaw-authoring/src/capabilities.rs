@@ -8,6 +8,8 @@ use nemoclaw_sdk::config::HarnessKind;
 /// This is not a compatibility registry: Fabric plans the selected configuration.
 #[derive(Clone, Debug)]
 pub struct Capabilities {
+    pub(crate) release_images: std::collections::BTreeMap<String, Vec<String>>,
+    pub(crate) release_tag: Option<String>,
     harnesses: Vec<HarnessKind>,
     pub(crate) fabric_revision: Option<String>,
     pub(crate) catalog_sha256: Option<String>,
@@ -22,6 +24,43 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
+    /// Add the image suggestions of `release`, from its `version-pins.json`.
+    /// They don't change compatibility checks: apply pulls and checks the image.
+    pub fn with_release_pins(mut self, bytes: &[u8], release: &str) -> Result<Self, String> {
+        let pins: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        if pins["release"] != release {
+            return Err("the release image pins are another release's".into());
+        }
+        if pins["components"]["fabric"]["version"].as_str() != self.fabric_revision.as_deref() {
+            return Err("the release images use another Fabric revision".into());
+        }
+        let mut images = std::collections::BTreeMap::<String, Vec<String>>::new();
+        for image in pins["agentImages"].as_array().into_iter().flatten() {
+            let reference = image["reference"]
+                .as_str()
+                .ok_or("a release image has no reference")?;
+            let adapters = image["adapters"].as_array().into_iter().flatten();
+            for adapter in adapters.filter_map(serde_json::Value::as_str) {
+                if self
+                    .harnesses
+                    .iter()
+                    .any(|harness| harness.as_str() == adapter)
+                {
+                    images
+                        .entry(adapter.into())
+                        .or_default()
+                        .push(reference.into());
+                }
+            }
+        }
+        self.release_images = images;
+        self.release_tag = Some(release.to_owned());
+        // Resolutions for the capabilities without these suggestions don't apply.
+        self.identity = next_identity();
+        Ok(self)
+    }
+
     pub fn available() -> Self {
         Self::from_catalog(nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled_ref())
     }
@@ -73,6 +112,8 @@ impl Capabilities {
         harnesses.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         harnesses.dedup();
         Self {
+            release_images: Default::default(),
+            release_tag: None,
             harnesses,
             fabric_revision: None,
             catalog_sha256: None,
@@ -80,14 +121,58 @@ impl Capabilities {
             config_schemas: Default::default(),
             targets: Vec::new(),
             model_schemas: Default::default(),
-            identity: {
-                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            },
+            identity: next_identity(),
         }
     }
 
     pub fn harnesses(&self) -> &[HarnessKind] {
         &self.harnesses
+    }
+
+    /// Which release supplied this suggestion, not proof of runtime compatibility.
+    pub fn image_release(&self, reference: &str) -> Option<&str> {
+        if self
+            .release_images
+            .values()
+            .any(|images| images.iter().any(|image| image == reference))
+        {
+            self.release_tag.as_deref()
+        } else {
+            None
+        }
+    }
+}
+
+fn next_identity() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod release_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn release_suggestions_come_only_from_this_release_its_fabric_revision_and_known_adapters() {
+        let reference = format!(
+            "ghcr.io/nvidia/nemoclaw/v1/hermes@sha256:{}",
+            "a".repeat(64)
+        );
+        let fabric = &nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled_ref().fabric_revision;
+        let load = |release: &str, fabric: &str, adapter: &str| {
+            let pins = json!({
+                "release": release,
+                "components": {"fabric": {"version": fabric}},
+                "agentImages": [{"reference": reference, "adapters": [adapter]}]
+            });
+            Capabilities::available().with_release_pins(pins.to_string().as_bytes(), "v0.1.0-rc.5")
+        };
+        let capabilities = load("v0.1.0-rc.5", fabric, "nvidia.fabric.hermes").unwrap();
+        assert_eq!(capabilities.image_release(&reference), Some("v0.1.0-rc.5"));
+        assert!(load("v0.1.0", fabric, "nvidia.fabric.hermes").is_err());
+        assert!(load("v0.1.0-rc.5", &"f".repeat(40), "nvidia.fabric.hermes").is_err());
+        let unknown = load("v0.1.0-rc.5", fabric, "unknown.adapter").unwrap();
+        assert_eq!(unknown.image_release(&reference), None);
     }
 }

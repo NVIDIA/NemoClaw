@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Shared terminal onboarding frontend for the native CLI and standalone example.
+#[cfg(test)]
+#[path = "../../test-support/http.rs"]
+mod http;
+mod release_images;
 mod tui;
 use nemoclaw_authoring::{Capabilities, new_deployment_uid};
 use nemoclaw_authoring::{JourneyDefinition, JourneyScope, JourneyState, PartialDocument};
@@ -21,23 +25,34 @@ pub enum Source<'a> {
 /// With `discover`, the target's engines, image, gateway, model catalog, and
 /// credential references are read; without it, they remain explicitly
 /// unverified. Reads never create deployment state or apply resources.
+/// A release `version` adds its release's agent images as suggestions.
 pub async fn author(
     source: Source<'_>,
     output: &Path,
     discover: bool,
     cancel: &CancellationToken,
+    version: Option<&str>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     if cancel.is_cancelled() {
         return Err(Error::Cancelled.into());
     }
-    let capabilities = Capabilities::available();
-    let state = load_journey(source, &capabilities)?;
     if output.try_exists()? {
         return Err("output already exists; choose a new path with --output".into());
     }
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err("onboarding requires a terminal on stdin and stderr".into());
     }
+    let (capabilities, warning) = release_images::load(
+        Capabilities::available(),
+        version,
+        release_images::RELEASES,
+        cancel,
+    )
+    .await?;
+    if let Some(warning) = warning {
+        eprintln!("{warning}");
+    }
+    let state = load_journey(source, &capabilities)?;
     let Some(yaml) = tui::run(capabilities, state, cancel, discover, output).await? else {
         return Ok(false);
     };

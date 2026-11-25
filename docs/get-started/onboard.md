@@ -56,6 +56,12 @@ An absent image or a read that could not be verified can leave an advisory and a
 Review is not a deployment plan and does not establish that the configuration will run.
 Refer to [provider discovery](../references/provider.md#engine-and-fabric-discovery) for the read contracts.
 
+When no usable local image fits the selected harness, a release CLI offers its release's agent images whose Fabric metadata lists the harness's adapter, from the release's `version-pins.json` on GitHub.
+Onboarding selects a single image and lists several as choices.
+The suggestion does not pull the image or establish that it runs; apply pulls the digest and checks it.
+Only release and release candidate builds read release suggestions.
+If the release's pins are unavailable, or name another release or Fabric revision, onboarding offers local images and manual entry.
+
 ## Reviewing and Saving the YAML
 
 Review shows the agent, model and provider per route, credential variable names and availability, placement, image and target checks, network access, any web search, and the output path.
