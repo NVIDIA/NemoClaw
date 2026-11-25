@@ -5,7 +5,7 @@
 # Kubernetes resources, planned without a cluster.
 terraform {
   required_providers {
-    openshell = { source = "registry.opentofu.org/nvidia/openshell" }
+    openshell = { source = "nvidia.github.io/nemoclaw/openshell" }
   }
 }
 variable "engine" { type = string }

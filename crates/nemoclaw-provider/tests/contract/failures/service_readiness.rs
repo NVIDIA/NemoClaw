@@ -124,7 +124,7 @@ async fn standalone_readiness(proxy: bool) {
     } else {
         ("vllm", "vllm_readiness")
     };
-    let graph = json!({"terraform":{"required_providers":{provider:{"source":format!("registry.opentofu.org/nvidia/{provider}")}}},"provider":{provider:{}},"data":{readiness:{"model":{"engine":"ssh://operator@gpu-box","name":name,"contract":contract,"container_id":"owned","wait_timeout_seconds":wait,"read_trigger":"${timestamp() != \"\"}"}}},"resource":{"terraform_data":{"consumer":{"input":format!("${{data.{readiness}.model.ready}}")}}}});
+    let graph = json!({"terraform":{"required_providers":{provider:{"source":format!("nvidia.github.io/nemoclaw/{provider}")}}},"provider":{provider:{}},"data":{readiness:{"model":{"engine":"ssh://operator@gpu-box","name":name,"contract":contract,"container_id":"owned","wait_timeout_seconds":wait,"read_trigger":"${timestamp() != \"\"}"}}},"resource":{"terraform_data":{"consumer":{"input":format!("${{data.{readiness}.model.ready}}")}}}});
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let run = |args: &[&str], success: bool| {
         let output = directory

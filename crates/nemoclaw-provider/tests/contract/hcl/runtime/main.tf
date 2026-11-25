@@ -4,8 +4,8 @@
 # platform to place a container from: no engine, gateway, or SDK takes part.
 terraform {
   required_providers {
-    vllm   = { source = "registry.opentofu.org/nvidia/vllm" }
-    ollama = { source = "registry.opentofu.org/nvidia/ollama" }
+    vllm   = { source = "nvidia.github.io/nemoclaw/vllm" }
+    ollama = { source = "nvidia.github.io/nemoclaw/ollama" }
   }
 }
 

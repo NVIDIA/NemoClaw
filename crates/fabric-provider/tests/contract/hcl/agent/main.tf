@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 terraform {
   required_providers {
-    openshell = { source = "registry.opentofu.org/nvidia/openshell" }
-    fabric    = { source = "registry.opentofu.org/nvidia/fabric" }
-    fixture   = { source = "registry.opentofu.org/nvidia/fixture" }
+    openshell = { source = "nvidia.github.io/nemoclaw/openshell" }
+    fabric    = { source = "nvidia.github.io/nemoclaw/fabric" }
+    fixture   = { source = "nvidia.github.io/nemoclaw/fixture" }
   }
 }
 variable "endpoint" { type = string }
