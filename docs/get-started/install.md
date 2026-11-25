@@ -94,7 +94,9 @@ Find the installed version under **NVIDIA NemoClaw Agent Configs** in **Settings
 
 A release includes the signed installer only if it signs the Windows executables.
 If the release omits the installer or you need to keep multiple versions side by side, <a href="?language=windows#installing-on-windows">install the Windows archive</a>.
-On Windows ARM64, [build the Linux ARM64 bundle in WSL2](from-source.md).
+The MSI and Windows archive install the native x64 NemoClaw CLI.
+The matching OpenShell 0.1.10 release has no native Windows CLI archive.
+For a first deployment and agent reply on Windows AMD64 or ARM64, [use the Linux tools inside WSL2](prerequisites.md#preparing-windows-with-wsl2).
 
 If you already use the installer, follow <a href="?language=windows#upgrading-with-the-windows-installer">the upgrade steps</a> before replacing the bundle.
 Use PowerShell in an empty download directory.
@@ -341,15 +343,17 @@ The default state directory is `.nemoclaw` in the working directory.
 
 ### Next Steps
 
-After you verify the CLI version, [keep the bundle intact](#keeping-the-bundle-intact) and choose a deployment guide.
+After you verify the CLI version, [keep the bundle intact](#keeping-the-bundle-intact).
 
 The CLI sends NVIDIA a usage record when `apply` or `destroy` finishes or when `onboard` saves a configuration.
 To disable the records, set `NEMOCLAW_DISABLE_TELEMETRY=1` before running those commands.
 Refer to [Usage Telemetry](../security/security.md#usage-telemetry).
 
-- On Linux or macOS, if you have an existing OpenShell gateway and inference endpoint, [deploy your first OpenClaw agent](first-deployment.md) with the release's example and image.
-- To configure your own deployment, [write deployment YAML with `nemoclaw onboard`](onboard.md) and review it before you plan and apply.
-- For a walkthrough that creates a managed Docker gateway on macOS or Windows with WSL2, [build and deploy Hermes from source](from-source.md).
+- [Deploy your first OpenClaw agent](first-deployment.md) with the release bundle, local Docker, and NVIDIA Endpoints.
+  On Windows, start with the [WSL2 setup](prerequisites.md#preparing-windows-with-wsl2).
+- If you already have an OpenShell gateway and inference endpoint, [use those services](first-deployment.md#using-an-existing-gateway-and-inference-endpoint).
+- To configure your own deployment, [write deployment YAML with `nemoclaw onboard`](onboard.md).
+- On Apple silicon or WSL2, you can [build and deploy Hermes from source](from-source.md).
 
 Use the [bundle and image digests from the same release](../references/compatibility.md#using-one-release-together) and check [Current Limits](../resources/limits.md#platforms-models-and-placement) for your deployment configuration.
 

@@ -28,8 +28,8 @@ If you use NemoClaw v0, evaluate NemoClaw Agent Configs in a separate deployment
 |---|---|
 | Check client, runtime, and model-host requirements | [Prerequisites](get-started/prerequisites.md) |
 | Install, upgrade, or uninstall the CLI using a platform installer or archive | [Installing the CLI](get-started/install.md) |
+| Deploy OpenClaw from the release with local Docker and NVIDIA Endpoints, or with existing services | [First Deployment](get-started/first-deployment.md) |
 | Build from source and deploy Hermes with a managed Docker gateway on an Apple silicon Mac or in WSL2 | [Onboarding From Source](get-started/from-source.md) |
-| Deploy OpenClaw with an existing gateway and inference endpoint from Linux or macOS | [First Deployment](get-started/first-deployment.md) |
 | Write YAML for a separate deployment | [Authoring Deployment YAML With Onboarding](get-started/onboard.md) |
 | Evaluate NemoClaw v0 settings without changing the original deployment | [Evaluate NemoClaw Agent Configs Alongside NemoClaw v0](get-started/migration.md) |
 

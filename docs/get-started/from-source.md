@@ -5,24 +5,25 @@
 
 Build the CLI and Hermes image from a checkout on an Apple silicon Mac or in WSL2 on Windows.
 You deploy Hermes with a managed Docker gateway and verify a reply through NVIDIA Endpoints.
-Use this walkthrough to try an unreleased revision or to run on Windows through WSL2.
-For a published bundle, refer to [Installing the CLI](install.md).
+To deploy from a published bundle and image, follow [Deploying Your First OpenClaw Agent](first-deployment.md).
 The procedure creates containers and can incur inference charges.
 
-## Preparing the Shell and Docker Desktop
+<a name="preparing-the-shell-and-docker-desktop"></a>
+
+## Preparing the Shell and Docker
 
 On macOS, open **Applications > Utilities > Terminal** and run `bash`, so that the following commands use Bash.
 Run the CLI in Terminal; double-clicking `bin/nemoclaw` in Finder doesn't start onboarding.
 Install Git, curl, jq, Apple's Command Line Tools, and Rust.
 
-On Windows, install WSL2 with an Ubuntu distribution that matches the machine's architecture.
-In PowerShell, find its name with `wsl --list --verbose` and enter it with `wsl -d NAME`.
-Run every later command in Bash inside WSL, and keep the checkout on the Linux filesystem, such as under `~/src`.
-Install Git, curl, jq, a C toolchain, and [Rust](https://www.rust-lang.org/tools/install).
-In Docker Desktop, enable integration for the distribution under **Settings > Resources > WSL Integration**.
+On Windows AMD64 or ARM64, [prepare Ubuntu and Docker Engine in WSL2](prerequisites.md#preparing-windows-with-wsl2).
+Run every later command in Bash inside WSL2, and keep the checkout on the Linux filesystem, such as under `~/src`.
+Install Git, curl, jq, a C toolchain, and [Rust](https://www.rust-lang.org/tools/install) inside Ubuntu.
 
 The checkout's `rust-toolchain.toml` selects the Rust version.
-Start [Docker Desktop](https://docs.docker.com/desktop/), then select the bundle and image platforms for this machine and check the engine and image store:
+On macOS, start [Docker Desktop](https://docs.docker.com/desktop/).
+On WSL2, use the distribution's local Docker Engine.
+Select the bundle and image platforms for this machine and check the engine and image store.
 
 ```sh
 case "$(uname -s)-$(uname -m)" in
@@ -77,7 +78,8 @@ An empty digest list means the image store doesn't retain repository digests; a 
 
 ## Preparing the Matching OpenShell CLI
 
-Use an OpenShell CLI at the checkout's `openshell` version in `versions.json`, as [Before the First Deployment](prerequisites.md#before-the-first-deployment) describes.
+Read the `openshell` version in the checkout's `versions.json`, then [prepare the matching standalone OpenShell CLI](prerequisites.md#preparing-the-standalone-openshell-cli) in the same shell.
+Return to the checkout root before continuing.
 
 ## Authoring and Applying a Deployment
 
@@ -116,10 +118,36 @@ If it fails, keep the same bundle, YAML, and state directory and follow [operati
 
 ## Verifying a Reply
 
-Copy the gateway and workspace selection commands from apply's output into this shell.
-Then send the JSON string `"Reply with exactly READY."` and save the result as [Running One Agent Request](../agents-inference/agents.md#running-one-agent-request) shows, with the sandbox, agent, and runtime ID from apply's `Invoke:` line.
-Expect `succeeded` in both statuses and `READY` in the Hermes adapter's result.
-[Diagnosing an Authentication Failure](../agents-inference/agents.md#diagnosing-an-authentication-failure) covers a rejected key.
+1. In the shell you used for apply, run the gateway and workspace selection commands printed under **Agents**.
+2. Set the sandbox name, agent name, and runtime ID from the same apply result's `Invoke:` line.
+   Replace the three example values before running the commands.
+
+   ```sh
+   SANDBOX='REPLACE_WITH_SANDBOX_NAME'
+   AGENT='REPLACE_WITH_AGENT_NAME'
+   RUNTIME_ID='REPLACE_WITH_RUNTIME_ID'
+   ```
+
+3. Send one JSON prompt string and save the full result in a private file.
+
+   ```sh
+   REPLY_FILE=$(mktemp "$PWD/hermes-reply.XXXXXX") &&
+     printf '%s\n' '"Reply with exactly READY."' |
+       openshell sandbox exec -n "$SANDBOX" --no-tty -- \
+         fabric-agent-ctl invoke --agent "$AGENT" --runtime-id "$RUNTIME_ID" --input - > "$REPLY_FILE"
+   ```
+
+   If the command fails, stop and [inspect the native logs](../observability/troubleshooting.md#reading-native-service-logs).
+4. Inspect the two statuses, error, and response.
+   The response path applies to the Hermes adapter used in this walkthrough.
+
+   ```sh
+   jq '{status, result_status: .result.status, error: .result.error, response: .result.output.response}' "$REPLY_FILE"
+   ```
+
+   Expect both statuses to be `succeeded`, the error to be null, and the response to be `READY`.
+   For a rejected key, follow [Diagnosing an Authentication Failure](../agents-inference/agents.md#diagnosing-an-authentication-failure).
+   Keep the full JSON file private.
 
 Run the same `plan` and `apply` again, and expect no resource changes.
 Keep the deployment for inspection, or follow [Destroying](../build-deploy/usage.md#destroying) with the same bundle, YAML, and state directory.
