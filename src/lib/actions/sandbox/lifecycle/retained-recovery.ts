@@ -58,17 +58,22 @@ function requireOwnedRuntime(
   state: RecoveryState,
   refuseRecovery: RefuseRecovery = refuse,
 ): void {
-  if (
-    resolveGatewayCleanupRuntimeProviderId(record.gatewayName, entry?.openshellDriver, {
+  const runtimeProviderId = resolveGatewayCleanupRuntimeProviderId(
+    record.gatewayName,
+    entry?.openshellDriver,
+    {
       requireOwnedRuntime: true,
       ...(state.forceLocal || record.createAuthority
         ? { requireDefaultDockerDaemon: true }
         : { recoveryRecordedAt: record.recordedAt }),
-    }) !== "docker"
-  ) {
+    },
+  );
+  if (runtimeProviderId !== "docker") {
     refuseRecovery(
       record.sandboxName,
-      "the owning Docker runtime on the original default daemon could not be established",
+      runtimeProviderId === "podman"
+        ? "retained recovery is unavailable for Podman gateways"
+        : "the owning Docker runtime on the original default daemon could not be established",
     );
   }
   if (

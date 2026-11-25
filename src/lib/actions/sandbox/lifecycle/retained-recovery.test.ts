@@ -774,12 +774,14 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.capture).not.toHaveBeenCalled();
   });
 
-  it("preserves recovery owned by a different runtime provider (#12260)", async () => {
+  it.each([false, true])("explains the Podman recovery refusal with force=%s", async (force) => {
     const h = await setup();
     h.writeRuntime(null, new Date(Date.parse(h.record.recordedAt) - 1_000).toISOString(), "podman");
     const before = h.snapshot();
-    expect(h.run).toThrow(/owning Docker runtime/u);
+    expect(() => h.run(force)).toThrow(/retained recovery is unavailable for Podman gateways/u);
     expect(h.snapshot()).toEqual(before);
+    expect(h.capture).not.toHaveBeenCalled();
+    expect(h.containers).not.toHaveBeenCalled();
   });
 
   it("preserves records when more than one failed create uses the same name (#12260)", async () => {
