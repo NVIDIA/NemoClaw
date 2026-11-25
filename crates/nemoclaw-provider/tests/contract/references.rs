@@ -26,7 +26,7 @@ impl References {
     /// workspace's `ref` unless a literal object is given).
     fn config(&self, label: &str, workspace: Option<Value>) {
         fs::write(self.dir.path().join("main.tf.json"), json!({
-            "terraform": {"required_providers": {"nemoclaw": {"source": "registry.opentofu.org/nvidia/nemoclaw"}}},
+            "terraform": {"required_providers": {"nemoclaw": {"source": "nvidia.github.io/nemoclaw/nemoclaw"}}},
             "provider": {"nemoclaw": {}},
             "resource": {
                 "nemoclaw_workspace": {"team": {"name": "team", "label": label}},

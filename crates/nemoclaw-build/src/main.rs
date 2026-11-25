@@ -515,17 +515,16 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
     let root = temporary.path();
     fs::create_dir_all(root.join("bin"))?;
     fs::create_dir_all(root.join("libexec"))?;
-    let openshell =
-        format!("providers/registry.opentofu.org/nvidia/openshell/{version}/{platform}");
+    let openshell = format!("providers/nvidia.github.io/nemoclaw/openshell/{version}/{platform}");
     fs::create_dir_all(root.join(&openshell))?;
-    let fabric = format!("providers/registry.opentofu.org/nvidia/fabric/{version}/{platform}");
+    let fabric = format!("providers/nvidia.github.io/nemoclaw/fabric/{version}/{platform}");
     fs::create_dir_all(root.join(&fabric))?;
     // The vllm, ollama, and host providers build from the nemoclaw-provider package.
-    let vllm = format!("providers/registry.opentofu.org/nvidia/vllm/{version}/{platform}");
+    let vllm = format!("providers/nvidia.github.io/nemoclaw/vllm/{version}/{platform}");
     fs::create_dir_all(root.join(&vllm))?;
-    let ollama = format!("providers/registry.opentofu.org/nvidia/ollama/{version}/{platform}");
+    let ollama = format!("providers/nvidia.github.io/nemoclaw/ollama/{version}/{platform}");
     fs::create_dir_all(root.join(&ollama))?;
-    let host = format!("providers/registry.opentofu.org/nvidia/host/{version}/{platform}");
+    let host = format!("providers/nvidia.github.io/nemoclaw/host/{version}/{platform}");
     fs::create_dir_all(root.join(&host))?;
     let extension = if platform.starts_with("windows") {
         ".exe"

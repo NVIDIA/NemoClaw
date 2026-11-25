@@ -882,32 +882,32 @@ const WINDOWS_PROGRAMS: [(&str, &str); 9] = [
     ("nvidia", "bin/nemoclaw.exe"),
     ("none", "libexec/tofu.exe"),
     (
+        "nvidia",
+        "providers/nvidia.github.io/nemoclaw/fabric/0.1.0/windows_amd64/terraform-provider-fabric_v0.1.0.exe",
+    ),
+    (
+        "nvidia",
+        "providers/nvidia.github.io/nemoclaw/host/0.1.0/windows_amd64/terraform-provider-host_v0.1.0.exe",
+    ),
+    (
+        "nvidia",
+        "providers/nvidia.github.io/nemoclaw/ollama/0.1.0/windows_amd64/terraform-provider-ollama_v0.1.0.exe",
+    ),
+    (
+        "nvidia",
+        "providers/nvidia.github.io/nemoclaw/openshell/0.1.0/windows_amd64/terraform-provider-openshell_v0.1.0.exe",
+    ),
+    (
+        "nvidia",
+        "providers/nvidia.github.io/nemoclaw/vllm/0.1.0/windows_amd64/terraform-provider-vllm_v0.1.0.exe",
+    ),
+    (
         "hashicorp",
         "providers/registry.opentofu.org/hashicorp/helm/3.3.0/windows_amd64/terraform-provider-helm_v3.3.0_x5.exe",
     ),
     (
         "none",
         "providers/registry.opentofu.org/kreuzwerker/docker/4.7.0/windows_amd64/terraform-provider-docker_v4.7.0.exe",
-    ),
-    (
-        "nvidia",
-        "providers/registry.opentofu.org/nvidia/fabric/0.1.0/windows_amd64/terraform-provider-fabric_v0.1.0.exe",
-    ),
-    (
-        "nvidia",
-        "providers/registry.opentofu.org/nvidia/host/0.1.0/windows_amd64/terraform-provider-host_v0.1.0.exe",
-    ),
-    (
-        "nvidia",
-        "providers/registry.opentofu.org/nvidia/ollama/0.1.0/windows_amd64/terraform-provider-ollama_v0.1.0.exe",
-    ),
-    (
-        "nvidia",
-        "providers/registry.opentofu.org/nvidia/openshell/0.1.0/windows_amd64/terraform-provider-openshell_v0.1.0.exe",
-    ),
-    (
-        "nvidia",
-        "providers/registry.opentofu.org/nvidia/vllm/0.1.0/windows_amd64/terraform-provider-vllm_v0.1.0.exe",
     ),
 ];
 

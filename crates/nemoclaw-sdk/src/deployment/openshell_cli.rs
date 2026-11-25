@@ -28,13 +28,13 @@ pub(super) fn unavailable(gateway: &crate::config::Gateway) -> Option<&'static s
     bearer.then_some("the bundled OpenShell CLI cannot use this gateway's bearer token; use a separately authenticated OpenShell CLI where supported")
 }
 
+#[cfg(unix)]
 impl Deployment {
     /// The bundled OpenShell CLI, set to run `args` against this deployment's
     /// gateway and workspace through OpenShell's documented selectors. Its
     /// configuration lives in the state directory, apart from the user's own.
     /// When the gateway sets `oidc` and OpenShell has not registered it, also
     /// returns the `openshell` arguments that register it and sign in.
-    #[cfg(unix)]
     pub fn openshell(
         &self,
         args: &[std::ffi::OsString],

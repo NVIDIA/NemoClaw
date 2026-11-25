@@ -221,7 +221,7 @@
   "terraform": {
     "required_providers": {
       "openshell": {
-        "source": "registry.opentofu.org/nvidia/openshell"
+        "source": "nvidia.github.io/nemoclaw/openshell"
       }
     }
   },

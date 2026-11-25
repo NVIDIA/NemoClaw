@@ -15,9 +15,9 @@ terraform {
   # version = "0.1.0", and install them from the bundle's providers directory.
   required_providers {
     docker    = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.7.0" }
-    ollama    = { source = "registry.opentofu.org/nvidia/ollama" }
-    openshell = { source = "registry.opentofu.org/nvidia/openshell" }
-    fabric    = { source = "registry.opentofu.org/nvidia/fabric" }
+    ollama    = { source = "nvidia.github.io/nemoclaw/ollama" }
+    openshell = { source = "nvidia.github.io/nemoclaw/openshell" }
+    fabric    = { source = "nvidia.github.io/nemoclaw/fabric" }
   }
 }
 

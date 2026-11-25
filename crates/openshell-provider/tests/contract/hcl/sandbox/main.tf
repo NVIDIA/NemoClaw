@@ -5,8 +5,8 @@
 # a policy's network rules, middleware binding, and filesystem paths.
 terraform {
   required_providers {
-    openshell = { source = "registry.opentofu.org/nvidia/openshell" }
-    fixture   = { source = "registry.opentofu.org/nvidia/fixture" }
+    openshell = { source = "nvidia.github.io/nemoclaw/openshell" }
+    fixture   = { source = "nvidia.github.io/nemoclaw/fixture" }
   }
 }
 variable "endpoint" { type = string }

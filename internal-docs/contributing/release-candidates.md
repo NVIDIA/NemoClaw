@@ -423,6 +423,11 @@ These changes since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affect e
 - The intent record is now version 33, so this release refuses any deployment that `v0.1.0-rc12` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release.
   See [compatibility](../../docs/references/compatibility.md#deployment-state).
+- The NemoClaw providers `openshell`, `fabric`, `vllm`, `ollama`, and `host` moved to the address `nvidia.github.io/nemoclaw/NAME` from `nvidia/NAME` on `registry.opentofu.org` ([#14767](https://github.com/NVIDIA/NemoClaw/issues/14767)).
+  OpenTofu state records each resource's provider address, so this release can't plan a deployment whose state records the earlier address.
+  Destroy each CLI deployment with the release that created it before upgrading, then create it again with this release.
+  For an HCL project, run `tofu state replace-provider nvidia/NAME nvidia.github.io/nemoclaw/NAME` for each NemoClaw provider in the state, where OpenTofu reads `nvidia/NAME` as the earlier address on `registry.opentofu.org`.
+  Then change each NemoClaw provider's `source` in `required_providers`, and the CLI configuration's `include` and `exclude` lists, to the new address, as [the OpenTofu project guide](../../docs/build-deploy/opentofu-project.md#installing-the-providers-from-a-bundle) shows, and run `tofu init`.
 - Agent images register the Fabric workflow targets they install, so plan checks a sandbox with a `workflow` against Fabric's compatibility check too ([#14600](https://github.com/NVIDIA/NemoClaw/issues/14600)).
   A document that sets a field the workflow's adapter doesn't accept, such as a route's `maxTokens` for NOOA, or a `workflow.target_id` the image doesn't register, now fails plan naming that field.
   Before, plan passed it and the agent failed to start after apply created resources.

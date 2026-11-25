@@ -439,9 +439,28 @@ fn convert(shape: &Shape, value: &Value, outward: bool) -> Value {
                     if !outward && omitted {
                         return None;
                     }
+                    // OpenTofu's JSON syntax reads the keys of an object under
+                    // a map block as its labels, so it has no spelling for an
+                    // empty map block; it reads an absent one as empty.
+                    if outward
+                        && matches!(field.shape, Shape::ObjectMap(_))
+                        && value.as_object().is_some_and(Map::is_empty)
+                    {
+                        return None;
+                    }
                     Some((name, convert(&field.shape, value, outward)))
                 })
                 .collect();
+            if !outward {
+                // A required map block that configuration left out is empty.
+                for field in fields.values() {
+                    if field.required && matches!(field.shape, Shape::ObjectMap(_)) {
+                        converted
+                            .entry(field.json.clone())
+                            .or_insert_with(|| Value::Object(Map::new()));
+                    }
+                }
+            }
             if fields
                 .get(EXTENSIONS)
                 .is_some_and(|field| field.json == OPEN)
@@ -741,6 +760,34 @@ mod tests {
             .unwrap()
             .remove("gpuMemoryGiB");
         assert_eq!(from_hcl(&fields, &configured), expected);
+    }
+
+    /// OpenTofu's JSON syntax reads the keys of an object under a map block as
+    /// its labels, so `{}` would be a block without a label. Configuration
+    /// leaves an empty map block out, and reading back gives a required one
+    /// its empty map, whether OpenTofu sends it as null or not at all.
+    #[test]
+    fn an_empty_map_block_is_left_out_and_a_required_one_reads_back_empty() {
+        let root = json!({
+            "type": "object",
+            "required": ["rules"],
+            "properties": {
+                "rules": {"type": "object", "additionalProperties": {"$ref": "#/$defs/Rule"}},
+                "extra": {"type": "object", "additionalProperties": {"$ref": "#/$defs/Rule"}}
+            },
+            "$defs": {"Rule": {"type": "object", "properties": {"host": {"type": "string"}}}}
+        });
+        let fields = fields(&root, &[]).unwrap();
+        assert!(matches!(fields["rules"].shape, Shape::ObjectMap(_)));
+        assert_eq!(
+            to_hcl(&fields, &json!({"rules": {}, "extra": {}})),
+            json!({})
+        );
+        for configured in [json!({"rules": null, "extra": null}), json!({})] {
+            assert_eq!(from_hcl(&fields, &configured), json!({"rules": {}}));
+        }
+        let value = json!({"rules": {"docs": {"host": "docs.example.com"}}});
+        assert_eq!(from_hcl(&fields, &to_hcl(&fields, &value)), value);
     }
 
     #[test]

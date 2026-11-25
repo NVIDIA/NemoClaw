@@ -102,7 +102,7 @@ fn macos_verification_requires_notarized_nvidia_signatures_and_hashicorps_on_the
         "providers/registry.opentofu.org/hashicorp/helm/3.1.1/darwin_arm64/terraform-provider-helm"
             .to_owned();
     let openshell = String::from(
-        "providers/registry.opentofu.org/nvidia/openshell/0.1.0/darwin_arm64/terraform-provider-openshell_v0.1.0",
+        "providers/nvidia.github.io/nemoclaw/openshell/0.1.0/darwin_arm64/terraform-provider-openshell_v0.1.0",
     );
     let nvidia =
         |identifier: &str| format!("notarized {NVIDIA_TEAM} com.nvidia.nemoclaw.{identifier}");

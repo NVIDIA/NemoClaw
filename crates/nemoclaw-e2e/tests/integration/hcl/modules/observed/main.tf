@@ -9,7 +9,7 @@
 terraform {
   required_providers {
     fixture = {
-      source = "registry.opentofu.org/nvidia/fixture"
+      source = "nvidia.github.io/nemoclaw/fixture"
     }
     # Unused here; a test file that mocks Docker for an example applies its
     # mock to this module's runs too, under this source.

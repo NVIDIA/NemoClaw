@@ -35,7 +35,7 @@ status=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   case "$path" in
-    bin/nemoclaw | bin/nemoclaw.exe | providers/registry.opentofu.org/nvidia/*) signer=nvidia ;;
+    bin/nemoclaw | bin/nemoclaw.exe | providers/nvidia.github.io/nemoclaw/*) signer=nvidia ;;
     libexec/tofu | libexec/tofu.exe | libexec/openshell | providers/registry.opentofu.org/kreuzwerker/docker/*) signer=$third_party ;;
     providers/registry.opentofu.org/hashicorp/helm/*) signer=hashicorp ;;
     *)
