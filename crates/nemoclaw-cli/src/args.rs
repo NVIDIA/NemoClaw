@@ -43,6 +43,13 @@ pub(crate) struct Cli {
 }
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// Run the bundled OpenShell CLI against this deployment's gateway and workspace.
+    #[command(name = "openshell", visible_alias = "osh")]
+    OpenShell {
+        /// Arguments passed unchanged to OpenShell, optionally after --.
+        #[arg(value_name = "ARGS", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Author deployment YAML using a template's choices as questionnaire defaults.
     Onboard {
         /// Complete YAML supported by guided authoring; omission uses built-in defaults.
@@ -104,7 +111,9 @@ impl Command {
             Self::Plan { output, .. } | Self::Apply { output, .. } | Self::Destroy { output } => {
                 *output
             }
-            Self::Export { .. } | Self::Onboard { .. } => OutputFormat::Text,
+            Self::Export { .. } | Self::Onboard { .. } | Self::OpenShell { .. } => {
+                OutputFormat::Text
+            }
         }
     }
 }

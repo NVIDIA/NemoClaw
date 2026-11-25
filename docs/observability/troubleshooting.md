@@ -9,6 +9,8 @@ Do not rerun authoring and replace the deployment identity.
 Do not delete bindings or substitute a fresh state directory to bypass an ownership error.
 Refer to [state locations](../build-deploy/state.md) and the [recovery procedure](../build-deploy/usage.md#updates-and-recovery).
 
+To run the `openshell` diagnostic commands below against a deployment, use `nemoclaw osh --state-dir DIR --` in their place where [the bundled CLI applies](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace).
+
 ## Capturing the Failing Operation
 
 Record the command, exit status, stderr, source revision or bundle, state path, and the step at which the operation stopped.

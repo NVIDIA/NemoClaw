@@ -42,6 +42,7 @@ impl RenderContext {
             Command::Destroy { .. } => ("Destroy", None),
             Command::Export { .. } => ("Export", None),
             Command::Onboard { file, .. } => ("Onboard", file.clone()),
+            Command::OpenShell { .. } => ("OpenShell", None),
         };
         Self {
             operation,
@@ -127,6 +128,17 @@ impl RenderContext {
     /// `nemoclaw OPERATION` with this deployment's state and bundle, on a
     /// file or, for `None`, on standard input, which the commands name `-`.
     fn follow_up_command(&self, operation: &str, input: Option<&std::path::Path>) -> String {
+        let mut command = self.nemoclaw(operation);
+        command.push(' ');
+        match input {
+            Some(path) => command.push_str(&shell_word(&path.display().to_string())),
+            None => command.push('-'),
+        }
+        terminal_text(&command)
+    }
+
+    /// `nemoclaw OPERATION` with this run's state and bundle selection.
+    fn nemoclaw(&self, operation: &str) -> String {
         let mut command = format!("nemoclaw {operation}");
         if self.state_dir != std::path::Path::new(".nemoclaw") {
             command.push_str(&format!(
@@ -140,12 +152,7 @@ impl RenderContext {
                 shell_word(&bundle.display().to_string())
             ));
         }
-        command.push(' ');
-        match input {
-            Some(path) => command.push_str(&shell_word(&path.display().to_string())),
-            None => command.push('-'),
-        }
-        terminal_text(&command)
+        command
     }
 }
 
@@ -213,15 +220,30 @@ fn shell_word(value: &str) -> String {
     } else {
         value.to_string()
     };
+    shell_argument(&value)
+}
+
+fn shell_argument(value: &str) -> String {
     let plain = !value.is_empty()
         && value
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
     if plain {
-        value
+        value.to_owned()
     } else {
         format!("'{}'", value.replace('\'', "'\\''"))
     }
+}
+
+#[cfg(unix)]
+pub(crate) fn openshell_registration(cli: &Cli, args: &[String]) -> String {
+    let mut command = RenderContext::new(cli).nemoclaw("osh");
+    command.push_str(" --");
+    for arg in args {
+        command.push(' ');
+        command.push_str(&shell_argument(arg));
+    }
+    terminal_text(&command)
 }
 
 /// External labels are text, never instructions to a terminal emulator.
@@ -594,9 +616,15 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             output.push_str(&format!("  {}\n", terminal_text(reason)));
         }
     }
-    let mut selected = false;
-    if !result.agents.is_empty() {
-        output.push_str(&agent_invocation(result, planned, &mut selected));
+    let osh = terminal_text(&format!("{} --", context.nemoclaw("osh")));
+    let unavailable = result
+        .connection
+        .as_ref()
+        .and_then(|connection| connection.openshell_cli_unavailable.as_deref());
+    if let Some(reason) = unavailable {
+        output.push_str(&format!("\nBundled OpenShell access unavailable: {}.\n  For supported standalone access, see {}.\n", terminal_text(reason), documentation_url("docs/agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways")));
+    } else if !result.agents.is_empty() {
+        output.push_str(&agent_invocation(result, planned, &osh));
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
@@ -613,8 +641,11 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             ));
         }
     }
-    if result.outcome == Outcome::Succeeded && !result.interfaces.is_empty() {
-        output.push_str(&interface_access(result, selected));
+    if unavailable.is_none()
+        && result.outcome == Outcome::Succeeded
+        && !result.interfaces.is_empty()
+    {
+        output.push_str(&interface_access(result, &osh));
     }
     if result.outcome == Outcome::Succeeded {
         output.push_str("\nModel and agent responses were not tested.\n");
@@ -622,36 +653,10 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     output
 }
 
-/// The commands that select this deployment's gateway and workspace, as the
-/// interface guide describes.
-fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String {
-    let mut output =
-        String::from("  In each terminal, select this deployment's gateway and workspace:\n");
-    let endpoint = connection
-        .gateway_endpoint
-        .as_deref()
-        .map_or_else(|| "its port forward".to_owned(), terminal_text);
-    if connection.plaintext_loopback() {
-        output.push_str(&format!(
-            "    unset OPENSHELL_GATEWAY\n    export OPENSHELL_GATEWAY_ENDPOINT={endpoint}\n"
-        ));
-    } else {
-        output.push_str(&format!(
-            "    unset OPENSHELL_GATEWAY_ENDPOINT\n    export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME  # your profile for {endpoint}\n"
-        ));
-    }
-    output.push_str(&format!(
-        "    export OPENSHELL_WORKSPACE={}\n",
-        terminal_text(&connection.workspace)
-    ));
-    output
-}
-
-/// The command that invokes each agent whose runtime the state records, under
-/// the gateway and workspace selection, which `selected` records printing. A
+/// The `osh` command that invokes each agent whose runtime the state records. A
 /// plan lists the runtimes the last apply left, which its changes may replace,
 /// and prints nothing when the state records none, such as before any apply.
-fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool) -> String {
+fn agent_invocation(result: &OperationResult, planned: bool, osh: &str) -> String {
     let invocable = result
         .agents
         .values()
@@ -664,18 +669,16 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
     } else {
         "\nAgents:\n"
     });
-    if invocable && let Some(connection) = &result.connection {
-        output.push_str(&gateway_selection(connection));
-        *selected = true;
-    }
     for (sandbox, agent) in &result.agents {
         let sandbox = terminal_text(sandbox);
         let name = terminal_text(&agent.agent);
         match &agent.runtime_id {
             Some(runtime) => {
                 let runtime = terminal_text(runtime);
+                let reply = shell_word(&format!("reply-{sandbox}.json"));
                 output.push_str(&format!(
-                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   openshell sandbox exec -n {sandbox} --no-tty -- fabric-agent-ctl invoke --agent {name} --runtime-id {runtime} --input FILE\n"
+                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   (umask 077; set -C; printf '%s\\n' '\"Reply with exactly READY.\"' | {osh} sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input - > {reply})\n    Inspect:  jq '{{status, result_status: .result.status, error: .result.error}}' {reply}\n",
+                    shell_argument(&sandbox), shell_argument(&name), shell_argument(&runtime),
                 ));
             }
             None => output.push_str(&format!("  {sandbox}: agent {name}, no runtime recorded\n")),
@@ -683,22 +686,18 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
     }
     if invocable {
         output.push_str(&format!(
-            "  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see {}.\n",
+            "  The request sends JSON on stdin and saves the result privately, refusing an existing file; choose another output path to repeat it. Continue only after exit 0 and both statuses succeeded; read the adapter's reply as {} describes. A request can incur inference charges and change conversation history.\n",
             documentation_url("docs/agents-inference/agents.md"),
         ));
     }
     output
 }
 
-/// How to reach each enabled interface: the commands a person runs, under the
-/// gateway and workspace selection, unless the agents' section printed it.
+/// How to reach each enabled interface: the `osh` commands a person runs.
 /// Only the person's own retrieval command discloses a token.
-fn interface_access(result: &OperationResult, selected: bool) -> String {
+fn interface_access(result: &OperationResult, osh: &str) -> String {
     use nemoclaw_sdk::SignIn;
     let mut output = String::from("\nAgent interfaces:\n");
-    if !selected && let Some(connection) = &result.connection {
-        output.push_str(&gateway_selection(connection));
-    }
     for access in &result.interfaces {
         let sandbox = terminal_text(&access.sandbox);
         let interface = terminal_text(&access.interface);
@@ -706,7 +705,7 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
             Some(port) => {
                 output.push_str(&format!("  {sandbox}/{interface} on port {port}\n"));
                 output.push_str(&format!(
-                    "    Forward:  openshell forward service {sandbox} --target-port {port} --local 127.0.0.1:{port}\n"
+                    "    Forward:  {osh} forward service {sandbox} --target-port {port} --local 127.0.0.1:{port}\n"
                 ));
             }
             None => output.push_str(&format!("  {sandbox}/{interface}\n")),
@@ -717,7 +716,7 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
         );
         match &access.token_path {
             Some(path) => output.push_str(&format!(
-                "    Token:    openshell sandbox exec -n {sandbox} --no-tty -- cat {}\n",
+                "    Token:    {osh} sandbox exec -n {sandbox} --no-tty -- cat {}\n",
                 terminal_text(path)
             )),
             None if token => output.push_str(
@@ -744,7 +743,7 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
                 ", replacing TOKEN with the token"
             };
             output.push_str(&format!(
-                "    Terminal: openshell sandbox exec -n {sandbox} --tty -- {}{token}\n",
+                "    Terminal: {osh} sandbox exec -n {sandbox} --tty -- {}{token}\n",
                 terminal_text(command)
             ));
         }
@@ -1050,7 +1049,7 @@ mod tests {
 
     /// After apply, each enabled interface gets its forward, the command that
     /// reads its token, its sign-in, and the command that opens its terminal UI
-    /// if it has one, under this deployment's gateway and workspace selection.
+    /// if it has one, through `nemoclaw osh`.
     /// The output names where the token is, never a token.
     #[test]
     fn apply_output_tells_how_to_reach_each_interface() {
@@ -1059,20 +1058,17 @@ mod tests {
         let text = render(&["nemoclaw", "apply", "deployment.yaml"], result.clone());
         let lines: Vec<&str> = text.lines().map(str::trim).collect();
         for expected in [
-            "unset OPENSHELL_GATEWAY",
-            "export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671",
-            "export OPENSHELL_WORKSPACE=nc-1234567890abcdef",
-            "Forward: openshell forward service assistant --target-port 18789 --local 127.0.0.1:18789",
-            "Token: openshell sandbox exec -n assistant --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/rt-1/interfaces/dashboard.token",
+            "Forward: nemoclaw osh -- forward service assistant --target-port 18789 --local 127.0.0.1:18789",
+            "Token: nemoclaw osh -- sandbox exec -n assistant --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/rt-1/interfaces/dashboard.token",
             "Sign in: open http://127.0.0.1:18789/#token=TOKEN, replacing TOKEN with the token",
-            "Terminal: openshell sandbox exec -n assistant --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN, replacing TOKEN with the token",
-            "Forward: openshell forward service reviewer --target-port 8642 --local 127.0.0.1:8642",
-            "Token: openshell sandbox exec -n reviewer --no-tty -- cat /sandbox/artifacts/.fabric/hermes/runtimes/rt-2/interfaces/api.token",
+            "Terminal: nemoclaw osh -- sandbox exec -n assistant --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN, replacing TOKEN with the token",
+            "Forward: nemoclaw osh -- forward service reviewer --target-port 8642 --local 127.0.0.1:8642",
+            "Token: nemoclaw osh -- sandbox exec -n reviewer --no-tty -- cat /sandbox/artifacts/.fabric/hermes/runtimes/rt-2/interfaces/api.token",
             "Sign in: send the header Authorization: Bearer TOKEN, replacing TOKEN with the token",
-            "Forward: openshell forward service reviewer --target-port 9119 --local 127.0.0.1:9119",
+            "Forward: nemoclaw osh -- forward service reviewer --target-port 9119 --local 127.0.0.1:9119",
             "Sign in: none; anyone who can reach the forward can use it",
             // Hermes's attach helper reads its token itself.
-            "Terminal: openshell sandbox exec -n reviewer --tty -- /opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/tui.json",
+            "Terminal: nemoclaw osh -- sandbox exec -n reviewer --tty -- /opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/tui.json",
         ] {
             assert!(
                 lines
@@ -1099,28 +1095,6 @@ mod tests {
         assert_eq!(machine["interfaces"], interfaces());
     }
 
-    /// A gateway the client can't reach as plaintext loopback is selected by
-    /// its OpenShell profile, which NemoClaw doesn't know.
-    #[test]
-    fn interface_access_selects_a_remote_gateway_by_profile() {
-        let connection = json!({"gatewayEndpoint": "https://gateway.example:443", "workspace": "nc-1234567890abcdef"});
-        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection, "interfaces": interfaces()});
-        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
-        assert!(
-            text.contains("unset OPENSHELL_GATEWAY_ENDPOINT\n"),
-            "{text}"
-        );
-        assert!(
-            text.contains("export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME"),
-            "{text}"
-        );
-        assert!(text.contains("https://gateway.example:443"), "{text}");
-        assert!(
-            !text.contains("export OPENSHELL_GATEWAY_ENDPOINT"),
-            "{text}"
-        );
-    }
-
     /// A managed cluster gateway without `expose` has no address: clients
     /// reach it through a port forward of their own, and JSON results leave
     /// the endpoint out.
@@ -1132,14 +1106,6 @@ mod tests {
         assert!(
             text.contains("OpenShell gateway: not published; forward a local port to the gateway pod, as https://github.com/NVIDIA/NemoClaw/blob/")
                 && text.contains("/docs/build-deploy/kubernetes.md describes\n"),
-            "{text}"
-        );
-        assert!(
-            text.contains("export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME  # your profile for its port forward\n"),
-            "{text}"
-        );
-        assert!(
-            !text.contains("export OPENSHELL_GATEWAY_ENDPOINT"),
             "{text}"
         );
         let machine: Value = serde_json::from_str(&render(
@@ -1178,7 +1144,7 @@ mod tests {
     }
 
     /// Plan and apply print the command that invokes each agent with a recorded
-    /// runtime, under this deployment's gateway and workspace selection, and
+    /// runtime through `nemoclaw osh`, and
     /// say which agent has none; JSON carries the same facts under `agents`.
     #[test]
     fn plan_and_apply_output_tells_how_to_invoke_each_agent() {
@@ -1195,17 +1161,12 @@ mod tests {
                 .lines()
                 .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
                 .collect();
-            for expected in [
-                "export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671",
-                "export OPENSHELL_WORKSPACE=nc-1234567890abcdef",
-                "Invoke: openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input FILE",
-                "reviewer: agent critic, no runtime recorded",
-            ] {
-                assert!(
-                    lines.iter().any(|line| line == expected),
-                    "{command}: missing {expected:?}:\n{text}"
-                );
-            }
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line == "reviewer: agent critic, no runtime recorded"),
+                "{command}: {text}"
+            );
             assert_eq!(
                 text.matches("fabric-agent-ctl invoke").count(),
                 1,
@@ -1237,32 +1198,107 @@ mod tests {
         }
     }
 
-    /// Agents and interfaces share one gateway and workspace selection.
-    #[test]
-    fn apply_output_selects_the_gateway_once_for_agents_and_interfaces() {
-        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
-        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection,
-            "agents": agents(), "interfaces": interfaces()});
-        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
-        assert_eq!(
-            text.matches("export OPENSHELL_WORKSPACE=").count(),
-            1,
-            "{text}"
-        );
-        assert!(text.contains("--runtime-id rt-1"), "{text}");
-        assert!(
-            text.contains("openshell forward service assistant"),
-            "{text}"
-        );
-    }
-
     #[test]
     fn results_without_interfaces_show_no_interface_access() {
         let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
         let result = json!({"outcome": "succeeded", "changes": [], "connection": connection});
         let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
-        assert!(!text.contains("openshell forward"), "{text}");
-        assert!(!text.contains("OPENSHELL_WORKSPACE"), "{text}");
+        assert!(!text.contains("forward service"), "{text}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_printed_request_sends_json_with_the_actual_identities_and_selection() {
+        use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let cli = bin.join("nemoclaw");
+        fs::write(&cli, "#!/bin/sh\nprintf '%s\\n' \"$@\" > args.txt\ncat > input.txt\nprintf '%s\\n' '{\"status\":\"succeeded\",\"result\":{\"status\":\"succeeded\"}}'\n").unwrap();
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o700)).unwrap();
+        let result = json!({"outcome":"succeeded", "changes":[], "agents":agents()});
+        let text = render(
+            &[
+                "nemoclaw",
+                "apply",
+                "deployment.yaml",
+                "--state-dir",
+                "state's directory",
+                "--bundle",
+                "bundle directory",
+            ],
+            result,
+        );
+        let command = text
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("Invoke:"))
+            .unwrap()
+            .trim();
+        let output = Command::new("/bin/sh")
+            .args(["-c", command])
+            .current_dir(root.path())
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let input: Value =
+            serde_json::from_slice(&fs::read(root.path().join("input.txt")).unwrap())
+                .expect("the printed command supplies a JSON value");
+        assert_eq!(input, "Reply with exactly READY.");
+        let args = fs::read_to_string(root.path().join("args.txt")).unwrap();
+        let args: Vec<_> = args.lines().collect();
+        for pair in [
+            ["--state-dir", "state's directory"],
+            ["--bundle", "bundle directory"],
+            ["-n", "assistant"],
+            ["--agent", "main"],
+            ["--runtime-id", "rt-1"],
+            ["--input", "-"],
+        ] {
+            assert!(
+                args.windows(2).any(|value| value == pair),
+                "missing {pair:?}: {args:?}"
+            );
+        }
+        let reply = root.path().join("reply-assistant.json");
+        let saved: Value = serde_json::from_slice(&fs::read(&reply).unwrap()).unwrap();
+        assert_eq!(saved["result"]["status"], "succeeded");
+        assert_eq!(
+            fs::metadata(&reply).unwrap().permissions().mode() & 0o077,
+            0,
+            "the captured result is private"
+        );
+        let second = Command::new("/bin/sh")
+            .args(["-c", command])
+            .current_dir(root.path())
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .output()
+            .unwrap();
+        assert!(
+            !second.status.success(),
+            "an existing reply must not be overwritten"
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(reply).unwrap()).unwrap(),
+            saved
+        );
+    }
+
+    #[test]
+    fn unsupported_bundled_access_has_guidance_instead_of_unusable_commands() {
+        let result = json!({"outcome":"succeeded", "changes":[], "agents":agents(), "interfaces":interfaces(),
+            "connection":{"workspace":"nc-test", "openshellCliUnavailable":"this gateway requires an unsupported bearer token"}});
+        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
+        assert!(text.contains("unsupported bearer token"), "{text}");
+        assert!(text.contains("interfaces.md"), "{text}");
+        assert!(
+            !text.contains("Invoke:") && !text.contains("Forward:") && !text.contains("Token:"),
+            "{text}"
+        );
     }
 
     #[test]
