@@ -57,10 +57,6 @@ The first `cargo ci tools` compiles its runner before installing tools, which ca
 The first result of `type -a` must be this checkout's CLI rather than another installation, such as NemoClaw Classic, and help must list `onboard`, `plan`, `apply`, and `destroy`.
 Keep the bundle together, and don't rebuild it while a deployment operation uses it.
 
-If macOS linking fails with an unsupported architecture such as `arm64e.x1`, the selected linker and SDK don't match.
-List the installed SDKs with `ls /Library/Developer/CommandLineTools/SDKs`, then prefix each failing Cargo command with a compatible one, such as `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`.
-This selects an SDK for one command; 26.5 isn't a NemoClaw requirement.
-
 ## Building the Hermes Image
 
 Build the image under a new repository name, which leaves other builds' tags intact:
