@@ -120,8 +120,7 @@ export interface V1Alpha1Export {
   readonly spec: Readonly<{
     gateway: Readonly<{
       management: "managed";
-      runtime: Readonly<{ provider: "docker" }>;
-      endpoint: string;
+      target: Readonly<{ docker: Readonly<{ port: number }> }>;
     }>;
     services?: Readonly<Record<string, Readonly<V1Alpha1ExportService>>>;
     inferenceProviders: Readonly<

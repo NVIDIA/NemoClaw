@@ -64,6 +64,7 @@ interface HermesConfigExportPublishedEvidence {
   readonly consumer: HermesV1ParseSummary;
   readonly credentialReferenceMatches: boolean;
   readonly credentialValuesOmitted: boolean;
+  readonly gatewayPortMatches: boolean;
   readonly identityDriftPreventedPublication: boolean;
   readonly identityDriftReported: boolean;
   readonly managedImageIsPlaceholder: boolean;
@@ -148,6 +149,7 @@ export function passesHermesConfigExportLiveEvidence(
     evidence.consumer.failure === undefined &&
     evidence.credentialReferenceMatches &&
     evidence.credentialValuesOmitted &&
+    evidence.gatewayPortMatches &&
     evidence.identityDriftPreventedPublication &&
     evidence.identityDriftReported &&
     evidence.managedImageIsPlaceholder &&
@@ -427,6 +429,7 @@ export async function verifyHermesConfigExportLive(
       },
       credentialReferenceMatches: false,
       credentialValuesOmitted: !containsCredential,
+      gatewayPortMatches: false,
       identityDriftPreventedPublication: false,
       identityDriftReported: false,
       managedImageIsPlaceholder: false,
@@ -514,6 +517,7 @@ export async function verifyHermesConfigExportLive(
     consumer,
     credentialValuesOmitted: !containsCredential && exportsSafe,
     credentialReferenceMatches: hostedProvider?.credential?.env === entry.credentialEnv,
+    gatewayPortMatches: nemoclawDocument.spec.gateway.target.docker.port === entry.gatewayPort,
     identityDriftPreventedPublication:
       typeof nemoclawDriftExitCode === "number" &&
       nemoclawDriftExitCode !== 0 &&

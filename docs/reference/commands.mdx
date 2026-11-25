@@ -324,7 +324,7 @@ The report has one line for each setting the export left out, replaced with a pl
   `after=omitted` means the export drops the field to get the same v1 behavior.
 
 The last line starts with `# gateway`.
-It records that the export reuses the source gateway port in `spec.gateway.endpoint`.
+It records that the export reuses the source gateway port in `spec.gateway.target.docker.port`.
 If the source deployment is still running, start the v1 gateway on a different, free port.
 
 The report never contains credential values or credential environment-variable names.

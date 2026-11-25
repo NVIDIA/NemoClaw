@@ -6,4 +6,4 @@
  * exporter keeps no table of them: it passes observed v0 values through and reports what v1
  * cannot hold.
  */
-export const V1ALPHA1_CHECKED_REVISION = "d1d0c87e535f9c757f47dde6ee157e9859dd91fd" as const;
+export const V1ALPHA1_CHECKED_REVISION = "1636069b91f402242a35714fde1011042c3f1f70" as const;

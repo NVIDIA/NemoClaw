@@ -155,11 +155,6 @@ describe("export config builder", () => {
       kind: "NemoClawConfig",
       metadata: { name: "work-agents", uid: firstUid },
       spec: {
-        gateway: {
-          management: "managed",
-          runtime: { provider: "docker" },
-          endpoint: "http://127.0.0.1:8080",
-        },
         inferenceProviders: {
           "hosted-openai-api": {
             provider: "openai",
@@ -195,6 +190,18 @@ describe("export config builder", () => {
       },
     });
     expect(result.spec.sandboxes.alpha).not.toHaveProperty("name");
+  });
+
+  it("selects the managed Docker target with the source gateway port (#14696)", () => {
+    const result = buildExportConfig(
+      { ...source, gateway: { ...source.gateway, port: 18_081 } },
+      { documentName: alphaDocumentName, documentUid: firstUid },
+    );
+
+    expect(result.spec.gateway).toEqual({
+      management: "managed",
+      target: { docker: { port: 18_081 } },
+    });
   });
 
   it("emits a verified Brave integration without another inference provider (#10904)", () => {

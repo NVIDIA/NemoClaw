@@ -5,6 +5,7 @@ import { managedStartupE2eProfile } from "../../../scripts/checks/generate-manag
 import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import type { V1ParseSummary } from "../../support/v1-parse-consumer.ts";
 import { V1_IMAGE_REF_PLACEHOLDER } from "../../../src/lib/domain/config/export-document.ts";
+import { V1ALPHA1_CHECKED_REVISION } from "../../../src/lib/domain/config/v1alpha1-checked-revision.ts";
 import type { ConfigExportDocument } from "../fixtures/phases/config-export-validation.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import type { NemoClawInstanceManifest } from "../registry/types.ts";
@@ -21,7 +22,7 @@ export const POLICY = {
   },
 };
 export const PINNED_CONSUMER_EVIDENCE: V1ParseSummary = {
-  revision: "d1d0c87e535f9c757f47dde6ee157e9859dd91fd",
+  revision: V1ALPHA1_CHECKED_REVISION,
   sandboxes: {
     sandbox: {
       harnessKind: "nvidia.fabric.openclaw",
@@ -60,12 +61,11 @@ export function document(
   overrides: {
     model?: string;
     credentialReference?: string;
-    gatewayEndpoint?: string;
+    gatewayPort?: number;
     agent?: "openclaw" | "hermes";
     searchProvider?: "brave" | "tavily";
   } = {},
 ): ConfigExportDocument {
-  const gatewayEndpoint = overrides.gatewayEndpoint ?? "http://127.0.0.1:8080";
   return {
     apiVersion: "nemoclaw.nvidia.com/v1alpha1",
     kind: "NemoClawConfig",
@@ -76,8 +76,7 @@ export function document(
     spec: {
       gateway: {
         management: "managed",
-        runtime: { provider: "docker" },
-        endpoint: gatewayEndpoint,
+        target: { docker: { port: overrides.gatewayPort ?? 8080 } },
       },
       inferenceProviders: {
         "hosted-compatible-endpoint": {
