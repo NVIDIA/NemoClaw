@@ -391,7 +391,7 @@ impl ExplicitPolicy {
             let mut reasons: Vec<&str> = violations.iter().map(violation).collect();
             reasons.sort_unstable();
             reasons.dedup();
-            ConfigError(format!(
+            ConfigError::from(format!(
                 "explicit sandbox policy failed OpenShell validation: {}",
                 reasons.join("; ")
             ))

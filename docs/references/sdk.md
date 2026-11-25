@@ -234,6 +234,8 @@ Refer to [credential ownership](../security/security.md#credentials-and-authenti
 ## Handling Failure and Cancellation
 
 Errors retain observation uncertainty and redact resolved values.
+`Document::parse` and `Document::validate` report every configuration error they find, which `ConfigError::diagnostics` lists in document order, at most 20.
+Each `Diagnostic` gives its `message` and, when the error has a place, its `path`; a parsed document's errors also give their `line` and `column`.
 Cancellation leaves state available for explicit reconciliation.
 It does not delete resources or stop the independent NVIDIA DGX Spark memory supervisor.
 
