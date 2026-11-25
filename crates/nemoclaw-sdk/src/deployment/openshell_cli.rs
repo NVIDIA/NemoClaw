@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+#[cfg(unix)]
 use crate::kubernetes::receipt::private_directory;
 
 impl Deployment {
