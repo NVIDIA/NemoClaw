@@ -59,7 +59,7 @@ Refer to [provider discovery](../references/provider.md#engine-and-fabric-discov
 When no usable local image fits the selected harness, a release CLI offers its release's agent images whose Fabric metadata lists the harness's adapter, from the release's `version-pins.json` on GitHub.
 Onboarding selects a single image and lists several as choices.
 The suggestion does not pull the image or establish that it runs; apply pulls the digest and checks it.
-Development builds do not read release suggestions.
+Only release and release candidate builds read release suggestions.
 If the release's pins are unavailable, or name another release or Fabric revision, onboarding offers local images and manual entry.
 
 ## Reviewing and Saving the YAML
