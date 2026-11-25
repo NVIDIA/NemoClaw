@@ -3,33 +3,69 @@
 
 # Installing the CLI
 
-Install the NemoClaw Agent Configs CLI bundle for the operating system and architecture where you run `nemoclaw`.
-The bundle includes the CLI, OpenTofu, providers, and schemas.
+Find downloads and `SHA256SUMS` in the [v0.1.0 release assets](https://github.com/NVIDIA/NemoClaw/releases/tag/v0.1.0).
+Install and sign in to the [GitHub CLI](https://cli.github.com/) to verify downloads.
+Check `release-evidence.json` for signing, macOS notarization, and unsigned exceptions.
 
+<!-- Keep existing install links reachable when their tabs are closed. -->
 <a name="choosing-the-archive"></a>
 <a name="choosing-an-installation-method"></a>
-
-## Installing the Bundle
-
-Find your installer or archive under **Assets** on the [v0.1.0 release page](https://github.com/NVIDIA/NemoClaw/releases/tag/v0.1.0), along with `SHA256SUMS` and `release-evidence.json`.
-
-To install from a checkout, follow the [source build guide](../build-deploy/build.md).
-Before verifying a download's build provenance, install and sign in to the [GitHub CLI](https://cli.github.com/).
-Refer to `release-evidence.json` for platform signing results and any unsigned exception.
-Code signing and macOS notarization are separate checks.
-
-<!-- Keep existing fragment links reachable when their tabs are closed. -->
+<a name="installing-the-bundle"></a>
 <a name="installing-with-the-macos-installer"></a>
 <a name="installing-with-the-windows-installer"></a>
 <a name="installing-on-windows"></a>
 <a name="installing-on-linux-or-macos"></a>
 
-Select the operating system where you run `nemoclaw`.
+<div className="nemoclaw-install-tabs">
+
+## Choosing Your Operating System
+
+Select the tab for your machine.
+
+<style>{`
+.nemoclaw-install-tabs #choosing-your-operating-system {
+  margin-block: 1rem 0.5rem;
+}
+
+.nemoclaw-install-tabs #choosing-your-operating-system + p {
+  margin-block: 0.5rem;
+}
+
+.nemoclaw-install-tabs :has(> [role="tab"]) {
+  gap: 0.5rem;
+  padding-bottom: 0.75rem;
+}
+
+.nemoclaw-install-tabs [role="tab"] {
+  min-height: 2.75rem;
+  min-width: 5rem;
+  justify-content: center;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--grayscale-a7, #808080);
+  border-radius: 0.375rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.nemoclaw-install-tabs [role="tab"][aria-selected="true"] {
+  border-color: currentColor;
+  background-color: var(--accent-a4, transparent);
+}
+
+.nemoclaw-install-tabs [role="tab"]::before {
+  content: none;
+}
+
+.nemoclaw-install-tabs a[id]:empty {
+  display: block;
+  scroll-margin-top: 7rem;
+}
+`}</style>
 
 <Tabs>
 <Tab title="macOS" id="macos" language="macos">
 
-<h3 id="installing-with-the-macos-installer">Installing with the macOS Installer</h3>
+<a id="installing-with-the-macos-installer"></a>
 
 On a Mac with Apple silicon and macOS 15 or later, `nemoclaw-v0.1.0-darwin_arm64.pkg` installs the bundle in `/usr/local/nemoclaw`.
 The installer requires administrator privileges and adds `/usr/local/nemoclaw/bin` to `PATH` for new Terminal windows.
@@ -88,7 +124,7 @@ Continue to [Next Steps](#next-steps).
 </Tab>
 <Tab title="Windows" id="windows" language="windows">
 
-<h3 id="installing-with-the-windows-installer">Installing with the Windows Installer</h3>
+<a id="installing-with-the-windows-installer"></a>
 
 On x64 Windows, `nemoclaw-v0.1.0-windows_amd64.msi` installs the bundle in `%LOCALAPPDATA%\Programs\NemoClaw` and adds its `bin` directory to your user `Path`.
 The installer requires no administrator rights.
@@ -158,7 +194,7 @@ Use that path for subsequent `nemoclaw` commands in the same session.
 
 Continue to [Next Steps](#next-steps).
 
-<h3 id="installing-on-windows">Installing from the Windows Archive</h3>
+<a id="installing-on-windows"></a>
 
 The archive requires `tar.exe`, which ships with Windows 10 version 1803 or later and Windows Server 2019 or later.
 Use PowerShell in an empty download directory.
@@ -238,7 +274,7 @@ Continue to [Next Steps](#next-steps).
 </Tab>
 <Tab title="Linux" id="linux" language="linux">
 
-<h3 id="installing-on-linux-or-macos">Installing from an Archive on Linux or macOS</h3>
+<a id="installing-on-linux-or-macos"></a>
 
 On Linux, use the `linux_amd64` or `linux_arm64` archive on a client with glibc 2.35 or later.
 On macOS, open **Applications > Utilities > Terminal** to run these commands.
@@ -325,8 +361,13 @@ Continue to [Next Steps](#next-steps).
 </Tab>
 </Tabs>
 
+</div>
+
+To install from a checkout, follow the [source build guide](../build-deploy/build.md).
+
 ### Keeping the Bundle Intact
 
+The bundle includes the CLI, OpenTofu, providers, and schemas.
 The CLI locates OpenTofu, providers, and schemas relative to its executable.
 Deployment operations verify the bundle against `manifest.json`.
 Keep the entire bundle together in `/usr/local/nemoclaw` for the macOS package or `%LOCALAPPDATA%\Programs\NemoClaw` for the Windows installer.
