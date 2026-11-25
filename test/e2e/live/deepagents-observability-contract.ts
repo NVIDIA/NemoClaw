@@ -7,6 +7,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import * as policyDenialNamespace from "../../../src/lib/actions/sandbox/exec-policy-hint-detection.ts";
+import * as redactionNamespace from "../../../src/lib/security/redact.ts";
 import * as curlDenialNamespace from "../fixtures/curl-policy-denial.ts";
 import type { DecodedOtlpSpan } from "./otlp-trace-decoder.ts";
 import * as decoderNamespace from "./otlp-trace-decoder.ts";
@@ -17,6 +18,7 @@ function moduleExports<T>(namespace: T & { default?: T }): T {
 }
 
 const { isPolicyDenialLine } = moduleExports(policyDenialNamespace);
+const { redactFullWithUrls } = moduleExports(redactionNamespace);
 const { isExpectedMcpCurlPolicyDenial } = moduleExports(curlDenialNamespace);
 const { decodeExportTraceServiceRequest, otlpValueContains } = moduleExports(decoderNamespace);
 const { parsePolicyPresetState } = moduleExports(policyStateNamespace);
@@ -149,6 +151,23 @@ export function assertDeepAgentsTraceContract(
 }
 
 type DnsDenialAudit = { before: string; after: string; hostname: string; port?: number };
+
+function writeDenialAuditDiagnostics(audit: DnsDenialAudit): void {
+  // The shell removes its private audit files during cleanup. Retain bounded
+  // denial evidence on stderr without exporting collector bodies or other logs.
+  for (const snapshot of ["before", "after"] as const) {
+    const lines = audit[snapshot].split(/\r?\n/u);
+    const denials = lines.filter((line) => /NET:(?:OPEN|REFUSE) \[\w+\] DENIED /u.test(line));
+    process.stderr.write(
+      `NEMOCLAW_OTLP_DENIAL_AUDIT=${JSON.stringify({
+        snapshot,
+        totalLines: lines.length,
+        omittedDenialLines: Math.max(0, denials.length - 20),
+        denialLines: denials.slice(-20).map((line) => redactFullWithUrls(line).slice(0, 2048)),
+      })}\n`,
+    );
+  }
+}
 
 function hasFreshPythonTcpDenial(output: string, audit?: DnsDenialAudit): boolean {
   if (
@@ -373,9 +392,9 @@ async function main(): Promise<void> {
             ),
           }
         : undefined;
-    process.stdout.write(
-      `${hasConfirmedOpenShellPolicyDenial(input, Number(argument), dnsAudit) ? "policy-denied" : "other-failure"}\n`,
-    );
+    const denied = hasConfirmedOpenShellPolicyDenial(input, Number(argument), dnsAudit);
+    if (!denied && dnsAudit) writeDenialAuditDiagnostics(dnsAudit);
+    process.stdout.write(`${denied ? "policy-denied" : "other-failure"}\n`);
     return;
   }
   if (command === "probe-thread-id") {

@@ -223,6 +223,67 @@ ${source}
       );
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout.trim()).toBe("policy-denied");
+      expect(result.stderr).toBe("");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("retains bounded redacted audit evidence when native denial confirmation fails", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-denial-diagnostic-"));
+    const before = path.join(directory, "before.log");
+    const after = path.join(directory, "after.log");
+    const token = `sk-${"diagnosticsecret".repeat(3)}`;
+    const unrelated = "private collector body must not be retained";
+    fs.writeFileSync(before, policyEvent);
+    fs.writeFileSync(
+      after,
+      [
+        unrelated,
+        ...Array.from({ length: 25 }, (_, index) =>
+          policyEvent
+            .replace("[2.0]", `[${index + 3}.0]`)
+            .replace("/opt/venv/bin/python3(0)", "/usr/bin/python3.13(12)")
+            .concat(` api_key=${token} ${"x".repeat(2200)}`),
+        ),
+      ].join("\n"),
+    );
+    try {
+      const result = spawnSync(
+        path.join(process.cwd(), "node_modules/.bin/tsx"),
+        [
+          "test/e2e/live/deepagents-observability-contract.ts",
+          "denial-state",
+          "7",
+          before,
+          after,
+          `http://${hostname}:${port}/v1/traces`,
+        ],
+        { encoding: "utf8", env: { PATH: process.env.PATH }, input: mappingFailure },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("other-failure");
+      const diagnostics = result.stderr
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line.replace(/^NEMOCLAW_OTLP_DENIAL_AUDIT=/u, "")));
+      expect(diagnostics).toHaveLength(2);
+      expect(diagnostics[0]).toMatchObject({
+        snapshot: "before",
+        omittedDenialLines: 0,
+        denialLines: [policyEvent],
+      });
+      expect(diagnostics[1]).toMatchObject({ snapshot: "after", omittedDenialLines: 5 });
+      expect(diagnostics[1].denialLines).toHaveLength(20);
+      expect(diagnostics[1].denialLines[0]).toContain("[8.0]");
+      expect(diagnostics[1].denialLines[19]).toContain("[27.0]");
+      expect(diagnostics[1].denialLines[19]).toContain("/usr/bin/python3.13(12)");
+      expect(diagnostics[1].denialLines[19]).toContain("api_key=<REDACTED>");
+      expect(diagnostics[1].denialLines.every((line: string) => line.length <= 2048)).toBe(true);
+      expect(result.stderr).not.toContain(token);
+      expect(result.stderr).not.toContain(unrelated);
+      expect(fs.existsSync(before)).toBe(true);
+      expect(fs.existsSync(after)).toBe(true);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
