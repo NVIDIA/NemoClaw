@@ -9,45 +9,47 @@ use std::time::Duration;
 
 const MAX_PINS_BYTES: usize = 1024 * 1024;
 
+/// Where each release's assets are downloaded from.
+pub(super) const RELEASES: &str = "https://github.com/NVIDIA/NemoClaw/releases/download";
+
+/// The tag of a release build, `X.Y.Z` or `X.Y.Z-rc.N`. Other builds, such as
+/// CI's numbered `X.Y.Z-RUN` and development `X.Y.Z-dev.SOURCE`, have no
+/// release whose images to suggest.
 fn release_tag(version: Option<&str>) -> Option<String> {
     let version = version?;
-    let version = version.strip_prefix('v').unwrap_or(version);
-    // A development bundle has no release image set. Never read a moving
-    // latest release or guess that another version's images are compatible.
-    if version.contains("dev")
-        || !version.starts_with("0.1.")
-        || !version
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b".-".contains(&c))
-    {
-        return None;
-    }
-    Some(format!("v{version}"))
+    let (core, candidate) = version
+        .split_once("-rc.")
+        .map_or((version, None), |(core, candidate)| (core, Some(candidate)));
+    let number = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    let release = core.split('.').count() == 3 && core.split('.').all(number);
+    (release && candidate.is_none_or(number)).then(|| format!("v{version}"))
 }
 
+/// `capabilities` with the image suggestions of this build's release from
+/// `releases`, and what to tell the user when a release build can't read them.
 pub(super) async fn load(
     capabilities: Capabilities,
     version: Option<&str>,
+    releases: &str,
     cancel: &CancellationToken,
-) -> Result<Capabilities, Box<dyn std::error::Error>> {
+) -> Result<(Capabilities, Option<String>), Box<dyn std::error::Error>> {
     let Some(tag) = release_tag(version) else {
-        return Ok(capabilities);
+        return Ok((capabilities, None));
     };
-    let url =
-        format!("https://github.com/NVIDIA/NemoClaw/releases/download/{tag}/version-pins.json");
+    let url = format!("{releases}/{tag}/version-pins.json");
     let fetched = tokio::select! {
         _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
         result = fetch(&url) => result,
     };
     match fetched.and_then(|bytes| capabilities.clone().with_release_pins(&bytes, &tag)) {
-        Ok(enriched) => Ok(enriched),
+        Ok(enriched) => Ok((enriched, None)),
         Err(_) => {
             let build_guide =
                 nemoclaw_sdk::documentation_url(nemoclaw_authoring::BUILD_AGENT_IMAGES);
-            eprintln!(
+            let warning = format!(
                 "Release image suggestions are unavailable for {tag}. Choose a local image or enter a digest. Build guide: {build_guide}"
             );
-            Ok(capabilities)
+            Ok((capabilities, Some(warning)))
         }
     }
 }
@@ -84,13 +86,41 @@ mod tests {
         for version in [
             None,
             Some("0.1.0-dev.abc"),
+            Some("0.1.0-412"),
+            Some("0.1.0-rc.5.412"),
             Some("0.1.0/../../latest"),
-            Some("1.0.0"),
+            Some("v0.1.0"),
         ] {
-            assert_eq!(release_tag(version), None);
+            assert_eq!(release_tag(version), None, "{version:?}");
         }
         assert_eq!(release_tag(Some("0.1.0-rc.5")), Some("v0.1.0-rc.5".into()));
         assert_eq!(release_tag(Some("0.1.0")), Some("v0.1.0".into()));
+        assert_eq!(release_tag(Some("1.2.3")), Some("v1.2.3".into()));
+    }
+
+    #[tokio::test]
+    async fn a_numbered_ci_build_looks_nothing_up_and_warns_about_nothing() {
+        let (requests, received) = std::sync::mpsc::channel();
+        let server = Fixture::start_tcp(move |request| {
+            requests.send(request).unwrap();
+            Some((404, Vec::new()))
+        })
+        .await;
+        for version in ["0.1.0-412", "0.1.0-rc.5.412"] {
+            let (_, warning) = load(
+                Capabilities::available(),
+                Some(version),
+                &server.endpoint,
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(warning, None, "{version}");
+            assert!(
+                received.try_recv().is_err(),
+                "{version} looked up release pins"
+            );
+        }
     }
 
     #[tokio::test]

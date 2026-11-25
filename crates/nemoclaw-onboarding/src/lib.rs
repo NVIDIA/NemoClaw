@@ -42,7 +42,16 @@ pub async fn author(
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err("onboarding requires a terminal on stdin and stderr".into());
     }
-    let capabilities = release_images::load(Capabilities::available(), version, cancel).await?;
+    let (capabilities, warning) = release_images::load(
+        Capabilities::available(),
+        version,
+        release_images::RELEASES,
+        cancel,
+    )
+    .await?;
+    if let Some(warning) = warning {
+        eprintln!("{warning}");
+    }
     let state = load_journey(source, &capabilities)?;
     let Some(yaml) = tui::run(capabilities, state, cancel, discover, output).await? else {
         return Ok(false);
