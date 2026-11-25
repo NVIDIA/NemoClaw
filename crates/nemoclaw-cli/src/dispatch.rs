@@ -139,6 +139,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             deployment.destroy(cancel).await?
         }
         Command::Onboard { .. } => unreachable!("onboarding returns before deployment setup"),
+        Command::OpenShell { .. } => unreachable!("OpenShell runs before deployment dispatch"),
     };
     Ok(CommandResult::Operation(Box::new(result)))
 }

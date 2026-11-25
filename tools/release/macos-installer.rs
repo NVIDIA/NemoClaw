@@ -450,6 +450,8 @@ mod tests {
             0o700,
         );
         put(root, "libexec/tofu", "tofu", 0o755);
+        put(root, "libexec/openshell", "openshell", 0o755);
+        put(root, "licenses/openshell-LICENSE", "Apache\n", 0o644);
         put(root, "manifest.json", "{}\n", 0o600);
         put(root, "LICENSE", "Apache License\n", 0o644);
         put(root, "licenses/OpenTofu-LICENSE", "MPL\n", 0o644);

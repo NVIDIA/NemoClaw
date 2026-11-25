@@ -7,6 +7,7 @@ mod deployment;
 mod dispatch;
 mod formatting;
 mod io;
+mod openshell;
 mod progress;
 mod style;
 mod telemetry;
@@ -63,6 +64,9 @@ fn main() -> ExitCode {
 
 async fn run() -> ExitCode {
     let cli = Cli::parse();
+    if let args::Command::OpenShell { args } = &cli.command {
+        return openshell::run(&cli, args);
+    }
     let started = std::time::Instant::now();
     let label = telemetry::gate::check();
     let operation = match &cli.command {

@@ -71,9 +71,9 @@ On macOS, Docker Desktop builds and runs this Linux image in its ARM64 Linux VM.
 Expect a `NAME@sha256:DIGEST` reference, and record it for onboarding.
 An empty digest list means the image store doesn't retain repository digests; a tag or image config ID can't replace the digest.
 
-## Preparing the Matching OpenShell CLI
+## Using the Bundled OpenShell CLI
 
-Use an OpenShell CLI at the checkout's `openshell` version in `versions.json`, as [Before the First Deployment](prerequisites.md#before-the-first-deployment) describes.
+The native bundle includes the pinned OpenShell CLI. Use `nemoclaw osh` with the same state directory as apply; no separate client installation or gateway selection is needed for this managed Docker route.
 
 ## Authoring and Applying a Deployment
 
@@ -112,8 +112,8 @@ If it fails, keep the same bundle, YAML, and state directory and follow [operati
 
 ## Verifying a Reply
 
-Copy the gateway and workspace selection commands from apply's output into this shell.
-Then send the JSON string `"Reply with exactly READY."` and save the result as [Running One Agent Request](../agents-inference/agents.md#running-one-agent-request) shows, with the sandbox, agent, and runtime ID from apply's `Invoke:` line.
+Run apply's complete `Invoke:` command. It uses `nemoclaw osh --state-dir .local/first/state --` with the actual sandbox, agent, and runtime ID and supplies the JSON prompt `"Reply with exactly READY."` on stdin.
+The command saves the full result in `reply-assistant.json`; [Running One Agent Request](../agents-inference/agents.md#running-one-agent-request) explains the status checks and Hermes reply filter.
 Expect `succeeded` in both statuses and `READY` in the Hermes adapter's result.
 [Diagnosing an Authentication Failure](../agents-inference/agents.md#diagnosing-an-authentication-failure) covers a rejected key.
 

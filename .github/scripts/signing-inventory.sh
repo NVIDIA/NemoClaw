@@ -36,7 +36,7 @@ while IFS= read -r path; do
   [ -n "$path" ] || continue
   case "$path" in
     bin/nemoclaw | bin/nemoclaw.exe | providers/nvidia.github.io/nemoclaw/*) signer=nvidia ;;
-    libexec/tofu | libexec/tofu.exe | providers/registry.opentofu.org/kreuzwerker/docker/*) signer=$third_party ;;
+    libexec/tofu | libexec/tofu.exe | libexec/openshell | providers/registry.opentofu.org/kreuzwerker/docker/*) signer=$third_party ;;
     providers/registry.opentofu.org/hashicorp/helm/*) signer=hashicorp ;;
     *)
       echo "$path isn't in the signing inventory; classify it in $0" >&2
