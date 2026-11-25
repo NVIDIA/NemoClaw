@@ -22,6 +22,73 @@ function runPython(script: string): string {
 }
 
 describe("Hermes NemoClaw plugin handlers", () => {
+  it("loads the routing observer through plugin registration and removes it on unload", () => {
+    const output = runPython(`
+import importlib.util, io, json, logging, os, pathlib, sys, types
+from unittest.mock import patch
+
+sys.modules["yaml"] = types.SimpleNamespace(safe_load=lambda *_args, **_kwargs: {})
+spec = importlib.util.spec_from_file_location("hermes_plugin", sys.argv[1])
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+plugin._install_nous_tool_broker_patch = lambda: False
+plugin._install_googlechat_adapter = lambda _ctx: False
+os.environ["NEMOCLAW_HERMES_SWITCHYARD_SHA256"] = "a" * 64
+
+def helper(name, path):
+    if name.endswith("preflight"):
+        return types.SimpleNamespace(read_installed=lambda: {"switchyardDeploymentToml": ""}, fingerprint=lambda files: "a" * 64)
+    return types.SimpleNamespace(selected_models=lambda deployment: ("capable", "efficient", "capable"))
+
+original_spec = importlib.util.spec_from_file_location
+def load(name, path, *args, **kwargs):
+    spec = original_spec(name, path, *args, **kwargs)
+    if name == "nemoclaw_switchyard_events":
+        execute = spec.loader.exec_module
+        def initialize(module):
+            execute(module)
+            module._load_helper = helper
+        spec.loader.exec_module = initialize
+    return spec
+
+subscribers = {}
+removed = []
+def deregister(name):
+    removed.append(name)
+    subscribers.pop(name)
+sys.modules["nemo_relay"] = types.SimpleNamespace(subscribers=types.SimpleNamespace(
+    register=lambda name, observer: subscribers.update({name: observer}), deregister=deregister))
+callbacks = []
+ctx = types.SimpleNamespace(register_tool=lambda **kwargs: None,
+    register_hook=lambda *args: None, on_unload=callbacks.append)
+log = io.StringIO()
+logger = logging.getLogger("gateway.nemoclaw_switchyard")
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler(log))
+with patch.object(importlib.util, "spec_from_file_location", load):
+    plugin.register(ctx)
+
+subscribers["nemoclaw.switchyard.evidence"](types.SimpleNamespace(kind="mark",
+    name="switchyard.routing.decision", data_schema={"name": "switchyard.routing.decision", "version": "1"},
+    uuid="a2165906-9c2c-4846-9a01-2a091eb55876", parent_uuid=None,
+    data={"selected_model": "efficient", "evidence": {"source": "llm-classifier"}, "prompt": "private-sentinel"}))
+callbacks[0]()
+print(json.dumps({"record": json.loads(log.getvalue().split("[switchyard-evidence] ")[1]),
+    "removed": removed, "remaining": list(subscribers)}))
+`);
+    expect(output).not.toContain("private-sentinel");
+    const result = JSON.parse(output);
+    expect(result.record).toMatchObject({
+      kind: "mark",
+      source: "llm-classifier",
+      selected_model_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      instance_id: expect.any(String),
+      sequence: 1,
+    });
+    expect(result.removed).toEqual(["nemoclaw.switchyard.evidence"]);
+    expect(result.remaining).toEqual([]);
+  });
+
   it("uses only the migrated Hermes home when no explicit home is set", () => {
     const output = runPython(`
 import importlib.util

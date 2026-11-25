@@ -71,7 +71,7 @@ COPY --from=switchyard-verified /opt/nemo-relay/plugins/switchyard/ /opt/nemo-re
 # Copying a scratch /tmp would replace the runtime's sticky writable mode.
 COPY scripts/security/standalone-security-package-inventory.mts /opt/nemoclaw-security/scripts/security/security-package-inventory.mts
 
-COPY agents/hermes/plugin/__init__.py agents/hermes/plugin/plugin.yaml /opt/nemoclaw-hermes-plugin/
+COPY agents/hermes/plugin/__init__.py agents/hermes/plugin/plugin.yaml agents/hermes/plugin/switchyard_events.py /opt/nemoclaw-hermes-plugin/
 # Channel-owned Google Chat runtime asset, loaded by the plugin beside its own
 # __init__.py.
 COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemoclaw-hermes-plugin/googlechat_adapter.py
