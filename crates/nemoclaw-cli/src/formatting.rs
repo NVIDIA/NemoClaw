@@ -220,15 +220,30 @@ fn shell_word(value: &str) -> String {
     } else {
         value.to_string()
     };
+    shell_argument(&value)
+}
+
+fn shell_argument(value: &str) -> String {
     let plain = !value.is_empty()
         && value
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
     if plain {
-        value
+        value.to_owned()
     } else {
         format!("'{}'", value.replace('\'', "'\\''"))
     }
+}
+
+#[cfg(unix)]
+pub(crate) fn openshell_registration(cli: &Cli, args: &[String]) -> String {
+    let mut command = RenderContext::new(cli).nemoclaw("osh");
+    command.push_str(" --");
+    for arg in args {
+        command.push(' ');
+        command.push_str(&shell_argument(arg));
+    }
+    terminal_text(&command)
 }
 
 /// External labels are text, never instructions to a terminal emulator.
@@ -602,7 +617,13 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         }
     }
     let osh = terminal_text(&format!("{} --", context.nemoclaw("osh")));
-    if !result.agents.is_empty() {
+    let unavailable = result
+        .connection
+        .as_ref()
+        .and_then(|connection| connection.openshell_cli_unavailable.as_deref());
+    if let Some(reason) = unavailable {
+        output.push_str(&format!("\nBundled OpenShell access unavailable: {}.\n  For supported standalone access, see {}.\n", terminal_text(reason), documentation_url("docs/agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways")));
+    } else if !result.agents.is_empty() {
         output.push_str(&agent_invocation(result, planned, &osh));
     }
     if planned {
@@ -620,7 +641,10 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             ));
         }
     }
-    if result.outcome == Outcome::Succeeded && !result.interfaces.is_empty() {
+    if unavailable.is_none()
+        && result.outcome == Outcome::Succeeded
+        && !result.interfaces.is_empty()
+    {
         output.push_str(&interface_access(result, &osh));
     }
     if result.outcome == Outcome::Succeeded {
@@ -651,8 +675,10 @@ fn agent_invocation(result: &OperationResult, planned: bool, osh: &str) -> Strin
         match &agent.runtime_id {
             Some(runtime) => {
                 let runtime = terminal_text(runtime);
+                let reply = shell_word(&format!("reply-{sandbox}.json"));
                 output.push_str(&format!(
-                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   {osh} sandbox exec -n {sandbox} --no-tty -- fabric-agent-ctl invoke --agent {name} --runtime-id {runtime} --input FILE\n"
+                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   (umask 077; set -C; printf '%s\\n' '\"Reply with exactly READY.\"' | {osh} sandbox exec -n {} --no-tty -- fabric-agent-ctl invoke --agent {} --runtime-id {} --input - > {reply})\n    Inspect:  jq '{{status, result_status: .result.status, error: .result.error}}' {reply}\n",
+                    shell_argument(&sandbox), shell_argument(&name), shell_argument(&runtime),
                 ));
             }
             None => output.push_str(&format!("  {sandbox}: agent {name}, no runtime recorded\n")),
@@ -660,7 +686,7 @@ fn agent_invocation(result: &OperationResult, planned: bool, osh: &str) -> Strin
     }
     if invocable {
         output.push_str(&format!(
-            "  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see {}.\n",
+            "  The request sends JSON on stdin and saves the result privately, refusing an existing file; choose another output path to repeat it. Continue only after exit 0 and both statuses succeeded; read the adapter's reply as {} describes. A request can incur inference charges and change conversation history.\n",
             documentation_url("docs/agents-inference/agents.md"),
         ));
     }
@@ -1135,15 +1161,12 @@ mod tests {
                 .lines()
                 .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
                 .collect();
-            for expected in [
-                "Invoke: nemoclaw osh -- sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input FILE",
-                "reviewer: agent critic, no runtime recorded",
-            ] {
-                assert!(
-                    lines.iter().any(|line| line == expected),
-                    "{command}: missing {expected:?}:\n{text}"
-                );
-            }
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line == "reviewer: agent critic, no runtime recorded"),
+                "{command}: {text}"
+            );
             assert_eq!(
                 text.matches("fabric-agent-ctl invoke").count(),
                 1,
@@ -1181,6 +1204,101 @@ mod tests {
         let result = json!({"outcome": "succeeded", "changes": [], "connection": connection});
         let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
         assert!(!text.contains("forward service"), "{text}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_printed_request_sends_json_with_the_actual_identities_and_selection() {
+        use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let cli = bin.join("nemoclaw");
+        fs::write(&cli, "#!/bin/sh\nprintf '%s\\n' \"$@\" > args.txt\ncat > input.txt\nprintf '%s\\n' '{\"status\":\"succeeded\",\"result\":{\"status\":\"succeeded\"}}'\n").unwrap();
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o700)).unwrap();
+        let result = json!({"outcome":"succeeded", "changes":[], "agents":agents()});
+        let text = render(
+            &[
+                "nemoclaw",
+                "apply",
+                "deployment.yaml",
+                "--state-dir",
+                "state's directory",
+                "--bundle",
+                "bundle directory",
+            ],
+            result,
+        );
+        let command = text
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("Invoke:"))
+            .unwrap()
+            .trim();
+        let output = Command::new("/bin/sh")
+            .args(["-c", command])
+            .current_dir(root.path())
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let input: Value =
+            serde_json::from_slice(&fs::read(root.path().join("input.txt")).unwrap())
+                .expect("the printed command supplies a JSON value");
+        assert_eq!(input, "Reply with exactly READY.");
+        let args = fs::read_to_string(root.path().join("args.txt")).unwrap();
+        let args: Vec<_> = args.lines().collect();
+        for pair in [
+            ["--state-dir", "state's directory"],
+            ["--bundle", "bundle directory"],
+            ["-n", "assistant"],
+            ["--agent", "main"],
+            ["--runtime-id", "rt-1"],
+            ["--input", "-"],
+        ] {
+            assert!(
+                args.windows(2).any(|value| value == pair),
+                "missing {pair:?}: {args:?}"
+            );
+        }
+        let reply = root.path().join("reply-assistant.json");
+        let saved: Value = serde_json::from_slice(&fs::read(&reply).unwrap()).unwrap();
+        assert_eq!(saved["result"]["status"], "succeeded");
+        assert_eq!(
+            fs::metadata(&reply).unwrap().permissions().mode() & 0o077,
+            0,
+            "the captured result is private"
+        );
+        let second = Command::new("/bin/sh")
+            .args(["-c", command])
+            .current_dir(root.path())
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .output()
+            .unwrap();
+        assert!(
+            !second.status.success(),
+            "an existing reply must not be overwritten"
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(reply).unwrap()).unwrap(),
+            saved
+        );
+    }
+
+    #[test]
+    fn unsupported_bundled_access_has_guidance_instead_of_unusable_commands() {
+        let result = json!({"outcome":"succeeded", "changes":[], "agents":agents(), "interfaces":interfaces(),
+            "connection":{"workspace":"nc-test", "openshellCliUnavailable":"this gateway requires an unsupported bearer token"}});
+        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
+        assert!(text.contains("unsupported bearer token"), "{text}");
+        assert!(text.contains("interfaces.md"), "{text}");
+        assert!(
+            !text.contains("Invoke:") && !text.contains("Forward:") && !text.contains("Token:"),
+            "{text}"
+        );
     }
 
     #[test]

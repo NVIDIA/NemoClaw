@@ -57,20 +57,20 @@ gateway:
 ```
 
 `audience` and `scopes` are optional.
-Until OpenShell has registered the gateway, `nemoclaw osh` prints the command that registers it from these settings, such as:
+Until OpenShell has registered the gateway, connection commands print the registration command and exit without running the requested operation. Run the printed command to sign in, then retry. The hint preserves custom `--state-dir` and `--bundle` options, such as:
 
 ```sh
-nemoclaw osh -- gateway add https://gateway.example.com --name nc-3f9a1c2b7d4e8a60 \
-  --oidc-issuer https://idp.example.com/realms/openshell --oidc-client-id openshell-cli \
-  --oidc-audience openshell --oidc-scopes 'openid offline_access'
+nemoclaw osh --state-dir .nemoclaw-first -- gateway add https://gateway.example.com --name=nc-3f9a1c2b7d4e8a60 \
+  --oidc-issuer=https://idp.example.com/realms/openshell --oidc-client-id=openshell-cli \
+  --oidc-audience=openshell '--oidc-scopes=openid offline_access'
 ```
 
 Registering signs in.
 OpenShell owns sign-in, token storage, and renewal; refer to [OpenShell's authentication guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx#oidc).
 Set `OPENSHELL_NO_BROWSER=1` for device-code sign-in, or `OPENSHELL_OIDC_CLIENT_SECRET` for automation; never put the client secret in YAML.
 Deployment operations still use `GATEWAY_TOKEN`; the signed-in identity needs membership in the deployment's workspace.
-Run `nemoclaw osh -- gateway login` to sign in again.
-After changing `gateway.oidc`, run `nemoclaw osh -- gateway remove <name>`, then register the gateway again.
+Run `nemoclaw osh --state-dir DIR -- gateway login` to sign in again, with the same state directory and bundle as apply.
+After changing `gateway.oidc`, run `nemoclaw osh --state-dir DIR -- gateway remove NAME` with that selection, then register the gateway again.
 
 Bearer-token gateways without `gateway.oidc`, including managed Kubernetes gateways, still require a separately configured OpenShell CLI.
 OpenShell publishes no Windows or Intel macOS CLI; use WSL 2 on Windows or a supported Linux or Apple silicon client.
@@ -211,7 +211,7 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `complete` | Whether a planned result has no deferred work. Inspect this alongside the exit code. |
 | `warnings` | Operator-action messages collected during the operation, also reported on failures. They do not change `complete`. Omitted when empty. |
 | `changes` | Resource addresses and planned or applied action lists. An empty list does not mean apply skipped readiness checks. |
-| `connection` | Gateway endpoint and UID-derived workspace selectors from plan or apply. They do not establish access or configure NVIDIA OpenShell CLI credentials. `gatewayEndpoint` is omitted for a managed Kubernetes or OpenShift gateway without `expose`. |
+| `connection` | Gateway endpoint and UID-derived workspace selectors from plan or apply. They do not establish access or configure NVIDIA OpenShell CLI credentials. `gatewayEndpoint` is omitted for a managed Kubernetes or OpenShift gateway without `expose`. `openshellCliUnavailable`, when present, explains why this client platform or gateway authentication cannot use the bundled CLI. |
 | `serviceUrls` | Apply-only URLs the gateway reports for sandbox service exposures, by sandbox and service name, with `""` for the unnamed endpoint. The URLs carry no credential, so the service must authenticate its own clients. Omitted when empty. When apply cannot read them, `warnings` says so. |
 | `agents` | Each sandbox's agent, by sandbox name: `agent`, its name, and `runtimeId`, the runtime ID that `fabric-agent-ctl invoke --runtime-id` takes. A plan reports the runtimes the last apply left, and apply reports the runtimes after its changes. `runtimeId` is omitted while state records no runtime. Never contains a credential. Omitted when empty. When apply cannot read state, `warnings` says so. Refer to [invoke an agent](../agents-inference/interfaces.md#invoking-an-agent). |
 | `deferred` | Unresolved planning prerequisites. Omitted when empty. |

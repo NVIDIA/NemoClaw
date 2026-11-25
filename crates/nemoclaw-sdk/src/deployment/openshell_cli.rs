@@ -1,9 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+#[cfg(unix)]
+use super::{Deployment, Error};
 #[cfg(unix)]
 use crate::kubernetes::receipt::private_directory;
+#[cfg(unix)]
+use std::fs;
+
+/// Whether this client can represent the gateway's authentication with the
+/// pinned CLI. A client certificate does not supply a required bearer token.
+pub(super) fn unavailable(gateway: &crate::config::Gateway) -> Option<&'static str> {
+    if !crate::bundle::openshell_available() {
+        return Some(
+            "OpenShell publishes no CLI for this platform; use a supported Linux or Apple silicon client, or WSL 2 on Windows",
+        );
+    }
+    let bearer = match gateway {
+        crate::config::Gateway::Managed(managed) => !matches!(
+            managed.target,
+            crate::config::ManagedTarget::Docker(_) | crate::config::ManagedTarget::Podman(_)
+        ),
+        crate::config::Gateway::External(external) => {
+            external.credential.is_some() && external.oidc.is_none()
+        }
+    };
+    bearer.then_some("the bundled OpenShell CLI cannot use this gateway's bearer token; use a separately authenticated OpenShell CLI where supported")
+}
 
 impl Deployment {
     /// The bundled OpenShell CLI, set to run `args` against this deployment's
@@ -15,7 +38,7 @@ impl Deployment {
     pub fn openshell(
         &self,
         args: &[std::ffi::OsString],
-    ) -> Result<(std::process::Command, Option<String>), Error> {
+    ) -> Result<(std::process::Command, Option<Vec<String>>), Error> {
         let (bundle, store) = self.open()?;
         if !bundle.manifest.files.contains_key("libexec/openshell") {
             return Err(Error::Bundle(
@@ -27,26 +50,8 @@ impl Deployment {
             .ok_or(Error::State("no deployment; apply one first"))?
             .document;
         let gateway = &document.spec.gateway;
-        // Cluster and token-only external gateways need the bearer token only
-        // NemoClaw holds, which the pinned CLI cannot take.
-        let bearer = match gateway {
-            crate::config::Gateway::Managed(managed) => !matches!(
-                managed.target,
-                crate::config::ManagedTarget::Docker(_) | crate::config::ManagedTarget::Podman(_)
-            ),
-            crate::config::Gateway::External(external) => {
-                external.credential.is_some()
-                    && external.oidc.is_none()
-                    && !external
-                        .tls
-                        .as_ref()
-                        .is_some_and(|tls| tls.certificate.is_some())
-            }
-        };
-        if bearer {
-            return Err(Error::State(
-                "the bundled OpenShell CLI cannot use this gateway's bearer token; use a standalone OpenShell CLI",
-            ));
+        if let Some(reason) = unavailable(gateway) {
+            return Err(Error::State(reason));
         }
         let endpoint = gateway.endpoint().ok_or(Error::State(
             "the gateway has no endpoint for the OpenShell CLI to reach",
@@ -81,17 +86,29 @@ impl Deployment {
         if let crate::config::Gateway::External(external) = gateway
             && let Some(oidc) = &external.oidc
             && !profile.join("metadata.json").exists()
-            && args.first().is_none_or(|first| first != "gateway")
+            // Login guidance must not intercept upstream gateway management
+            // or help, including after global options. OpenShell still owns
+            // argument parsing and all authentication decisions.
+            && !args.iter().any(|arg| matches!(arg.to_str(), Some("gateway" | "--help" | "-h" | "--version" | "-V")))
         {
-            let mut add = format!(
-                "gateway add {endpoint} --name {workspace} --oidc-issuer {} --oidc-client-id {}",
-                oidc.issuer, oidc.client_id
-            );
+            let mut add = vec![
+                "gateway".into(),
+                "add".into(),
+                endpoint.clone(),
+                format!("--name={workspace}"),
+                format!("--oidc-issuer={}", oidc.issuer),
+                format!("--oidc-client-id={}", oidc.client_id),
+            ];
             if let Some(audience) = &oidc.audience {
-                add += &format!(" --oidc-audience {audience}");
+                add.push(format!("--oidc-audience={audience}"));
             }
             if let Some(scopes) = &oidc.scopes {
-                add += &format!(" --oidc-scopes '{scopes}'");
+                add.push(format!("--oidc-scopes={scopes}"));
+            }
+            if add.iter().any(|arg| arg.chars().any(char::is_control)) {
+                return Err(Error::State(
+                    "gateway OIDC login settings must not contain control characters",
+                ));
             }
             sign_in = Some(add);
         }

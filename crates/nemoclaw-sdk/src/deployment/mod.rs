@@ -104,6 +104,9 @@ pub struct DeploymentConnection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway_endpoint: Option<String>,
     pub workspace: String,
+    /// Why the bundled CLI cannot access this gateway on this client platform.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openshell_cli_unavailable: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -329,6 +332,8 @@ impl Deployment {
         let connection = Some(DeploymentConnection {
             gateway_endpoint: document.spec.gateway.endpoint(),
             workspace: document.workspace(),
+            openshell_cli_unavailable: openshell_cli::unavailable(&document.spec.gateway)
+                .map(str::to_owned),
         });
         let compiled =
             compile::deployment_graph(&document, &record.generations, &bundle.manifest.version)?;

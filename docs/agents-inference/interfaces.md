@@ -103,14 +103,9 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 ## Invoking an Agent
 
 After [selecting the gateway and workspace](#selecting-the-gateway-and-workspace), send requests through `nemoclaw osh -- sandbox exec`.
-Plan and apply print a command for each agent with a recorded runtime ID, as in this illustrative output:
-
-```text
-Agents:
-  claw: agent main, runtime RUNTIME_ID
-    Invoke:   nemoclaw osh -- sandbox exec -n claw --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id RUNTIME_ID --input FILE
-  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents-inference/agents.md.
-```
+For supported gateways and client platforms, plan and apply print a complete `Invoke:` command for each agent with a recorded runtime ID. It supplies a JSON prompt through stdin, selects the same state directory and bundle, and saves the full result in `reply-SANDBOX.json` with access restricted to your account. It refuses an existing output file; choose a new filename before repeating it.
+The `Inspect:` command displays both statuses and the agent error. [Run one request](agents.md#running-one-agent-request) explains how to read the adapter's reply and handle a failed request.
+Unsupported routes report the limitation and link to the standalone access procedure instead of printing commands the bundled CLI cannot run.
 
 JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`.
 A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.

@@ -70,7 +70,7 @@ The [headless OpenClaw request](#running-one-headless-openclaw-request) shows a 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
-Plan and apply print this command for each agent with both filled in, after the commands that select the deployment's gateway and workspace, and JSON results report them under `agents`.
+For gateways and client platforms the bundled CLI supports, plan and apply print a complete stdin request with the actual sandbox, agent, and runtime ID. The command preserves the state and bundle selection and saves the full result in `reply-SANDBOX.json`. JSON results report the identities under `agents`.
 See [invoke an agent](interfaces.md#invoking-an-agent).
 Use `--input -` to read the value from stdin instead.
 See the [bridge commands](../../internal-docs/design/fabric-management.md#bridge-commands).
@@ -81,17 +81,32 @@ Don't assume a universal result shape.
 Check `result.status` as well as the outer `status`: the outer one only reports that `fabric-agent-ctl` completed the call, while a failed run reports `result.status: failed` with Fabric's error in `result.error`.
 `result.artifacts` names the files Fabric kept for that request, such as the adapter's output.
 
-To send a prompt from the client host and keep the full result, pipe a JSON string to `--input -` and save stdout, then show the statuses with `jq`:
+Run the printed `Invoke:` command and check its exit status before inspecting the saved result. A nonzero exit means the request command failed; inspect its stderr before retrying. The command restricts new files to your account and refuses to overwrite an existing result; choose another output filename for a second request. Keep the result in a private directory.
+To construct the request yourself, substitute the actual identities and the same state/bundle options as apply:
 
 ```sh
-printf '%s\n' '"Reply with exactly READY."' |
-  nemoclaw osh -- sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent NAME --runtime-id ID --input - > reply.json
+(umask 077; set -C; printf '%s\n' '"Reply with exactly READY."' |
+  nemoclaw osh -- sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent NAME --runtime-id ID --input - > reply.json)
+```
+
+After exit 0, inspect the command and agent statuses:
+
+```sh
 jq '{status, result_status: .result.status, error: .result.error}' reply.json
+jq -e '.status == "succeeded" and .result.status == "succeeded"' reply.json
 ```
 
 The prompt keeps its double quotes because it is a JSON string; empty stdin is not a prompt.
 Continue only if the command exits 0 and both statuses are `succeeded`, then read the reply from the fields that the adapter's result contract names.
 Keep `reply.json` private, and review it for credentials and personal data before sharing.
+
+For the Hermes adapter, this filter prints its reply on success and reports its error on failure, with a nonzero exit status:
+
+```sh
+jq -er 'if .status == "succeeded" and .result.status == "succeeded" then .result.output.response else error((.result.error // "request failed") | tostring) end' reply.json
+```
+
+Use `reply-assistant.json` in place of `reply.json` when using the printed command for sandbox `assistant`. Other adapters have their own result contracts; do not assume they use Hermes's response field. The full result remains available for separate diagnosis.
 
 ### Diagnosing an Authentication Failure
 

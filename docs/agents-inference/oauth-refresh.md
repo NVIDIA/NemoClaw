@@ -51,8 +51,8 @@ It doesn't grant every native agent tool access.
 Use a provider name that doesn't collide with any registration owned by the deployment.
 
 ```sh
-openshell profile lint -f microsoft-graph-mail.yaml
-openshell profile import -f microsoft-graph-mail.yaml
+nemoclaw osh -- profile lint -f microsoft-graph-mail.yaml
+nemoclaw osh -- profile import -f microsoft-graph-mail.yaml
 nemoclaw osh -- provider create --name microsoft-mail --type microsoft-graph-mail \
   --credential MS_GRAPH_ACCESS_TOKEN
 nemoclaw osh -- provider refresh configure microsoft-mail \
@@ -143,7 +143,7 @@ Before destroy, stop use of the manual registration, detach it from every consum
 ```sh
 nemoclaw osh -- provider refresh delete microsoft-mail --credential-key MS_GRAPH_ACCESS_TOKEN
 nemoclaw osh -- provider delete microsoft-mail
-openshell profile delete microsoft-graph-mail
+nemoclaw osh -- profile delete microsoft-graph-mail
 ```
 
 These commands don't revoke the issuer's grant or remove your client credential source.
