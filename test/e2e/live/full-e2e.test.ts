@@ -3,7 +3,6 @@
 
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
-import { randomUUID } from "node:crypto";
 import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import os from "node:os";
 import path from "node:path";
@@ -65,12 +64,9 @@ import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json
 import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
 import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
 import {
-  completedAgentRunId,
+  nativePluginAgentInvocationOutcome,
   nativePluginPresent,
-  nativePluginAgentPrompt,
-  nativeToolCallOutcome,
   NATIVE_PLUGIN_ID,
-  nativeToolName,
   nativePluginWriteScript,
   type NativePluginVersion,
 } from "../fixtures/native-plugin-evidence.ts";
@@ -236,52 +232,16 @@ async function invokeNativePlugin(
   version: NativePluginVersion,
   artifactName: string,
 ): Promise<void> {
-  const toolName = nativeToolName(version);
-  const result = await sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "openclaw",
-      "agent",
-      "--agent",
-      "main",
-      "--json",
-      "--thinking",
-      "off",
-      "--timeout",
-      "30",
-      "--session-id",
-      `e2e-plugin-${randomUUID()}`,
-      "-m",
-      nativePluginAgentPrompt(version),
-    ],
-    { artifactName, env: env(), timeoutMs: 60_000 },
-  );
-  await captureNativePluginFailureReadiness(
-    sandbox,
-    result,
-    SANDBOX_NAME,
+  const outcome = await nativePluginAgentInvocationOutcome(sandbox, {
+    sandboxName: SANDBOX_NAME,
+    version,
     artifactName,
-    env(),
-    toolName,
-  );
-  expect(result.exitCode, resultText(result)).toBe(0);
-  const runId = completedAgentRunId(result.stdout);
-  // Audit persistence is asynchronous. Poll only the read-only page, never replay the agent turn.
-  const audit = await pollUntil({
-    artifactPrefix: `${artifactName}-audit`,
-    attempts: 5,
-    delayMs: 1_000,
-    probe: async (_attempt, auditArtifact) => {
-      const page = await sandbox.exec(
-        SANDBOX_NAME,
-        ["openclaw", "audit", "--run", runId, "--kind", "tool_action", "--limit", "100", "--json"],
-        { artifactName: auditArtifact, env: env(), timeoutMs: 30_000 },
-      );
-      return page.exitCode === 0 ? nativeToolCallOutcome(page.stdout, runId, toolName) : "failed";
-    },
-    accept: (outcome) => outcome !== "pending",
+    env: env(),
+    agentTimeoutSeconds: 30,
+    turnTimeoutMs: 60_000,
+    audit: { attempts: 5, delayMs: 1_000, timeoutMs: 30_000 },
   });
-  expect(audit.value, "the plugin tool must start and succeed in this agent run").toBe("succeeded");
+  expect(outcome, "the plugin tool must start and succeed in this gateway run").toBe("succeeded");
 }
 
 async function exerciseNativeOpenClawPluginVersion(
@@ -318,36 +278,6 @@ async function exerciseNativeOpenClawPluginLifecycle(
 ): Promise<void> {
   await exerciseNativeOpenClawPluginVersion(host, sandbox, "v1");
   await exerciseNativeOpenClawPluginVersion(host, sandbox, "v2");
-
-  const updateDryRun = await sandbox.exec(
-    SANDBOX_NAME,
-    ["/usr/local/bin/openclaw", "plugins", "update", NATIVE_PLUGIN_ID, "--dry-run"],
-    {
-      artifactName: "phase-4-native-plugin-update-dry-run",
-      env: env(),
-      timeoutMs: 120_000,
-    },
-  );
-  expect(updateDryRun.exitCode, resultText(updateDryRun)).toBe(0);
-
-  const selfUpdateDryRun = await sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "/usr/local/bin/openclaw",
-      "update",
-      "--dry-run",
-      "--yes",
-      "--no-restart",
-      "--tag",
-      "2026.7.1",
-    ],
-    {
-      artifactName: "phase-4-native-self-update-dry-run",
-      env: env(),
-      timeoutMs: 120_000,
-    },
-  );
-  expect(selfUpdateDryRun.exitCode, resultText(selfUpdateDryRun)).toBe(0);
 
   await sandbox.exec(
     SANDBOX_NAME,

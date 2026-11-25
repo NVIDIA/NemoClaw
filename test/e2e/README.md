@@ -740,16 +740,26 @@ The weather lifecycle and sandbox survival fixtures invoke native plugins throug
 They verify the actual paired tool result in that session's native store; the model's reply alone cannot establish execution.
 A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
-Full E2E's versioned local plugin request names `tool_call` when that dispatcher is exposed,
-and uses the native tool directly otherwise. Both versions still require matched tool-start and
-successful tool-completion audit records from the admitted run. A failed invocation collects
-metadata-only audit counts and readiness within one ten-second diagnostic budget, without replaying
-the turn. The collector accepts only a validated gateway-envelope run ID and emits fixed categories
-and bounded counts. It omits audit identities, arguments, reply text and arbitrary error messages.
-The `NEMOCLAW_NATIVE_PLUGIN_FAILURE` record is retained in the existing Launchable `full-e2e.log`,
-even when guest artifact files disappear with workspace cleanup. Missing or invalid diagnostics
-remain unknown and cannot turn the failed invocation into success.
-Gateway restart failures retain readiness artifacts without emitting an invocation-failure record.
+Full E2E's versioned local plugin lifecycle proves installation, replacement, and execution
+across gateway restarts, followed by removal from the plugin inventory. Its local request names
+`tool_call` when that dispatcher is exposed and uses the native tool directly otherwise.
+Both versions require matched tool-start and successful tool-completion records for the same
+tool-call ID in one gateway-identified run. Neither a model reply nor diagnostic outcome counts
+can establish plugin execution. A missing final assistant reply does not invalidate a completed
+tool execution; the existing inference and launch checks own reply completion. A timed-out or
+interrupted shell, ambiguous gateway run, or missing, mismatched, or failed audit evidence cannot
+qualify the plugin. Audit polling is read-only and never repeats the agent turn.
+The real v1-to-v2 replacement provides update evidence; native plugin-update and CLI self-update
+dry-runs are not part of this lifecycle scenario.
+
+A nonzero agent turn collects metadata-only audit counts and readiness within one ten-second
+diagnostic budget. The collector accepts only a validated gateway-envelope run ID and emits fixed
+categories and bounded counts. It omits audit identities, arguments, reply text and arbitrary error
+messages. The `NEMOCLAW_NATIVE_PLUGIN_FAILURE` record describes the failed agent turn and is retained
+in the existing Launchable `full-e2e.log`, even when guest artifact files disappear with workspace
+cleanup. Missing or invalid diagnostics remain unknown; qualification reads and validates the
+actual audit page separately. Gateway restart failures retain readiness artifacts without
+emitting an invocation-failure record.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
 local image, removes registry credentials, validates the anonymously pullable digest, and uploads a

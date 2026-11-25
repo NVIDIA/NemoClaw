@@ -7,8 +7,8 @@ import { isObjectRecord } from "../../../src/lib/core/json-types.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import {
   openClawFinalAgentResponse,
+  openClawAgentResponseRecord,
   parseOpenClawJsonDocuments,
-  projectOpenClawAgentCompletion,
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
 import { captureNativePluginFailureReadiness } from "./native-plugin-failure-diagnostics.ts";
@@ -83,20 +83,19 @@ export default plugin;
   ].join("\n");
 }
 
-/** Read the gateway envelope, never a run identifier in model or tool output. */
-export function completedAgentRunId(raw: string): string {
+/** Identify one gateway run; its tool audit, not the final reply, establishes execution. */
+export function nativePluginAgentRunId(raw: string): string {
   const documents = parseOpenClawJsonDocuments(raw);
   const final = openClawFinalAgentResponse(documents);
-  const completion = projectOpenClawAgentCompletion(documents);
   const runId = final?.document.runId;
   if (
-    !completion.runCompleted ||
-    completion.aborted ||
-    completion.errorPresent ||
+    documents.filter((doc) => openClawAgentResponseRecord(doc) !== null).length !== 1 ||
+    !final ||
+    final.document.result !== final.response ||
     typeof runId !== "string" ||
     !/^[a-zA-Z0-9_-]{1,128}$/u.test(runId)
   ) {
-    throw new Error("Native plugin agent turn has no completed gateway run");
+    throw new Error("Native plugin invocation has no unambiguous gateway run");
   }
   return runId;
 }
@@ -165,6 +164,7 @@ export interface NativePluginInvocationOptions {
   artifactName: string;
   env: NodeJS.ProcessEnv;
   turnTimeoutMs: number;
+  agentTimeoutSeconds: number;
   audit: { attempts: number; delayMs: number; timeoutMs: number };
 }
 
@@ -185,6 +185,8 @@ export async function nativePluginAgentInvocationOutcome(
       "--json",
       "--thinking",
       "off",
+      "--timeout",
+      String(options.agentTimeoutSeconds),
       "--session-id",
       `e2e-plugin-${randomUUID()}`,
       "-m",
@@ -200,8 +202,13 @@ export async function nativePluginAgentInvocationOutcome(
     env,
     toolName,
   );
-  if (turn.exitCode !== 0) return "failed";
-  const runId = completedAgentRunId(turn.stdout);
+  if (turn.exitCode === null || turn.timedOut || turn.signal) return "failed";
+  let runId: string;
+  try {
+    runId = nativePluginAgentRunId(turn.stdout);
+  } catch {
+    return "failed";
+  }
   // Audit persistence is asynchronous. Poll only the read-only page, never replay the agent turn.
   const audit = await pollUntil({
     artifactPrefix: `${artifactName}-audit`,
@@ -213,7 +220,9 @@ export async function nativePluginAgentInvocationOutcome(
         ["openclaw", "audit", "--run", runId, "--kind", "tool_action", "--limit", "100", "--json"],
         { artifactName: auditArtifact, env, timeoutMs: options.audit.timeoutMs },
       );
-      return page.exitCode === 0 ? nativeToolCallOutcome(page.stdout, runId, toolName) : "failed";
+      return page.exitCode === 0 && !page.timedOut && !page.signal
+        ? nativeToolCallOutcome(page.stdout, runId, toolName)
+        : "failed";
     },
     accept: (outcome) => outcome !== "pending",
   });
