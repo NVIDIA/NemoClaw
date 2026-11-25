@@ -154,7 +154,7 @@ The following SDK and provider limits apply:
 | Configuration or state migration between releases | Not during alpha, as [compatibility](../references/compatibility.md) describes | [`cb8ef25`][v1-cb8ef25]: code, docs |
 | A hosted Rust API reference | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 | `tofu import`, adoption, and remote state for CLI and SDK deployments | Not supported, as [compatibility](../references/compatibility.md) describes | [`cb8ef25`][v1-cb8ef25]: code, docs |
-| [Hand-written HCL](../build-deploy/opentofu-project.md) under Terraform: the provider addresses are under `registry.opentofu.org`, and the examples' tests run only under OpenTofu. | [#14725](https://github.com/NVIDIA/NemoClaw/issues/14725) | [`1b5574f`][v1-1b5574f]: code, issue |
+| [Hand-written HCL](../build-deploy/opentofu-project.md) under Terraform: the examples require the Docker provider at `registry.opentofu.org/kreuzwerker/docker`, and their tests run only under OpenTofu. | [#14725](https://github.com/NVIDIA/NemoClaw/issues/14725) | [`1b5574f`][v1-1b5574f]: code, issue |
 | A guard against lost creation replies in hand-written HCL: only the SDK records the OpenShell and Fabric objects an apply might create. | [#14726](https://github.com/NVIDIA/NemoClaw/issues/14726) | [`1b5574f`][v1-1b5574f]: code, issue |
 | Handing an existing CLI deployment over to hand-written HCL | [#14721](https://github.com/NVIDIA/NemoClaw/issues/14721) | [`1b5574f`][v1-1b5574f]: code, issue |
 

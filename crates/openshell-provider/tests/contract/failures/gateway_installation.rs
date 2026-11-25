@@ -95,7 +95,7 @@ async fn podman_gateway_rechecks_network_and_image_prerequisites_before_saved_pl
             format!(
                 r#"terraform {{
   required_providers {{
-    openshell = {{ source = "registry.opentofu.org/nvidia/openshell" }}
+    openshell = {{ source = "nvidia.github.io/nemoclaw/openshell" }}
   }}
 }}
 provider "openshell" {{}}

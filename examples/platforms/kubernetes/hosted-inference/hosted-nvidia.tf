@@ -8,8 +8,8 @@
 terraform {
   required_version = "~> 1.12"
   required_providers {
-    openshell = { source = "registry.opentofu.org/nvidia/openshell" }
-    fabric    = { source = "registry.opentofu.org/nvidia/fabric" }
+    openshell = { source = "nvidia.github.io/nemoclaw/openshell" }
+    fabric    = { source = "nvidia.github.io/nemoclaw/fabric" }
     helm      = { source = "registry.opentofu.org/hashicorp/helm", version = "= 3.3.0" }
   }
 }

@@ -11,14 +11,14 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Registry address of the provider that reconciles OpenShell objects.
-pub const OPENSHELL_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/openshell";
+pub const OPENSHELL_PROVIDER_ADDRESS: &str = "nvidia.github.io/nemoclaw/openshell";
 /// Registry address of the provider that configures Fabric agents in sandboxes.
-pub const FABRIC_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/fabric";
-pub const VLLM_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/vllm";
-pub const OLLAMA_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/ollama";
+pub const FABRIC_PROVIDER_ADDRESS: &str = "nvidia.github.io/nemoclaw/fabric";
+pub const VLLM_PROVIDER_ADDRESS: &str = "nvidia.github.io/nemoclaw/vllm";
+pub const OLLAMA_PROVIDER_ADDRESS: &str = "nvidia.github.io/nemoclaw/ollama";
 /// Registry address of the provider that observes container engines; it has
 /// no settings, so it is not one of [`NEMOCLAW_PROVIDERS`].
-pub const HOST_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/host";
+pub const HOST_PROVIDER_ADDRESS: &str = "nvidia.github.io/nemoclaw/host";
 /// This repository's providers that take `destroy`.
 pub const NEMOCLAW_PROVIDERS: [&str; 4] = ["openshell", "fabric", "vllm", "ollama"];
 

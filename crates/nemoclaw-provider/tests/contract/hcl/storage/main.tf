@@ -4,9 +4,9 @@
 # volumes: one authored identity, and two the providers generate.
 terraform {
   required_providers {
-    vllm    = { source = "registry.opentofu.org/nvidia/vllm" }
-    ollama  = { source = "registry.opentofu.org/nvidia/ollama" }
-    fixture = { source = "registry.opentofu.org/nvidia/fixture" }
+    vllm    = { source = "nvidia.github.io/nemoclaw/vllm" }
+    ollama  = { source = "nvidia.github.io/nemoclaw/ollama" }
+    fixture = { source = "nvidia.github.io/nemoclaw/fixture" }
   }
 }
 variable "engine" { type = string }

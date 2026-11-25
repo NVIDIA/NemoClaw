@@ -11,7 +11,7 @@ use crate::*;
 const MAIN: &str = r#"
 terraform {
   required_providers {
-    openshell = { source = "registry.opentofu.org/nvidia/openshell" }
+    openshell = { source = "nvidia.github.io/nemoclaw/openshell" }
   }
 }
 variable "endpoint" { type = string }

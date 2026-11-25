@@ -5,7 +5,7 @@
 # reference containing "missing".
 terraform {
   required_providers {
-    fabric = { source = "registry.opentofu.org/nvidia/fabric" }
+    fabric = { source = "nvidia.github.io/nemoclaw/fabric" }
   }
 }
 variable "engine" { type = string }
