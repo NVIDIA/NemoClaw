@@ -51,6 +51,10 @@ const mainSdkRun = {
 
 type SdkPackageLocatorFixture = Readonly<{
   artifacts?: readonly unknown[];
+  baseRef?: string;
+  parents?: unknown;
+  parentDecision?: unknown;
+  runSequence?: readonly unknown[];
   inspectorOutput?: string;
   inspectorRequired?: unknown;
   run?: unknown;
@@ -80,7 +84,11 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
     );
     writeFileSync(
       join(inspectorDirectory, "prepare-ci-npm-install.mts"),
-      `process.stdout.write(${JSON.stringify(fixture.inspectorOutput ?? JSON.stringify({ artifactName: "reviewed-sdk.tgz", required: fixture.inspectorRequired ?? true }))});\n`,
+      `import { appendFileSync } from "node:fs";
+      if (process.env.NEMOCLAW_OPEN_SHELL_SDK_CANDIDATE === "1") {
+        appendFileSync(process.env.REQUEST_LOG, "parent-inspection " + JSON.stringify([process.env.UPGRADE_PR_NUMBER, process.env.CANDIDATE_SHA, process.env.UPGRADE_BASE_SHA]) + "\\n");
+        process.stdout.write(${JSON.stringify(JSON.stringify(fixture.parentDecision ?? {}))});
+      } else process.stdout.write(${JSON.stringify(fixture.inspectorOutput ?? JSON.stringify({ artifactName: "reviewed-sdk.tgz", required: fixture.inspectorRequired ?? true }))});\n`,
     );
     writeFileSync(
       join(fakeBin, "gh"),
@@ -91,10 +99,16 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
         'fs.appendFileSync(process.env.REQUEST_LOG, request + "\\n");',
         'if (process.env.API_FAILURE === "true") { process.stderr.write("private diagnostic"); process.exit(1); }',
         'if (request.includes("actions/artifacts?name=")) { process.stdout.write(process.env.ARTIFACTS); }',
-        'else if (request.includes("actions/runs/")) { const id = request.match(/actions\\/runs\\/(\\d+)/)?.[1]; const run = JSON.parse(process.env.SDK_RUNS)[id]; if (!run) process.exit(64); process.stdout.write(JSON.stringify(run)); }',
+        'else if (request.includes("/pulls")) { process.stdout.write(process.env.PARENTS); }',
+        'else if (request.includes("actions/runs/")) { const id = request.match(/actions\\/runs\\/(\\d+)/)?.[1]; const sequence = JSON.parse(process.env.RUN_SEQUENCE); const countPath = process.env.RUN_COUNTER; const count = fs.existsSync(countPath) ? Number(fs.readFileSync(countPath, "utf8")) : 0; fs.writeFileSync(countPath, String(count + 1)); const run = sequence.length ? sequence[Math.min(count, sequence.length - 1)] : JSON.parse(process.env.SDK_RUNS)[id]; if (!run) process.exit(64); process.stdout.write(JSON.stringify(run)); }',
         "else process.exit(64);",
       ].join("\n"),
       { mode: 0o755 },
+    );
+    mkdirSync(join(tempRoot, "ci"));
+    writeFileSync(
+      join(tempRoot, "ci/reviewed-npm-audit.json"),
+      JSON.stringify({ sourceRegistryPackage: reviewedSdk }),
     );
     const sleepLog = join(tempRoot, "sleeps");
     writeFileSync(sleepLog, "");
@@ -109,6 +123,10 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
       {
         ARTIFACTS: JSON.stringify([{ artifacts: fixture.artifacts ?? [mainSdkArtifact] }]),
         API_FAILURE: String(fixture.apiFailure ?? false),
+        GITHUB_BASE_REF: fixture.baseRef ?? "main",
+        PARENTS: JSON.stringify(fixture.parents ?? [[]]),
+        RUN_SEQUENCE: JSON.stringify(fixture.runSequence ?? []),
+        RUN_COUNTER: join(tempRoot, "run-counter"),
         SDK_RUNS: JSON.stringify(fixture.runs ?? { "200": fixture.run ?? mainSdkRun }),
         REQUEST_LOG: requestLog,
         SLEEP_LOG: sleepLog,
@@ -201,6 +219,99 @@ describe("reviewed SDK artifact selection", () => {
           : `required=true\nartifact_id=${selected}\nrun_id=${selected + 100}\nartifact_name=reviewed-sdk.tgz\n`,
       );
       expect(observedSleeps).toBe("5\n".repeat(sleeps));
+    },
+  );
+
+  const candidateSha = "a".repeat(40);
+  const stackHead = "b".repeat(40);
+  const stackBase = "c".repeat(40);
+  const parent = {
+    number: 321,
+    head: { sha: stackHead, repo: { full_name: "NVIDIA/NemoClaw" } },
+    base: { sha: stackBase, ref: "main", repo: { full_name: "NVIDIA/NemoClaw" } },
+  };
+  const parentBundle = `candidate-openshell-sdk-321-${stackHead}-${stackBase}-99`;
+  const parentDecision = {
+    required: true,
+    candidate: true,
+    artifactName: "reviewed-sdk.tgz",
+    bundleName: parentBundle,
+  };
+  const parentRun = {
+    ...mainSdkRun,
+    path: ".github/workflows/candidate-upgrade-admission.yaml",
+    status: "completed",
+    conclusion: "success",
+    event: "pull_request_target",
+    head_sha: stackHead,
+    pull_requests: [{ number: 321, head: { sha: stackHead }, base: { sha: stackBase } }],
+  };
+
+  it("resolves a unique same-repository stack parent and reinspects its exact admission", () => {
+    const { result, githubOutput, requests } = runSdkPackageLocator({
+      step: locateSdk,
+      baseRef: "stack-parent",
+      parents: [[parent]],
+      parentDecision,
+      artifacts: [{ ...mainSdkArtifact, name: parentBundle }],
+      run: parentRun,
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(githubOutput).toContain(
+      `stack_pr=321\nstack_head=${stackHead}\nstack_base=${stackBase}\n`,
+    );
+    expect(githubOutput).toContain("artifact_id=100\nrun_id=200\nartifact_name=reviewed-sdk.tgz\n");
+    expect(requests).toContain(
+      "--method GET --paginate --slurp repos/NVIDIA/NemoClaw/pulls -f state=open -f base=main -f head=NVIDIA:stack-parent -f per_page=100",
+    );
+    expect(requests).toContain(
+      `parent-inspection ${JSON.stringify(["321", stackHead, stackBase])}`,
+    );
+    expect(requests).toContain(`actions/artifacts?name=${parentBundle}`);
+  });
+
+  it("waits for the approved candidate producer to become successful", () => {
+    const bundleName = `candidate-openshell-sdk-123-${candidateSha}-${stackHead}-99`;
+    const successful = {
+      ...parentRun,
+      head_sha: candidateSha,
+      pull_requests: [{ number: 123, head: { sha: candidateSha }, base: { sha: stackHead } }],
+    };
+    const { result, githubOutput, requests, sleeps } = runSdkPackageLocator({
+      step: locateSdk,
+      inspectorOutput: JSON.stringify({ ...parentDecision, bundleName }),
+      artifacts: [{ ...mainSdkArtifact, name: bundleName }],
+      runSequence: [{ ...successful, status: "in_progress", conclusion: null }, successful],
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(githubOutput).toContain("artifact_id=100\nrun_id=200\n");
+    expect(sleeps).toBe("5\n");
+    expect(requests.split("actions/runs/200")).toHaveLength(4);
+  });
+
+  it.each(
+    [
+      [],
+      [parent, parent],
+      [{ ...parent, head: { ...parent.head, sha: candidateSha } }],
+      [{ ...parent, head: { ...parent.head, repo: { full_name: "example/fork" } } }],
+      { invalid: true },
+    ].map((parents) => ({ parents })),
+  )(
+    "rejects malformed or ambiguous stack parent %j before selecting an artifact",
+    ({ parents }) => {
+      const { result, githubOutput, requests } = runSdkPackageLocator({
+        step: locateSdk,
+        baseRef: "stack-parent",
+        parents: [parents],
+        parentDecision,
+        artifacts: [{ ...mainSdkArtifact, name: parentBundle }],
+        run: parentRun,
+      });
+      expect(result.status).not.toBe(0);
+      expect(githubOutput).not.toContain("artifact_id=");
+      expect(requests).not.toContain("parent-inspection");
+      expect(requests).not.toContain("actions/runs/");
     },
   );
 

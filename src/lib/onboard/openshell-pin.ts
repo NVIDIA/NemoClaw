@@ -63,7 +63,7 @@ function listOpenshellReleaseTagsViaGh(): string[] | null {
       "release",
       "list",
       "--repo",
-      "NVIDIA/OpenShell",
+      "ai-openshell/openshell",
       "--limit",
       String(GH_LIMIT),
       "--json",
@@ -92,7 +92,7 @@ function listOpenshellReleaseTagsViaCurl(): string[] | null {
         "-fsSL",
         "-H",
         "Accept: application/vnd.github+json",
-        `https://api.github.com/repos/NVIDIA/OpenShell/releases?per_page=${PER_PAGE}&page=${page}`,
+        `https://api.github.com/repos/ai-openshell/openshell/releases?per_page=${PER_PAGE}&page=${page}`,
       ],
       { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
     );
