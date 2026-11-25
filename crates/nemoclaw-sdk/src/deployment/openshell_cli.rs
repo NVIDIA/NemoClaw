@@ -25,7 +25,31 @@ pub(super) fn unavailable(gateway: &crate::config::Gateway) -> Option<&'static s
             external.credential.is_some() && external.oidc.is_none()
         }
     };
-    bearer.then_some("the bundled OpenShell CLI cannot use this gateway's bearer token; use a separately authenticated OpenShell CLI where supported")
+    bearer.then_some("the bundled OpenShell CLI cannot use this gateway's bearer token yet (https://github.com/NVIDIA/NemoClaw/issues/14880); use a separately authenticated OpenShell CLI where supported")
+}
+
+/// The `openshell` arguments that register an external OIDC gateway in the
+/// bundled CLI's configuration and sign in, once.
+pub(super) fn registration(document: &crate::config::Document) -> Option<Vec<String>> {
+    let crate::config::Gateway::External(external) = &document.spec.gateway else {
+        return None;
+    };
+    let oidc = external.oidc.as_ref()?;
+    let mut add = vec![
+        "gateway".into(),
+        "add".into(),
+        document.spec.gateway.endpoint()?,
+        format!("--name={}", document.workspace()),
+        format!("--oidc-issuer={}", oidc.issuer),
+        format!("--oidc-client-id={}", oidc.client_id),
+    ];
+    if let Some(audience) = &oidc.audience {
+        add.push(format!("--oidc-audience={audience}"));
+    }
+    if let Some(scopes) = &oidc.scopes {
+        add.push(format!("--oidc-scopes={scopes}"));
+    }
+    Some(add)
 }
 
 #[cfg(unix)]
@@ -33,12 +57,7 @@ impl Deployment {
     /// The bundled OpenShell CLI, set to run `args` against this deployment's
     /// gateway and workspace through OpenShell's documented selectors. Its
     /// configuration lives in the state directory, apart from the user's own.
-    /// When the gateway sets `oidc` and OpenShell has not registered it, also
-    /// returns the `openshell` arguments that register it and sign in.
-    pub fn openshell(
-        &self,
-        args: &[std::ffi::OsString],
-    ) -> Result<(std::process::Command, Option<Vec<String>>), Error> {
+    pub fn openshell(&self, args: &[std::ffi::OsString]) -> Result<std::process::Command, Error> {
         let (bundle, store) = self.open()?;
         let document = store
             .load()?
@@ -75,38 +94,6 @@ impl Deployment {
                 }
             }
         }
-        // OpenShell signs in to an OIDC gateway when it is registered; until
-        // then, give the arguments that register this one.
-        let mut sign_in = None;
-        if let crate::config::Gateway::External(external) = gateway
-            && let Some(oidc) = &external.oidc
-            && !profile.join("metadata.json").exists()
-            // Login guidance must not intercept upstream gateway management
-            // or help, including after global options. OpenShell still owns
-            // argument parsing and all authentication decisions.
-            && !args.iter().any(|arg| matches!(arg.to_str(), Some("gateway" | "--help" | "-h" | "--version" | "-V")))
-        {
-            let mut add = vec![
-                "gateway".into(),
-                "add".into(),
-                endpoint.clone(),
-                format!("--name={workspace}"),
-                format!("--oidc-issuer={}", oidc.issuer),
-                format!("--oidc-client-id={}", oidc.client_id),
-            ];
-            if let Some(audience) = &oidc.audience {
-                add.push(format!("--oidc-audience={audience}"));
-            }
-            if let Some(scopes) = &oidc.scopes {
-                add.push(format!("--oidc-scopes={scopes}"));
-            }
-            if add.iter().any(|arg| arg.chars().any(char::is_control)) {
-                return Err(Error::State(
-                    "gateway OIDC login settings must not contain control characters",
-                ));
-            }
-            sign_in = Some(add);
-        }
         let mut command = std::process::Command::new(bundle.directory.join("libexec/openshell"));
         command
             .args(args)
@@ -116,6 +103,6 @@ impl Deployment {
             .env("OPENSHELL_GATEWAY_ENDPOINT", &endpoint)
             .env("OPENSHELL_WORKSPACE", &workspace)
             .env_remove("OPENSHELL_GATEWAY_INSECURE");
-        Ok((command, sign_in))
+        Ok(command)
     }
 }

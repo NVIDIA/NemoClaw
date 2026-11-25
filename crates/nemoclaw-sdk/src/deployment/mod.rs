@@ -107,6 +107,10 @@ pub struct DeploymentConnection {
     /// Why the bundled CLI cannot access this gateway on this client platform.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openshell_cli_unavailable: Option<String>,
+    /// For an external OIDC gateway, the `openshell` arguments that register
+    /// it with the bundled CLI and sign in, once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openshell_registration: Option<Vec<String>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -334,6 +338,7 @@ impl Deployment {
             workspace: document.workspace(),
             openshell_cli_unavailable: openshell_cli::unavailable(&document.spec.gateway)
                 .map(str::to_owned),
+            openshell_registration: openshell_cli::registration(&document),
         });
         let compiled =
             compile::deployment_graph(&document, &record.generations, &bundle.manifest.version)?;
