@@ -81,6 +81,20 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       "live E2E must upload cold-onboard performance evidence",
     );
   });
+  it.each(["live", "hermes-e2e"])(
+    "requires the pinned v1 protoc wherever %s sets up the pinned v1 toolchain (#14580)",
+    (job) => {
+      const workflow = readE2eOperationsWorkflow();
+      const steps = workflow.jobs[job]!.steps!;
+      workflow.jobs[job]!.steps = steps.filter(
+        (step) => step.name !== "Set up the pinned v1 protoc",
+      );
+
+      expect(validateE2eOperationsWorkflow(workflow)).toContain(
+        `${job} must install the pinned v1 protoc after the pinned v1 toolchain`,
+      );
+    },
+  );
   it("requires automatic config export evidence in retained live artifacts (#11485)", () => {
     const workflow = readE2eOperationsWorkflow();
     const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;

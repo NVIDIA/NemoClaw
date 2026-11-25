@@ -7,7 +7,7 @@ import type {
   ObservedExportRegistry,
   VerifiedExportSource,
 } from "./export-evidence";
-import { V1ALPHA1_RUNTIME_DEFAULTS } from "./v1alpha1-runtime-defaults";
+import { HERMES_INTERFACE_DEFAULTS } from "../../config/model";
 
 type InterfaceInspection = Readonly<{
   findings: readonly ExportFinding[];
@@ -60,16 +60,9 @@ function inspectOpenClawDashboard(
 ): InterfaceInspection {
   const { port, bindAddress } = dashboard;
   const remote = bindAddress === "0.0.0.0";
-  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.openclaw.interfaces.dashboard;
-  const projected = {
-    ...(port === defaults.port ? {} : { port }),
-    ...(bindAddress === defaults.bind ? {} : { bind: bindAddress }),
-  };
-  const targetDashboard =
-    Object.keys(projected).length === 0 && !defaults.enabled ? { port: defaults.port } : projected;
   return {
     findings: openClawDashboardFindings(entry, dashboard),
-    ...(Object.keys(targetDashboard).length ? { interfaces: { dashboard: targetDashboard } } : {}),
+    interfaces: { dashboard: { port, bind: bindAddress } },
     dashboard: {
       agent: "openclaw",
       mode: remote ? "remote" : "loopback",
@@ -174,16 +167,11 @@ function hermesDashboardFindings(
 }
 
 function projectHermesDashboard(dashboard: EnabledHermesDashboard) {
-  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.hermes.interfaces.dashboard;
   return {
     enabled: true as const,
-    ...(dashboard.publicPort === defaults.port ? {} : { port: dashboard.publicPort }),
-    ...(dashboard.internalPort === defaults.internalPort
-      ? {}
-      : { internalPort: dashboard.internalPort }),
-    ...(dashboard.tuiEnabled === defaults.tuiEnabled
-      ? {}
-      : { tui: { enabled: dashboard.tuiEnabled } }),
+    port: dashboard.publicPort,
+    internalPort: dashboard.internalPort,
+    tui: { enabled: dashboard.tuiEnabled },
   };
 }
 
@@ -191,20 +179,20 @@ function inspectHermesDashboard(
   entry: ObservedExportRegistry,
   dashboard: HermesDashboard,
 ): InterfaceInspection {
-  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.hermes.interfaces;
   const findings = hermesApiFindings(entry, dashboard.mode === "loopback-forwarded");
-  const api =
-    typeof entry.hermesApiPort === "number" && entry.hermesApiPort !== defaults.api.port
-      ? { api: { port: entry.hermesApiPort } }
-      : {};
+  // v0 serves the API on its allocated port, or on its own default when none is recorded.
+  const api = {
+    api: {
+      port:
+        typeof entry.hermesApiPort === "number"
+          ? entry.hermesApiPort
+          : HERMES_INTERFACE_DEFAULTS.apiPort,
+    },
+  };
   if (dashboard.mode === "disabled") {
-    const targetDashboard = defaults.dashboard.enabled
-      ? { dashboard: { enabled: false as const } }
-      : {};
-    const interfaces = { ...targetDashboard, ...api };
     return {
       findings: [...findings, ...disabledHermesDashboardFindings(entry, dashboard)],
-      ...(Object.keys(interfaces).length ? { interfaces } : {}),
+      interfaces: { dashboard: { enabled: false as const }, ...api },
       ...(isAllocatedLoopbackDashboard(entry, dashboard) ? { dashboard } : {}),
     };
   }

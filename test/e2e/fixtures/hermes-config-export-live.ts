@@ -12,9 +12,10 @@ import YAML from "yaml";
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
 import { hasExportExcludedMessaging } from "../../../src/lib/domain/config/verify-export-source.ts";
 import {
-  V1ALPHA1_RUNTIME_DEFAULTS,
-  V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
-} from "../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
+  exportedExplicitPolicy,
+  V1_IMAGE_REF_PLACEHOLDER,
+} from "../../../src/lib/domain/config/export-document.ts";
+import { V1ALPHA1_CHECKED_REVISION } from "../../../src/lib/domain/config/v1alpha1-checked-revision.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -25,12 +26,13 @@ import type { ArtifactSink } from "./artifacts.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
+import { redactString } from "./redaction.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
 import {
-  expectedPinnedV1HermesNativeSettings,
-  type PinnedV1ConsumerEvidence,
-  validateConfigExportWithPinnedV1,
-} from "../../support/v1-config-consumer.ts";
+  createV1ParseConsumer,
+  summarizeV1Parse,
+  type V1ParseSummary,
+} from "../../support/v1-parse-consumer.ts";
 import {
   inspectConfigExportArtifactSafety,
   parseConfigExport,
@@ -46,7 +48,7 @@ interface HermesConfigExportLiveInput {
   readonly host: HostCliClient;
   readonly redactionValues: readonly string[];
   readonly sandboxName: string;
-  readonly validateWithPinnedV1?: (raw: string) => PinnedV1ConsumerEvidence;
+  readonly validateWithPinnedV1?: (raw: string) => V1ParseSummary;
 }
 
 export interface HermesConfigExportLiveResult {
@@ -59,13 +61,13 @@ interface HermesConfigExportPublishedEvidence {
   readonly agent: string | undefined;
   readonly aliasesEquivalent: boolean;
   readonly checked: true;
-  readonly consumer: HermesPinnedV1ConsumerEvidence;
+  readonly consumer: HermesV1ParseSummary;
   readonly credentialReferenceMatches: boolean;
   readonly credentialValuesOmitted: boolean;
   readonly identityDriftPreventedPublication: boolean;
   readonly identityDriftReported: boolean;
-  readonly managedImageIsOmitted: boolean;
-  readonly interfacesMatch: boolean;
+  readonly managedImageIsPlaceholder: boolean;
+  readonly interfacesOmitted: boolean;
   readonly dashboardRuntimeMatches: boolean;
   readonly inferenceEndpointMatches: boolean;
   readonly launchersSucceeded: boolean;
@@ -73,10 +75,16 @@ interface HermesConfigExportPublishedEvidence {
   readonly sandboxNameMatches: boolean;
 }
 
-interface HermesPinnedV1ConsumerEvidence {
-  readonly expected: PinnedV1ConsumerEvidence;
-  readonly actual: Partial<Record<"nemoclaw" | "nemohermes", PinnedV1ConsumerEvidence>>;
+interface HermesV1ParseSummary {
+  readonly expected: V1ParseSummary;
+  readonly actual: Partial<Record<"nemoclaw" | "nemohermes", V1ParseSummary>>;
   readonly passed: boolean;
+  readonly failure?: {
+    readonly alias: "nemoclaw" | "nemohermes";
+    readonly operation: "parse-export-with-pinned-v1";
+    readonly revision: typeof V1ALPHA1_CHECKED_REVISION;
+    readonly diagnostic: string;
+  };
 }
 
 interface HermesConfigExportExpectedRefusalEvidence {
@@ -85,27 +93,33 @@ interface HermesConfigExportExpectedRefusalEvidence {
   readonly checked: true;
   readonly credentialValuesOmitted: boolean;
   readonly outputFilesAbsent: boolean;
-  readonly refusalCategory: "unsupported" | null;
-  readonly refusalDiagnosticMatches: boolean;
+  readonly refusalCausesMatch: boolean;
+  readonly refusalCategoriesMatch: boolean;
 }
 
 export type HermesConfigExportLiveEvidence =
   | HermesConfigExportPublishedEvidence
   | HermesConfigExportExpectedRefusalEvidence;
 
-const CREDENTIAL_HTTP_REFUSAL =
-  "V1alpha1 requires HTTPS when an inference provider declares a credential.";
-const PODMAN_REFUSAL =
-  "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
-const MESSAGING_REFUSAL = "V1 export does not support messaging.";
-const POLICY_REFUSAL =
-  "Verified effective policy is malformed, unknown, or cannot be represented losslessly.";
-// The exporter reports these v1 compatibility limits alongside excluded messaging.
-const MESSAGING_ADDITIONAL_REFUSALS = [
-  "The sandbox provider attachments do not match its supported configuration.",
-  "The managed startup profile is not the canonical profile supported by v1 export.",
-  POLICY_REFUSAL,
-];
+function refusalCategories(diagnostic: string): string[] {
+  const header = diagnostic.split("\n")[0] ?? "";
+  return /^Config export failed \(([^)]+)\)\.$/u.exec(header)?.[1]?.split(", ").sort() ?? [];
+}
+
+function refusalFindings(diagnostic: string): Array<{ field: string; category: string } | null> {
+  return diagnostic
+    .split("\n")
+    .slice(1)
+    .map((line) => {
+      const finding = /^(\S+) \(([^)]+)\):(?: .*)?$/u.exec(line);
+      if (finding) return { field: finding[1]!, category: finding[2]! };
+      // Redaction erases this category. Normalize to the source contract's unsupported category;
+      // only domain tests can verify the original token. Live evidence retains the field and header.
+      return line.startsWith("spec.inferenceProviders[].credential <REDACTED> ")
+        ? { field: "spec.inferenceProviders[].credential", category: "unsupported" }
+        : null;
+    });
+}
 
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
@@ -123,20 +137,21 @@ export function passesHermesConfigExportLiveEvidence(
       evidence.aliasesEquivalent &&
       evidence.credentialValuesOmitted &&
       evidence.outputFilesAbsent &&
-      evidence.refusalCategory === "unsupported" &&
-      evidence.refusalDiagnosticMatches
+      evidence.refusalCausesMatch &&
+      evidence.refusalCategoriesMatch
     );
   }
   return (
-    evidence.agent === "hermes" &&
+    evidence.agent === "nvidia.fabric.hermes" &&
     evidence.aliasesEquivalent &&
     evidence.consumer.passed &&
+    evidence.consumer.failure === undefined &&
     evidence.credentialReferenceMatches &&
     evidence.credentialValuesOmitted &&
     evidence.identityDriftPreventedPublication &&
     evidence.identityDriftReported &&
-    evidence.managedImageIsOmitted &&
-    evidence.interfacesMatch &&
+    evidence.managedImageIsPlaceholder &&
+    evidence.interfacesOmitted &&
     evidence.dashboardRuntimeMatches &&
     evidence.inferenceEndpointMatches &&
     evidence.launchersSucceeded &&
@@ -145,60 +160,68 @@ export function passesHermesConfigExportLiveEvidence(
   );
 }
 
-function expectedHermesConsumerEvidence(
-  input: HermesConfigExportLiveInput,
-): PinnedV1ConsumerEvidence {
-  const nativeSettings = expectedPinnedV1HermesNativeSettings({
-    hermesApiPort: Number(input.env.NEMOCLAW_HERMES_API_PORT ?? HERMES_INTERFACE_DEFAULTS.apiPort),
-    hermesDashboardEnabled: input.dashboardEnabled === true,
-    hermesDashboardPort: Number(
-      input.env.NEMOCLAW_DASHBOARD_PORT ?? HERMES_INTERFACE_DEFAULTS.dashboardPort,
-    ),
-    hermesDashboardInternalPort: Number(
-      input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
-        HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
-    ),
-    hermesDashboardTui: hermesTuiEnabled(input.env),
-  });
+function expectedHermesConsumerEvidence(input: HermesConfigExportLiveInput): V1ParseSummary {
   return {
-    revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
-    compiledSandboxes: 1,
-    hermesNativeSettings: { [input.sandboxName]: nativeSettings },
-    openclawNativeSettingsVerified: 0,
-    hermesNativeSettingsVerified: 1,
+    revision: V1ALPHA1_CHECKED_REVISION,
+    sandboxes: {
+      [input.sandboxName]: {
+        harnessKind: "nvidia.fabric.hermes",
+        imageRef: V1_IMAGE_REF_PLACEHOLDER,
+        integrationRefs: [],
+      },
+    },
+    integrations: {},
   };
 }
 
-function comparableHermesConsumerEvidence(
-  evidence: PinnedV1ConsumerEvidence,
-  sandboxName: string,
-): PinnedV1ConsumerEvidence {
-  const nativeSettings = evidence.hermesNativeSettings?.[sandboxName];
-  return {
-    revision: evidence.revision,
-    compiledSandboxes: evidence.compiledSandboxes,
-    hermesNativeSettings: nativeSettings ? { [sandboxName]: nativeSettings } : {},
-    openclawNativeSettingsVerified: evidence.openclawNativeSettingsVerified,
-    hermesNativeSettingsVerified: evidence.hermesNativeSettingsVerified,
-  };
+function parseWithPinnedV1(raw: string): V1ParseSummary {
+  const consumer = createV1ParseConsumer();
+  try {
+    return summarizeV1Parse(consumer.parse(raw));
+  } finally {
+    consumer.dispose();
+  }
 }
 
 function validateHermesConsumers(
   input: HermesConfigExportLiveInput,
   nemoclawRaw: string,
   nemohermesRaw: string,
-): HermesPinnedV1ConsumerEvidence {
+): HermesV1ParseSummary {
   const expected = expectedHermesConsumerEvidence(input);
-  const actual: HermesPinnedV1ConsumerEvidence["actual"] = {};
-  const validate = input.validateWithPinnedV1 ?? validateConfigExportWithPinnedV1;
-  try {
-    actual.nemoclaw = comparableHermesConsumerEvidence(validate(nemoclawRaw), input.sandboxName);
-    actual.nemohermes = comparableHermesConsumerEvidence(
-      validate(nemohermesRaw),
-      input.sandboxName,
-    );
-  } catch {
-    return { expected, actual, passed: false };
+  const actual: HermesV1ParseSummary["actual"] = {};
+  const validate = input.validateWithPinnedV1 ?? parseWithPinnedV1;
+  for (const [alias, raw] of [
+    ["nemoclaw", nemoclawRaw],
+    ["nemohermes", nemohermesRaw],
+  ] as const) {
+    try {
+      actual[alias] = validate(raw);
+    } catch (error) {
+      const diagnostic = redactString(
+        error instanceof Error ? error.message : String(error),
+        input.redactionValues,
+      );
+      const diagnosticSafe = inspectConfigExportArtifactSafety(
+        diagnostic,
+        input.redactionValues,
+        diagnostic,
+      ).knownSecretsAbsent;
+      return {
+        expected,
+        actual,
+        passed: false,
+        failure: {
+          alias,
+          operation: "parse-export-with-pinned-v1",
+          revision: V1ALPHA1_CHECKED_REVISION,
+          diagnostic: (diagnosticSafe
+            ? diagnostic
+            : "[REDACTED] Consumer diagnostic contained credential material."
+          ).slice(0, 2000),
+        },
+      };
+    }
   }
   return {
     expected,
@@ -213,35 +236,6 @@ function hermesTuiEnabled(env: NodeJS.ProcessEnv): boolean {
   return ["1", "true", "yes", "on"].includes(
     (env.NEMOCLAW_HERMES_DASHBOARD_TUI ?? "0").toLowerCase(),
   );
-}
-
-function expectedHermesInterfaces(input: HermesConfigExportLiveInput) {
-  const targetDefaults = V1ALPHA1_RUNTIME_DEFAULTS.hermes.interfaces;
-  const port = Number(input.env.NEMOCLAW_DASHBOARD_PORT ?? HERMES_INTERFACE_DEFAULTS.dashboardPort);
-  const internalPort = Number(
-    input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
-      HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
-  );
-  const apiPort = Number(input.env.NEMOCLAW_HERMES_API_PORT ?? HERMES_INTERFACE_DEFAULTS.apiPort);
-  const api = apiPort === targetDefaults.api.port ? undefined : { port: apiPort };
-  if (!input.dashboardEnabled) {
-    return {
-      ...(targetDefaults.dashboard.enabled ? { dashboard: { enabled: false as const } } : {}),
-      ...(api ? { api } : {}),
-    };
-  }
-  const tuiEnabled = hermesTuiEnabled(input.env);
-  return {
-    dashboard: {
-      enabled: true,
-      ...(port === targetDefaults.dashboard.port ? {} : { port }),
-      ...(internalPort === targetDefaults.dashboard.internalPort ? {} : { internalPort }),
-      ...(tuiEnabled === targetDefaults.dashboard.tuiEnabled
-        ? {}
-        : { tui: { enabled: tuiEnabled } }),
-    },
-    ...(api ? { api } : {}),
-  };
 }
 
 async function dashboardRuntimeMatches(input: HermesConfigExportLiveInput): Promise<boolean> {
@@ -350,51 +344,73 @@ export async function verifyHermesConfigExportLive(
     entry.credentialEnv.length > 0 &&
     entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
   const expectsMessagingRefusal = hasExportExcludedMessaging(entry);
-  const expectedRefusals = [
-    ...(expectsMessagingRefusal ? [MESSAGING_REFUSAL] : []),
-    ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
-    ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
-  ];
-  if (expectedRefusals.length > 0 || !launchersSucceeded) {
-    if (expectedRefusals.length > 0) {
-      const expectedDiagnostic = ["Config export failed (unsupported).", ...expectedRefusals].join(
-        "\n",
+  const expectsRefusal =
+    expectsMessagingRefusal || entry.openshellDriver === "podman" || expectsCredentialHttpRefusal;
+  if (expectsRefusal || !launchersSucceeded) {
+    if (expectsRefusal) {
+      const diagnostics = [nemoclawDiagnostics, nemohermesDiagnostics];
+      const categories = diagnostics.map(refusalCategories);
+      const findings = diagnostics.map(refusalFindings);
+      const findingSets = findings.map((values) =>
+        [
+          ...new Set(values.map((finding) => finding && `${finding.field} (${finding.category})`)),
+        ].sort(),
       );
-      const refusalDiagnosticMatches = [nemoclawDiagnostics, nemohermesDiagnostics].every(
-        (diagnostic) => {
-          if (!expectsMessagingRefusal) return diagnostic === expectedDiagnostic;
-          const [header, ...findings] = diagnostic.split("\n");
-          const categories = /^Config export failed \(([^)]+)\)\.$/u
-            .exec(header ?? "")?.[1]
-            ?.split(", ");
-          const expectedCategories = [
-            "unsupported",
-            ...(findings.includes(POLICY_REFUSAL) ? ["policy-not-representable"] : []),
-          ];
-          return (
-            categories?.length === expectedCategories.length &&
-            expectedCategories.every((category) => categories.includes(category)) &&
-            expectedRefusals.every((refusal) => findings.includes(refusal)) &&
-            findings.every(
-              (finding) =>
-                expectedRefusals.includes(finding) ||
-                MESSAGING_ADDITIONAL_REFUSALS.includes(finding),
-            )
-          );
-        },
+      const allowedCategories = ["unsupported", "policy-not-representable"];
+      const refusalCategoriesMatch = categories.every(
+        (values, index) =>
+          values.includes("unsupported") &&
+          new Set(values).size === values.length &&
+          values.every((category) => allowedCategories.includes(category)) &&
+          isDeepStrictEqual(
+            values,
+            [...new Set(findings[index]!.map((finding) => finding?.category))].sort(),
+          ),
       );
-      const refusalCategory = refusalDiagnosticMatches ? "unsupported" : null;
+      const expectedFields = [
+        ...(expectsCredentialHttpRefusal ? ["spec.inferenceProviders[].credential"] : []),
+        ...(entry.openshellDriver === "podman" ? ["spec.sandboxes[].runtime.provider"] : []),
+        ...(expectsMessagingRefusal ? ["spec.sandboxes[].integrations.messaging"] : []),
+      ];
+      const allowedFields = [
+        ...expectedFields,
+        ...(expectsMessagingRefusal
+          ? ["source.sandbox.providers", "source.workload.startupProfile"]
+          : []),
+      ];
+      const refusalCausesMatch = findings.every(
+        (values) =>
+          expectedFields.every((field) =>
+            values.some(
+              (finding) => finding?.field === field && finding.category === "unsupported",
+            ),
+          ) &&
+          values.every(
+            (finding) =>
+              finding !== null &&
+              ((finding.category === "unsupported" && allowedFields.includes(finding.field)) ||
+                (finding.category === "policy-not-representable" &&
+                  finding.field === "spec.sandboxes[].network.policy")),
+          ),
+      );
       const evidence: HermesConfigExportExpectedRefusalEvidence = {
         outcome: "expected-refusal",
         aliasesEquivalent:
           nemoclaw.exitCode === 2 &&
           nemohermes.exitCode === 2 &&
-          nemoclawDiagnostics === nemohermesDiagnostics,
+          isDeepStrictEqual(categories[0], categories[1]) &&
+          isDeepStrictEqual(findingSets[0], findingSets[1]),
         checked: true,
-        credentialValuesOmitted: !containsCredential,
+        credentialValuesOmitted:
+          !containsCredential &&
+          diagnostics.every(
+            (diagnostic) =>
+              inspectConfigExportArtifactSafety(diagnostic, input.redactionValues, diagnostic)
+                .knownSecretsAbsent,
+          ),
         outputFilesAbsent: !fs.existsSync(nemoclawPath) && !fs.existsSync(nemohermesPath),
-        refusalCategory,
-        refusalDiagnosticMatches,
+        refusalCausesMatch,
+        refusalCategoriesMatch,
       };
       await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
       return { checked: true, passed: passesHermesConfigExportLiveEvidence(evidence) };
@@ -413,8 +429,8 @@ export async function verifyHermesConfigExportLive(
       credentialValuesOmitted: !containsCredential,
       identityDriftPreventedPublication: false,
       identityDriftReported: false,
-      managedImageIsOmitted: false,
-      interfacesMatch: false,
+      managedImageIsPlaceholder: false,
+      interfacesOmitted: false,
       dashboardRuntimeMatches: false,
       inferenceEndpointMatches: false,
       launchersSucceeded,
@@ -433,14 +449,19 @@ export async function verifyHermesConfigExportLive(
   ].every(({ internalTransportsAbsent, knownSecretsAbsent }) => {
     return internalTransportsAbsent && knownSecretsAbsent;
   });
-  const sandbox = nemoclawDocument.spec.sandboxes[0]!;
-  const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
+  const [exportedSandboxName, sandbox] = Object.entries(nemoclawDocument.spec.sandboxes)[0]!;
+  const hostedProvider = Object.values(nemoclawDocument.spec.inferenceProviders)[0] as
+    | { credential?: { env?: string }; endpoint?: string }
+    | undefined;
   const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(entry.gatewayName ?? ""),
     sandboxName: input.sandboxName,
-    scope: "effective",
+    scope: "base",
   });
-  const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
+  // Compare in the export's own projection (TLS spellings, omitted sections), not a second copy.
+  const expectedPolicy = policy.ok
+    ? exportedExplicitPolicy(YAML.parse(policy.value.document))
+    : null;
   const consumer = validateHermesConsumers(input, nemoclawRaw, nemohermesRaw);
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");
@@ -503,8 +524,8 @@ export async function verifyHermesConfigExportLive(
     identityDriftReported:
       nemoclawDriftDiagnostics.includes("drifted") &&
       nemohermesDriftDiagnostics.includes("drifted"),
-    managedImageIsOmitted: !("image" in sandbox),
-    interfacesMatch: isDeepStrictEqual(sandbox.harness.interfaces, expectedHermesInterfaces(input)),
+    managedImageIsPlaceholder: sandbox.image.ref === V1_IMAGE_REF_PLACEHOLDER,
+    interfacesOmitted: !("settings" in sandbox.harness),
     dashboardRuntimeMatches: await dashboardRuntimeMatches(input),
     inferenceEndpointMatches: hostedProvider?.endpoint === entry.endpointUrl,
     launchersSucceeded,
@@ -514,7 +535,7 @@ export async function verifyHermesConfigExportLive(
         (sandbox.network.policy.explicit as { network_policies?: unknown }).network_policies,
         (expectedPolicy as { network_policies?: unknown }).network_policies,
       ),
-    sandboxNameMatches: sandbox.name === input.sandboxName,
+    sandboxNameMatches: exportedSandboxName === input.sandboxName,
   };
   const passed = passesHermesConfigExportLiveEvidence(evidence);
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);

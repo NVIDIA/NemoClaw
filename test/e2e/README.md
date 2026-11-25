@@ -1062,11 +1062,32 @@ of credential values. It then changes the fixture's recorded sandbox fingerprint
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
+The shared Hermes export fixture checks refusal exit status 2, matching expected category sets,
+a matching field for each active refusal cause, absence of output files, and omission of credential
+values. Refusal detail wording is incidental and can change during redaction. Redaction erases the
+credential finding's category token. The fixture normalizes that finding to the source contract's
+`unsupported` category; it cannot establish the original token. Domain config-export tests own the
+original category and exact refusal messages. Live evidence checks the field for each active
+expected refusal cause, the header, exit status, and absence of output files and credential values.
+Both launchers must report the same normalized field/category set. Every finding must identify an
+allowed cause, and the header must match the normalized finding categories.
+The effective-policy refusal is allowed alongside any expected source refusal when its finding is present.
+A pinned-V1 consumer exception still fails validation. Its evidence records the launcher alias,
+pinned revision, operation, and a redacted diagnostic limited to 2,000 characters, while preserving
+any earlier successful launcher result. A diagnostic containing encoded credential material is replaced
+with a fixed non-sensitive message. Support tests cover exceptions from each alias, redaction,
+bounded evidence, private-file cleanup, and parsed-document mismatches.
+
+The Hermes security catalogue profile installs the checksum-verified pinned V1 `protoc` through
+a first-party action pinned to a reviewed main commit, before candidate checkout and Docker Hub
+authentication. The installer runs from the action directory, not the candidate workspace. The pinned
+consumer compiler finds this binary through `PATH`.
+
 The `hermes-discord` target owns the live messaging refusal boundary for #12987. After Discord
 onboarding, it requires the persisted sandbox state to contain the configured Discord channel, then
 uses the shared Hermes export fixture to run both real CLI launchers. Both must refuse the unsupported
 messaging state without publishing a file or exposing credentials. The E2E support tests cover the
-deterministic refusal selection and diagnostic comparison.
+deterministic refusal selection and category comparison.
 The target owns the shared export fixture in the catalogue so fixture changes select this live check.
 The target removes redundant CLI-presence, sandbox-list, and standalone provider-get probes: later
 live commands use both CLIs, read the persisted sandbox entry, and require the named provider to be
@@ -1347,7 +1368,7 @@ The GPU memory-offload assertion also rejects a missing matching process because
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies attached-Ollama and fixed managed-vLLM configuration export on
-native Linux Docker. Each scenario runs the candidate CLI, checks its named service and `image: null`,
+native Linux Docker. Each scenario runs the candidate CLI, checks its named service and placeholder `image`,
 rejects credential disclosure, and retains the generated YAML. The existing CUDA, authentication,
 and inference lifecycle scenarios remain separate. The catalogue allows 150 minutes for this target.
 The fixture retries read-only daemon readiness checks on connection refusal or curl

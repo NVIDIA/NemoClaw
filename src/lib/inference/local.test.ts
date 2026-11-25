@@ -866,6 +866,24 @@ describe("local inference helpers", () => {
     expect(result?.detail).toContain("reachable");
   });
 
+  it("tells the operator to verify host Ollama when the proxy's backend answers 5xx", () => {
+    const result = probeOllamaAuthProxyHealth({
+      loadOllamaProxyTokenImpl: () => "token",
+      runCurlProbeImpl: () => ({
+        ok: false,
+        httpStatus: 502,
+        curlStatus: 0,
+        body: "",
+        stderr: "",
+        message: "HTTP 502",
+      }),
+    });
+    expect(result?.ok).toBe(false);
+    expect(result?.failureLabel).toBe("unhealthy");
+    expect(result?.detail).toContain("backend returned HTTP 502");
+    expect(result?.detail).toContain("Verify host Ollama");
+  });
+
   it("reports the auth proxy as unhealthy when the auth config cannot be prepared", () => {
     const spy = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
       throw new Error("mkdtemp failed");
