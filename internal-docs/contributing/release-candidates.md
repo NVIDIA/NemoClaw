@@ -16,9 +16,40 @@ The earlier `v0.1.0-rc1` through `v0.1.0-rc12` tags and their draft releases wer
 The development branch provides desired-state YAML, a Rust SDK, the `onboard`/`plan`/`apply`/`export`/`destroy` CLI, and a bundled OpenTofu provider.
 Refer to [the overview](../../docs/about/overview.md) for implemented boundaries and [the CLI reference](../../docs/references/cli.md) for commands.
 
-### Changes Since v0.1.0-rc12
+### Changes Since v0.1.0-rc.5
 
-These changes reached `v1` after `1636069b91`, the commit that `v0.1.0-rc12` tagged.
+These changes reached `v1` after `6da649ac6c`, the commit that `v0.1.0-rc.5` tagged.
+[Breaking changes](#breaking-changes-since-v010-rc5) are listed separately.
+
+Plan and apply:
+
+- Plan, apply, and the SDK's `Document::parse` and `Document::validate` report every configuration error they find, in document order, and list the first 20 ([#14834](https://github.com/NVIDIA/NemoClaw/issues/14834)).
+  Each error names its document path in the schema's style, such as `spec.sandboxes.coding.agent.auth`, with its line and column when the document came from a file.
+  `-o json` lists the errors in `error.diagnostics` beside `error.message`, and the `nemoclaw onboard` review shows a semantic error under its field with its reason.
+  The checks after the schema run only on a document the schema accepts, and a sandbox's checks still stop at its first error.
+  See [correcting a document validation error](../../docs/observability/troubleshooting.md#correcting-a-document-validation-error).
+  Before, parsing stopped at the first error, most checks after the schema named no field, reference errors wrote paths such as `spec.sandboxes[bob].agent.inferenceRef`, and onboarding showed a semantic error as `: sdk-semantic`.
+- When `nemoclaw plan -` reads its document from standard input and suggests applying it, it suggests `nemoclaw apply -`, which applies the same input ([#14861](https://github.com/NVIDIA/NemoClaw/issues/14861)).
+  Before, it suggested `nemoclaw apply ./-`, which names a file called `-` and fails.
+- The OpenTofu configuration that NemoClaw writes leaves out an empty map block, which OpenTofu reads as an empty map ([#14871](https://github.com/NVIDIA/NemoClaw/issues/14871)).
+  An explicit sandbox policy with `network_policies: {}`, which grants no general egress, now plans and applies, and `nemoclaw export` returns it unchanged.
+  Before, plan failed with `Missing block label`.
+
+Onboarding:
+
+- The `nemoclaw onboard` review reports a sandbox whose `network.policyRef` selects a policy from `spec.policies` as running an explicit policy, and lists the grants that its `grantRefs` select with its inline grants, in name order ([#14860](https://github.com/NVIDIA/NemoClaw/issues/14860)).
+  Before, the review read only the sandbox's inline `network.policy` and `network.grants`, so it described such a sandbox as isolated and left out its referenced grants.
+
+Documentation:
+
+- [Deploying to Kubernetes](../../docs/build-deploy/kubernetes.md) describes a managed gateway and an external gateway as separate procedures, and [deploying to OpenShift](../../docs/build-deploy/openshift.md) covers what differs on OpenShift: the internal registry, `restricted-v2`, the pass-through Route, an external gateway on `openshift: {}`, and `Retain` volumes after destroy ([#14869](https://github.com/NVIDIA/NemoClaw/issues/14869)).
+  The Kubernetes guide now offers `expose.route` only on `openshift`, lists every setting that is fixed after the first apply, and runs its OIDC, OpenShell CLI, and registry commands in the example's namespace.
+- The [migration guide](../../docs/get-started/migration.md) and [current limits](../../docs/resources/limits.md) link the [roadmap milestones](https://github.com/NVIDIA/NemoClaw/milestones), which track planned work, including planned NemoClaw v0 features for Agent Configs ([#14872](https://github.com/NVIDIA/NemoClaw/issues/14872)).
+
+### Changes in v0.1.0-rc.5
+
+These changes reached `v1` between `1636069b91`, the commit that `v0.1.0-rc12` tagged, and the `v0.1.0-rc.5` tag, so they span `v0.1.0-rc.1` through `v0.1.0-rc.5`.
+[Breaking changes](#breaking-changes-in-v010-rc5) are listed separately.
 
 Bundles:
 
@@ -416,18 +447,23 @@ Examples and builds:
 Earlier CLI commands, schemas, and state formats have no compatibility guarantees.
 See [migration](../../docs/get-started/migration.md) for where each earlier task lives now, and [state](../../docs/build-deploy/state.md) for data preservation.
 
-### Breaking Changes Since v0.1.0-rc12
+### Breaking Changes Since v0.1.0-rc.5
 
-These changes since `1636069b91`, the commit that `v0.1.0-rc12` tagged, affect existing deployments or documents:
+These changes since `6da649ac6c`, the commit that `v0.1.0-rc.5` tagged, affect existing deployments or documents:
 
-- The intent record is now version 33, so this release refuses any deployment that `v0.1.0-rc12` or an earlier build of this branch created, without changing its state.
-  Destroy each one with the bundle that created it, then create it again with this release.
-  See [compatibility](../../docs/references/compatibility.md#deployment-state).
-- The NemoClaw providers `openshell`, `fabric`, `vllm`, `ollama`, and `host` moved to the address `nvidia.github.io/nemoclaw/NAME` from `nvidia/NAME` on `registry.opentofu.org` ([#14767](https://github.com/NVIDIA/NemoClaw/issues/14767)).
+- The NemoClaw providers `openshell`, `fabric`, `vllm`, `ollama`, and `host` moved to the address `nvidia.github.io/nemoclaw/NAME` from `nvidia/NAME` on `registry.opentofu.org` ([#14873](https://github.com/NVIDIA/NemoClaw/issues/14873)).
   OpenTofu state records each resource's provider address, so this release can't plan a deployment whose state records the earlier address.
   Destroy each CLI deployment with the release that created it before upgrading, then create it again with this release.
   For an HCL project, run `tofu state replace-provider nvidia/NAME nvidia.github.io/nemoclaw/NAME` for each NemoClaw provider in the state, where OpenTofu reads `nvidia/NAME` as the earlier address on `registry.opentofu.org`.
   Then change each NemoClaw provider's `source` in `required_providers`, and the CLI configuration's `include` and `exclude` lists, to the new address, as [the OpenTofu project guide](../../docs/build-deploy/opentofu-project.md#installing-the-providers-from-a-bundle) shows, and run `tofu init`.
+
+### Breaking Changes in v0.1.0-rc.5
+
+These changes between `1636069b91`, the commit that `v0.1.0-rc12` tagged, and the `v0.1.0-rc.5` tag affect existing deployments or documents:
+
+- The intent record is now version 33, so this release refuses any deployment that `v0.1.0-rc12` or an earlier build of this branch created, without changing its state.
+  Destroy each one with the bundle that created it, then create it again with this release.
+  See [compatibility](../../docs/references/compatibility.md#deployment-state).
 - Agent images register the Fabric workflow targets they install, so plan checks a sandbox with a `workflow` against Fabric's compatibility check too ([#14600](https://github.com/NVIDIA/NemoClaw/issues/14600)).
   A document that sets a field the workflow's adapter doesn't accept, such as a route's `maxTokens` for NOOA, or a `workflow.target_id` the image doesn't register, now fails plan naming that field.
   Before, plan passed it and the agent failed to start after apply created resources.
