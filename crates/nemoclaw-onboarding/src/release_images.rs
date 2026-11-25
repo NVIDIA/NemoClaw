@@ -42,8 +42,10 @@ pub(super) async fn load(
     match fetched.and_then(|bytes| capabilities.clone().with_release_pins(&bytes, &tag)) {
         Ok(enriched) => Ok(enriched),
         Err(_) => {
+            let build_guide =
+                nemoclaw_sdk::documentation_url(nemoclaw_authoring::BUILD_AGENT_IMAGES);
             eprintln!(
-                "Release image suggestions are unavailable for {tag}. Local images and manual digest entry remain available; see the release's image list or source build guide."
+                "Release image suggestions are unavailable for {tag}. Choose a local image or enter a digest. Build guide: {build_guide}"
             );
             Ok(capabilities)
         }

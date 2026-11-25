@@ -131,11 +131,15 @@ impl Capabilities {
 
     /// Which release supplied this suggestion, not proof of runtime compatibility.
     pub fn image_release(&self, reference: &str) -> Option<&str> {
-        self.release_images
+        if self
+            .release_images
             .values()
             .any(|images| images.iter().any(|image| image == reference))
-            .then_some(self.release_tag.as_deref())
-            .flatten()
+        {
+            self.release_tag.as_deref()
+        } else {
+            None
+        }
     }
 }
 
