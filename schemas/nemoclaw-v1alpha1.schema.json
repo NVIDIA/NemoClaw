@@ -1061,12 +1061,12 @@
           "description": "Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead."
         },
         "ref": {
-          "description": "Immutable image reference, pinned by SHA-256 digest. Required on every gateway target; build one as described in the agent image build instructions.",
-          "errorMessage": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images",
+          "description": "Immutable image reference, pinned by SHA-256 digest. Required on every gateway target. Use the selected release's image digest or build from the same source revision. Onboarding links the matching image build and registry-access guides.",
+          "errorMessage": "image.ref must name an agent image pinned by a SHA-256 digest; use the selected release's image digest or build an image from the same source revision, following docs/build-deploy/build.md#building-agent-images in that source (onboarding links the matching guide)",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
-          "patternErrorMessage": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images",
+          "patternErrorMessage": "image.ref must name an agent image pinned by a SHA-256 digest; use the selected release's image digest or build an image from the same source revision, following docs/build-deploy/build.md#building-agent-images in that source (onboarding links the matching guide)",
           "type": "string",
-          "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"
+          "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; use the selected release's image digest or build an image from the same source revision, following docs/build-deploy/build.md#building-agent-images in that source (onboarding links the matching guide)"
         }
       },
       "required": [
@@ -3609,8 +3609,8 @@
         "image": {
           "$ref": "#/$defs/Image",
           "description": "Immutable agent image that contains the selected Fabric adapter and, on Kubernetes, is compatible with the gateway's runtime user and group IDs. Required: no default image is published.",
-          "errorMessage": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images",
-          "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"
+          "errorMessage": "image.ref must name an agent image pinned by a SHA-256 digest; use the selected release's image digest or build an image from the same source revision, following docs/build-deploy/build.md#building-agent-images in that source (onboarding links the matching guide)",
+          "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; use the selected release's image digest or build an image from the same source revision, following docs/build-deploy/build.md#building-agent-images in that source (onboarding links the matching guide)"
         },
         "inferenceProviders": {
           "additionalProperties": {

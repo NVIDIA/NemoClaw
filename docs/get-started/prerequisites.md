@@ -60,6 +60,7 @@ After apply, the [first-deployment guide](first-deployment.md#sending-a-verifica
 To run the release CLI, use a [verified archive](install.md); no Rust, compiler, or image build tools are needed. For a source build, use the [build guide](../build-deploy/build.md) from the revision you build. Keep the resulting bundle intact for the lifetime of its deployments.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
+Windows ARM64 clients use [Linux ARM64 through WSL2](from-source.md), with the Linux toolchain and Docker Desktop integration enabled for that distribution.
 `CI / Bundle` builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64.
 These builds and tests don't qualify GPU deployment on every platform.
 

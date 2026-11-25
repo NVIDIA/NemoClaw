@@ -61,6 +61,24 @@ fn docker() -> Command {
     command
 }
 
+/// Reject Docker's classic store before an agent build can lose its manifest
+/// digest. Other engines must retain digests, but need not use containerd.
+pub fn check_image_store() -> Result<()> {
+    let bytes = output(
+        docker().args(["info", "--format", "{{json .}}"]),
+        "check the image store; start Docker Desktop or the selected daemon first",
+    )?;
+    let info: Value =
+        serde_json::from_slice(&bytes).map_err(|_| "unreadable Docker engine information")?;
+    if matches!(
+        info["Driver"].as_str(),
+        Some("overlay2" | "aufs" | "devicemapper")
+    ) {
+        return Err("The selected Docker engine uses the classic image store, which does not retain repository digests for local agent builds. Enable the containerd image store and rebuild; see docs/build-deploy/build.md#checking-the-docker-image-store. Existing stores remain separate.".into());
+    }
+    Ok(())
+}
+
 fn output_of(command: &mut Command, what: &str) -> Result<Vec<u8>> {
     output(command, what)
 }

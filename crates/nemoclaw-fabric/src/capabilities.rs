@@ -454,6 +454,19 @@ pub struct AgentImagesObservation {
     pub status: nemoclaw_backend::ObservationStatus,
     pub reason: Option<String>,
     pub references: Vec<String>,
+    /// Engine metadata for identifying a choice, never a compatibility claim.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub details: std::collections::BTreeMap<String, AgentImageDetails>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentImageDetails {
+    pub tags: Vec<String>,
+    /// Creation time reported by the engine, in Unix seconds.
+    pub created: Option<i64>,
+    /// The image's OCI revision label, when advertised; not verified source provenance.
+    pub revision: Option<String>,
 }
 
 impl FabricObservation {

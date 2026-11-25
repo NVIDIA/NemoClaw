@@ -53,6 +53,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/containerd-store
+        if: inputs.run
       # Image builds copy the remote files versions.json pins, which both
       # platforms download once per pin change.
       - name: Restore and save the verified image sources

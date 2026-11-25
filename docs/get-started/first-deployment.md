@@ -3,6 +3,9 @@
 
 # Deploying Your First OpenClaw Agent
 
+For Windows ARM64, use [onboarding from source](from-source.md), which builds the current checkout in WSL2 and creates a managed gateway.
+This tutorial instead uses the v0.1.0 release and an existing gateway, with a shell on Linux or macOS.
+
 Use NemoClaw Agent Configs v0.1.0 to deploy one OpenClaw agent and verify a reply. This exercise uses an existing OpenShell gateway and inference service. NemoClaw manages the deployment's workspace and sandbox, not the gateway or model server.
 
 ## Preparing the Tools and Services

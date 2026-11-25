@@ -71,6 +71,8 @@ The file names credential variables, not values.
    The summary describes the resulting default network access.
 6. Press **Enter** on the review screen to save.
    The CLI prints `plan` and `apply` commands for the saved path but does not run either command.
+   It repeats missing credential references and names the first operation that needs each one.
+   Interactive apply prompts for missing required values with hidden terminal input; non-interactive runs require them in the environment.
 
 ## Planning the Saved Configuration
 

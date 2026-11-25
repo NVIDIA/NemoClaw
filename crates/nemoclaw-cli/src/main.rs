@@ -105,7 +105,7 @@ async fn run() -> ExitCode {
         Ok(dispatch::CommandResult::Operation(result)) => {
             Some(telemetry::succeeded(operation, &result.changes))
         }
-        Ok(dispatch::CommandResult::Authored(Some(_))) => {
+        Ok(dispatch::CommandResult::Authored { path: Some(_), .. }) => {
             Some(telemetry::succeeded(operation, &[]))
         }
         Ok(_) => None,

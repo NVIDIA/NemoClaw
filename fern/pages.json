@@ -41,6 +41,11 @@
           "slug": "install"
         },
         {
+          "title": "Onboarding From Source on macOS or WSL2",
+          "source": "docs/get-started/from-source.md",
+          "slug": "from-source"
+        },
+        {
           "title": "Deploying Your First OpenClaw Agent",
           "source": "docs/get-started/first-deployment.md",
           "slug": "get-started"

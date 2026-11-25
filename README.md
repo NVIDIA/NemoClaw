@@ -14,6 +14,8 @@ Choose agents, models, tools, and network access, then preview and apply deploym
 
 [Install the v0.1.0 CLI](docs/get-started/install.md) and follow the [first-deployment tutorial](docs/get-started/first-deployment.md) to verify an OpenClaw reply.
 
+On Windows ARM64, which has no native bundle, [onboard from source in WSL2](docs/get-started/from-source.md).
+
 <a href="docs/get-started/first-deployment.md#gh-light-mode-only">
   <picture>
     <source media="(max-width: 700px)" srcset="docs/assets/deployment-workflow-mobile-light.svg">
@@ -71,6 +73,7 @@ The [43-second lifecycle recording](docs/assets/terminal-lifecycle-verbose.mp4) 
 - [Browse shipped examples by use case and environment](examples/README.md).
 - [Explore community recipes](#community-recipes).
 - [Build NemoClaw from source](docs/build-deploy/build.md) for a custom revision or build-only target.
+- [Build and onboard from source](docs/get-started/from-source.md) on an Apple silicon Mac or in WSL2.
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).

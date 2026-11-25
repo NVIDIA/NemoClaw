@@ -27,7 +27,7 @@ The following table lists what this guide builds and which deployments need each
 | Artifact | Build Host | Result | Needed By |
 |---|---|---|---|
 | [Native bundle](#building-a-native-bundle) | The client's platform, or another target with its toolchain | `dist/PLATFORM`, with the CLI in `dist/PLATFORM/bin` | Every deployment, through the CLI or the [Rust SDK](../references/sdk.md) |
-| [Agent image](#building-agent-images) | Native Linux ARM64 or AMD64, matching the sandbox host | A local image such as `nc-fabric:openclaw`, selected by digest in `sandboxes.<name>.image.ref` | Every sandbox |
+| [Agent image](#building-agent-images) | Linux ARM64 or AMD64 engine, matching the sandbox host; includes Docker Desktop ARM64 for the macOS Hermes path | A local image such as `nc-fabric:openclaw`, selected by digest in `sandboxes.<name>.image.ref` | Every sandbox |
 | [Runtime image](#building-a-runtime-image) | Native Linux ARM64 or AMD64, matching the model host | A local image such as `nc-prototype-vllm:rust-v1`, selected by digest in `spec.services.<name>.image` | Deployments with a managed vLLM, Ollama, or llama.cpp service |
 
 Build the artifacts in the following order:
@@ -42,10 +42,13 @@ Build the artifacts in the following order:
 
 Run every command in this guide from the repository root.
 
+On an Apple silicon Mac or Windows ARM64, [onboarding from source](../get-started/from-source.md) connects these builds to a Hermes deployment on Docker Desktop.
+Windows ARM64 has no native bundle; use the Linux ARM64 toolchain inside WSL2.
+
 | Artifact | Requirements |
 |---|---|
 | Native bundle | Rust 1.100.0, pinned in [rust-toolchain.toml](../../rust-toolchain.toml); Protocol Buffers compiler (`protoc`) 36.2; a C toolchain for the TLS dependencies |
-| Agent images | Docker with Buildx on a native Linux ARM64 or AMD64 host; a Docker image store that retains repository digests for local builds, such as the tested containerd store; Rust, which runs the image builder and source downloader |
+| Agent images | Docker with Buildx on native Linux ARM64 or AMD64, or Docker Desktop's ARM64 Linux VM on an [Apple silicon Mac](../get-started/from-source.md); a Docker image store that retains repository digests for local builds, such as the tested containerd store; Rust, which runs the image builder and source downloader |
 | Runtime images | Docker with Buildx on a Linux ARM64 or AMD64 host; a Docker daemon that uses the containerd image store; Rust for the Ollama and llama.cpp images, which fetch their pinned sources |
 
 Initial builds need network access.
@@ -78,6 +81,10 @@ Another `protoc` 36.2 also works.
 
 ### Checking the Docker Image Store
 
+Start Docker Desktop, or your Docker daemon, before onboarding or building images.
+Run `docker version` and confirm that it reports both a client and a server.
+An installed Docker CLI without a running engine cannot discover images or deploy a sandbox.
+
 To check that a Docker daemon uses the containerd image store, run the following command against that daemon:
 
 ```sh
@@ -87,6 +94,8 @@ docker info --format '{{json .DriverStatus}}'
 The output includes `["driver-type","io.containerd.snapshotter.v1"]` when the daemon uses the containerd store.
 Runtime images require the containerd image store.
 Agent images require a store that retains repository digests for local builds, and containerd is the tested store.
+To switch Docker Desktop to the containerd store, follow [Docker's image-store instructions](https://docs.docker.com/desktop/features/containerd/).
+Check this before building; an image loaded into the classic store can have an empty `RepoDigests` list even when its build succeeds.
 
 ## Building a Native Bundle
 
@@ -141,6 +150,9 @@ To build a bundle for the host's platform and check its CLI, perform the followi
 
    `nemoclaw --version` prints the version from step 1, and `nemoclaw --help` lists `plan`, `apply`, and `destroy`.
 
+   If Classic is also installed, check which executable runs with `type -a nemoclaw` in Bash or `Get-Command nemoclaw -All` in PowerShell.
+   The first result must be the new bundle's executable.
+
 Next, [build an agent image](#building-agent-images).
 
 ### Selecting Another Target Platform
@@ -177,6 +189,8 @@ The API version alone does not identify a source revision.
 A source-derived provider version prevents reuse of a stale OpenTofu provider installation.
 Repository text uses LF on every platform, so checkout newline conversion does not change source-derived provider versions.
 
+CLI guide links use the checkout's Git commit; a build without `.git` names each guide's path in its original source instead.
+
 Keep the bundle unchanged while an operation uses it.
 A Docker or Podman deployment keeps the gateway image pin of the bundle that created it.
 Before you operate it with a bundle built from a different pin, refer to [the change path](usage.md#choosing-the-change-path).
@@ -197,7 +211,8 @@ When building from source, build an image for each harness that the deployment r
 
 Before you build an agent image, check the following:
 
-- The build host has the [agent image requirements](#preparing-the-build-host): a native Linux host whose architecture, ARM64 or AMD64, matches the image you build.
+- The build host has the [agent image requirements](#preparing-the-build-host): a Linux engine whose architecture, ARM64 or AMD64, matches the image you build.
+  For Hermes on Apple silicon, follow the [Docker Desktop procedure](../get-started/from-source.md#building-the-hermes-image).
 - The Docker image store retains repository digests for local builds; [check the store](#checking-the-docker-image-store).
 
 To build an agent image and select it, perform the following steps:

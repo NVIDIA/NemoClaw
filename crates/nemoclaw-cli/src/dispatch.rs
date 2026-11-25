@@ -13,8 +13,38 @@ use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 pub(crate) enum CommandResult {
     Export(Box<Document>),
-    Authored(Option<std::path::PathBuf>),
+    Authored {
+        path: Option<std::path::PathBuf>,
+        missing_credentials: Vec<(String, &'static str)>,
+    },
     Operation(Box<OperationResult>),
+}
+
+fn saved_document(
+    path: std::path::PathBuf,
+    document: &Document,
+    mut available: impl FnMut(&str) -> bool,
+) -> CommandResult {
+    let plan = document.plan_credential_names();
+    let missing_credentials = document
+        .credential_names()
+        .into_iter()
+        .filter(|name| !available(name))
+        .map(|name| {
+            (
+                name.to_owned(),
+                if plan.contains(&name) {
+                    "plan"
+                } else {
+                    "apply"
+                },
+            )
+        })
+        .collect();
+    CommandResult::Authored {
+        path: Some(path),
+        missing_credentials,
+    }
 }
 
 /// Runs the command, and puts in `read` the document it read: the input of
@@ -39,12 +69,18 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             nemoclaw_onboarding::Source::Template,
         );
         let saved = nemoclaw_onboarding::author(source, output, true, cancel).await?;
-        if saved {
-            *read = std::fs::File::open(output)
-                .ok()
-                .and_then(|file| Document::parse(file).ok());
-        }
-        return Ok(CommandResult::Authored(saved.then(|| output.clone())));
+        return if saved {
+            let document = document(output, tokio::io::empty(), cancel).await?;
+            *read = Some(document.clone());
+            Ok(saved_document(output.clone(), &document, |name| {
+                std::env::var(name).is_ok_and(|value| !value.is_empty())
+            }))
+        } else {
+            Ok(CommandResult::Authored {
+                path: None,
+                missing_credentials: Vec::new(),
+            })
+        };
     }
     let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), force_stop, progress)?;
     let result = match command {
@@ -123,6 +159,27 @@ mod tests {
         task::{Context, Poll},
     };
     use tokio::io::ReadBuf;
+
+    #[test]
+    fn saving_reminds_about_missing_credentials_at_the_stage_that_needs_them() {
+        let document = Document::parse(
+            include_bytes!("../../../examples/onboarding/openclaw.yaml").as_slice(),
+        )
+        .unwrap();
+        let cli = Cli::try_parse_from(["nemoclaw", "onboard"]).unwrap();
+        let result = saved_document("deployment.yaml".into(), &document, |_| false);
+        let text = crate::formatting::render(
+            result,
+            crate::args::OutputFormat::Text,
+            &crate::formatting::RenderContext::new(&cli),
+        )
+        .unwrap();
+        assert!(
+            text.contains("NVIDIA_API_KEY: not set; apply will ask"),
+            "{text}"
+        );
+        assert!(text.contains("not saved in the deployment file"), "{text}");
+    }
 
     struct ForbiddenInput;
     impl AsyncRead for ForbiddenInput {

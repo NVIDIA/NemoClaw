@@ -654,7 +654,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `metadata` | [FileRef](#fileref) | No | — | Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead. |
-| `ref` | string | Yes | — | Immutable image reference, pinned by SHA-256 digest. Required on every gateway target; build one as described in the agent image build instructions. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `ref` | string | Yes | — | Immutable image reference, pinned by SHA-256 digest. Required on every gateway target. Use the selected release's image digest or build from the same source revision. Onboarding links the matching image build and registry-access guides. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 
 ## ImagePullPolicy
 

@@ -66,7 +66,7 @@ The [headless OpenClaw request](#running-one-headless-openclaw-request) shows a 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
-Plan and apply print this command for each agent with both filled in, and JSON results report them under `agents`.
+Plan and apply print this command for each agent with both filled in, after the commands that select the deployment's gateway and workspace, and JSON results report them under `agents`.
 See [invoke an agent](interfaces.md#invoking-an-agent).
 Use `--input -` to read the value from stdin instead.
 See the [bridge commands](../../internal-docs/design/fabric-management.md#bridge-commands).
@@ -76,6 +76,34 @@ A request can incur inference charges and affect retained agent history.
 Don't assume a universal result shape.
 Check `result.status` as well as the outer `status`: the outer one only reports that `fabric-agent-ctl` completed the call, while a failed run reports `result.status: failed` with Fabric's error in `result.error`.
 `result.artifacts` names the files Fabric kept for that request, such as the adapter's output.
+
+To send a prompt from the client host and keep the full result, pipe a JSON string to `--input -` and save stdout, then show the statuses with `jq`:
+
+```sh
+printf '%s\n' '"Reply with exactly READY."' |
+  openshell sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent NAME --runtime-id ID --input - > reply.json
+jq '{status, result_status: .result.status, error: .result.error}' reply.json
+```
+
+The prompt keeps its double quotes because it is a JSON string; empty stdin is not a prompt.
+Continue only if the command exits 0 and both statuses are `succeeded`, then read the reply from the fields that the adapter's result contract names.
+Keep `reply.json` private, and review it for credentials and personal data before sharing.
+
+### Diagnosing an Authentication Failure
+
+An HTTP 401 or 403 reported by the inference request is evidence of rejection for that request; a successful model listing does not establish permission to invoke the selected model.
+Check the YAML's inference base URL, exact model, and `credential.env` reference.
+The NVIDIA Endpoints preset uses `https://integrate.api.nvidia.com/v1` and a key from [NVIDIA API Catalog](https://build.nvidia.com/settings/api-keys).
+An SSO session at `inference.nvidia.com` does not supply that API key.
+Do not infer a key's issuer or validity from its prefix.
+
+If a request to the same model and base URL through the provider's supported client also returns 401 or 403 with the same key, resolve that rejection with the provider.
+If that request succeeds while the sandbox request fails, check the deployment's selected endpoint, credential registration, and running process revision.
+Without that comparison, retain both possibilities; a 401 alone does not identify which deployment setting is wrong.
+Do not put the key in command arguments or shared debug logs.
+Use [managed credential rotation](../security/credential-rotation.md#inference-web-search-and-api-keys-you-supply) to register a replacement value and restart affected agents through apply.
+That apply replaces affected sandboxes and deletes their files and conversations except on mounted volumes; preserve required data first.
+Do not recreate the whole deployment or run `hermes setup` as the credential-update procedure.
 
 ### Running One Headless OpenClaw Request
 

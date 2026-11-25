@@ -1588,6 +1588,7 @@ fn agent_images(references: &[&str]) -> DiscoveryObservation {
     DiscoveryObservation::AgentImages(AgentImagesObservation {
         status: ObservationStatus::Available,
         reason: None,
+        details: Default::default(),
         references: references
             .iter()
             .map(|reference| (*reference).into())
@@ -1600,6 +1601,164 @@ const OLDER_HERMES_IMAGE: &str =
 const OPENCLAW_IMAGE: &str =
     "nc-fabric@sha256:4444444444444444444444444444444444444444444444444444444444444444";
 const IMAGE_QUESTION: &str = "/spec/sandboxes/assistant/image/ref";
+
+#[test]
+fn image_choices_show_engine_metadata_without_changing_the_saved_digest() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(
+        query,
+        DiscoveryObservation::AgentImages(
+            serde_json::from_value(serde_json::json!({
+                "status": "available", "reason": null,
+                "references": [HERMES_IMAGE, OLDER_HERMES_IMAGE],
+                "details": {HERMES_IMAGE: {
+                    "tags": ["hermes:local"], "created": 1795550400,
+                    "revision": "abc123"
+                }}
+            }))
+            .unwrap(),
+        ),
+    );
+    let text = flat(&screen(&wizard, 160, 45));
+    for expected in ["hermes:local", "2026-11-24", "abc123", "not advertised"] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+    wizard.advance();
+    assert_eq!(
+        wizard.state().values().pointer(IMAGE_QUESTION),
+        Some(&serde_json::json!(HERMES_IMAGE))
+    );
+}
+
+#[test]
+fn compatible_review_distinguishes_metadata_from_runtime_and_inference_checks() {
+    let wizard = reviewing_wizard_with("nvidia.fabric.hermes");
+    let resolution = wizard.state().resolve(&wizard.capabilities).unwrap();
+    let rows = super::summary::rows(
+        resolution.assessment().document().unwrap(),
+        &super::summary::Facts {
+            observations: wizard.observations(),
+            target: Some(nemoclaw_authoring::CompatibilityStatus::Compatible),
+            output: None,
+        },
+    );
+    let image = rows.iter().find(|row| row.label == "Image").unwrap();
+    assert_eq!(image.status.as_ref().unwrap().text, "metadata compatible");
+    let detail = image.detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("runtime") && detail.contains("inference"),
+        "{detail}"
+    );
+}
+
+#[test]
+fn review_names_the_full_inference_url_before_a_request_is_attempted() {
+    let document = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../../examples/onboarding/openclaw.yaml").as_slice(),
+    )
+    .unwrap();
+    let rows = super::summary::rows(
+        &document,
+        &super::summary::Facts {
+            observations: &DiscoveryObservations::new(),
+            target: None,
+            output: None,
+        },
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.value == "https://integrate.api.nvidia.com/v1")
+    );
+}
+
+#[test]
+fn review_requests_gateway_credentials_at_plan_time() {
+    let document = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../../examples/platforms/kubernetes/external-gateway.yaml")
+            .as_slice(),
+    )
+    .unwrap();
+    let mut value = serde_json::to_value(document).unwrap();
+    value["spec"]["inferenceProviders"]["inference"]["credential"]["env"] =
+        serde_json::json!("GATEWAY_TOKEN");
+    let document =
+        nemoclaw_sdk::config::Document::parse(serde_json::to_vec(&value).unwrap().as_slice())
+            .unwrap();
+    let mut observations = DiscoveryObservations::new();
+    for reference in document.plan_credential_names() {
+        observations.record(
+            DiscoveryQuery::Credential(CredentialRequest {
+                reference: reference.into(),
+            }),
+            DiscoveryObservation::Credential(CredentialObservation {
+                reference: reference.into(),
+                status: ObservationStatus::Unavailable,
+                reason: None,
+            }),
+        );
+    }
+    let rows = super::summary::rows(
+        &document,
+        &super::summary::Facts {
+            observations: &observations,
+            target: None,
+            output: None,
+        },
+    );
+    let row = rows
+        .iter()
+        .find(|row| row.value == "GATEWAY_TOKEN")
+        .unwrap();
+    assert_eq!(
+        row.status.as_ref().unwrap().text,
+        "not set (plan will ask for it)"
+    );
+}
+
+#[test]
+fn a_discovered_image_is_named_when_its_question_is_skipped() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[HERMES_IMAGE]));
+    assert_ne!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+    let text = flat(&screen(&wizard, 160, 40));
+    assert!(text.contains("Automatically selected image"), "{text}");
+    assert!(
+        text.contains("only image discovered for this harness"),
+        "{text}"
+    );
+    assert!(text.contains(HERMES_IMAGE), "{text}");
+    assert!(text.contains("back to change"), "{text}");
+}
+
+#[test]
+fn a_matching_image_without_a_digest_explains_how_to_rebuild_it() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, DiscoveryObservation::AgentImages(AgentImagesObservation {
+        status: ObservationStatus::Available,
+        reason: Some("Matching images have no repository digest. Enable the containerd image store and rebuild.".into()),
+        references: vec![],
+        details: Default::default(),
+    }));
+    let text = flat(&screen(&wizard, 160, 40));
+    assert!(text.contains("no repository digest"), "{text}");
+    assert!(text.contains("containerd"), "{text}");
+    assert!(!text.contains("No image on this engine installs"), "{text}");
+}
+
+#[test]
+fn an_image_tag_is_rejected_with_the_required_reference_format() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let error = wizard
+        .submit(Some(serde_json::json!("hermes:latest")))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("NAME@sha256:"), "{error}");
+    assert!(error.contains("repository digest"), "{error}");
+    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+}
 
 #[test]
 fn the_image_question_suggests_the_newest_of_the_local_images_that_install_the_chosen_harness() {
@@ -1775,6 +1934,7 @@ fn an_image_the_engine_could_not_list_is_still_asked() {
             status: ObservationStatus::Unknown,
             reason: Some("the engine did not answer".into()),
             references: vec![HERMES_IMAGE.into()],
+            details: Default::default(),
         }),
     );
     assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
@@ -1996,7 +2156,8 @@ fn without_a_local_image_for_the_harness_the_image_question_says_how_to_build_on
         .note()
         .expect("the question says why it suggests no image");
     assert!(
-        note.contains("https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"),
+        note.contains("/docs/build-deploy/build.md#building-agent-images")
+            && !note.contains("/blob/v1/"),
         "{note}"
     );
 }
@@ -2099,14 +2260,12 @@ async fn credentials_are_checked_when_review_opens_and_only_once() {
     assert!(credential_probe(&wizard).is_empty(), "each is checked once");
     let text = flat(&screen(&wizard, 100, 40));
     assert!(
-        text.contains("API key NVIDIA_API_KEY · could not be read (plan will ask for it)"),
+        text.contains("API key NVIDIA_API_KEY · could not be read (apply will ask for it)"),
         "{text}"
     );
     // The key may be set but unreadable here, so getting a new one is no fix.
-    assert!(
-        text.contains("Run export NVIDIA_API_KEY=... before nemoclaw plan"),
-        "{text}"
-    );
+    assert!(text.contains("hidden input"), "{text}");
+    assert!(!text.contains("export NVIDIA_API_KEY="), "{text}");
     assert!(!text.contains("Get a key at"), "{text}");
 }
 
@@ -2158,13 +2317,16 @@ async fn review_reads_the_image_once_and_says_how_to_get_an_absent_one() {
     for (width, height) in [(160, 40), (80, 30)] {
         let text = flat(&screen(&wizard, width, height));
         assert!(text.contains("not present"), "{width}x{height}: {text}");
-        // The link wraps on a narrow screen.
-        let link = if width >= 100 {
-            "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"
-        } else {
-            "building-agent-images"
-        };
-        assert!(text.contains(link), "{width}x{height}: {text}");
+        // Source-pinned links can wrap within any path segment.
+        let unwrapped: String = text
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '"')
+            .collect();
+        assert!(
+            unwrapped.contains("/docs/build-deploy/build.md#building-agent-images"),
+            "{width}x{height}: {text}"
+        );
+        assert!(!text.contains("/blob/v1/"), "{text}");
         assert!(!text.contains("not checked"), "{width}x{height}: {text}");
         assert!(
             !text.contains("not been observed"),
@@ -2224,7 +2386,7 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
         (ObservationStatus::Available, "API key NVIDIA_API_KEY · set"),
         (
             ObservationStatus::Unavailable,
-            "API key NVIDIA_API_KEY · not set (plan will ask for it)",
+            "API key NVIDIA_API_KEY · not set (apply will ask for it)",
         ),
     ] {
         let capabilities = Capabilities::available();
@@ -2257,11 +2419,7 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
             let text = flat(&screen(&wizard, width, height));
             assert!(text.contains(expected), "{width}x{height}: {text}");
             let unset = status == ObservationStatus::Unavailable;
-            // The command may wrap on a narrow screen; the URL is one word.
-            let mut hints = vec!["https://build.nvidia.com/settings/api-keys"];
-            if width >= 100 {
-                hints.push("export NVIDIA_API_KEY=...");
-            }
+            let hints = ["https://build.nvidia.com/settings/api-keys", "hidden input"];
             for hint in hints {
                 assert_eq!(
                     text.contains(hint),
@@ -2270,6 +2428,7 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
                 );
             }
             assert!(!text.contains("non-interactive"), "{text}");
+            assert!(!text.contains("export NVIDIA_API_KEY="), "{text}");
         }
         if status == ObservationStatus::Unavailable {
             // The detail wraps under the value, not back to the label column.

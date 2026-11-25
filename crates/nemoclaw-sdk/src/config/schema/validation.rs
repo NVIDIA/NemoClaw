@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 pub(crate) use nemoclaw_runtime::schema::{at, forbid, property};
 
-const IMAGE_REF_ERROR: &str = "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images";
+const IMAGE_REF_ERROR: &str = "image.ref must name an agent image pinned by a SHA-256 digest; use the selected release's image digest or build an image from the same source revision, following docs/build-deploy/build.md#building-agent-images in that source (onboarding links the matching guide)";
 fn optional_string(
     schema: &mut Value,
     field: &str,
