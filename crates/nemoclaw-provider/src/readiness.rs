@@ -48,7 +48,7 @@ fn endpoint_mode(config: &ReadinessState) -> bool {
 /// `/v1`, and no credentials, query, or fragment.
 fn base_url(url: &str, name: &'static str) -> Result<(), Error> {
     let invalid = || {
-        Error::Configuration(nemoclaw_sdk::config::ConfigError(format!(
+        Error::Configuration(nemoclaw_sdk::config::ConfigError::from(format!(
             "{name} must be an http or https URL with a host and a path ending in /v1, without credentials, query, or fragment"
         )))
     };
@@ -198,11 +198,11 @@ async fn wait_endpoint_ready(endpoint: &str, model: &str, timeout: Duration) -> 
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {
-            return Err(Error::Configuration(nemoclaw_sdk::config::ConfigError(
-                format!(
+            return Err(Error::Configuration(
+                nemoclaw_sdk::config::ConfigError::from(format!(
                     "the server does not list model {model} at its endpoint; check that it is running and serving that model"
-                ),
-            )));
+                )),
+            ));
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }

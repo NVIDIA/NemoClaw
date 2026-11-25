@@ -210,11 +210,7 @@ fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
     assert!(!output.status.success());
     let diagnostic = String::from_utf8_lossy(&output.stderr);
     assert!(
-        diagnostic.contains("configuration violates schema"),
-        "{diagnostic}"
-    );
-    assert!(
-        diagnostic.contains("spec.inferenceProviders.local")
+        diagnostic.contains("spec.inferenceProviders.local (line 1, column ")
             && diagnostic.contains("unknown fields are not allowed"),
         "{diagnostic}"
     );

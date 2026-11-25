@@ -43,7 +43,7 @@ pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
 pub use crate::artifact_pins::DEFAULT_GATEWAY_IMAGE;
 
 /// Configuration diagnostics omit credentials and arbitrary source values.
-pub use nemoclaw_runtime::config::ConfigError;
+pub use nemoclaw_runtime::config::{ConfigError, Diagnostic};
 
 /// Parse a bounded YAML value without claiming it is a complete configuration.
 /// Authoring can inspect sparse input before constructing a [`Document`].
@@ -89,7 +89,9 @@ impl Document {
             ConfigError::new("configuration contains an unknown field or invalid field type")
         })?;
         document.defaults();
-        document.validate()?;
+        document
+            .check()
+            .map_err(|error| document.locate(error, Some(&text)))?;
         Ok(document)
     }
     /// Serialize a valid configuration to YAML.

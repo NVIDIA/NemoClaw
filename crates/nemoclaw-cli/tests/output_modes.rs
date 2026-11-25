@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::fs;
+use std::{fs, process::Command};
 
 #[test]
 fn json_selection_does_not_turn_usage_errors_into_operation_results() {
@@ -226,5 +226,74 @@ fn terminal_brand_and_color_respect_streams_and_no_color() {
             assert!(!terminal.contains("38;2;"), "{terminal:?}");
             assert!(!terminal.contains("\x1b[31m"), "{terminal:?}");
         }
+    }
+}
+
+#[test]
+fn a_configuration_failure_lists_each_error_with_its_place() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("input.yaml");
+    // API-key auth whose provider has no credential, and a second sandbox
+    // whose route names a provider that doesn't exist.
+    let text = include_str!("../../../examples/agents/local.yaml").replace(
+        "        name: main\n",
+        "        name: main\n        auth:\n          method: api-key\n",
+    );
+    let helper = text[text.find("    assistant:\n").unwrap()..]
+        .replacen("    assistant:", "    helper:", 1)
+        .replace("providerRef: local", "providerRef: locl");
+    let text = format!("{text}{helper}");
+    fs::write(&config, &text).unwrap();
+    let position = |needle: &str| {
+        let before = &text[..text.find(needle).unwrap()];
+        (
+            before.matches('\n').count() + 1,
+            before.rsplit('\n').next().unwrap().chars().count() + 1,
+        )
+    };
+    let ((auth_line, auth_column), (ref_line, ref_column)) =
+        (position("method: api-key"), position("locl"));
+    for operation in ["plan", "apply"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+            .args([
+                operation,
+                "-o",
+                "json",
+                "--progress",
+                "off",
+                "--non-interactive",
+            ])
+            .arg(&config)
+            .arg("--bundle")
+            .arg(directory.path().join("missing-bundle"))
+            .arg("--state-dir")
+            .arg(directory.path().join("state"))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{operation}");
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            result["error"]["diagnostics"],
+            serde_json::json!([
+                {
+                    "path": "spec.sandboxes.assistant.agent.auth",
+                    "line": auth_line,
+                    "column": auth_column,
+                    "message": "API-key auth must reference the routed provider with a credential",
+                },
+                {
+                    "path": "spec.sandboxes.helper.agent.inference.routes[0].providerRef",
+                    "line": ref_line,
+                    "column": ref_column,
+                    "message": "unknown provider \"locl\"; visible definitions: local",
+                },
+            ]),
+            "{operation}: {result}"
+        );
+        let message = result["error"]["message"].as_str().unwrap();
+        assert!(
+            message.starts_with("2 configuration errors:\n"),
+            "{message}"
+        );
     }
 }

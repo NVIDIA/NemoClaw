@@ -180,5 +180,10 @@ fn an_external_gateway_takes_no_config() {
     let error = Document::parse(value.to_string().as_bytes())
         .unwrap_err()
         .to_string();
-    assert!(error.contains("config"), "{error}");
+    // The position is the key's, which the message never shows.
+    assert!(
+        error.starts_with("spec.gateway (line ")
+            && error.contains("unknown fields are not allowed"),
+        "{error}"
+    );
 }

@@ -6,10 +6,18 @@ use serde_json::{Value, json};
 fn input() -> Value {
     crate::support::fixture("local.yaml")
 }
+/// The one error's path and message; these one-line JSON documents put every
+/// position on line 1.
 fn error(value: Value) -> String {
-    Document::parse(value.to_string().as_bytes())
-        .unwrap_err()
-        .to_string()
+    let error = Document::parse(value.to_string().as_bytes()).unwrap_err();
+    let [diagnostic] = error.diagnostics() else {
+        panic!("{error}")
+    };
+    format!(
+        "{}: {}",
+        diagnostic.path.as_deref().unwrap_or_default(),
+        diagnostic.message
+    )
 }
 #[test]
 fn missing_references_identify_the_consumer_and_visible_names() {
@@ -33,9 +41,9 @@ fn missing_references_identify_the_consumer_and_visible_names() {
         v["spec"][definitions] = json!({"smart": definition});
         v.pointer_mut(path).unwrap()[format!("{field}Ref")] = json!("smrat");
         let consumer = if field == "harness" {
-            "spec.sandboxes[assistant].harnessRef"
+            "spec.sandboxes.assistant.harnessRef"
         } else {
-            "spec.sandboxes[assistant].agent.inferenceRef"
+            "spec.sandboxes.assistant.agent.inferenceRef"
         };
         assert_eq!(
             error(v),
@@ -47,7 +55,7 @@ fn missing_references_identify_the_consumer_and_visible_names() {
         json!("missing");
     assert_eq!(
         error(v),
-        "spec.sandboxes[assistant].agent.inference.routes[primary].providerRef: unknown provider \"missing\"; visible definitions: local"
+        "spec.sandboxes.assistant.agent.inference.routes[0].providerRef: unknown provider \"missing\"; visible definitions: local"
     );
     let mut v = input();
     v["spec"]["integrations"] =
@@ -55,7 +63,7 @@ fn missing_references_identify_the_consumer_and_visible_names() {
     v["spec"]["sandboxes"]["assistant"]["agent"]["integrationRefs"] = json!(["serach"]);
     assert_eq!(
         error(v),
-        "spec.sandboxes[assistant].agent.integrationRefs[0]: unknown integration \"serach\"; visible definitions: search"
+        "spec.sandboxes.assistant.agent.integrationRefs[0]: unknown integration \"serach\"; visible definitions: search"
     );
 }
 #[test]
@@ -76,7 +84,7 @@ fn shared_inference_does_not_suggest_sandbox_local_providers() {
     v["spec"]["sandboxes"]["assistant"]["inferenceProviders"] = providers;
     assert_eq!(
         error(v),
-        "spec.inferences[smart].routes[primary].providerRef: unknown provider \"local\"; visible definitions: (none)"
+        "spec.inferences.smart.routes[0].providerRef: unknown provider \"local\"; visible definitions: (none)"
     );
 }
 
@@ -96,7 +104,7 @@ fn visible_names_are_sorted_and_exclude_other_sandboxes() {
     v["spec"]["sandboxes"]["assistant"]["harnessRef"] = json!("missing");
     assert_eq!(
         error(v),
-        "spec.sandboxes[assistant].harnessRef: unknown harness \"missing\"; visible definitions: alpha, zulu"
+        "spec.sandboxes.assistant.harnessRef: unknown harness \"missing\"; visible definitions: alpha, zulu"
     );
 }
 
@@ -106,7 +114,10 @@ fn malformed_reference_values_are_not_echoed() {
     v["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["providerRef"] =
         json!("https://user:secret@example.com\nforged diagnostic");
     let message = error(v);
-    assert!(message.contains("schema"));
+    assert!(
+        message.starts_with("spec.sandboxes.assistant.agent.inference.routes[0].providerRef: "),
+        "{message}"
+    );
     assert!(!message.contains("secret"));
     assert!(!message.contains('\n'));
 }

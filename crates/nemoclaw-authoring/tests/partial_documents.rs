@@ -115,3 +115,31 @@ fn a_pinned_llama_cpp_document_materializes_without_loading_credentials() {
         "serving key is owned by the runtime"
     );
 }
+
+#[test]
+fn a_semantic_failure_names_its_field_and_reason() {
+    // API-key auth whose provider has no credential.
+    let yaml = include_str!("../../../examples/agents/local.yaml").replace(
+        "        name: main\n",
+        "        name: main\n        auth:\n          method: api-key\n",
+    );
+    let assessment = PartialDocument::from_yaml(yaml.as_bytes())
+        .unwrap()
+        .assess();
+    assert!(assessment.document().is_none());
+    let issues: Vec<_> = assessment
+        .issues()
+        .iter()
+        .map(|issue| (issue.path(), issue.kind(), issue.rule()))
+        .collect();
+    // A semantic issue isn't one answer's to fix, so onboarding shows it
+    // rather than asking for the field again.
+    assert_eq!(
+        issues,
+        [(
+            "/spec/sandboxes/assistant/agent/auth",
+            PartialIssueKind::Semantic,
+            "API-key auth must reference the routed provider with a credential"
+        )]
+    );
+}

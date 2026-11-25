@@ -577,12 +577,15 @@ fn definition<'a>(
         .get_key_value(name)
         .map(|(name, definition)| Some((name.as_str(), definition)))
         .ok_or_else(|| {
-            crate::config::references::missing_reference(
-                "inferenceProviders.<name>.serviceRef",
+            let error = crate::config::references::missing_reference(
                 "service",
                 name,
                 document.spec.services.keys().map(String::as_str),
-            )
+            );
+            match document.provider_pointer(provider) {
+                Some(pointer) => error.or_at(&format!("{pointer}/serviceRef")),
+                None => error,
+            }
         })
 }
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Offline validators compiled once from the SDK contract, never from a deployment file.
-use crate::config::{ConfigError, Document, RouteTuning};
+use crate::config::{ConfigError, Diagnostic, Document, RouteTuning};
 use nemoclaw_runtime::schema::{select_variant, variant_keys};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -61,26 +61,57 @@ fn compile(schema: &Value) -> jsonschema::Validator {
     jsonschema::validator_for(schema).expect("SDK configuration schema must compile")
 }
 
+/// The errors in `value`, each at its JSON pointer in `value`: the first rule
+/// a value breaks, as rules on one value tend to repeat each other.
 fn check(
     validator: &jsonschema::Validator,
     value: &Value,
     schema: &Value,
     source: Option<&str>,
 ) -> Result<(), ConfigError> {
-    validator
-        .validate(value)
-        .map_err(|error| diagnostic(&error, value, schema, source, ""))
+    let mut places = BTreeSet::new();
+    let errors = validator
+        .iter_errors(value)
+        .flat_map(|error| diagnostics(&error, schema, source, ""))
+        .filter(|diagnostic| places.insert((diagnostic.pointer.clone(), diagnostic.key.clone())))
+        .map(ConfigError::from);
+    ConfigError::collect(errors).map_or(Ok(()), Err)
 }
 
-/// `variant` is the schema location of the union variant that the input
-/// selected on the way to this error, or empty when it selected none.
-fn diagnostic(
+/// The errors `error` stands for. A union's error stands for those of the
+/// variant the input names, so they describe its fields rather than unrelated
+/// alternatives. `variant` is the schema location of the union variant that
+/// the input selected on the way to this error, or empty when it selected
+/// none.
+fn diagnostics(
     error: &jsonschema::ValidationError<'_>,
-    root: &Value,
     schema: &Value,
     source: Option<&str>,
     variant: &str,
-) -> ConfigError {
+) -> Vec<Diagnostic> {
+    use jsonschema::error::ValidationErrorKind as Kind;
+    let schema_path = error.schema_path().as_str();
+    if let Kind::OneOfNotValid { context } | Kind::AnyOf { context } = error.kind()
+        && let Some(variants) = schema.pointer(schema_path).and_then(Value::as_array)
+        && let Some(index) = select_variant(variants, error.instance())
+        && let Some(errors) = context.get(index).filter(|errors| !errors.is_empty())
+    {
+        let variant = format!("{schema_path}/{index}");
+        return errors
+            .iter()
+            .flat_map(|error| diagnostics(error, schema, source, &variant))
+            .collect();
+    }
+    vec![diagnostic(error, schema, source, variant)]
+}
+
+/// One error, which selected no union variant.
+fn diagnostic(
+    error: &jsonschema::ValidationError<'_>,
+    schema: &Value,
+    source: Option<&str>,
+    variant: &str,
+) -> Diagnostic {
     use jsonschema::error::{TypeKind, ValidationErrorKind as Kind};
     let schema_path = error.schema_path().as_str();
     let union = match error.kind() {
@@ -90,15 +121,7 @@ fn diagnostic(
             .map(|variants| (variants, context)),
         _ => None,
     };
-    // Select the variant the input names, so errors describe its fields rather than
-    // unrelated alternatives. Never render rejected values or arbitrary map keys.
-    if let Some((variants, context)) = union
-        && let Some(index) = select_variant(variants, error.instance())
-        && let Some(error) = context.get(index).and_then(|errors| errors.first())
-    {
-        let variant = format!("{schema_path}/{index}");
-        return diagnostic(error, root, schema, source, &variant);
-    }
+    // Never render rejected values or arbitrary map keys.
     let pointer = error.instance_path().to_string();
     // A tag such as `kind` that names no variant: list the values the variants
     // declare, never the input's.
@@ -112,15 +135,11 @@ fn diagnostic(
         let values = values.join(", ");
         return match object.get(tag) {
             Some(_) => located(
-                root,
-                source,
                 &format!("{pointer}/{tag}"),
                 None,
                 &format!("must be one of: {values}"),
             ),
             None => located(
-                root,
-                source,
                 &pointer,
                 None,
                 &format!("required field: \"{tag}\"; must be one of: {values}"),
@@ -214,30 +233,68 @@ fn diagnostic(
             _ => "does not match the configuration schema".into(),
         }
     };
-    located(root, source, &pointer, key.as_deref(), &constraint)
+    located(&pointer, key.as_deref(), &constraint)
 }
 
 /// The error at `pointer`, positioned at the map key `key` when the failure is
 /// about that key. The key itself is never shown.
-fn located(
-    root: &Value,
-    source: Option<&str>,
-    pointer: &str,
-    key: Option<&str>,
-    constraint: &str,
-) -> ConfigError {
-    use super::super::yaml_source;
-    let path = instance_path(pointer, root);
-    let position = source
-        .and_then(|text| match key {
-            Some(key) => yaml_source::key_position(text, &format!("{pointer}/{}", escape(key))),
-            None => yaml_source::position(text, pointer),
-        })
-        .map(|(line, column)| format!(" (line {line}, column {column})"))
-        .unwrap_or_default();
-    ConfigError(format!(
-        "configuration violates schema at {path}{position}: {constraint}"
-    ))
+fn located(pointer: &str, key: Option<&str>, constraint: &str) -> Diagnostic {
+    Diagnostic {
+        pointer: Some(pointer.to_owned()),
+        key: key.map(str::to_owned),
+        message: constraint.to_owned(),
+        ..Diagnostic::default()
+    }
+}
+
+/// Names where each error is in `root` in the schema's path style, adds its
+/// line and column when `root` was parsed from `source`, and orders the errors
+/// by position.
+pub(crate) fn locate(error: ConfigError, root: &Value, source: Option<&str>) -> ConfigError {
+    let positions = source.map(super::super::yaml_source::Positions::of);
+    let mut diagnostics = error.into_diagnostics();
+    for diagnostic in &mut diagnostics {
+        let Some(pointer) = diagnostic.pointer.clone() else {
+            continue;
+        };
+        diagnostic
+            .path
+            .get_or_insert_with(|| instance_path(&pointer, root));
+        let position = positions.as_ref().and_then(|positions| {
+            diagnostic
+                .key
+                .as_deref()
+                .and_then(|key| positions.key(&format!("{pointer}/{}", escape(key))))
+                .or_else(|| positions.value(&pointer))
+        });
+        if let Some((line, column)) = position.filter(|_| diagnostic.line.is_none()) {
+            (diagnostic.line, diagnostic.column) = (Some(line), Some(column));
+        }
+    }
+    diagnostics.sort_by_key(|diagnostic| {
+        (
+            diagnostic.line.is_none(),
+            diagnostic.line,
+            diagnostic.column,
+        )
+    });
+    ConfigError::collect(diagnostics.into_iter().map(ConfigError::from))
+        .expect("a configuration error has a diagnostic")
+}
+
+/// Errors from checking one object on its own, whose places only that object
+/// knows: each names its place within the object, and the caller places it.
+fn relative(error: ConfigError, object: &Value) -> ConfigError {
+    let diagnostics = error.into_diagnostics().into_iter().map(|diagnostic| {
+        let message = match diagnostic.pointer.as_deref() {
+            Some(pointer) if !pointer.is_empty() => {
+                format!("{}: {}", instance_path(pointer, object), diagnostic.message)
+            }
+            _ => diagnostic.message,
+        };
+        ConfigError::from(message)
+    });
+    ConfigError::collect(diagnostics).expect("a configuration error has a diagnostic")
 }
 
 fn escape(key: &str) -> String {
@@ -266,16 +323,13 @@ fn tag_values(variants: &[Value]) -> Option<(&'static str, Vec<String>)> {
 /// Of several unknown keys, the one written first, so the position and the
 /// hint describe the same field.
 fn first_written(unexpected: &[String], pointer: &str, source: Option<&str>) -> Option<String> {
+    let positions = source.map(super::super::yaml_source::Positions::of);
     unexpected
         .iter()
         .min_by_key(|key| {
-            source
-                .and_then(|text| {
-                    super::super::yaml_source::key_position(
-                        text,
-                        &format!("{pointer}/{}", escape(key)),
-                    )
-                })
+            positions
+                .as_ref()
+                .and_then(|positions| positions.key(&format!("{pointer}/{}", escape(key))))
                 .unwrap_or((usize::MAX, usize::MAX))
         })
         .cloned()
@@ -538,8 +592,10 @@ fn value(value: &impl Serialize) -> Result<Value, ConfigError> {
 
 pub(crate) fn validate_input(value: &Value, source: Option<&str>) -> Result<(), ConfigError> {
     check(&INPUT, value, super::input_schema_ref(), source)
+        .map_err(|error| locate(error, value, source))
 }
 
+/// The normalized schema's errors, at JSON pointers in the document.
 pub(crate) fn validate_document(document: &Document) -> Result<(), ConfigError> {
     check(&DOCUMENT, &value(document)?, &NORMALIZED, None)
 }
@@ -578,7 +634,8 @@ fn validate_at(path: &str, object: &impl Serialize) -> Result<(), ConfigError> {
             })
             .clone()
     };
-    check(&validator, &value(object)?, &NORMALIZED, None)
+    let object = value(object)?;
+    check(&validator, &object, &NORMALIZED, None).map_err(|error| relative(error, &object))
 }
 
 pub(crate) fn validate_service(
@@ -591,7 +648,8 @@ pub(crate) fn validate_service(
 }
 
 pub(crate) fn validate_tuning(tuning: &RouteTuning) -> Result<(), ConfigError> {
-    check(&TUNING, &value(tuning)?, &TUNING_SCHEMA, None)
+    let tuning = value(tuning)?;
+    check(&TUNING, &tuning, &TUNING_SCHEMA, None).map_err(|error| relative(error, &tuning))
 }
 
 #[cfg(test)]
@@ -632,9 +690,8 @@ mod tests {
     }
 
     fn message(schema: &Value, instance: Value) -> String {
-        check(&compile(schema), &instance, schema, None)
-            .unwrap_err()
-            .to_string()
+        let error = check(&compile(schema), &instance, schema, None).unwrap_err();
+        locate(error, &instance, None).to_string()
     }
 
     #[test]
@@ -645,13 +702,10 @@ mod tests {
         );
         assert_eq!(
             error,
-            "configuration violates schema at gateway.kubernetes.endpoint: required pattern: ^https://"
+            "gateway.kubernetes.endpoint: required pattern: ^https://"
         );
         let error = message(&targets(), json!({"gateway": {"kubernetes": {}}}));
-        assert_eq!(
-            error,
-            r#"configuration violates schema at gateway.kubernetes: required field: "endpoint""#
-        );
+        assert_eq!(error, r#"gateway.kubernetes: required field: "endpoint""#);
     }
 
     #[test]
@@ -664,8 +718,7 @@ mod tests {
         ] {
             let error = message(&targets(), json!({"gateway": instance}));
             assert_eq!(
-                error,
-                "configuration violates schema at gateway: must contain exactly one of: docker, kubernetes, podman",
+                error, "gateway: must contain exactly one of: docker, kubernetes, podman",
                 "{instance}"
             );
         }
@@ -676,19 +729,13 @@ mod tests {
         let mut schema = targets();
         schema["$defs"]["Target"]["x-nemoclaw-error"] = json!("gateway must name one target");
         let error = message(&schema, json!({"gateway": {"dokcer": {}}}));
-        assert_eq!(
-            error,
-            "configuration violates schema at gateway: gateway must name one target"
-        );
+        assert_eq!(error, "gateway: gateway must name one target");
         assert!(!error.contains("dokcer"), "{error}");
         // The union's message does not hide an error inside the selected variant.
         schema["$defs"]["Target"]["oneOf"][2]["properties"]["kubernetes"] =
             schema["$defs"]["Cluster"].clone();
         let error = message(&schema, json!({"gateway": {"kubernetes": {"endpoint": 1}}}));
-        assert_eq!(
-            error,
-            "configuration violates schema at gateway.kubernetes.endpoint: must be string"
-        );
+        assert_eq!(error, "gateway.kubernetes.endpoint: must be string");
     }
 
     #[test]
@@ -714,12 +761,12 @@ mod tests {
             let instance = json!({"gateway": {"runtime": runtime}});
             assert_eq!(
                 message(&union(None), instance.clone()),
-                "configuration violates schema at gateway.runtime: must contain exactly one of: docker, podman",
+                "gateway.runtime: must contain exactly one of: docker, podman",
                 "{instance}"
             );
             assert_eq!(
                 message(&union(Some("the gateway names one runtime")), instance),
-                "configuration violates schema at gateway.runtime: the gateway names one runtime"
+                "gateway.runtime: the gateway names one runtime"
             );
         }
     }
@@ -762,7 +809,7 @@ mod tests {
         ] {
             assert_eq!(
                 message(&schema, json!({"gateway": instance})),
-                format!("configuration violates schema at {path}: {expected}")
+                format!("{path}: {expected}")
             );
         }
     }
@@ -786,14 +833,14 @@ mod tests {
                 &schema,
                 json!({"gateway": {"endpoint": "http://127.0.0.1:1"}})
             ),
-            "configuration violates schema at gateway: the engine names a local socket"
+            "gateway: the engine names a local socket"
         );
         assert_eq!(
             message(
                 &schema,
                 json!({"gateway": {"engine": "unix:///run/engine.sock"}})
             ),
-            "configuration violates schema at gateway: the gateway is incomplete"
+            "gateway: the gateway is incomplete"
         );
     }
 
@@ -819,7 +866,7 @@ mod tests {
         ] {
             assert_eq!(
                 message(&schema(rule), json!({"gateway": instance})),
-                format!("configuration violates schema at gateway: {expected}")
+                format!("gateway: {expected}")
             );
         }
     }

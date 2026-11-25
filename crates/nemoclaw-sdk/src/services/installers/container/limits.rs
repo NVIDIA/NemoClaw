@@ -73,7 +73,7 @@ impl ServiceContainer {
             "container.memoryLimitGiB must cover container.sharedMemoryGiB for private IPC",
         )?;
         if preparation_memory_gib > limit {
-            return Err(crate::config::ConfigError(format!(
+            return Err(crate::config::ConfigError::from(format!(
                 "container.memoryLimitGiB must cover recipe preparationMemoryGiB; the container limit is {limit} GiB"
             )));
         }
