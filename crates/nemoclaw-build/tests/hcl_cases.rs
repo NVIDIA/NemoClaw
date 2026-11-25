@@ -84,55 +84,92 @@ fn a_suite_runs_its_requested_cases_and_refuses_cases_placed_elsewhere() {
     assert!(error.contains("hosted-c"), "{error}");
 }
 
-#[test]
-fn the_station_example_is_discovered_without_sending_it_to_the_generic_gpu_runner() {
+/// A repository whose `examples/scenarios.md` lists `rows`, each an On cell,
+/// a deployment ID, and its example's document, with that example written.
+fn page(rows: &[(&str, &str, String)]) -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     fs::create_dir_all(root.path().join("crates/nemoclaw-e2e/tests/e2e/hcl/tests")).unwrap();
-    for (path, contents) in [
-        (
-            "examples/platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml",
-            document("docker", VLLM),
-        ),
-        (
-            "crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-station-openclaw-nemotron.tftest.hcl",
-            "\n".into(),
-        ),
-    ] {
-        let path = root.path().join(path);
+    let mut table = String::from(
+        "| On | ID | Scenario | Example | Needs | Model |\n|---|---|---|---|---|---|\n",
+    );
+    for (on, id, document) in rows {
+        let example = format!("platforms/{}.yaml", id.to_lowercase());
+        table.push_str(&format!(
+            "| {on} | {id} | x | [{example}]({example}) | docker | vLLM |\n"
+        ));
+        let path = root.path().join("examples").join(&example);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, contents).unwrap();
+        fs::write(path, document).unwrap();
     }
+    fs::write(root.path().join("examples/scenarios.md"), table).unwrap();
+    root
+}
+
+#[test]
+fn a_station_row_that_is_on_runs_on_the_station_and_not_the_generic_gpu_runner() {
+    let root = page(&[("✅", "STATION-OPENCLAW", document("docker", VLLM))]);
     let placements = nemoclaw_build::hcl_cases::placements(root.path()).unwrap();
-    let station = placements
-        .get("dgx-station-openclaw-nemotron")
-        .expect("discover the qualified Station case");
-    assert_eq!(station.runner.name(), "dgx-station");
+    assert_eq!(placements["station-openclaw"].runner, Runner::DgxStation);
     assert!(on(root.path(), Runner::Gpu, None).unwrap().is_empty());
+    assert_eq!(
+        nemoclaw_build::hcl_cases::files(root.path(), "station-openclaw").unwrap(),
+        [
+            "examples/platforms/station-openclaw.yaml",
+            "crates/nemoclaw-e2e/tests/e2e/hcl/scenarios/lifecycle-model.tftest.hcl",
+            "examples/scenarios.md",
+        ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_row_that_links_a_symlinked_example_owns_the_file_it_names() {
+    let root = page(&[("✅", "STATION-OPENCLAW", document("docker", VLLM))]);
+    let linked = root.path().join("examples/platforms/station-openclaw.yaml");
+    let target = root
+        .path()
+        .join("examples/platforms/docker/openclaw-dgx-station.yaml");
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    fs::rename(&linked, &target).unwrap();
+    std::os::unix::fs::symlink("docker/openclaw-dgx-station.yaml", &linked).unwrap();
+    let files = nemoclaw_build::hcl_cases::files(root.path(), "station-openclaw").unwrap();
+    assert_eq!(
+        files[0],
+        "examples/platforms/docker/openclaw-dgx-station.yaml"
+    );
+    assert!(files.contains(&"examples/platforms/station-openclaw.yaml".to_owned()));
+}
+
+#[test]
+fn a_spark_row_runs_only_on_the_manual_spark_runner() {
+    let root = page(&[("✅", "SPARK-OPENCLAW", document("docker", VLLM))]);
+    let ids = vec!["spark-openclaw".to_owned()];
+    assert_eq!(on(root.path(), Runner::DgxSpark, Some(&ids)).unwrap(), ids);
+    assert!(on(root.path(), Runner::DgxStation, Some(&ids)).is_err());
+    assert!(on(root.path(), Runner::Gpu, Some(&ids)).is_err());
+}
+
+#[test]
+fn a_paused_row_or_one_without_a_ci_runner_is_not_a_live_case() {
+    let root = page(&[
+        ("⏸️", "STATION-HERMES", document("docker", VLLM)),
+        ("✅", "DOCKER-OPENCLAW", document("docker", STUB_KEY)),
+    ]);
+    assert!(
+        nemoclaw_build::hcl_cases::live(root.path())
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
 fn station_harnesses_are_independently_selectable_only_on_station() {
-    let root = tempfile::tempdir().unwrap();
-    fs::create_dir_all(root.path().join("crates/nemoclaw-e2e/tests/e2e/hcl/tests")).unwrap();
-    for harness in ["openclaw", "hermes"] {
-        let id = format!("dgx-station-{harness}-nemotron");
-        for (path, contents) in [
-            (
-                format!("examples/platforms/docker/vllm/dgx-station/{harness}-dgx-station.yaml"),
-                document("docker", VLLM),
-            ),
-            (
-                format!("crates/nemoclaw-e2e/tests/e2e/hcl/manual/{id}.tftest.hcl"),
-                "\n".into(),
-            ),
-        ] {
-            let path = root.path().join(path);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, contents).unwrap();
-        }
-    }
-    let hermes = "dgx-station-hermes-nemotron".to_owned();
-    let openclaw = "dgx-station-openclaw-nemotron".to_owned();
+    let root = page(&[
+        ("✅", "STATION-OPENCLAW", document("docker", VLLM)),
+        ("✅", "STATION-HERMES", document("docker", VLLM)),
+    ]);
+    let hermes = "station-hermes".to_owned();
+    let openclaw = "station-openclaw".to_owned();
     for ids in [
         vec![hermes.clone()],
         vec![openclaw.clone()],

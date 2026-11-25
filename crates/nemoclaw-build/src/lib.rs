@@ -17,6 +17,7 @@ pub mod helm_provider;
 pub mod images;
 pub mod release_assessment;
 pub mod release_pins;
+pub mod scenarios;
 #[cfg(feature = "sdk")]
 pub mod schema;
 mod source;

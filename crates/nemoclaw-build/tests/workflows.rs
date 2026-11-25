@@ -992,9 +992,18 @@ fn station_cases_bind_their_own_harness_example_and_images() {
         let output = Command::new("bash")
             .args(["-e", "-o", "pipefail", "-c", script])
             .current_dir(repository())
+            .env("NEMOCLAW_HCL_CASE", format!("station-{harness}"))
+            // As the cases job lists them, from the case registry.
             .env(
-                "NEMOCLAW_HCL_CASE",
-                format!("dgx-station-{harness}-nemotron"),
+                "DOCUMENTS",
+                serde_json::json!({
+                    format!("station-{harness}"): nemoclaw_build::hcl_cases::files(
+                        &repository(),
+                        &format!("station-{harness}"),
+                    )
+                    .unwrap()[0]
+                })
+                .to_string(),
             )
             .env("GITHUB_OUTPUT", &output_file)
             .output()

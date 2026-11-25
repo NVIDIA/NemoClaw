@@ -28,6 +28,7 @@ DGX Station and Windows WSL2 RTX Spark remain untested.
 | LangChain Deep Agents | [Station](../platforms/docker/vllm/dgx-station/deepagents-dgx-station.yaml) | [Spark](../platforms/docker/vllm/dgx-spark/deepagents-dgx-spark.yaml) | [WSL2 RTX Spark](../platforms/docker/vllm/rtx-spark-wsl2/deepagents-windows-wsl2-rtx-spark.yaml) |
 
 The local-inference files select [NVIDIA Nemotron 3 Super 120B-A12B NVFP4](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4/tree/ff433f5493e25d631c9f12b5d55c674229923d02), pinned to commit `ff433f5493e25d631c9f12b5d55c674229923d02`.
+The Hermes and OpenClaw DGX Station files instead select NVIDIA Nemotron 3.5 Super VL 120B-A12B NVFP4, pinned to commit `da5b2650a835292c678994a1fa3fb653250fb508`, the model that the DGX Station CI cases run, with the same serving configuration.
 The serving configuration uses a 65,536-token context, one sequence, an 8 GiB KV cache, and an 88 GiB total GPU budget.
 That budget covers the approximately 74.8 GiB pinned weights and declared cache; actual runtime headroom and context capacity still require verification.
 KV and SSM cache dtypes use runtime defaults; model output accuracy and tool calls also require live checks.

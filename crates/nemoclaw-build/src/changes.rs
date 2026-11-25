@@ -216,6 +216,9 @@ pub struct CaseSelection {
     pub runners: BTreeMap<hcl_cases::Runner, Vec<String>>,
     /// The selected cases that read the NVIDIA API key.
     pub nvidia_key: Vec<String>,
+    /// Every live HCL case's document, relative to the repository root, which
+    /// the workflows bind and deploy.
+    pub documents: BTreeMap<String, String>,
 }
 
 /// Select the live HCL cases that the changes since the merge base of `base`
@@ -288,12 +291,17 @@ pub fn cases(root: &Path, base: Option<&str>, requested: &[String]) -> Result<Ca
             nvidia_key.push(id.clone());
         }
     }
+    let documents = ids
+        .iter()
+        .map(|id| Ok((id.clone(), hcl_cases::files(root, id)?.swap_remove(0))))
+        .collect::<Result<_>>()?;
     Ok(CaseSelection {
         commit,
         selected,
         cases,
         runners,
         nvidia_key,
+        documents,
     })
 }
 
@@ -324,10 +332,13 @@ fn select_cases(
         .map_err(|_| "git printed a non-UTF-8 revision")?
         .trim()
         .to_owned();
-    let owners: BTreeMap<String, &str> = ids
-        .iter()
-        .flat_map(|id| hcl_cases::files(id).map(|file| (file, id.as_str())))
-        .collect();
+    // A page row's scenario and the page itself belong to several cases.
+    let mut owners: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    for id in ids {
+        for file in hcl_cases::files(root, id)? {
+            owners.entry(file).or_default().push(id.as_str());
+        }
+    }
     let runtimes = hcl_cases::runtimes(root)?;
     let mut ignored: Vec<String> = owners.keys().cloned().collect();
     ignored.extend(
@@ -340,9 +351,11 @@ fn select_cases(
         Ok(ids
             .iter()
             .map(|id| {
-                let own = paths
-                    .into_iter()
-                    .find(|path| owners.get(path.as_str()) == Some(&id.as_str()));
+                let own = paths.into_iter().find(|path| {
+                    owners
+                        .get(path.as_str())
+                        .is_some_and(|owners| owners.contains(&id.as_str()))
+                });
                 let directories = runtime_directories(&runtimes[id]);
                 let runtime = paths.into_iter().find(|path| {
                     directories

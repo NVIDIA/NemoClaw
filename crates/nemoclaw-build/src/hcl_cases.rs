@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The live HCL E2E cases: each scenario in [`SCENARIOS`] with a case
-//! document of the same name in [`DOCUMENTS`], and where each one runs.
+//! The live HCL E2E cases, and where each one runs: each scenario in
+//! [`SCENARIOS`] with a case document of the same name in [`DOCUMENTS`], and
+//! each row of `examples/scenarios.md` ([`crate::scenarios`]) that is on and
+//! whose platform has a CI runner, which runs its example through
+//! [`PAGE_SCENARIOS`].
 
 use serde_json::Value;
 use std::{
@@ -19,10 +22,11 @@ pub const SCENARIOS: &str = "crates/nemoclaw-e2e/tests/e2e/hcl/tests";
 /// The variable through which a case reads the NVIDIA API key, which only
 /// the hosted and GPU jobs provide.
 pub const NVIDIA_KEY: &str = "NVIDIA_INFERENCE_API_KEY";
-/// Station cases reuse their GTC documents rather than second copies.
-pub const STATION_CASES: [&str; 2] = [
-    "dgx-station-openclaw-nemotron",
-    "dgx-station-hermes-nemotron",
+/// The scenarios that the page's rows run: the first for a deployment that
+/// serves no model, the second for one that does.
+pub const PAGE_SCENARIOS: [&str; 2] = [
+    "crates/nemoclaw-e2e/tests/e2e/hcl/scenarios/lifecycle.tftest.hcl",
+    "crates/nemoclaw-e2e/tests/e2e/hcl/scenarios/lifecycle-model.tftest.hcl",
 ];
 
 /// Where a live case runs.
@@ -39,6 +43,8 @@ pub enum Runner {
     Gpu,
     /// The qualified ARM64 GB300 runner, separate from the generic GPU runner.
     DgxStation,
+    /// The ARM64 GB10 runner, which runs only when dispatched by hand.
+    DgxSpark,
     /// An OpenShift cluster, such as OpenShift Local, where the case runs by
     /// hand: no CI job has one.
     #[serde(rename = "openshift")]
@@ -54,18 +60,29 @@ impl Runner {
             Runner::Hosted => "hosted",
             Runner::Gpu => "gpu",
             Runner::DgxStation => "dgx-station",
+            Runner::DgxSpark => "dgx-spark",
             Runner::OpenShift => "openshift",
         }
     }
 
-    pub const ALL: [Runner; 6] = [
+    pub const ALL: [Runner; 7] = [
         Runner::LiveDocker,
         Runner::LiveKind,
         Runner::Hosted,
         Runner::Gpu,
         Runner::DgxStation,
+        Runner::DgxSpark,
         Runner::OpenShift,
     ];
+
+    /// The runner for a page row's platform, if CI has one.
+    fn for_platform(platform: &str) -> Option<Runner> {
+        match platform {
+            "STATION" => Some(Runner::DgxStation),
+            "SPARK" => Some(Runner::DgxSpark),
+            _ => None,
+        }
+    }
 }
 
 /// What a case needs from the job that runs it.
@@ -76,25 +93,53 @@ pub struct Needs {
     pub nvidia_key: bool,
 }
 
-/// A case's document and scenario.
-pub fn files(id: &str) -> [String; 2] {
-    if STATION_CASES.contains(&id) {
-        return [
-            format!(
-                "examples/platforms/docker/vllm/dgx-station/{}-dgx-station.yaml",
-                if id == "dgx-station-hermes-nemotron" {
-                    "hermes"
-                } else {
-                    "openclaw"
-                }
-            ),
-            format!("crates/nemoclaw-e2e/tests/e2e/hcl/manual/{id}.tftest.hcl"),
-        ];
+/// The page's rows that are live cases, by case ID: on, and on a platform
+/// that a CI runner serves.
+fn page_cases(root: &Path) -> Result<BTreeMap<String, (crate::scenarios::Row, Runner)>> {
+    if !root.join(crate::scenarios::PAGE).is_file() {
+        return Ok(BTreeMap::new());
     }
-    [
+    Ok(crate::scenarios::read(root)?
+        .into_iter()
+        .filter(|row| row.on)
+        .filter_map(|row| Some((row.case_id(), Runner::for_platform(row.platform())?, row)))
+        .map(|(id, runner, row)| (id, (row, runner)))
+        .collect())
+}
+
+/// A case's files, which select only that case when they change, and of which
+/// the first is its document and the second its scenario. A page row's case
+/// also owns the page, and shares its scenario with the page's other cases.
+pub fn files(root: &Path, id: &str) -> Result<Vec<String>> {
+    if let Some((row, _)) = page_cases(root)?.remove(id) {
+        let linked = row.example_path();
+        // A row may link a symlink, such as examples/gtc-dc/'s; the case owns
+        // both the link and the file it names, which its document is.
+        let resolve = |path: &Path| {
+            fs::canonicalize(path).map_err(|error| format!("cannot read {linked}: {error}"))
+        };
+        let document = resolve(&root.join(&linked))?
+            .strip_prefix(resolve(root)?)
+            .map_err(|_| format!("{linked} names a file outside the repository"))?
+            .to_string_lossy()
+            .into_owned();
+        let text = fs::read_to_string(root.join(&document))
+            .map_err(|error| format!("cannot read {document}: {error}"))?;
+        let serves_model = !crate::images::runtime_targets(&text)?.is_empty();
+        let mut files = vec![
+            document.clone(),
+            PAGE_SCENARIOS[usize::from(serves_model)].to_owned(),
+            crate::scenarios::PAGE.to_owned(),
+        ];
+        if linked != document {
+            files.push(linked);
+        }
+        return Ok(files);
+    }
+    Ok(vec![
         format!("{DOCUMENTS}/{id}.yaml"),
         format!("{SCENARIOS}/{id}.tftest.hcl"),
-    ]
+    ])
 }
 
 /// The live cases under `root`.
@@ -110,14 +155,15 @@ pub fn live(root: &Path) -> Result<BTreeSet<String>> {
         else {
             continue;
         };
-        let [document, _] = files(id);
-        if root.join(document).is_file() {
+        if root.join(DOCUMENTS).join(format!("{id}.yaml")).is_file() {
             ids.insert(id.to_owned());
         }
     }
-    for id in STATION_CASES {
-        if files(id).iter().all(|path| root.join(path).is_file()) {
-            ids.insert(id.into());
+    for id in page_cases(root)?.into_keys() {
+        if !ids.insert(id.clone()) {
+            return Err(format!(
+                "the page's case {id} has the name of a case in {SCENARIOS}"
+            ));
         }
     }
     Ok(ids)
@@ -128,7 +174,7 @@ fn documents(root: &Path) -> Result<BTreeMap<String, String>> {
     live(root)?
         .into_iter()
         .map(|id| {
-            let [document, _] = files(&id);
+            let document = files(root, &id)?.swap_remove(0);
             let document = fs::read_to_string(root.join(&document))
                 .map_err(|error| format!("cannot read {document}: {error}"))?;
             Ok((id, document))
@@ -179,13 +225,17 @@ pub fn needs(document: &str) -> Result<Needs> {
 }
 
 /// What each live case needs from the job that runs it.
+/// A page row's case runs on its platform's runner rather than where its
+/// document's needs alone would place it: a DGX Spark example serves a model,
+/// but must not run on the generic GPU runner.
 pub fn placements(root: &Path) -> Result<BTreeMap<String, Needs>> {
+    let page = page_cases(root)?;
     documents(root)?
         .into_iter()
         .map(|(id, document)| {
             let mut needed = needs(&document).map_err(|error| format!("the {id} case: {error}"))?;
-            if STATION_CASES.contains(&id.as_str()) {
-                needed.runner = Runner::DgxStation;
+            if let Some((_, runner)) = page.get(&id) {
+                needed.runner = *runner;
             }
             Ok((id, needed))
         })

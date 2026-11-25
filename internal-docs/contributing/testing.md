@@ -494,6 +494,8 @@ cargo run --locked -p nemoclaw-build --no-default-features -- changes cases --ba
 
 The JSON names the commit analyzed, the selected case IDs, each case's reason, the selected cases by where they run, and those that read the NVIDIA API key; `--all` selects every case without analysis.
 A live case is a scenario in `crates/nemoclaw-e2e/tests/e2e/hcl/tests/` with a case document of the same name in `crates/nemoclaw-e2e/cases/`.
+A row of [`examples/scenarios.md`](../../examples/scenarios.md) that is on and whose platform is `STATION` or `SPARK` is also a live case, named by its deployment ID in lowercase, such as `station-hermes`: it deploys the row's example through a shared scenario in `crates/nemoclaw-e2e/tests/e2e/hcl/scenarios/` on its platform's runner.
+Its example selects only its case, and the page and the shared scenario select all of the page's cases.
 The command compares the checkout's `HEAD` with its merge base with `--base`, so changes the base made since don't count.
 A case's own document and scenario select only that case.
 A model runtime image's directory, `image/vllm/` or `image/ollama/`, selects the cases whose documents declare a service of that `kind`, and `image/supervisor/` selects every case that runs either.

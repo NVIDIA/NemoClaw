@@ -13,9 +13,9 @@
 # - 005-DEPLOY: plan without adding a container, volume, network, or image,
 #   apply, get READY and then 391 from every agent, and destroy.
 #
-# The runner passes the row as TF_VAR_scenario, a JSON object with `targets`
-# (the verifier's targets, READY and 391 for each agent). It destroys the
-# deployment and removes what it labelled after the run, whatever its outcome.
+# Whoever runs the scenario, scenarios::page or the Live / HCL workflow,
+# destroys the deployment and removes what it labelled afterward, whatever its
+# outcome.
 
 run "case_005_inventory" {
   module {
@@ -74,8 +74,25 @@ run "case_005_reply" {
     source = "./verifier"
   }
 
+  # READY, then 391, from every agent the deployment names, as 005-DEPLOY
+  # asks.
   variables {
-    targets = jsondecode(var.scenario).targets
+    targets = merge([
+      for name, sandbox in yamldecode(file(jsondecode(var.context).config)).spec.sandboxes : {
+        "${name}-ready" = {
+          agent            = sandbox.agent.name
+          request          = "Reply with exactly READY."
+          response_pointer = "/output/response"
+          answer           = "READY"
+        }
+        "${name}-391" = {
+          agent            = sandbox.agent.name
+          request          = "What is 17 multiplied by 23? Reply with only the number."
+          response_pointer = "/output/response"
+          answer           = "391"
+        }
+      }
+    ]...)
   }
 
   assert {

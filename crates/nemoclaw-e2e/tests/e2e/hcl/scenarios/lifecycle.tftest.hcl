@@ -16,11 +16,11 @@
 # - Unchanged plan: a plan of the applied deployment has no changes.
 #
 # Export, reapply, and recovery belong to the integration tests, which run
-# against fixtures. The runner passes the row as TF_VAR_scenario, a JSON
-# object with `stub` (whether to serve the stub model), `port` (where it
-# listens), and `targets` (the verifier's targets, READY and 391 for each
-# agent), and the key the stub requires as TF_VAR_model_key. It destroys the
-# deployment and removes what it labelled after the run, whatever its outcome.
+# against fixtures. scenarios::page passes a stub row as TF_VAR_scenario, a
+# JSON object with `stub` (whether to serve the stub model) and `port` (where
+# it listens), and the key the stub requires as TF_VAR_model_key. Whoever runs
+# the scenario destroys the deployment and removes what it labelled
+# afterward, whatever its outcome.
 
 run "setup_model" {
   module {
@@ -28,8 +28,8 @@ run "setup_model" {
   }
 
   variables {
-    enabled = jsondecode(var.scenario).stub
-    port    = jsondecode(var.scenario).port
+    enabled = try(jsondecode(var.scenario).stub, false)
+    port    = try(jsondecode(var.scenario).port, 1)
     key     = var.model_key
     reply   = "nemoclaw-stub-reply"
   }
@@ -92,8 +92,25 @@ run "case_005_reply" {
     source = "./verifier"
   }
 
+  # READY, then 391, from every agent the deployment names, as 005-DEPLOY
+  # asks; a stub row's stub gives one reply to both.
   variables {
-    targets = jsondecode(var.scenario).targets
+    targets = merge([
+      for name, sandbox in yamldecode(file(jsondecode(var.context).config)).spec.sandboxes : {
+        "${name}-ready" = {
+          agent            = sandbox.agent.name
+          request          = "Reply with exactly READY."
+          response_pointer = "/output/response"
+          answer           = try(jsondecode(var.scenario).stub, false) ? "nemoclaw-stub-reply" : "READY"
+        }
+        "${name}-391" = {
+          agent            = sandbox.agent.name
+          request          = "What is 17 multiplied by 23? Reply with only the number."
+          response_pointer = "/output/response"
+          answer           = try(jsondecode(var.scenario).stub, false) ? "nemoclaw-stub-reply" : "391"
+        }
+      }
+    ]...)
   }
 
   assert {

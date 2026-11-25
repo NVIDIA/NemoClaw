@@ -1300,7 +1300,7 @@ fn the_selection_names_where_each_selected_case_runs() {
     let (_, selection) = repo.selected(&base, &[]);
     assert_eq!(
         selection["runners"],
-        serde_json::json!({"gpu": ["docker-one"], "dgx-station": [], "hosted": [], "live-docker": [], "live-kind": [], "openshift": []}),
+        serde_json::json!({"gpu": ["docker-one"], "dgx-station": [], "dgx-spark": [], "hosted": [], "live-docker": [], "live-kind": [], "openshift": []}),
         "{selection}"
     );
     assert_eq!(
@@ -1333,7 +1333,7 @@ fn all_selects_every_case_without_analysis() {
     );
     assert_eq!(
         selection["runners"],
-        serde_json::json!({"gpu": ["docker-one"], "dgx-station": [], "hosted": [], "live-docker": [], "live-kind": ["kind-two"], "openshift": []}),
+        serde_json::json!({"gpu": ["docker-one"], "dgx-station": [], "dgx-spark": [], "hosted": [], "live-docker": [], "live-kind": ["kind-two"], "openshift": []}),
         "{selection}"
     );
 }
@@ -1469,36 +1469,36 @@ fn live_case_files_are_read_only_by_their_own_case() {
     }
 }
 
-#[test]
-fn changing_the_station_example_selects_only_its_qualified_hardware_case() {
-    let repo = Repo::new();
-    let document = fs::read_to_string(
-        repo.0
-            .path()
-            .join("crates/nemoclaw-e2e/cases/docker-one.yaml"),
-    )
-    .unwrap();
-    let example = "examples/platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml";
-    let base = repo.commit(&[
-        (example, Some(&document)),
-        (
-            "crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-station-openclaw-nemotron.tftest.hcl",
-            Some("\n"),
-        ),
-    ]);
-    repo.commit(&[(example, Some(&format!("{document}\n# changed\n")))]);
-    let (ids, selection) = repo.selected(&base, &[]);
-    assert_eq!(ids, ["dgx-station-openclaw-nemotron"]);
-    assert_eq!(selection["runners"]["dgx-station"], serde_json::json!(ids));
+/// A page with a STATION-OPENCLAW and a STATION-HERMES row that are on, and
+/// their examples, as `(path, text)` pairs to commit, using `document`.
+fn station_page(document: &str) -> Vec<(String, String)> {
+    let mut files = vec![(
+        "examples/scenarios.md".to_owned(),
+        "| On | ID | Scenario | Example | Needs | Model |\n|---|---|---|---|---|---|\n\
+         | ✅ | STATION-OPENCLAW | x | [o](platforms/openclaw-dgx-station.yaml) | docker | vLLM |\n\
+         | ✅ | STATION-HERMES | x | [h](platforms/hermes-dgx-station.yaml) | docker | vLLM |\n"
+            .to_owned(),
+    )];
+    for harness in ["openclaw", "hermes"] {
+        files.push((
+            format!("examples/platforms/{harness}-dgx-station.yaml"),
+            document.to_owned(),
+        ));
+    }
+    files.push((
+        "crates/nemoclaw-e2e/tests/e2e/hcl/scenarios/lifecycle-model.tftest.hcl".to_owned(),
+        "\n".to_owned(),
+    ));
+    files
 }
 
 #[test]
-fn station_harness_inputs_select_independently_and_shared_runtime_selects_both() {
+fn station_rows_select_by_their_own_example_and_together_by_what_they_share() {
     for changed in [
-        "examples/platforms/docker/vllm/dgx-station/hermes-dgx-station.yaml",
-        "examples/platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml",
-        "crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-station-hermes-nemotron.tftest.hcl",
-        "crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-station-openclaw-nemotron.tftest.hcl",
+        "examples/platforms/hermes-dgx-station.yaml",
+        "examples/platforms/openclaw-dgx-station.yaml",
+        "crates/nemoclaw-e2e/tests/e2e/hcl/scenarios/lifecycle-model.tftest.hcl",
+        "examples/scenarios.md",
         "image/vllm/Dockerfile",
         "docs/guide.md",
     ] {
@@ -1509,43 +1509,55 @@ fn station_harness_inputs_select_independently_and_shared_runtime_selects_both()
                 .join("crates/nemoclaw-e2e/cases/docker-one.yaml"),
         )
         .unwrap();
-        let mut files = Vec::new();
-        for harness in ["openclaw", "hermes"] {
-            files.push((
-                format!("examples/platforms/docker/vllm/dgx-station/{harness}-dgx-station.yaml"),
-                document.clone(),
-            ));
-            files.push((format!("crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-station-{harness}-nemotron.tftest.hcl"), "\n".into()));
-        }
+        let files = station_page(&document);
         let entries: Vec<_> = files
             .iter()
             .map(|(path, text)| (path.as_str(), Some(text.as_str())))
             .collect();
         let base = repo.commit(&entries);
         let previous = fs::read_to_string(repo.0.path().join(changed)).unwrap();
-        repo.commit(&[(changed, Some(&format!("{previous}\n# changed\n")))]);
-        let (_, selection) = repo.selected(&base, &[]);
-        let expected = if changed.contains("hermes") {
-            vec!["dgx-station-hermes-nemotron"]
-        } else if changed.contains("openclaw") {
-            vec!["dgx-station-openclaw-nemotron"]
-        } else if changed == "image/vllm/Dockerfile" {
-            vec![
-                "dgx-station-hermes-nemotron",
-                "dgx-station-openclaw-nemotron",
-            ]
+        let marker = if changed.ends_with(".md") {
+            "<!-- changed -->"
         } else {
+            "# changed"
+        };
+        repo.commit(&[(changed, Some(&format!("{previous}\n{marker}\n")))]);
+        let (_, selection) = repo.selected(&base, &[]);
+        assert_eq!(
+            selection["documents"]["station-hermes"],
+            "examples/platforms/hermes-dgx-station.yaml"
+        );
+        assert_eq!(
+            selection["documents"]["docker-one"],
+            "crates/nemoclaw-e2e/cases/docker-one.yaml"
+        );
+        let expected = if changed.contains("hermes") {
+            vec!["station-hermes"]
+        } else if changed.contains("openclaw") {
+            vec!["station-openclaw"]
+        } else if changed == "docs/guide.md" {
             vec![]
+        } else {
+            vec!["station-hermes", "station-openclaw"]
         };
         assert_eq!(
             selection["runners"]["dgx-station"],
             serde_json::json!(expected),
             "{changed}"
         );
-        let (_, added) = repo.selected(&base, &["dgx-station-hermes-nemotron"]);
+        assert_eq!(
+            selection["runners"]["gpu"],
+            serde_json::json!(if changed == "image/vllm/Dockerfile" {
+                vec!["docker-one"]
+            } else {
+                vec![]
+            }),
+            "{changed}"
+        );
+        let (_, added) = repo.selected(&base, &["station-hermes"]);
         let mut expected = expected;
-        if !expected.contains(&"dgx-station-hermes-nemotron") {
-            expected.insert(0, "dgx-station-hermes-nemotron");
+        if !expected.contains(&"station-hermes") {
+            expected.insert(0, "station-hermes");
         }
         assert_eq!(
             added["runners"]["dgx-station"],

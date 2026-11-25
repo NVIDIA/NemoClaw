@@ -10,9 +10,9 @@
 //! row it ran failed. A row the page cannot express fails the parse, so no row
 //! is ever dropped without a message.
 
+use nemoclaw_build::scenarios::{Need, PAGE, Row, harness_id, parse};
 use nemoclaw_sdk::config::Document;
 use nemoclaw_test_fixtures::Bundle;
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -22,19 +22,6 @@ use std::{
     process::Command,
 };
 
-/// The page, relative to the repository root.
-const PAGE: &str = "examples/scenarios.md";
-/// The columns, in order, that every table on the page has.
-const HEADER: [&str; 6] = ["On", "ID", "Scenario", "Example", "Needs", "Model"];
-/// The On cell that lets a row run, and the one that pauses it.
-const ON: &str = "✅";
-const PAUSED: &str = "⏸";
-/// The reply the stub model gives, which `lifecycle` configures.
-const STUB_REPLY: &str = "nemoclaw-stub-reply";
-/// The prompts of the QA plan's 005-DEPLOY, which every agent must answer
-/// with `READY` and then `391`.
-const READY_PROMPT: &str = "Reply with exactly READY.";
-const PRODUCT_PROMPT: &str = "What is 17 multiplied by 23? Reply with only the number.";
 /// What `lifecycle.tftest.hcl` checks, by the prefix of its run blocks'
 /// names: the QA plan's 005-DEPLOY, which the report names by run ID, such as
 /// `SPARK-HERMES-005`, and the live suites' unchanged plan, which the QA plan
@@ -48,113 +35,25 @@ const UNCHANGED_PLAN: &str = "unchanged plan";
 /// none.
 const STUB_KEY_ENV: &str = "NEMOCLAW_SCENARIO_MODEL_KEY";
 
-/// The platforms of the QA team's run IDs (`PLATFORM-HARNESS-NNN`), and
-/// DOCKER for any host with a Docker engine, which their plan does not name.
-const PLATFORMS: [&str; 5] = ["SPARK", "STATION", "RTXSPARKWSL2", "K8S", "DOCKER"];
-
-/// The HARNESS part of a deployment ID for a harness kind, such as HERMES for
-/// `nvidia.fabric.hermes`.
-fn harness_id(kind: &str) -> String {
-    kind.rsplit('.').next().unwrap_or_default().to_uppercase()
-}
-
-/// A deployment ID, `PLATFORM-HARNESS`, as the QA team's run IDs start.
-fn deployment_id(text: &str) -> Result<String, String> {
-    let (platform, harness) = text
-        .split_once('-')
-        .ok_or_else(|| format!("names `{text}`, not PLATFORM-HARNESS"))?;
-    if !PLATFORMS.contains(&platform) {
-        return Err(format!(
-            "names the platform `{platform}`: use one of {}",
-            PLATFORMS.join(", ")
-        ));
-    }
-    if harness.is_empty() || !harness.chars().all(|c| c.is_ascii_uppercase()) {
-        return Err(format!(
-            "names the harness `{harness}`: use capital letters"
-        ));
-    }
-    Ok(text.to_owned())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Row {
-    /// The deployment IDs, joined, which name the row in output.
-    id: String,
-    /// One deployment ID for each harness the example deploys.
-    ids: Vec<String>,
-    title: String,
-    /// Whether the page lets the row run, by its On cell; a paused row never runs.
-    on: bool,
-    /// The example, relative to the page's directory.
-    example: String,
-    needs: Vec<Need>,
-    /// Whether the runner serves the stub model in place of every endpoint.
-    stub: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Need {
-    Linux,
-    Wsl2,
-    Arm64,
-    Amd64,
-    Docker,
-    Gpu(String),
-    Kubernetes,
-    Env(String),
-}
-
-impl Need {
-    fn parse(text: &str) -> Result<Need, String> {
-        Ok(match text {
-            "linux" => Need::Linux,
-            "wsl2" => Need::Wsl2,
-            "arm64" => Need::Arm64,
-            "amd64" => Need::Amd64,
-            "docker" => Need::Docker,
-            "kubernetes" => Need::Kubernetes,
-            _ => {
-                if let Some(name) = text.strip_prefix("gpu ").map(str::trim)
-                    && !name.is_empty()
-                {
-                    Need::Gpu(name.to_owned())
-                } else if let Some(name) = text.strip_prefix('$')
-                    && !name.is_empty()
-                    && name
-                        .chars()
-                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-                {
-                    Need::Env(name.to_owned())
-                } else {
-                    return Err(format!(
-                        "unknown need `{text}`: use linux, wsl2, arm64, amd64, docker, kubernetes, `gpu NAME`, or `$NAME`"
-                    ));
-                }
-            }
-        })
-    }
-
-    /// What the machine lacks, or none when it has this.
-    fn lacking(&self, host: &Host) -> Option<String> {
-        let (has, wanted) = match self {
-            Need::Linux => (host.os == "linux" && !host.wsl, "a Linux host".to_owned()),
-            Need::Wsl2 => (host.wsl, "WSL2".to_owned()),
-            Need::Arm64 => (host.arch == "aarch64", "an ARM64 host".to_owned()),
-            Need::Amd64 => (host.arch == "x86_64", "an AMD64 host".to_owned()),
-            Need::Docker => (host.engine.is_some(), "a Docker engine".to_owned()),
-            Need::Gpu(name) => (
-                host.gpus.iter().any(|gpu| gpu.contains(name.as_str())),
-                format!("an NVIDIA GPU named like `{name}`"),
-            ),
-            Need::Kubernetes => (
-                host.env.contains("NEMOCLAW_CLUSTER_KUBECONFIG"),
-                "a cluster in NEMOCLAW_CLUSTER_KUBECONFIG".to_owned(),
-            ),
-            Need::Env(name) => (host.env.contains(name), format!("`${name}` set")),
-        };
-        (!has).then_some(wanted)
-    }
+/// What the machine lacks of `need`, or none when it has it.
+fn lacking(need: &Need, host: &Host) -> Option<String> {
+    let (has, wanted) = match need {
+        Need::Linux => (host.os == "linux" && !host.wsl, "a Linux host".to_owned()),
+        Need::Wsl2 => (host.wsl, "WSL2".to_owned()),
+        Need::Arm64 => (host.arch == "aarch64", "an ARM64 host".to_owned()),
+        Need::Amd64 => (host.arch == "x86_64", "an AMD64 host".to_owned()),
+        Need::Docker => (host.engine.is_some(), "a Docker engine".to_owned()),
+        Need::Gpu(name) => (
+            host.gpus.iter().any(|gpu| gpu.contains(name.as_str())),
+            format!("an NVIDIA GPU named like `{name}`"),
+        ),
+        Need::Kubernetes => (
+            host.env.contains("NEMOCLAW_CLUSTER_KUBECONFIG"),
+            "a cluster in NEMOCLAW_CLUSTER_KUBECONFIG".to_owned(),
+        ),
+        Need::Env(name) => (host.env.contains(name), format!("`${name}` set")),
+    };
+    (!has).then_some(wanted)
 }
 
 /// What this machine has, as the Needs column names it.
@@ -216,121 +115,9 @@ impl Host {
         if !row.on {
             return Some("paused on the page".to_owned());
         }
-        let lacking: Vec<_> = row.needs.iter().filter_map(|n| n.lacking(self)).collect();
+        let lacking: Vec<_> = row.needs.iter().filter_map(|n| lacking(n, self)).collect();
         (!lacking.is_empty()).then(|| format!("needs {}", lacking.join(", ")))
     }
-}
-
-/// A table cell's text and the targets of its links.
-type Cell = (String, Vec<String>);
-
-/// Every row of every table on `page`. A table with other columns, an empty
-/// cell, an unknown need, an Example cell without exactly one link, or a
-/// repeated scenario fails, so that no row is dropped without a message.
-fn parse(page: &str) -> Result<Vec<Row>, String> {
-    let mut tables: Vec<Vec<Vec<Cell>>> = Vec::new();
-    let mut cell: Option<Cell> = None;
-    for event in Parser::new_ext(page, Options::ENABLE_TABLES) {
-        match event {
-            Event::Start(Tag::Table(_)) => tables.push(Vec::new()),
-            Event::Start(Tag::TableHead | Tag::TableRow) => {
-                tables.last_mut().unwrap().push(Vec::new());
-            }
-            Event::Start(Tag::TableCell) => cell = Some((String::new(), Vec::new())),
-            Event::End(TagEnd::TableCell) => {
-                let (text, links) = cell.take().unwrap();
-                let row = tables.last_mut().unwrap().last_mut().unwrap();
-                row.push((text.trim().to_owned(), links));
-            }
-            Event::Start(Tag::Link { dest_url, .. }) => {
-                if let Some((_, links)) = cell.as_mut() {
-                    links.push(dest_url.into_string());
-                }
-            }
-            Event::Text(text) | Event::Code(text) => {
-                if let Some((cell, _)) = cell.as_mut() {
-                    cell.push_str(&text);
-                }
-            }
-            _ => {}
-        }
-    }
-    if tables.is_empty() {
-        return Err("the page has no table".into());
-    }
-    let mut rows = Vec::new();
-    let mut ids = BTreeSet::new();
-    for table in tables {
-        let mut lines = table.into_iter();
-        let header: Vec<_> = lines.next().unwrap_or_default();
-        let header: Vec<&str> = header.iter().map(|(text, _)| text.as_str()).collect();
-        if header != HEADER {
-            return Err(format!("a table's columns are {header:?}, not {HEADER:?}"));
-        }
-        for cells in lines {
-            let row = row(&cells).map_err(|error| {
-                format!(
-                    "the row `{}` {error}",
-                    cells
-                        .get(HEADER.iter().position(|c| *c == "ID").unwrap())
-                        .map_or("", |c| &c.0)
-                )
-            })?;
-            for id in &row.ids {
-                if !ids.insert(id.clone()) {
-                    return Err(format!("the deployment {id} appears twice"));
-                }
-            }
-            rows.push(row);
-        }
-    }
-    Ok(rows)
-}
-
-fn row(cells: &[Cell]) -> Result<Row, String> {
-    let column = |name: &str| {
-        let index = HEADER.iter().position(|c| *c == name).unwrap();
-        let (text, links) = &cells[index];
-        if text.is_empty() {
-            Err(format!("has no {name}"))
-        } else {
-            Ok((text.as_str(), links))
-        }
-    };
-    let ids: Vec<String> = column("ID")?
-        .0
-        .split(',')
-        .map(|id| deployment_id(id.trim()))
-        .collect::<Result<_, _>>()?;
-    let (title, _) = column("Scenario")?;
-    // The emoji may carry the emoji-presentation selector.
-    let on = match column("On")?.0.trim_end_matches('\u{fe0f}') {
-        ON => true,
-        PAUSED => false,
-        other => {
-            return Err(format!(
-                "has `{other}` in On: write {ON} or {PAUSED}\u{fe0f}"
-            ));
-        }
-    };
-    let example = match column("Example")?.1.as_slice() {
-        [link] => link.clone(),
-        links => return Err(format!("links {} examples, not one", links.len())),
-    };
-    let needs = column("Needs")?
-        .0
-        .split(',')
-        .map(|need| Need::parse(need.trim()))
-        .collect::<Result<_, _>>()?;
-    Ok(Row {
-        id: ids.join(", "),
-        ids,
-        title: title.trim().to_owned(),
-        on,
-        example,
-        needs,
-        stub: column("Model")?.0 == "stub",
-    })
 }
 
 /// What binding an example to this machine needs from it.
@@ -358,13 +145,10 @@ struct Running {
 /// The variable that holds a running model's key.
 const RUNNING_KEY_ENV: &str = "NEMOCLAW_SCENARIO_MODEL_KEY";
 
-/// The row's example bound to this machine, the verifier's targets, the
-/// stub's port, and the credential variables a stub row's providers read.
+/// The row's example bound to this machine, the stub's port, and the
+/// credential variables a stub row's providers read.
 struct Bound {
     document: Value,
-    /// The verifier's targets for 005-DEPLOY: each agent asked for READY and
-    /// for 391.
-    targets: Value,
     /// Whether the lifecycle plans the applied deployment again, which it does
     /// unless the deployment serves a model: as the live hardware cases do,
     /// it leaves unchanged reconciliation to the integration tests rather
@@ -450,10 +234,10 @@ fn bind(row: &Row, mut document: Value, inputs: Inputs<'_>) -> Result<Bound, Str
             }
         }
     }
-    let mut targets = serde_json::Map::new();
-    for (name, sandbox) in spec["sandboxes"]
+    for sandbox in spec["sandboxes"]
         .as_object_mut()
         .ok_or("the example has no sandboxes")?
+        .values_mut()
     {
         if let Some(repository) = sandbox["image"]["ref"]
             .as_str()
@@ -462,18 +246,6 @@ fn bind(row: &Row, mut document: Value, inputs: Inputs<'_>) -> Result<Bound, Str
             let harness = sandbox["harness"]["kind"].as_str().unwrap_or_default();
             let tag = harness.rsplit('.').next().unwrap_or_default();
             sandbox["image"]["ref"] = json!((inputs.image)(repository, tag)?);
-        }
-        for (suffix, request, answer) in [
-            ("ready", READY_PROMPT, "READY"),
-            ("391", PRODUCT_PROMPT, "391"),
-        ] {
-            let target = json!({
-                "agent": sandbox["agent"]["name"],
-                "request": request,
-                "response_pointer": "/output/response",
-                "answer": if row.stub { STUB_REPLY } else { answer },
-            });
-            targets.insert(format!("{name}-{suffix}"), target);
         }
     }
     let stub_port = if row.stub { (inputs.ports)()? } else { 1 };
@@ -514,7 +286,6 @@ fn bind(row: &Row, mut document: Value, inputs: Inputs<'_>) -> Result<Bound, Str
         .is_none_or(serde_json::Map::is_empty);
     Ok(Bound {
         document,
-        targets: Value::Object(targets),
         replans,
         stub_port,
         stub_credentials,
@@ -730,21 +501,21 @@ fn run_row(
     let scenario = json!({
         "stub": row.stub,
         "port": bound.stub_port,
-        "targets": bound.targets,
     });
     // The output is kept to read each run block's result, and echoed.
     let output = Command::new(std::env::current_exe().unwrap())
         .args(["hcl_live::case", "--exact", "--ignored", "--nocapture"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .env("NEMOCLAW_HCL_CASE", row.case_id())
+        .env("NEMOCLAW_HCL_TEST_DIRECTORY", "scenarios")
         .env(
-            "NEMOCLAW_HCL_CASE",
+            "NEMOCLAW_HCL_SCENARIO",
             if bound.replans {
                 "lifecycle"
             } else {
                 "lifecycle-model"
             },
         )
-        .env("NEMOCLAW_HCL_TEST_DIRECTORY", "scenarios")
         .env("NEMOCLAW_HCL_RUN", &run)
         .env("NEMOCLAW_HCL_DOCUMENT", &config)
         .env("TF_VAR_scenario", scenario.to_string())
@@ -1116,13 +887,6 @@ scenarios/lifecycle.tftest.hcl... fail
             spec["sandboxes"]["assistant"]["image"]["ref"],
             fake_image("nc-fabric", "openclaw")
         );
-        assert_eq!(
-            bound.targets,
-            json!({
-                "assistant-ready": {"agent": "primary", "request": READY_PROMPT, "response_pointer": "/output/response", "answer": STUB_REPLY},
-                "assistant-391": {"agent": "primary", "request": PRODUCT_PROMPT, "response_pointer": "/output/response", "answer": STUB_REPLY},
-            })
-        );
     }
 
     #[test]
@@ -1133,8 +897,6 @@ scenarios/lifecycle.tftest.hcl... fail
         assert_eq!(service["serving"]["port"], 20002);
         assert_eq!(service["image"], fake_image("nc-prototype-vllm", "rust-v1"));
         assert!(bound.stub_credentials.is_empty());
-        assert_eq!(bound.targets["assistant-ready"]["answer"], "READY");
-        assert_eq!(bound.targets["assistant-391"]["answer"], "391");
     }
 
     #[test]
