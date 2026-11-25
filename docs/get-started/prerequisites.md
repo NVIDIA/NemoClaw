@@ -4,8 +4,8 @@
 # Checking Prerequisites
 
 Identify the client host, sandbox engine, and inference host before building a deployment.
-They can have different requirements.
-A working client binary doesn't qualify the runtime or GPU host.
+Use the [installation guide](install.md) to select the CLI bundle for your client.
+Check the engine and inference requirements for your deployment separately.
 
 ## Identifying Each Host
 
@@ -25,8 +25,10 @@ SSH access doesn't provide an inference tunnel.
 
 ## Before the First Deployment
 
-The [first-deployment guide](first-deployment.md) uses OpenClaw with an existing OpenShell gateway and external inference endpoint.
-Prepare these inputs before running apply:
+The [first-deployment tutorial](first-deployment.md) runs from Linux or macOS and uses an existing OpenShell gateway and inference endpoint.
+For a walkthrough that creates a managed Docker gateway on an Apple silicon Mac or in WSL2, follow [Onboarding From Source](from-source.md).
+
+Gather the following inputs for the OpenClaw tutorial.
 
 - An OpenShell gateway with the selected Docker or Podman compute driver and permission to create a deployment workspace and sandbox.
 - Its client-reachable endpoint and any bearer credential or mTLS files required by the gateway operator.
@@ -57,7 +59,9 @@ After apply, the [first-deployment guide](first-deployment.md#sending-a-verifica
 
 ## Client and Build Tools
 
-To run the release CLI, use a [verified archive](install.md); no Rust, compiler, or image build tools are needed. For a source build, use the [build guide](../build-deploy/build.md) from the revision you build. Keep the resulting bundle intact for the lifetime of its deployments.
+To run the release CLI, use a [verified installer or archive](install.md).
+For a source build, use the [build guide](../build-deploy/build.md) from the revision you build.
+Keep the bundle intact for the lifetime of its deployments.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
 Windows ARM64 clients use [Linux ARM64 through WSL2](from-source.md), with the Linux toolchain and Docker Desktop integration enabled for that distribution.
@@ -68,8 +72,6 @@ On Linux, the oldest supported release is Ubuntu 22.04, whose glibc is 2.35.
 `CI / Bundle` builds the Linux bundles there and fails if any bundle executable needs a newer glibc.
 It runs the contract, integration, and live tests on Ubuntu 24.04.
 A bundle runs only where the glibc is at least as new as on the host that built it, so build it on the oldest Linux release that will run it.
-
-To use a release's CLI instead of building it, [install the CLI](install.md) from the release's archive for your platform.
 
 ## Runtime and Inference Requirements
 

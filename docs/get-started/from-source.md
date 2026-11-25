@@ -3,10 +3,11 @@
 
 # Onboarding From Source on macOS or WSL2
 
-Build the checkout's CLI bundle and a Linux Hermes image on an Apple silicon Mac or in WSL2 on Windows, then deploy Hermes with a managed Docker gateway and verify one reply through hosted NVIDIA Endpoints inference.
-Windows ARM64 has no native bundle, so it uses the Linux ARM64 bundle inside WSL2; Windows AMD64 can use the Linux AMD64 bundle the same way.
+Build the CLI and Hermes image from a checkout on an Apple silicon Mac or in WSL2 on Windows.
+You deploy Hermes with a managed Docker gateway and verify a reply through NVIDIA Endpoints.
+Use this walkthrough to try an unreleased revision or to run on Windows through WSL2.
+For a published bundle, refer to [Installing the CLI](install.md).
 The procedure creates containers and can incur inference charges.
-It does not qualify release signing, notarization, or browser quarantine handling; for a release, follow [Installing the CLI](install.md).
 
 ## Preparing the Shell and Docker Desktop
 
@@ -40,13 +41,16 @@ If the image store differs, follow [Checking the Docker Image Store](../build-de
 ## Building the Checkout
 
 Clone the branch to test into a new directory and check out the intended commit.
-From its root, in the same shell, build the bundle:
+From its root, in the same shell, build the bundle.
+Stop if a command fails.
 
 ```sh
 git clone --branch v1 https://github.com/NVIDIA/NemoClaw.git
 cd NemoClaw
 cargo ci tools
-export PROTOC="$PWD/.tools/protoc-36.2/bin/protoc"
+if [ -z "${PROTOC:-}" ] && [ -x .tools/protoc-36.2/bin/protoc ]; then
+  export PROTOC="$PWD/.tools/protoc-36.2/bin/protoc"
+fi
 cargo run --locked -p nemoclaw-build -- bundle
 export PATH="$PWD/dist/$PLATFORM/bin:$PATH"
 type -a nemoclaw

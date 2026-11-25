@@ -3,16 +3,17 @@
 
 # Deploying Your First OpenClaw Agent
 
-For Windows ARM64, use [onboarding from source](from-source.md), which builds the current checkout in WSL2 and creates a managed gateway.
-This tutorial instead uses the v0.1.0 release and an existing gateway, with a shell on Linux or macOS.
+Use the v0.1.0 CLI on Linux or macOS to deploy one OpenClaw agent and verify a reply.
+This tutorial starts from the release's example YAML and uses an existing OpenShell gateway and inference endpoint.
+NemoClaw manages the workspace and sandbox for this deployment.
 
-Use NemoClaw Agent Configs v0.1.0 to deploy one OpenClaw agent and verify a reply. This exercise uses an existing OpenShell gateway and inference service. NemoClaw manages the deployment's workspace and sandbox, not the gateway or model server.
+On an Apple silicon Mac or in WSL2 on Windows, you can also [build from source and deploy Hermes](from-source.md) with a managed Docker gateway.
 
 ## Preparing the Tools and Services
 
 Use a shell on Linux or macOS with `curl`, `jq`, and `uuidgen`. Complete the [first-deployment prerequisites](prerequisites.md#before-the-first-deployment) before changing the gateway. Run the commands from a new directory on the client host. Keep the CLI, example, schema, and image on the same release.
 
-1. [Install the v0.1.0 CLI bundle](install.md).
+1. [Install the v0.1.0 CLI bundle](install.md) and verify the version with `nemoclaw --version`.
 2. Download the [tagged OpenClaw example](https://github.com/NVIDIA/NemoClaw/blob/v0.1.0/examples/agents/openclaw.yaml) as `deployment.yaml`.
 
    ```sh
@@ -46,7 +47,8 @@ Keep the example's `external` gateway management mode, `local` provider key, `as
    | `spec.sandboxes.assistant.agent.inference.routes[0].overrides.model` | The exact model ID the endpoint serves. |
    | `spec.sandboxes.assistant.agent.inference.routes[0].overrides.maxTokens` | A limit the model supports. You can omit this override. |
 
-3. Point the editor's `# yaml-language-server: $schema=...` comment at `schemas/nemoclaw-v1alpha1.schema.json` inside the extracted `dist/PLATFORM` directory.
+3. Point the editor's `# yaml-language-server: $schema=...` comment at `schemas/nemoclaw-v1alpha1.schema.json` in your CLI bundle.
+   The bundle root is `/usr/local/nemoclaw` for the macOS package or `dist/PLATFORM` inside the directory where you extracted the archive.
 4. If the gateway requires authentication, configure its credential or TLS references using [the external gateway credential procedure](../build-deploy/usage.md#supplying-credential-references).
 5. If the inference endpoint requires a key, add this reference under `spec.inferenceProviders.local`. Use HTTPS for a credentialed inference endpoint.
 
