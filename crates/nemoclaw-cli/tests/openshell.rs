@@ -50,7 +50,6 @@ fn osh(root: &Path, gateway: serde_json::Value, script: &str) -> Command {
         .arg(state)
         .arg("--bundle")
         .arg(bundle)
-        .arg("--")
         .env("OPENSHELL_GATEWAY", "user-gateway");
     cli
 }
@@ -63,7 +62,7 @@ fn runs_openshell_against_the_deployment_gateway_and_workspace() {
         serde_json::Value::Null,
         "#!/bin/sh\n[ \"$OPENSHELL_GATEWAY\" = \"$OPENSHELL_WORKSPACE\" ] || exit 1\nprintf '%s\\n' \"$OPENSHELL_GATEWAY_ENDPOINT\" \"$@\"\nexit 37\n",
     )
-    .args(["sandbox", "exec", "--", "hello world"])
+    .args(["--", "sandbox", "exec", "--", "hello world"])
     .output()
     .unwrap();
     assert_eq!(

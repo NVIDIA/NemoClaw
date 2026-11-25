@@ -22,7 +22,7 @@ Each command takes the following input and has the following result:
 | `nemoclaw apply FILE` | YAML path or `-` for stdin | Text result. Computes a checked plan and applies it. |
 | `nemoclaw export` | Retained state, without YAML | Observed YAML after configuration and ownership checks. |
 | `nemoclaw destroy` | Retained state, without YAML | Text result. Removes owned workloads under the retention rules. |
-| `nemoclaw openshell -- ARGS` (alias `osh`) | Retained state and any referenced TLS files | Runs the bundle's pinned OpenShell CLI against the saved gateway and workspace. Supports plaintext, mTLS, and external OIDC gateways. |
+| `nemoclaw openshell [--] ARGS` (alias `osh`) | Retained state and any referenced TLS files | Runs the bundle's pinned OpenShell CLI against the saved gateway and workspace. Supports plaintext, mTLS, and external OIDC gateways. |
 
 ### Running OpenShell Against a Deployment
 
@@ -34,7 +34,7 @@ nemoclaw osh --state-dir .nemoclaw -- sandbox list
 nemoclaw osh --state-dir .nemoclaw -- sandbox exec -n assistant --tty -- sh
 ```
 
-Put NemoClaw options before `--`; arguments after it pass to OpenShell unchanged.
+The `--` is optional. NemoClaw reads its own options, such as `--state-dir` and `--bundle`, up to the first OpenShell argument or `--`, and passes the rest to OpenShell unchanged.
 NemoClaw runs OpenShell in place of itself, so input, output, signals, and the exit status are OpenShell's.
 
 OpenShell keeps this deployment's configuration in `<state-dir>/openshell/`, apart from your own OpenShell profiles.
