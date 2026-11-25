@@ -4,8 +4,9 @@
 # An agent on a managed OpenShift gateway that a pass-through Route publishes
 # at expose.endpoint, so that the OpenShell CLI dials the cluster's router
 # instead of a port forward. The oidc profile lets you sign in there with your
-# own token; see "Publish the Gateway Outside the Cluster" and "Reach the
-# Gateway from the OpenShell CLI" in docs/build-deploy/kubernetes.md.
+# own token; see "Publishing the Gateway Through a Route" in
+# docs/build-deploy/openshift.md and "Reaching the Gateway From the OpenShell
+# CLI" in docs/build-deploy/kubernetes.md.
 # NemoClaw's own commands still forward a port to the gateway pod.
 # Before the first plan, replace the endpoint's host with a DNS name that
 # reaches the cluster's router, such as one under its apps domain, and its port
