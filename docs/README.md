@@ -42,7 +42,8 @@ Choose the guide for the artifact or deployment operation you need to perform.
 | Extend an agent image with your own tools | [Derived Agent Images](build-deploy/derived-images.md) |
 | Configure, apply, export, recover, and destroy | [Use Desired State](build-deploy/usage.md) |
 | Run the providers from your own OpenTofu project and pipelines | [Your Own OpenTofu Project](build-deploy/opentofu-project.md) |
-| Deploy on Kubernetes or OpenShift | [Cluster Deployment](build-deploy/kubernetes.md) |
+| Deploy on Kubernetes with a managed or an external gateway | [Kubernetes Deployment](build-deploy/kubernetes.md) |
+| Deploy on OpenShift | [OpenShift Deployment](build-deploy/openshift.md) |
 | Share or inline definitions | [Definitions and References](build-deploy/configuration-references.md) |
 | Retain data and clean up safely | [Deployment State](build-deploy/state.md) |
 | Run an application-owned container on managed Docker | [Container Service](build-deploy/container-services.md) |

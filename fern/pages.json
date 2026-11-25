@@ -86,9 +86,14 @@
           "slug": "opentofu-project"
         },
         {
-          "title": "Deploying to Kubernetes or OpenShift",
+          "title": "Deploying to Kubernetes",
           "source": "docs/build-deploy/kubernetes.md",
           "slug": "kubernetes"
+        },
+        {
+          "title": "Deploying to OpenShift",
+          "source": "docs/build-deploy/openshift.md",
+          "slug": "openshift"
         },
         {
           "title": "Defining Once or Configuring Inline",

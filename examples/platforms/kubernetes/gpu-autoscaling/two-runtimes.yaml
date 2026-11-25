@@ -10,9 +10,10 @@
 # Replace the deployment UID, the context, the issuer settings, and the image
 # digests before applying. Set GPU_VLLM_API_KEY and GPU_OLLAMA_API_KEY to the
 # two releases' inference keys, and NEMOCLAW_GATEWAY_TOKEN to a token from your
-# issuer, where you run nemoclaw. Write each image's metadata bundle with
-# `cargo images export-metadata` and set HERMES_IMAGE_METADATA and
-# OPENCLAW_IMAGE_METADATA to their paths; see docs/build-deploy/build.md.
+# issuer, where you run nemoclaw. Download each image's `<image>.metadata.json`
+# from the release, or write it with `cargo images export-metadata`, and set
+# HERMES_IMAGE_METADATA and OPENCLAW_IMAGE_METADATA to their absolute paths;
+# see docs/build-deploy/kubernetes.md#preparing-agent-images.
 # Adapted from hermes-vllm.yaml and openclaw-ollama.yaml in
 # NVIDIA/NemoClaw#14009 at ac69c22.
 apiVersion: nemoclaw.nvidia.com/v1alpha1

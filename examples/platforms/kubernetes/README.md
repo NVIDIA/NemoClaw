@@ -4,7 +4,7 @@
 # Kubernetes Examples
 
 Choose an example, copy it to your own deployment directory, and replace the values its header lists.
-[Deploying to Kubernetes or OpenShift](../../../docs/build-deploy/kubernetes.md) lists the cluster prerequisites and walks through plan, apply and destroy.
+[Deploying to Kubernetes](../../../docs/build-deploy/kubernetes.md) lists the cluster prerequisites and walks through plan, apply and destroy for a managed and an external gateway.
 
 ## Choose an Example
 
@@ -18,10 +18,11 @@ Choose an example, copy it to your own deployment directory, and replace the val
 | [hosted-nvidia.yaml](hosted-inference/hosted-nvidia.yaml) and [hosted-nvidia.tf](hosted-inference/hosted-nvidia.tf) | Managed, `development` profile | OpenClaw and Hermes on hosted NVIDIA inference | Agent files on PVCs you create, in YAML and in HCL; [the GTC DC guide](../../gtc-dc/README.md#amd64-kubernetes-with-nvidia-cloud-inference) prepares the claims |
 | [in-cluster-vllm.yaml](vllm/in-cluster-vllm.yaml) | Managed, `development` profile | One OpenClaw agent on a vLLM server you run, with a key | [A model server in the cluster](../../../docs/build-deploy/kubernetes.md#using-a-model-server-in-the-cluster) |
 | [in-cluster-ollama.yaml](ollama/in-cluster-ollama.yaml) | Managed, `development` profile | One OpenClaw agent on an Ollama server you run, without a key | The same, for a server without a key |
-| [external-gateway.yaml](external-gateway.yaml) | External | Three OpenClaw agents on an inference endpoint you name | [An existing gateway](../../../docs/build-deploy/kubernetes.md#using-an-existing-gateway), reached with TLS and a bearer token |
+| [external-gateway.yaml](external-gateway.yaml) | External | Three OpenClaw agents on an inference endpoint you name | [An external gateway](../../../docs/build-deploy/kubernetes.md#deploying-with-an-external-gateway), reached with TLS and a bearer token |
 | [gpu-autoscaling/](gpu-autoscaling/README.md) | Managed, `development` or `oidc` profile | OpenClaw and Hermes on GPU inference pods that Kubernetes scales | One sandbox per user on a shared, autoscaled model Service, with a load script |
 
-[OpenShift examples](../openshift) holds the OpenShift versions of `managed-development.yaml` and `external-gateway.yaml`.
+[OpenShift examples](../openshift/README.md) holds `published-route.yaml` and the OpenShift versions of `managed-development.yaml` and `external-gateway.yaml`.
+[Deploying to OpenShift](../../../docs/build-deploy/openshift.md) describes what differs on OpenShift.
 
 ## What Is Tested
 

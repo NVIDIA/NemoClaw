@@ -71,8 +71,8 @@ Rotate each gateway connection credential as follows:
 | Credential | How to Rotate |
 |---|---|
 | External gateway bearer token or mTLS files | The gateway operator issues new ones. Update the referenced environment values or files. NemoClaw reads them on every run. |
-| OIDC token for a managed Kubernetes gateway | Refresh it with the issuer's tooling into the variable `token.env` names. NemoClaw reads it on every run, and an expired token fails as an authentication error. |
-| Development credentials for a managed Kubernetes gateway | Their certificates are valid for 365 days and are not rotated in place. Create a new deployment before they expire, or use the [OIDC profile](../build-deploy/kubernetes.md). |
+| OIDC token for a managed Kubernetes gateway | Refresh it with the issuer's tooling into the variable `token.env` names. NemoClaw reads it on every run. OpenShell accepts a token until 60 seconds after its `exp` and refuses it after that as an authentication error, so a revoked token keeps working until then. |
+| Development credentials for a managed Kubernetes gateway | Their certificates are valid for 365 days and are not rotated in place. Create a new deployment before they expire, or use the [OIDC profile](../build-deploy/kubernetes.md#authenticating-through-an-existing-oidc-issuer). |
 
 ## Platform Credentials
 

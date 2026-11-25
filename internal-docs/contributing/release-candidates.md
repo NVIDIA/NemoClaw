@@ -201,7 +201,7 @@ Gateways:
   Omitting it selects Docker with its defaults.
   Editors offer only the selected target's fields, and an invalid field reports that target's rule.
   A managed `kubernetes` or `openshift` gateway without `expose` names no address or port: each command forwards a free local port to the gateway pod, and plan and apply report the gateway as `not published`.
-  The `openshift` target takes the fields of `kubernetes`, and only it takes [`expose.route`](../../docs/build-deploy/kubernetes.md#through-an-openshift-route), which publishes the gateway at `expose.endpoint`.
+  The `openshift` target takes the fields of `kubernetes`, and only it takes [`expose.route`](../../docs/build-deploy/openshift.md#publishing-the-gateway-through-a-route), which publishes the gateway at `expose.endpoint`.
   See [adapting a document to another target](../../docs/build-deploy/usage.md#adapting-a-document-to-another-target) and the [breaking change](#breaking-changes-in-v010-rc12).
 
 Recovery:
@@ -263,7 +263,7 @@ Kubernetes and OpenShift:
 - `gateway.target.openshift.expose.route` publishes a managed OpenShift gateway at `expose.endpoint` through the OpenShell chart's pass-through Route, for clients such as the OpenShell CLI.
   `expose.route`'s optional `annotations` reach the Route.
   The gateway certificate names the endpoint's host, and NemoClaw's own commands keep their port forward.
-  See [publishing through an OpenShift Route](../../docs/build-deploy/kubernetes.md#through-an-openshift-route).
+  See [publishing through an OpenShift Route](../../docs/build-deploy/openshift.md#publishing-the-gateway-through-a-route).
 
 Plan and apply:
 

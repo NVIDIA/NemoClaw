@@ -4,8 +4,10 @@
 # GTC DC target: Linux AMD64 Kubernetes, one OpenClaw and one Hermes sandbox.
 # Both agents use NVIDIA cloud inference; live qualification is pending.
 # Replace the deployment UID, cluster context, namespace, and both image digests before applying.
-# Export each Linux AMD64 image's metadata with `cargo images export-metadata`.
-# Set the two image-metadata variables below to the matching bundle paths.
+# Download each image's `<image>.metadata.json` from the release, or write it
+# with `cargo images export-metadata`, and set the two image-metadata variables
+# below to the matching absolute paths; see
+# docs/build-deploy/kubernetes.md#preparing-agent-images.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
