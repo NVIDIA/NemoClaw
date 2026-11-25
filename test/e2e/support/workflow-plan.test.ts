@@ -863,10 +863,10 @@ describe("E2E workflow plan", () => {
   it.each([
     "test/e2e/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh",
     "test/e2e/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh",
+    "test/e2e/support/skill-agent-classifiers.ts",
   ])("selects the skill-agent target when its shared helper %s changes", (changedFile) => {
-    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
-      "skill-agent",
-    );
+    const targets = catalogueTargetsForChangedFiles([changedFile]);
+    expect(targets).toContainEqual(catalogueTarget("skill-agent"));
   });
 
   it.each([

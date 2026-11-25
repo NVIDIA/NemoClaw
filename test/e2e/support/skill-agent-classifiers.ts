@@ -1,12 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Pure predicate helpers shared by the skill-agent live E2E target and its
+import { shellQuote } from "../../../src/lib/core/shell-quote";
+
+// Fixture probe and predicate helpers shared by the skill-agent live E2E target and its
 // PR-collected unit tests. Keeping them here lets the fast e2e-support project
 // exercise the classification logic without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
 // Token the injected skill fixture must echo back through the agent transcript.
 export const VERIFY_PHRASE = "SKILL_SMOKE_VERIFY_K9X2";
+
+export function buildVerifySkillFixtureScript(skillPath: string): string {
+  return [
+    `token=${shellQuote(VERIFY_PHRASE)}`,
+    `path=${shellQuote(skillPath)}`,
+    'test -f "$path"',
+    'grep -Fq "$token" "$path"',
+    'echo "SKILL_TOKEN_PATH=$path"',
+  ].join(" && ");
+}
 
 export function isExternalAgentVerificationFlake(text: string): boolean {
   // Only provider/model/transport timeout signatures are skippable, and only

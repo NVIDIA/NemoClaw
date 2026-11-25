@@ -4,7 +4,6 @@
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
 import path from "node:path";
-import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -18,6 +17,7 @@ import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   agentSectionContainsToken,
+  buildVerifySkillFixtureScript,
   isAgentVerificationFailClosed,
   isExternalProviderValidationFailure,
   shouldSkipExternalAgentVerificationFailure,
@@ -61,26 +61,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function buildVerifySkillFixtureScript(): string {
-  // Keep this readable as discrete clauses while emitting one atomic `sh -lc`
-  // expression with consistent error propagation.
-  const skillPath = `/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`;
-  return [
-    `token=${shellQuote(VERIFY_PHRASE)}`,
-    `path=${shellQuote(skillPath)}`,
-    'test -f "$path"',
-    'grep -Fq "$token" "$path"',
-    'echo "SKILL_TOKEN_PATH=$path"',
-  ].join("; ");
-}
-
 async function verifySkillFixturePresent(
   sandbox: SandboxClient,
   sandboxName: string,
 ): Promise<boolean> {
   const result = await sandbox.execShell(
     sandboxName,
-    trustedSandboxShellScript(buildVerifySkillFixtureScript()),
+    trustedSandboxShellScript(
+      buildVerifySkillFixtureScript(`/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`),
+    ),
     {
       artifactName: "verify-skill-fixture-present",
       env: buildAvailabilityProbeEnv(),
