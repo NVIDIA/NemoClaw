@@ -6,6 +6,7 @@ use std::{ffi::OsString, process::ExitCode, sync::Arc};
 
 /// Replace this process with the bundled OpenShell CLI, so its terminal,
 /// signals, output, and exit status are OpenShell's own.
+#[cfg_attr(not(unix), allow(unused_variables))]
 pub(crate) fn run(cli: &Cli, args: &[OsString]) -> ExitCode {
     let error = match crate::deployment::create(
         &cli.state_dir,
