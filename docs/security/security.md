@@ -164,10 +164,9 @@ export NEMOCLAW_DISABLE_TELEMETRY=1
 ```
 
 Any value other than empty, `0`, or `false` in any letter case turns telemetry off, so `yes` and `TRUE` also work.
-The CLI also sends nothing when any of these CI variables is set by the same rule: `CI`, `GITHUB_ACTIONS`, `TF_BUILD`, `BUILD_ID`, `TEAMCITY_VERSION`, or `CODEBUILD_BUILD_ID`.
+Common CI variables, such as `CI` and `GITHUB_ACTIONS`, also turn it off by the same rule.
+A failed send never changes the command's output or exit code.
 
-The CLI makes one HTTPS POST request to `https://events.telemetry.data.nvidia.com/v1.1/events/json` with a 3-second timeout.
-It never retries, and a failed send never changes the command's output or exit code.
 The record carries these fields:
 
 | What | Fields |
@@ -177,24 +176,21 @@ The record carries these fields:
 | The machine | `os`, `arch`, `hostContext`, `deploymentSource`, `cloud`, `hardware` |
 | The configuration | `harnesses`, `models`, `inferenceHosts`, `computeDriver`, `sandboxCount`, `agentCount`, `webSearch`, `mcpConfigured` |
 
-The [telemetry design](../../internal-docs/design/telemetry.md) lists every field with its values and source.
+The [telemetry design](../../internal-docs/design/telemetry.md) lists every field with its values and source, and every CI variable.
 These rules limit what the configuration and machine fields carry:
 
 - **Model names** are sent as written in the configuration, from each sandbox's default route. A name longer than 64 characters or containing `://` is sent as `unknown`.
 - **Harness IDs** are sent as written only when the bundled Fabric catalog lists them. Any other ID is sent as `other`.
 - **Inference endpoints** are matched on the machine against `local`, `build.nvidia.com`, `inference.nvidia.com`, `openai`, and `anthropic`. Only the matched word is sent, or `other`; the URL is never sent.
-- **Machine details** are read locally from the operating system, DMI vendor and product names, and the `/etc/nemoclaw/deployment-source` marker that a platform image sets. Only a word from a fixed list is sent.
-
-The record never carries deployment, sandbox, service, agent, user, or host names, file paths, URLs, endpoint or IP addresses, image names, credentials, prompts, or error text.
+- **Machine details** are read locally, and only a word from a fixed list is sent. The record never carries deployment, sandbox, service, agent, user, or host names, file paths, URLs, endpoint or IP addresses, image names, credentials, prompts, or error text.
 
 The install ID is a random UUID kept in `telemetry.json` in a `nemoclaw` directory under the user configuration directory: `$XDG_CONFIG_HOME` or `~/.config` on Linux, `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows.
 It is not derived from the machine.
 Deleting the file creates a new install ID on the next run.
 Uninstalling the CLI does not remove the file.
 
-QA runs set `NEMOCLAW_TELEMETRY_TEST_LABEL` to a label such as `qa-1120a:onboard-hermes:attempt-2`, which the record carries as `testLabel` so reports can leave QA runs out.
-The label must match `qa-<run>:<case>:attempt-<n>`, with lowercase letters, digits, and `-` in `<run>` and `<case>`.
-When the variable is set to any other value, the CLI sends nothing.
+QA runs set `NEMOCLAW_TELEMETRY_TEST_LABEL`, which the record carries as `testLabel` so reports can leave QA runs out.
+When the label is not valid, the CLI sends nothing.
 
 The OpenShell gateway has its own telemetry, separate from this record.
 For a gateway that NemoClaw manages, the gateway's telemetry follows the same switch and CI variables.
