@@ -744,8 +744,9 @@ Full E2E's versioned local plugin lifecycle proves installation, replacement, an
 across gateway restarts, followed by removal from the plugin inventory. Its local request names
 `tool_call` when that dispatcher is exposed and uses the native tool directly otherwise.
 Both versions require successful execution of the intended tool in one gateway-identified run.
-Every matching call must have paired start and successful completion records with the same
-tool-call ID. Neither a model reply nor diagnostic outcome counts can establish plugin execution.
+Every matching call on the accepted audit page must have paired start and successful completion
+records with the same tool-call ID. The check does not wait for records that arrive after a
+successful page. Neither a model reply nor diagnostic outcome counts can establish plugin execution.
 A missing final assistant reply does not invalidate a completed
 tool execution; the existing inference and launch checks own reply completion. A timed-out or
 interrupted shell, ambiguous gateway run, or missing, mismatched, or failed audit evidence cannot
@@ -1805,7 +1806,7 @@ Issue #11766 retired the dedicated `openclaw-plugin-runtime-exdev` workflow job
 and its custom-image prebuild/recreation fixtures. That removes one default E2E
 job and the image-ownership contract it existed to verify.
 
-The standard `full-e2e` target owns native OpenClaw installation,
+The standard `full-e2e` target owns native OpenClaw plugin installation,
 invocation, local-source replacement, restart survival, credential
 non-exposure, and removal in one sandbox.
 After replacing plugin v1 with v2, it restarts through the native gateway

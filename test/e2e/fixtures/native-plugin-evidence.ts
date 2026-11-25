@@ -21,7 +21,7 @@ export const nativeToolName = (version: NativePluginVersion) => `nemoclaw_e2e_ch
 /** Name the native dispatcher without changing the run's tool disclosure policy. */
 export function nativePluginAgentPrompt(version: NativePluginVersion): string {
   const tool = nativeToolName(version);
-  return `Run the local fixture tool ${tool} exactly once with arguments {}. Use tool_call with id ${tool} and args {} when tool_call is available; otherwise use the directly exposed tool. After the tool succeeds, reply DONE.`;
+  return `Invoke the local fixture tool ${tool} with arguments {}. Use tool_call with id ${tool} and args {} when tool_call is available; otherwise use the directly exposed tool. After the tool succeeds, reply DONE.`;
 }
 
 export function nativePluginWriteScript(version: NativePluginVersion): string {
