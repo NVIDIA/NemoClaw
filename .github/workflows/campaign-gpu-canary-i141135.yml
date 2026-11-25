@@ -1,0 +1,25 @@
+name: campaign-gpu-canary-i141135
+# Transient benign CI canary for authorized campaign validation (intent 141135).
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  runner-control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: control
+        run: |
+          echo "CAMPAIGN-CONTROL i141135 runner=$(hostname)"
+  gpu-canary:
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 10
+    steps:
+      - name: gpu-probe
+        run: |
+          echo "CAMPAIGN-CANARY i141135 host=$(hostname) user=$(id -un)"
+          nvidia-smi -L || true
+          nvidia-smi --query-gpu=name,memory.total,memory.free,driver_version --format=csv || true
+          cat /proc/driver/nvidia/version 2>/dev/null || true
+          uname -a || true
