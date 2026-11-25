@@ -597,6 +597,7 @@ export function printDashboardUi(
     note: (msg: string) => void;
     buildControlUiUrls: (token: string | null, port: number) => string[];
     effectiveDashboardPort?: number;
+    effectiveApiPort?: number;
   },
 ): void {
   const info = getAgentDashboardInfo(agent);
@@ -605,6 +606,13 @@ export function printDashboardUi(
   const effectiveDashboardPort = isValidForwardPort(deps.effectiveDashboardPort)
     ? deps.effectiveDashboardPort
     : info.port;
+  const sandboxApiPort =
+    deps.effectiveApiPort ??
+    (agent.name === "hermes"
+      ? resolveSandboxHermesApiPort(
+          (sandboxName ? registry.getSandbox(sandboxName) : undefined) ?? {},
+        )
+      : undefined);
 
   if (kind === "api") {
     console.log(`  ${info.displayName} ${label}`);
@@ -617,7 +625,7 @@ export function printDashboardUi(
       seen.add(url);
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
-    printBearerTokenApiAccess(sandboxName, agent, cliName);
+    printBearerTokenApiAccess(sandboxName, agent, cliName, sandboxApiPort);
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
     printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls, sandboxName);
     return;
@@ -629,7 +637,7 @@ export function printDashboardUi(
     for (const url of deps.buildControlUiUrls(null, effectiveDashboardPort)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
-    printBearerTokenApiAccess(sandboxName, agent, cliName);
+    printBearerTokenApiAccess(sandboxName, agent, cliName, sandboxApiPort);
     printOptionalDashboardUi(agent, {
       ...deps,
       effectiveDashboardPort,
