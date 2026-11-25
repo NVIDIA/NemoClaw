@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { openShellReleaseOrigins } from "../../scripts/checks/openshell-trust-data.mts";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import {
@@ -88,14 +89,28 @@ export function reviewedOpenShellMcpRuntime(version: string) {
       gateway = "0b7cb54fd8558bfad4c57f556f7fc1a20ef8cd94ebb11f4f40a9a90b74b4ad17";
       standaloneSandbox = "d13966b032b07d75c917d3fbb7471e608edfdf1f25e9d922e5aa7c779cf6ad21";
       break;
+    case "0.1.9":
+      sourceSha = "ce58cf8e9b953281352d98a637e41616295b1318";
+      supervisorDigest = "f1ec231b5dbe5b6a40c33acb2ac847995aabb959a56134ef6d7d7aa4f43199d3";
+      cli = "2db8e54f63feebe9f994efaf6004bbd45c55bc70ea455eda42fe82a0ea7c7e69";
+      gateway = "865e8c5ae15a599ca001d023efc137527ff8e102b0cccb90a85184a1c6e33978";
+      standaloneSandbox = "6c3afd40f40922c9c84be19460779c951b61c6c542aaa95e4c2c8a4b0e7f48c4";
+      break;
+    case "0.1.10":
+      sourceSha = "152c59d3178039e3fbb4a5595f9fff7216a6be92";
+      supervisorDigest = "3bfb2f5a145a9e93495870682bf5fda242df76e0f3017a9279355e7606fbf3f2";
+      cli = "d5a9917ac5b774f15f98b3a5f5a5ccc5297bbe5a0bcc81dac7e12244c44e6c70";
+      gateway = "ae8aeaf1e498ae605bc81953a941daffe0fd150c6b69ac46df90341c34f7619c";
+      standaloneSandbox = "31c58b2d4acadd1fd9b13033522e77b55bd80e00fe51e786579b00d9597a4900";
+      break;
     default:
       throw new Error("The selected OpenShell release has no reviewed MCP runtime provenance");
   }
   return {
-    supervisorImage: `ghcr.io/nvidia/openshell/supervisor@sha256:${supervisorDigest}`,
+    supervisorImage: `${openShellReleaseOrigins(version).supervisor}@sha256:${supervisorDigest}`,
     provenance: {
       schemaVersion: 1,
-      sourceRepository: "NVIDIA/OpenShell",
+      sourceRepository: openShellReleaseOrigins(version).repository,
       releaseTag: `v${version}`,
       sourceSha,
       artifacts: {

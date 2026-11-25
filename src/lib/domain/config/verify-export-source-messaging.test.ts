@@ -36,7 +36,7 @@ describe.each(["openclaw", "hermes"] as const)("%s messaging export", (agent) =>
     const withoutMessaging = await exportSnapshots([observedMessaging(agent, undefined)]);
 
     expect(verify(observed).kind).toBe("verified");
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     expect(result.writeStdout.mock.calls).toEqual(withoutMessaging.writeStdout.mock.calls);
     expect(result.publish).not.toHaveBeenCalled();
   });

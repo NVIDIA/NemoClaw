@@ -44,6 +44,13 @@ function layout(value: unknown) {
   return { assets: list(entry.assets, asset), manifests: list(entry.manifests, asset) };
 }
 
+/** Official origins are version-bound; artifact and template admission remains separate. */
+export function openShellReleaseOrigins(version: string) {
+  return version === "0.1.10"
+    ? { repository: "ai-openshell/openshell", supervisor: "quay.io/ai-openshell/supervisor" }
+    : { repository: "NVIDIA/OpenShell", supervisor: "ghcr.io/nvidia/openshell/supervisor" };
+}
+
 /** Parse inert, already-reviewed data; this function does not grant admission. */
 function parseRelease(value: unknown): OpenShellReleaseTrust {
   const entry = object(value, [
@@ -61,9 +68,10 @@ function parseRelease(value: unknown): OpenShellReleaseTrust {
   const formula = object(entry.formula, ["asset", "sha256", "url"]);
   if (
     formula.asset !== "openshell.rb" ||
-    formula.url !== `https://github.com/NVIDIA/OpenShell/releases/download/v${version}/openshell.rb`
+    formula.url !==
+      `https://github.com/${openShellReleaseOrigins(version).repository}/releases/download/v${version}/openshell.rb`
   ) {
-    throw new Error("Upgrade formula must come from the selected NVIDIA/OpenShell release");
+    throw new Error("Upgrade formula must come from the selected official OpenShell release");
   }
   const pins = object(entry.pinLayout, ["installer", "brev"]);
   const supervisor = object(entry.supervisor, [
@@ -72,7 +80,7 @@ function parseRelease(value: unknown): OpenShellReleaseTrust {
     "required",
     "runtimeTemplateSha256",
   ]);
-  if (supervisor.image !== "ghcr.io/nvidia/openshell/supervisor")
+  if (supervisor.image !== openShellReleaseOrigins(version).supervisor)
     throw new Error("Invalid upgrade supervisor repository");
   return {
     version,

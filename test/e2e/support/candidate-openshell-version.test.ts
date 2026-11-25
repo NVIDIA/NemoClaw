@@ -12,6 +12,8 @@ import { describe, expect, it, vi } from "vitest";
 import * as installerPins from "../../../scripts/checks/extract-installer-pins.mts";
 import { runCandidateOpenShellCli } from "../../support/candidate-openshell-version-cli";
 import evidence from "../fixtures/openshell-runtime-provenance-v0.1.7.json" with { type: "json" };
+import evidence0110 from "../fixtures/openshell-runtime-provenance-v0.1.10.json" with { type: "json" };
+import evidence019 from "../fixtures/openshell-runtime-provenance-v0.1.9.json" with { type: "json" };
 import {
   candidateOpenShellVersion,
   reviewedOpenShellMcpRuntime,
@@ -27,20 +29,25 @@ const blueprintVersions = [...blueprint.matchAll(/^max_openshell_version: "(\d+\
 assert.equal(blueprintVersions.length, 1, "Expected one blueprint OpenShell pin");
 const pinnedVersion = blueprintVersions[0]![1]!;
 // Independent upstream evidence is the oracle; production must not read this test fixture.
-const expected017Runtime = {
-  supervisorImage: evidence.supervisor.image,
-  provenance: {
-    schemaVersion: 1,
-    sourceRepository: evidence.source.repository,
-    releaseTag: evidence.releaseTag,
-    sourceSha: evidence.source.commit,
-    artifacts: {
-      cli: { binarySha256: evidence.artifacts.cli.binarySha256 },
-      gateway: { binarySha256: evidence.artifacts.gateway.binarySha256 },
-      standaloneSandbox: { binarySha256: evidence.artifacts.standaloneSandbox.binarySha256 },
+function expectedRuntimeFromEvidence(
+  release: typeof evidence | typeof evidence019 | typeof evidence0110,
+) {
+  return {
+    supervisorImage: release.supervisor.image,
+    provenance: {
+      schemaVersion: 1,
+      sourceRepository: release.source.repository,
+      releaseTag: release.releaseTag,
+      sourceSha: release.source.commit,
+      artifacts: {
+        cli: { binarySha256: release.artifacts.cli.binarySha256 },
+        gateway: { binarySha256: release.artifacts.gateway.binarySha256 },
+        standaloneSandbox: { binarySha256: release.artifacts.standaloneSandbox.binarySha256 },
+      },
     },
-  },
-};
+  };
+}
+const expected017Runtime = expectedRuntimeFromEvidence(evidence);
 function sourceResponse(url: string) {
   const parsed = new URL(url, "https://api.github.com");
   expect(parsed.searchParams.get("ref")).toBe(sha);
@@ -71,6 +78,7 @@ describe("candidate OpenShell selection", () => {
       expectedVersion: pinnedVersion,
     },
     { scenario: "reviewed 0.1.7", upgradeVersion: "0.1.7", expectedVersion: "0.1.7" },
+    { scenario: "reviewed 0.1.10", upgradeVersion: "0.1.10", expectedVersion: "0.1.10" },
     {
       scenario: "already selected release",
       upgradeVersion: pinnedVersion,
@@ -83,7 +91,9 @@ describe("candidate OpenShell selection", () => {
       const expected =
         expectedVersion === "0.1.7"
           ? expected017Runtime
-          : reviewedOpenShellMcpRuntime(expectedVersion);
+          : expectedVersion === "0.1.10"
+            ? expectedRuntimeFromEvidence(evidence0110)
+            : reviewedOpenShellMcpRuntime(expectedVersion);
       expect(actual.selected).toBe(expectedVersion);
       expect(actual.status, actual.diagnostic).toBe(0);
       expect(actual.emitted.version).toBe(expectedVersion);
@@ -275,10 +285,17 @@ describe("reviewed candidate MCP runtime evidence", () => {
     });
   });
 
-  it("binds OpenShell 0.1.7 to the reviewed upstream release evidence", () => {
-    expect(evidence.releaseTag).toBe("v0.1.7");
-    expect(reviewedOpenShellMcpRuntime("0.1.7")).toEqual(expected017Runtime);
-  });
+  it.each([
+    ["0.1.7", evidence],
+    ["0.1.9", evidence019],
+    ["0.1.10", evidence0110],
+  ] as const)(
+    "binds OpenShell %s to the reviewed upstream release evidence",
+    (version, release) => {
+      expect(release.releaseTag).toBe(`v${version}`);
+      expect(reviewedOpenShellMcpRuntime(version)).toEqual(expectedRuntimeFromEvidence(release));
+    },
+  );
 
   it.each(
     [
@@ -296,6 +313,14 @@ describe("reviewed candidate MCP runtime evidence", () => {
       ["0.1.5", "openshell-credential-generation-window", "openshell-credential-generation-window"],
       ["0.1.7", "mcp-bridge", "mcp-bridge-deepagents"],
       ["0.1.7", "openshell-credential-generation-window", "openshell-credential-generation-window"],
+      ["0.1.9", "mcp-bridge", "mcp-bridge-deepagents"],
+      ["0.1.9", "openshell-credential-generation-window", "openshell-credential-generation-window"],
+      ["0.1.10", "mcp-bridge", "mcp-bridge-deepagents"],
+      [
+        "0.1.10",
+        "openshell-credential-generation-window",
+        "openshell-credential-generation-window",
+      ],
     ].flatMap(([version, job, artifact]) => [
       [version, job, artifact, "local"],
       [version, job, artifact, "path"],
@@ -345,6 +370,8 @@ describe("reviewed candidate MCP runtime evidence", () => {
     ].flatMap(([job, artifact, role, binary]) => [
       [binary, job, artifact, "0.1.5", role],
       [binary, job, artifact, "0.1.7", role],
+      [binary, job, artifact, "0.1.9", role],
+      [binary, job, artifact, "0.1.10", role],
     ]),
   )(
     "rejects an altered %s binary in %s before writing %s provenance for OpenShell %s (%s)",
