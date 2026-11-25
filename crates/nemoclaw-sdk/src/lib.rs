@@ -66,9 +66,8 @@ pub use tokio_util::sync::CancellationToken;
 mod deployment;
 pub use deployment::{
     AgentRuntime, Change, Deployment, DeploymentConnection, DiscoveryObservation, DiscoveryReport,
-    DiscoveryScope, DiscoveryTarget, InterfaceAccess, OpenShellCommand, OperationResult, Outcome,
-    PlanObservation, Progress, ReportedObservation, ResourceInventoryEntry, ResourceSource, SignIn,
-    StepOutcome,
+    DiscoveryScope, DiscoveryTarget, InterfaceAccess, OperationResult, Outcome, PlanObservation,
+    Progress, ReportedObservation, ResourceInventoryEntry, ResourceSource, SignIn, StepOutcome,
 };
 
 pub mod managed;

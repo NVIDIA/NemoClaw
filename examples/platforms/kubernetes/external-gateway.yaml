@@ -18,13 +18,6 @@ spec:
       kubernetes: {}
     endpoint: https://openshell.example.com
     credential: {env: GATEWAY_TOKEN}
-    # Optional native CLI login. Deployment operations still use GATEWAY_TOKEN.
-    # Register this client with the issuer; keep its secret, when needed, in
-    # OPENSHELL_OIDC_CLIENT_SECRET in the caller's environment, never this file.
-    oidc:
-      issuer: https://idp.example.com/realms/openshell
-      clientId: openshell-cli
-      audience: openshell
     tls:
       ca: {env: GATEWAY_CA}
       # A client certificate and key authenticate only to a gateway that receives them itself;

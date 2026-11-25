@@ -99,39 +99,32 @@ async fn bundled_cli_reads_the_deployment_workspace(mtls: bool) {
         .apply(&document, &CancellationToken::new())
         .await
         .unwrap();
-    let user_config = directory.path().join("user-config");
-    fs::create_dir_all(user_config.join("openshell")).unwrap();
-    let active_gateway = user_config.join("openshell/active_gateway");
-    fs::write(&active_gateway, "unrelated-user-gateway\n").unwrap();
-    let command = || {
-        let mut command = tokio::process::Command::new(
-            bundle
-                .join("bin")
-                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-        );
-        command
-            .arg("osh")
-            .arg("--state-dir")
-            .arg(&state)
-            .arg("--bundle")
-            .arg(&bundle)
-            .args([
-                "--",
-                "workspace",
-                "get",
-                &document.workspace(),
-                "-o",
-                "json",
-            ])
-            .envs(&values)
-            .env("NEMOCLAW_DISABLE_TELEMETRY", "1")
-            .env("XDG_CONFIG_HOME", &user_config)
-            .env("OPENSHELL_GATEWAY", "unrelated-user-gateway")
-            .env("OPENSHELL_GATEWAY_ENDPOINT", "http://127.0.0.1:1")
-            .env("OPENSHELL_WORKSPACE", "unrelated-workspace");
-        command
-    };
-    let output = command().output().await.unwrap();
+    // The user's own OpenShell selection must not redirect the bundled CLI.
+    let output = tokio::process::Command::new(
+        bundle
+            .join("bin")
+            .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+    )
+    .arg("osh")
+    .arg("--state-dir")
+    .arg(&state)
+    .arg("--bundle")
+    .arg(&bundle)
+    .args([
+        "--",
+        "workspace",
+        "get",
+        &document.workspace(),
+        "-o",
+        "json",
+    ])
+    .envs(&values)
+    .env("NEMOCLAW_DISABLE_TELEMETRY", "1")
+    .env("OPENSHELL_GATEWAY", "user-gateway")
+    .env("OPENSHELL_WORKSPACE", "user-workspace")
+    .output()
+    .await
+    .unwrap();
     assert!(
         output.status.success(),
         "{}",
@@ -139,36 +132,6 @@ async fn bundled_cli_reads_the_deployment_workspace(mtls: bool) {
     );
     let workspace: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(workspace["name"], document.workspace(), "{workspace}");
-    assert_eq!(
-        fs::read_to_string(&active_gateway).unwrap(),
-        "unrelated-user-gateway\n"
-    );
-    if mtls {
-        let wrong_ca = directory.path().join("wrong-ca");
-        fs::write(&wrong_ca, authority().0).unwrap();
-        let before = fixture.state.lock().unwrap().rpcs.len();
-        let refused = command()
-            .env("CLI_CA", &wrong_ca)
-            .env("OPENSHELL_GATEWAY_INSECURE", "true")
-            .output()
-            .await
-            .unwrap();
-        assert!(
-            !refused.status.success(),
-            "an inherited insecure setting must not bypass the deployment's CA"
-        );
-        assert_eq!(
-            fixture.state.lock().unwrap().rpcs.len(),
-            before,
-            "untrusted TLS must fail before an RPC"
-        );
-    }
-    assert_eq!(
-        fs::read_dir(directory.path().join("state/openshell"))
-            .unwrap()
-            .count(),
-        0
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

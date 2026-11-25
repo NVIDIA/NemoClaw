@@ -13,7 +13,7 @@ mod commands;
 mod executable;
 #[path = "exit_guards.rs"]
 mod exit_guards;
-#[cfg(all(unix, not(all(target_os = "macos", target_arch = "x86_64"))))]
+#[cfg(unix)]
 mod openshell;
 #[path = "output_modes.rs"]
 mod output_modes;

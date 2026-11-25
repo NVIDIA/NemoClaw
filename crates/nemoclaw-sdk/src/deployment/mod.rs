@@ -7,7 +7,6 @@ mod tests;
 mod export;
 mod openshell_cli;
 mod opentofu;
-pub use openshell_cli::OpenShellCommand;
 mod plan;
 mod reporting;
 pub use reporting::{
@@ -105,9 +104,6 @@ pub struct DeploymentConnection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway_endpoint: Option<String>,
     pub workspace: String,
-    /// Whether the bundled CLI can select this deployment without a user profile.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub bundled_cli: bool,
 }
 impl DeploymentConnection {
     /// Whether the OpenShell CLI can select the gateway by its endpoint alone:
@@ -351,8 +347,6 @@ impl Deployment {
         let connection = Some(DeploymentConnection {
             gateway_endpoint: document.spec.gateway.endpoint(),
             workspace: document.workspace(),
-            bundled_cli: openshell_cli::supported(&document)
-                && crate::bundle::openshell_available(),
         });
         let compiled =
             compile::deployment_graph(&document, &record.generations, &bundle.manifest.version)?;
