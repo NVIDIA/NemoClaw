@@ -1,7 +1,7 @@
 {
   "opentofu": "1.13.10",
   "openshell": "0.1.10",
-  "ollama": "0.40.16",
+  "ollama": "0.40.18",
   "platforms": {
     "linux_arm64": {
       "rustupInit": {
@@ -173,7 +173,7 @@
         "sha256": "73571b25326281d369087f469842c02444fe39faaecebda4d82ed21ff3a1c29d"
       },
       "bun-LICENSE.md": {
-        "url": "https://raw.githubusercontent.com/oven-sh/bun/38afee6c84fcf48c0edb2466aa4b27d287a59c30/LICENSE.md",
+        "url": "https://raw.githubusercontent.com/oven-sh/bun/a7733435cf40429e3b35c36072769df2052b80f1/LICENSE.md",
         "sha256": "362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd"
       },
       "codex-LICENSE": {
@@ -447,54 +447,62 @@
     },
     "ollama": {
       "ollama-LICENSE": {
-        "url": "https://raw.githubusercontent.com/ollama/ollama/d63b702609c4300a2ca07be2bdb0adb9834725e5/LICENSE",
+        "url": "https://raw.githubusercontent.com/ollama/ollama/924cc286cc592f49c481fa84e15fa60dbc75989e/LICENSE",
         "sha256": "5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226"
       }
     },
     "llama-cpp": {
       "llama.cpp-LICENSE": {
-        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/LICENSE",
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/af5c58347fdbc2cd19e65b278e81c8f528f8a175/LICENSE",
         "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
       },
       "nlohmann-json-LICENSE": {
-        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/licenses/LICENSE-jsonhpp",
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/af5c58347fdbc2cd19e65b278e81c8f528f8a175/licenses/LICENSE-jsonhpp",
         "sha256": "c0d068392ea65358b798b8c165103560f06e9e3b38c4ab4e2d8810a7b931af86"
       },
       "cpp-httplib-LICENSE": {
-        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/vendor/cpp-httplib/LICENSE",
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/af5c58347fdbc2cd19e65b278e81c8f528f8a175/vendor/cpp-httplib/LICENSE",
         "sha256": "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b"
       },
       "rotate-bits-LICENSE.md": {
-        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/vendor/hash/rotate-bits/LICENSE.md",
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/af5c58347fdbc2cd19e65b278e81c8f528f8a175/vendor/hash/rotate-bits/LICENSE.md",
         "sha256": "ca0b44aec101afb6b46f4c39b23369fa06a64fb9c0add37c2689d702156fee55"
       },
       "xxhash-LICENSE": {
-        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/vendor/hash/xxhash/LICENSE",
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/af5c58347fdbc2cd19e65b278e81c8f528f8a175/vendor/hash/xxhash/LICENSE",
         "sha256": "6ffedbc0f7878612d2b23589f1ff2ab15633e1df7963a5d9fc750ec5500c7e7a"
       },
       "llama-brand-LICENSE": {
-        "url": "https://raw.githubusercontent.com/ggml-org/llama-brand/f05540643c1ca2a18d732ed6491c839686da9a3a/LICENSE",
+        "url": "https://raw.githubusercontent.com/ggml-org/llama-brand/9e91eb167731ae69a3f2108b3b577b6baf32dede/LICENSE",
         "sha256": "41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0"
       },
       "llama-brand-BRAND-USAGE.md": {
-        "url": "https://raw.githubusercontent.com/ggml-org/llama-brand/f05540643c1ca2a18d732ed6491c839686da9a3a/BRAND-USAGE.md",
-        "sha256": "3f9e9b47e1ce34a34178f23daeac254f400f58ddf49009aa8b4026d92a3f0d46"
+        "url": "https://raw.githubusercontent.com/ggml-org/llama-brand/9e91eb167731ae69a3f2108b3b577b6baf32dede/BRAND-USAGE.md",
+        "sha256": "71e81c434c2f8aeece90ce170ba436b43f22237dc0eed52ac193dffccd0cfd61"
       },
       "llama-brand-fonts-OFL.txt": {
-        "url": "https://raw.githubusercontent.com/ggml-org/llama-brand/f05540643c1ca2a18d732ed6491c839686da9a3a/fonts/OFL.txt",
+        "url": "https://raw.githubusercontent.com/ggml-org/llama-brand/9e91eb167731ae69a3f2108b3b577b6baf32dede/fonts/OFL.txt",
         "sha256": "c683bfbcc7e087f5d37a54ef628f10387c451a83ddc459b151403a164ac46c90"
       },
+      "llama-brand-css-LICENSE": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama-brand/9e91eb167731ae69a3f2108b3b577b6baf32dede/css/LICENSE",
+        "sha256": "9173a66e9f845b996727b4f2afc3a3c5b7cb4f19969e3d5c46707e1b0d63d8b0"
+      },
       "llama-ui-big-integer-LICENSE": {
-        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/tools/ui/src/lib/vendors/big-integer/LICENSE",
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/af5c58347fdbc2cd19e65b278e81c8f528f8a175/ui/apps/chat/src/lib/vendors/big-integer/LICENSE",
         "sha256": "e9b0e94f628e00b5ed98046cfa041696ff89eebbbdd54108ee350625bc6d0363"
       },
       "llama-ui-nerdamer-LICENSE": {
-        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/tools/ui/src/lib/vendors/nerdamer-prime/LICENSE",
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/af5c58347fdbc2cd19e65b278e81c8f528f8a175/ui/apps/chat/src/lib/vendors/nerdamer-prime/LICENSE",
         "sha256": "c9f52548869a0a2e63a7100055c54cebf36b9327c8fc2da7cf9ca8dddc2f1cca"
       },
+      "llama-ui-decimal-js-LICENCE.md": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/af5c58347fdbc2cd19e65b278e81c8f528f8a175/ui/apps/chat/src/lib/vendors/decimal.js/LICENCE.md",
+        "sha256": "3108b546bcff5d346923a82f48b2d252ca722f9088076db6d145f6b67757ad6c"
+      },
       "llama-source.tar.gz": {
-        "url": "https://codeload.github.com/ggml-org/llama.cpp/tar.gz/9d25e0014c4b4b316873c01f4938c0e3c687287d",
-        "sha256": "16807cb72e989e2191b2e6d99aa8d3d859ab870ce82fb352b52663fc10e287c6"
+        "url": "https://codeload.github.com/ggml-org/llama.cpp/tar.gz/af5c58347fdbc2cd19e65b278e81c8f528f8a175",
+        "sha256": "b17f07c9bef5b3a1b5368f445c99d2bde6265164d2a30866a616cf9f6ebe02f3"
       }
     },
     "vllm": {
