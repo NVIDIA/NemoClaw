@@ -100,6 +100,9 @@ impl Services for DockerServices {
 pub const OWNER: &str = "nemoclaw.nvidia.com/uid";
 pub const GENERATION: &str = "nemoclaw.nvidia.com/generation";
 pub use nemoclaw_openshell::credential_metadata::CREDENTIAL_SOURCE;
+/// The label naming the variable a registration took its credential from when
+/// it was created. OpenShell keeps a provider's labels when it updates the
+/// provider, so after a rotation only the resource's state names the variable.
 pub const CREDENTIAL: &str = "nemoclaw.nvidia.com/credential-env";
 pub const AGENT: &str = "nemoclaw.nvidia.com/agent";
 pub const AGENT_RUNTIME: &str = "nemoclaw.nvidia.com/agent-runtime";

@@ -335,10 +335,12 @@ impl ConnectedOpenShellGateway {
         {
             return Err(ObservationError::BindingMismatch);
         }
+        // The resource asks to register the credential when its variable or
+        // that variable's value changes. The registration's label doesn't
+        // follow the variable: OpenShell keeps a provider's labels when it
+        // updates the provider.
         if value(want, crate::credential::REGISTER) == "true"
-            || ["endpoint", "credential_env"]
-                .iter()
-                .any(|key| value(live, key) != value(want, key))
+            || value(live, "endpoint") != value(want, "endpoint")
         {
             // This direct read supplies the version used for the conditional write.
             let current = self
