@@ -176,15 +176,6 @@ pub struct KubernetesAuthentication {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "SecretRef")]
     pub token: Option<SecretRef>,
-    /// Identity-provider client that `nemoclaw osh` signs in with, for `oidc` on a gateway that `expose` publishes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(
-        default,
-        with = "String",
-        length(min = 1, max = 253),
-        regex(pattern = r"^[^\x00-\x20\x7f]+$")
-    )]
-    pub client_id: Option<String>,
 }
 
 /// Supported managed gateway authentication profile.
