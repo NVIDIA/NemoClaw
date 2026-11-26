@@ -427,6 +427,8 @@ impl Spec {
             port,
             network_cidr: get("network_cidr")?,
             image_pull_policy: None,
+            // The gateway publishes on loopback on every engine.
+            docker_desktop: false,
         };
         let spec = Self {
             layout,

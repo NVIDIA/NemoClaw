@@ -16,8 +16,8 @@ pub use engine::{
     is_missing, optional, remote,
 };
 pub use facts::{
-    observe_engine, observe_engine_facts, observe_gateway_prerequisites, observe_hardware,
-    observe_host,
+    docker_desktop, observe_engine, observe_engine_facts, observe_gateway_prerequisites,
+    observe_hardware, observe_host,
 };
 pub use local::local_engine_candidates;
 pub use nemoclaw_docker::ssh_command;

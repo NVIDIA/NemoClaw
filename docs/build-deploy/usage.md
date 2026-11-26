@@ -13,6 +13,11 @@ On macOS, a managed gateway on Docker Desktop's, Colima's, Rancher Desktop's, or
 On another socket, it binds the socket's own path.
 See [engine connection limits](../../internal-docs/design/execution-targets.md#connections-and-identity).
 
+A managed model service without an explicit `placement` publishes its serving port on its Docker network's bridge address, such as `172.30.110.1` for `networkCIDR: 172.30.110.0/24`.
+Docker Desktop also opens each published port on macOS or Windows, which have no bridge address, so on Docker Desktop the service publishes on `127.0.0.1` instead, and sandboxes reach it at `http://host.openshell.internal:PORT/v1`.
+Plan asks the gateway's Docker engine whether it is Docker Desktop until the engine answers, then records the answer in the state directory, where it holds for the deployment's lifetime; an engine that doesn't answer is treated as another Docker engine.
+Loopback ports are shared by every deployment on the engine, so give each deployment's services distinct serving ports.
+
 ## Planning and Applying
 
 A preview observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.

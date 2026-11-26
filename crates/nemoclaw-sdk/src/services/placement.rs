@@ -54,6 +54,9 @@ impl<'a> PublishedPlacement<'a> {
     }
 }
 
+/// OpenShell's name for the engine host, as seen from a sandbox supervisor.
+const OPENSHELL_HOST_ALIAS: &str = "host.openshell.internal";
+
 /// Where a managed service runs and how it is reached, resolved once.
 /// Explicit placement wins; otherwise the managed gateway's engine and bridge are inherited.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,11 +84,22 @@ impl ResolvedPlacement {
             },
             None => {
                 let gateway = gateway.managed()?;
-                let bind_address = gateway.bridge()?;
+                // Docker Desktop also opens each published port on macOS or
+                // Windows, which have no address on the engine's bridges, so
+                // the service publishes on loopback there. Sandbox supervisors
+                // share the engine host's network, where OpenShell's host
+                // alias names that loopback.
+                let (bind_address, host) =
+                    if gateway.local().is_some_and(|local| local.docker_desktop) {
+                        ("127.0.0.1".to_owned(), OPENSHELL_HOST_ALIAS.to_owned())
+                    } else {
+                        let bridge = gateway.bridge()?;
+                        (bridge.clone(), bridge)
+                    };
                 Self {
                     engine: gateway.engine().to_owned(),
                     network_cidr: gateway.network_cidr().to_owned(),
-                    endpoint: format!("http://{bind_address}:{port}/v1"),
+                    endpoint: format!("http://{host}:{port}/v1"),
                     bind_address,
                     explicit: false,
                 }

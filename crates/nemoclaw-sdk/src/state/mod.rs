@@ -20,8 +20,8 @@ use std::{
 /// When the format changes, raise the version with the fingerprint, so that a
 /// release refuses state another release wrote instead of misreading it.
 pub(crate) const RECORD_FORMAT: (u32, &str) = (
-    34,
-    "d7c91a855c9a46b5b9212eeb2797e0fc51fb75ee372c7010b65863c438477204",
+    35,
+    "d6f9b983cf981de8dc535fe6639be614decb6ae74525fdea295841cdadf9d1a5",
 );
 pub(crate) const RECORD_VERSION: u32 = RECORD_FORMAT.0;
 
@@ -40,6 +40,10 @@ pub(crate) struct Record {
     destroying: bool,
     #[serde(skip_serializing_if = "is_false")]
     destroyed: bool,
+    /// Whether the managed gateway's Docker engine is Docker Desktop, as first
+    /// observed; unset until the engine answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docker_desktop: Option<bool>,
 }
 fn is_false(value: &bool) -> bool {
     !*value
@@ -98,7 +102,22 @@ fn allocate_missing_generation_values(
     generations.extend(additions);
     Ok(())
 }
+fn engine_facts(docker_desktop: Option<bool>, document: &mut Document) {
+    if let crate::config::Gateway::Managed(gateway) = &mut document.spec.gateway
+        && let crate::config::ManagedTarget::Docker(local) = &mut gateway.target
+    {
+        local.docker_desktop = docker_desktop == Some(true);
+    }
+}
 impl Record {
+    /// Carry the recorded engine facts into `document`, which compiles from them.
+    pub fn engine_facts(&self, document: &mut Document) {
+        engine_facts(self.docker_desktop, document);
+    }
+    /// Carry the recorded engine facts into the recorded document.
+    pub fn own_engine_facts(&mut self) {
+        engine_facts(self.docker_desktop, &mut self.document);
+    }
     pub fn allocate_missing_generations(&mut self, document: &Document) -> Result<(), Error> {
         allocate_missing_generation_values(&mut self.generations, document)
     }
@@ -465,8 +484,9 @@ impl Store {
                 supported: RECORD_VERSION,
             });
         }
-        let record: Record = serde_json::from_value(record).map_err(|_| corrupt())?;
+        let mut record: Record = serde_json::from_value(record).map_err(|_| corrupt())?;
         record.validate()?;
+        record.own_engine_facts();
         Ok(Some(record))
     }
     pub fn save(&self, record: &Record) -> Result<(), Error> {

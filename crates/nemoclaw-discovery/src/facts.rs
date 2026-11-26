@@ -32,6 +32,13 @@ async fn read_info(engines: &dyn Engines, endpoint: &str) -> InfoRead {
         .ok()
 }
 
+/// Whether the engine is Docker Desktop, which names itself in `/info`'s
+/// `OperatingSystem`; `None` when the engine can't be read.
+pub async fn docker_desktop(engines: &dyn Engines, endpoint: &str) -> Option<bool> {
+    let info = read_info(engines, endpoint).await?.ok()?;
+    Some(info.operating_system.as_deref() == Some("Docker Desktop"))
+}
+
 /// The selected engine's facts and its advertised hardware from one `/info`
 /// read, with the same meaning as [`observe_engine_facts`] and [`observe_hardware`].
 pub async fn observe_host(

@@ -219,6 +219,13 @@ pub struct LocalTarget {
     #[schemars(default, with = "super::ImagePullPolicy")]
     /// Image acquisition before local container creation.
     pub image_pull_policy: Option<super::ImagePullPolicy>,
+    /// Whether the engine is Docker Desktop, as observed when the deployment
+    /// was first planned. Docker Desktop also opens each published port on
+    /// macOS or Windows, which have no address on the engine's bridges, so
+    /// managed services publish on loopback there. Not part of the configuration.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub docker_desktop: bool,
 }
 
 fn is_zero_port(port: &u16) -> bool {

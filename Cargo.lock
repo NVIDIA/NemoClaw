@@ -2982,8 +2982,10 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "crossterm_winapi",
+ "futures-util",
  "getrandom 0.4.3",
  "jsonschema 0.61.2",
+ "nemoclaw-discovery",
  "nemoclaw-onboarding",
  "nemoclaw-sdk",
  "nix 0.29.0",
