@@ -61,10 +61,10 @@ nemoclaw osh --state-dir .nemoclaw -- gateway add https://gateway.example.com --
 ```
 
 Use the gateway endpoint and workspace that plan and apply print, and the identity provider's issuer and CLI client ID; the audience and scopes are optional.
-If a private CA signed the gateway's certificate, OpenShell reads it from `<state-dir>/openshell/openshell/gateways/WORKSPACE/mtls/ca.crt`. NemoClaw links `spec.gateway.tls.ca` there; otherwise, copy the CA there before registering.
+If a private CA signed the gateway's certificate, OpenShell reads it from `<state-dir>/openshell/openshell/gateways/WORKSPACE/mtls/ca.crt`. NemoClaw links `spec.gateway.tls.ca`, or a managed cluster gateway's CA, there; otherwise, copy the CA there before registering.
 Run `nemoclaw osh -- gateway login` to sign in again.
 
-When the deployment YAML holds the client settings in `gateway.oidc`, plan and apply print both commands, as `Register once:` and `Sign in again:`, with the same `--state-dir` and `--bundle` options:
+When the deployment YAML holds the OIDC settings, plan and apply print both commands, as `Register once:` and `Sign in again:`, with the same `--state-dir` and `--bundle` options. A managed gateway takes them from `openshell.gateway.oidc`, and OpenShell's default client ID, `openshell-cli`; add `--oidc-client-id` for another client. An external gateway takes them from `gateway.oidc`:
 
 ```yaml
 gateway:
@@ -222,7 +222,7 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `complete` | Whether a planned result has no deferred work. Inspect this alongside the exit code. |
 | `warnings` | Operator-action messages collected during the operation, also reported on failures. They do not change `complete`. Omitted when empty. |
 | `changes` | Resource addresses and planned or applied action lists. An empty list does not mean apply skipped readiness checks. |
-| `connection` | Gateway endpoint and UID-derived workspace selectors from plan or apply. They do not establish access or configure NVIDIA OpenShell CLI credentials. `gatewayEndpoint` is omitted for a managed Kubernetes or OpenShift gateway without `expose`. `openshellCliUnavailable`, when present, explains why this client platform or gateway authentication cannot use the bundled CLI. `openshellRegistration`, when the YAML sets `gateway.oidc`, lists the `openshell` arguments that register it and sign in once. |
+| `connection` | Gateway endpoint and UID-derived workspace selectors from plan or apply. They do not establish access or configure NVIDIA OpenShell CLI credentials. `gatewayEndpoint` is omitted for a managed Kubernetes or OpenShift gateway without `expose`. `openshellCliUnavailable`, when present, explains why this client platform or gateway authentication cannot use the bundled CLI. `openshellRegistration`, for an OIDC gateway with an endpoint, lists the `openshell` arguments that register it and sign in once. |
 | `serviceUrls` | Apply-only URLs the gateway reports for sandbox service exposures, by sandbox and service name, with `""` for the unnamed endpoint. The URLs carry no credential, so the service must authenticate its own clients. Omitted when empty. When apply cannot read them, `warnings` says so. |
 | `agents` | Each sandbox's agent, by sandbox name: `agent`, its name, and `runtimeId`, the runtime ID that `fabric-agent-ctl invoke --runtime-id` takes. A plan reports the runtimes the last apply left, and apply reports the runtimes after its changes. `runtimeId` is omitted while state records no runtime. Never contains a credential. Omitted when empty. When apply cannot read state, `warnings` says so. Refer to [invoke an agent](../agents-inference/interfaces.md#invoking-an-agent). |
 | `deferred` | Unresolved planning prerequisites. Omitted when empty. |

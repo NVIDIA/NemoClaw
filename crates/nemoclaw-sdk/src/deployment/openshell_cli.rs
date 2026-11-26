@@ -33,27 +33,40 @@ pub(super) fn unavailable(gateway: &crate::config::Gateway) -> Option<&'static s
     bearer.then_some("the bundled OpenShell CLI cannot use this gateway's bearer token yet (https://github.com/NVIDIA/NemoClaw/issues/14880); use a separately authenticated OpenShell CLI where supported")
 }
 
-/// The `openshell` arguments that register an external OIDC gateway in the
-/// bundled CLI's configuration and sign in, once.
+/// The `openshell` arguments that register an OIDC gateway in the bundled
+/// CLI's configuration and sign in, once.
 pub(super) fn registration(document: &crate::config::Document) -> Option<Vec<String>> {
-    let crate::config::Gateway::External(external) = &document.spec.gateway else {
-        return None;
+    let (issuer, client_id, audience, scopes) = match &document.spec.gateway {
+        crate::config::Gateway::External(external) => {
+            let oidc = external.oidc.as_ref()?;
+            let client_id = Some(oidc.client_id.clone());
+            (
+                oidc.issuer.clone(),
+                client_id,
+                oidc.audience.clone(),
+                oidc.scopes.clone(),
+            )
+        }
+        // The gateway's own OIDC settings; OpenShell defaults the client ID.
+        crate::config::Gateway::Managed(managed) => {
+            let table = managed
+                .config
+                .as_ref()?
+                .get(crate::managed::gateway_config::OIDC_TABLE)?;
+            let field = |key: &str| table.get(key)?.as_str().map(str::to_owned);
+            (field("issuer")?, None, field("audience"), None)
+        }
     };
-    let oidc = external.oidc.as_ref()?;
     let mut add = vec![
         "gateway".into(),
         "add".into(),
         document.spec.gateway.endpoint()?,
         format!("--name={}", document.workspace()),
-        format!("--oidc-issuer={}", oidc.issuer),
-        format!("--oidc-client-id={}", oidc.client_id),
+        format!("--oidc-issuer={issuer}"),
     ];
-    if let Some(audience) = &oidc.audience {
-        add.push(format!("--oidc-audience={audience}"));
-    }
-    if let Some(scopes) = &oidc.scopes {
-        add.push(format!("--oidc-scopes={scopes}"));
-    }
+    add.extend(client_id.map(|id| format!("--oidc-client-id={id}")));
+    add.extend(audience.map(|audience| format!("--oidc-audience={audience}")));
+    add.extend(scopes.map(|scopes| format!("--oidc-scopes={scopes}")));
     Some(add)
 }
 
@@ -98,6 +111,16 @@ impl Deployment {
                         .map_err(|_| Error::State("cannot link TLS file for OpenShell"))?;
                 }
             }
+        } else if gateway.as_kubernetes().is_some() {
+            // Apply keeps the cluster gateway's CA in the state directory.
+            let mtls = profile.join("mtls");
+            private_directory(&mtls)?;
+            let link = mtls.join("ca.crt");
+            let _ = fs::remove_file(&link);
+            let target = std::path::absolute(self.state_directory.join("kubernetes/client/ca.crt"))
+                .map_err(|_| Error::State("cannot resolve TLS file path"))?;
+            std::os::unix::fs::symlink(target, &link)
+                .map_err(|_| Error::State("cannot link TLS file for OpenShell"))?;
         }
         let mut command = std::process::Command::new(bundle.directory.join("libexec/openshell"));
         command

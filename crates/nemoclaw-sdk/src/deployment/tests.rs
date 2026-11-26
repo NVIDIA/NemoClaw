@@ -53,6 +53,25 @@ fn bundled_openshell_access_follows_the_gateway_authentication() {
         );
     }
     assert_eq!(openshell_cli::registration(&cluster), None);
+    let mut managed = serde_json::to_value(&cluster).unwrap();
+    let kubernetes = &mut managed["spec"]["gateway"]["target"]["kubernetes"];
+    kubernetes["authentication"] = json!({"profile":"oidc", "token":{"env":"GATEWAY_TOKEN"}});
+    kubernetes["expose"] =
+        json!({"endpoint":"https://gateway.example.com:30080", "service":{"type":"NodePort"}});
+    managed["spec"]["gateway"]["config"]["openshell.gateway.oidc"] =
+        json!({"issuer":"https://idp.example.com", "audience":"openshell"});
+    let managed: Document = serde_json::from_value(managed).unwrap();
+    assert_eq!(
+        openshell_cli::registration(&managed),
+        Some(vec![
+            "gateway".to_owned(),
+            "add".to_owned(),
+            "https://gateway.example.com:30080".to_owned(),
+            format!("--name={}", managed.workspace()),
+            "--oidc-issuer=https://idp.example.com".to_owned(),
+            "--oidc-audience=openshell".to_owned(),
+        ])
+    );
     let local =
         Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
             .unwrap();

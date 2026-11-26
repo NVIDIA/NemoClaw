@@ -181,25 +181,11 @@ Before you start, check the following:
 - Your identity provider has a client for the OpenShell CLI that accepts the sign-in redirect to `http://127.0.0.1` on any port, path `/callback`.
 - The host and the browser trust the CA that signed the issuer's certificate. Otherwise, set `SSL_CERT_FILE` to a PEM file holding it.
 
-`nemoclaw osh` needs the gateway [published with `expose`](#publishing-the-gateway-outside-the-cluster). Then follow these steps with WORKSPACE as the workspace that apply prints, and your document's context and namespace in place of `my-cluster` and `nemoclaw-oidc`:
+`nemoclaw osh` needs the gateway [published with `expose`](#publishing-the-gateway-outside-the-cluster). Then:
 
-1. Copy the gateway's CA certificate from the Secret `WORKSPACE-gateway-client-tls`:
-
-   ```sh
-   mtls=.local/kubernetes/openshell/openshell/gateways/WORKSPACE/mtls
-   mkdir -p "$mtls"
-   kubectl --kubeconfig "$NEMOCLAW_CLUSTER_KUBECONFIG" --context my-cluster --namespace nemoclaw-oidc \
-     get secret WORKSPACE-gateway-client-tls -o 'go-template={{index .data "ca.crt"}}' | base64 -d > "$mtls/ca.crt"
-   ```
-
-2. Sign in once at `expose.endpoint`, with the issuer and audience from `openshell.gateway.oidc`, as [Logging In to an OIDC Gateway](../references/cli.md#logging-in-to-an-oidc-gateway) describes:
-
-   ```sh
-   nemoclaw osh --state-dir .local/kubernetes -- gateway add https://gateway.agents.example.com:30080 --name WORKSPACE \
-     --oidc-issuer https://login.example.com/realms/openshell --oidc-client-id REPLACE_WITH_CLI_CLIENT_ID --oidc-audience openshell
-   ```
-
-3. Run `nemoclaw osh --state-dir .local/kubernetes -- status`, and confirm that it reports the gateway as connected and authenticated.
+1. Run the `Register once:` command that plan and apply print, which signs in, as [Logging In to an OIDC Gateway](../references/cli.md#logging-in-to-an-oidc-gateway) describes.
+   It uses the issuer and audience from `openshell.gateway.oidc`, and OpenShell's default client ID, `openshell-cli`; add `--oidc-client-id` for another client.
+2. Run `nemoclaw osh --state-dir .local/kubernetes -- status`, and confirm that it reports the gateway as connected and authenticated.
    With only the `user_role` role, it reports `authorization denied`, because that check needs admin access.
 
 Without `expose`, use a [standalone OpenShell CLI](../get-started/prerequisites.md#preparing-the-standalone-openshell-cli).
