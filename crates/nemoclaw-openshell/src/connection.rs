@@ -37,6 +37,36 @@ pub struct IdentityFiles {
     pub key_env: String,
 }
 
+/// The TLS files a connection reads, each named by a configuration field.
+#[derive(Clone, Copy)]
+enum TlsFile {
+    Ca,
+    Certificate,
+    Key,
+}
+
+impl TlsFile {
+    /// The diagnostic for a file that cannot be read: the field, never the path.
+    const fn unreadable(self) -> &'static str {
+        match self {
+            Self::Ca => "cannot read the CA file that tls.ca names",
+            Self::Certificate => {
+                "cannot read the client certificate file that tls.certificate names"
+            }
+            Self::Key => "cannot read the client key file that tls.key names",
+        }
+    }
+}
+
+fn read_tls(
+    secrets: &dyn Secrets,
+    reference: &str,
+    file: TlsFile,
+) -> Result<Vec<u8>, ObservationError> {
+    std::fs::read(secrets.resolve(reference)?)
+        .map_err(|_| ObservationError::Backend(file.unreadable()))
+}
+
 /// Configure a lazy channel without network mutation or automatic RPC retry.
 /// Secret references are resolved locally; raw credentials never leave this client.
 pub fn client(
@@ -57,28 +87,16 @@ pub fn client(
     if endpoint.starts_with("https:") {
         let mut tls = ClientTlsConfig::new().with_native_roots();
         if let Some(references) = &connection.tls {
-            let file = |name: &str, unreadable| -> Result<Vec<u8>, ObservationError> {
-                std::fs::read(secrets.resolve(name)?)
-                    .map_err(|_| ObservationError::Backend(unreadable))
-            };
             // A CA alone pins the gateway's certificate without a client
             // identity, as OpenShell's own client connects to a gateway that
             // authenticates clients by token.
-            tls = ClientTlsConfig::new().ca_certificate(Certificate::from_pem(file(
-                &references.ca_env,
-                "cannot read the CA file that tls.ca names",
-            )?));
+            let ca = read_tls(secrets, &references.ca_env, TlsFile::Ca)?;
+            tls = ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca));
             if let Some(identity) = &references.identity {
-                tls = tls.identity(Identity::from_pem(
-                    file(
-                        &identity.certificate_env,
-                        "cannot read the client certificate file that tls.certificate names",
-                    )?,
-                    file(
-                        &identity.key_env,
-                        "cannot read the client key file that tls.key names",
-                    )?,
-                ));
+                let certificate =
+                    read_tls(secrets, &identity.certificate_env, TlsFile::Certificate)?;
+                let key = read_tls(secrets, &identity.key_env, TlsFile::Key)?;
+                tls = tls.identity(Identity::from_pem(certificate, key));
             }
         }
         channel = channel
