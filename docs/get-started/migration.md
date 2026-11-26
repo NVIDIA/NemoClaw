@@ -3,13 +3,13 @@
 
 # Evaluating NemoClaw Agent Configs Alongside NemoClaw v0
 
-Evaluate NemoClaw Agent Configs in a separate deployment without changing your NemoClaw v0 tooling, configuration, or state.
-The CLI can't adopt an existing deployment or migrate its state.
-[Author new deployment YAML](onboard.md) or [start from an export](#starting-from-the-earlier-export) if your NemoClaw v0 CLI supports the report-capable exporter.
+Choose how to prepare YAML for a separate deployment. Leave your NemoClaw v0 tools, configuration, and state untouched.
 
-NemoClaw has no upgrade, native-data transfer or rollback procedure: native data belongs to the harness, and moving its storage belongs to the platform.
-The evaluation steps below create a separate deployment.
-They don't provide an in-place upgrade or data conversion.
+- [Author fresh YAML](onboard.md) if you want to start from CLI suggestions or do not have the report-capable v0 exporter.
+- [Start from a configuration export](#starting-from-the-earlier-export) if your v0 CLI supports the report-capable exporter and you want to compare settings.
+
+Neither path adopts the earlier deployment, upgrades it in place, or transfers native data.
+The harness owns its data format, and the platform owns its storage. NemoClaw provides no data rollback between the two deployments.
 
 This guide and [current limits](../resources/limits.md) describe current support.
 The [roadmap milestones](https://github.com/NVIDIA/NemoClaw/milestones) track planned work, including [planned NemoClaw v0 features for Agent Configs](https://github.com/NVIDIA/NemoClaw/milestone/14).
@@ -51,8 +51,8 @@ These checks aren't a conversion mechanism.
 NemoClaw v0's `nemoclaw config export` writes NemoClaw Agent Configs YAML for one sandbox.
 The report-capable exporter assigns a new UUID but keeps the earlier gateway port and writes an image placeholder.
 If your version of NemoClaw v0 does not include the report-capable exporter, skip export and [author separate deployment YAML](onboard.md) using the settings you can carry over.
-Prepare a copy of the export for the new deployment.
-You can edit the copy yourself or ask an assistant with access to this checkout to follow [Preparing a Separate Deployment From a NemoClaw v0 Export](../../.agents/skills/nemoclaw-v0-migration/SKILL.md).
+Work from a copy of the export, not the running deployment's files.
+The [detailed field mappings](../../.agents/skills/nemoclaw-v0-migration/SKILL.md#5-handle-each-report-entry) cover settings that need harness-specific decisions.
 
 1. On the NemoClaw v0 host, export the sandbox using a CLI that includes the [report-capable exporter](https://github.com/NVIDIA/NemoClaw/pull/14602) from revision `7892283831683e8b8b7a167b5cf1006d7bc262a5`:
 
@@ -62,17 +62,19 @@ You can edit the copy yourself or ask an assistant with access to this checkout 
 
    File output requires Linux; on other hosts use `--output -` and redirect it.
    A refused export writes no YAML and prints one `<field> (<category>): <reason>` line per capability it cannot carry, such as messaging or host mounts.
-   Check those capabilities in the task map above before continuing without them.
-2. Read the comment block at the top of the export.
-   Each line names a setting the export left out, replaced with a placeholder, or rewrote.
-   If the first line is not `# nemoclaw-export-report: 1`, stop and [author a separate YAML file](onboard.md) instead.
-3. Copy the export to a new `deployment.yaml` and edit only the copy.
-   Set `metadata.uid` to a fresh UUID from `uuidgen` and choose a dedicated state directory for the new deployment.
-4. Use the [separate deployment instructions](../../.agents/skills/nemoclaw-v0-migration/SKILL.md#3-give-the-deployment-its-own-identity) to select a free gateway port and network, replace the image placeholder with a matching digest, and adapt the policy to that image.
-5. Go through the export report one entry at a time.
-   Use the [field mappings](../../.agents/skills/nemoclaw-v0-migration/SKILL.md#5-handle-each-report-entry) to update supported settings and record any settings you cannot carry over.
-   Review the list before proceeding.
-6. [Evaluate the new deployment](#evaluating-v1-beside-the-existing-deployment) with the new YAML and state directory.
+   If export refuses, use the [task map](#mapping-the-user-task) to decide whether a fresh configuration meets your needs.
+2. Check the first line for `# nemoclaw-export-report: 1`. If the marker is absent, stop and [author fresh YAML](onboard.md) instead.
+3. Copy the export to a new `deployment.yaml`. Edit only this copy.
+4. Set `metadata.uid` to a fresh UUID from `uuidgen`.
+5. Choose a state directory for the new deployment only.
+6. Set a free gateway port in the gateway's compute target. The export keeps the earlier gateway's port.
+7. Check the gateway subnet for overlap. If it overlaps, set an unused `networkCIDR` in the target. Any managed service names and published ports also need to avoid collisions.
+8. Replace the sandbox's `image.ref` placeholder with a digest from the matching release or [build the image](../build-deploy/build.md#building-agent-images) from the bundle's revision.
+9. Match `harness.kind` to the selected image's exact adapter ID. For example, use `nvidia.fabric.openclaw` for the release OpenClaw image.
+10. Adapt any explicit policy to the selected image. Use its runtime settings for `filesystem_policy`, `process`, and `landlock`. Keep intended egress rules only where the paths and endpoints still match the new image and deployment. Refer to [image-specific policy checks](../../.agents/skills/nemoclaw-v0-migration/SKILL.md#6-check-the-rest-of-the-document).
+11. Review each report entry. Use the [field mappings](../../.agents/skills/nemoclaw-v0-migration/SKILL.md#5-handle-each-report-entry) and the selected image's adapter descriptor to identify settings you can carry over. For example, do not copy v0 sandbox proxy settings or OpenClaw reasoning overrides into Agent Configs. Export does not carry native data or manually attached OAuth refresh material.
+12. Record the settings you cannot carry over. If you need any of those settings, keep the earlier deployment available.
+13. [Evaluate the new deployment](#evaluating-v1-beside-the-existing-deployment) with its own YAML and state directory.
 
 The skill lists the harnesses and revisions it has been run with.
 Deep Agents exports and exports with managed inference services are untested.
@@ -88,17 +90,21 @@ Use a separate identity and state directory so the comparison doesn't mutate an 
 2. Check the task mapping above for workflows you rely on.
    If a workflow you need is in [current limits](../resources/limits.md) or [Out of Scope](../resources/out-of-scope.md), keep the earlier deployment available rather than assuming feature parity.
 3. [Install the v0.1.0 bundle](install.md).
-4. Prepare a fresh UUID and dedicated state directory using [the first-deployment guide](first-deployment.md).
-   Check names, exposed ports, model capacity, and credentials so the evaluation doesn't overwrite or exhaust the original deployment's resources.
-5. Plan the Agent Configs deployment using only its YAML and state directory.
-6. Apply the reviewed changes to the new deployment.
-7. Verify a reply through the native interface.
-8. Check [configuration export](../build-deploy/state.md).
-9. Check [unchanged reapply](../build-deploy/usage.md#verifying-an-unchanged-reapply).
-10. Validate each required task before switching to Agent Configs.
+4. Confirm that the new deployment has a fresh UUID and dedicated state directory.
+5. Check resource names, exposed ports, model capacity, and credential scope for conflicts with the original deployment.
+6. [Preview changes](../build-deploy/usage.md#planning-and-applying) using only the new YAML and state directory.
+7. Review the changes, deferred checks, and unverified advisories. Resolve unexpected changes or missing prerequisites before apply.
+8. Apply the reviewed configuration to the new deployment.
+9. [Verify an agent reply](../agents-inference/agents.md#running-one-agent-request).
+10. Check [configuration export](../build-deploy/state.md).
+11. Check [unchanged reapply](../build-deploy/usage.md#verifying-an-unchanged-reapply).
+12. Validate each required task before switching to Agent Configs.
     An agent reply alone doesn't validate tools, channels, history continuity, or workload quality.
 
-If evaluation fails, keep using the earlier deployment. Diagnose Agent Configs with its own bundle and state. Before removing the evaluation deployment, preserve data needed for investigation and [preview teardown](first-deployment.md#previewing-and-removing-the-deployment).
+If evaluation fails, the earlier deployment remains available. Diagnose Agent Configs with its own bundle and state.
+
+1. Preserve data needed for investigation before removing the evaluation deployment.
+2. Follow the [teardown procedure](../build-deploy/usage.md#destroying) for the evaluation deployment only.
 
 Continuing to use an untouched earlier deployment isn't a rollback of data written in NemoClaw Agent Configs.
 NemoClaw has no procedure to transfer those changes back to the earlier runtime.
