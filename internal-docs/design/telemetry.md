@@ -5,8 +5,7 @@
 
 The `nemoclaw` CLI sends one flat record when a command that changes a deployment or its configuration finishes.
 This page defines that record: when it is sent, every field with its values and source, and what is never sent.
-The sender is not built yet, and [#13995](https://github.com/NVIDIA/NemoClaw/issues/13995) tracks it.
-Before it ships, [Security and Credential Ownership](../../docs/security/security.md) must tell users what is sent and how to turn it off.
+[Usage telemetry](../../docs/security/security.md#usage-telemetry) tells users what is sent and how to turn it off.
 
 ## Goals
 
