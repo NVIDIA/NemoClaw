@@ -197,6 +197,15 @@ async fn case() {
         }
     }
     assert!(tested.unwrap().success(), "tofu test failed");
+    // tofu test exits successfully even when it cannot destroy the state its
+    // run blocks created; it then writes that state here
+    // (https://github.com/opentofu/opentofu/issues/4879). Remove this check
+    // once the bundled OpenTofu fails such a run.
+    assert!(
+        !root.join("errored_test.tfstate").exists(),
+        "tofu test could not clean up its run blocks' state; see errored_test.tfstate in {}",
+        root.display()
+    );
 }
 
 #[test]
