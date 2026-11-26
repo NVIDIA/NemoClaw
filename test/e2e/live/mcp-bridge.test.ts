@@ -63,6 +63,7 @@ import {
   HERMES_MCP_ENV_LOAD_COMMANDS,
   HERMES_MCP_DENIED_TOOL_PROBE,
   captureRejectedOpenClawCredentialAliasState,
+  enableOpenClawDoctorPhaseTrace,
   addBridgeAndReadStatus,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
   MCP_BRIDGE_DENIED_TOOL_NAME,
@@ -1042,6 +1043,7 @@ test(
     };
     await runOpenClawPublicPinRefreshProof(host, sandbox, OPENCLAW_SANDBOX_NAME, mcpUrl);
     await proveRestoredBridge("openclaw-public-pin-refresh");
+    await enableOpenClawDoctorPhaseTrace(sandbox, OPENCLAW_SANDBOX_NAME);
     await rebuildWithoutMcpHostSecret(host, OPENCLAW_SANDBOX_NAME, "openclaw");
     await proveRestoredBridge("openclaw");
     await proveStoppedDockerAgentRecovery(

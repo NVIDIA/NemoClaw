@@ -938,6 +938,40 @@ export function trackMcpFailureDiagnostics(
   };
 }
 
+/** Retain native Doctor phase timings through both complete-home rebuilds. */
+export async function enableOpenClawDoctorPhaseTrace(
+  sandbox: SandboxClient,
+  sandboxName: string,
+): Promise<void> {
+  await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      [
+        "python3 -I - <<'PY'",
+        "import os, stat",
+        'value = b"\\nOPENCLAW_GATEWAY_STARTUP_TRACE=1\\n"',
+        'fd = os.open("/sandbox/.openclaw/.env", os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)',
+        "try:",
+        "    entry = os.fstat(fd)",
+        "    if not stat.S_ISREG(entry.st_mode) or entry.st_uid != os.getuid() or entry.st_nlink != 1 or entry.st_size + len(value) > 1048576:",
+        '        raise RuntimeError("Unsafe OpenClaw diagnostic environment file")',
+        "    if os.write(fd, value) != len(value):",
+        '        raise RuntimeError("Incomplete OpenClaw diagnostic environment write")',
+        "    os.fsync(fd)",
+        "finally:",
+        "    os.close(fd)",
+        "PY",
+      ].join("\n"),
+    ),
+    {
+      artifactName: "openclaw-enable-doctor-phase-trace",
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: MCP_BRIDGE_TEST_REDACTION_VALUES,
+      timeoutMs: 10_000,
+    },
+  );
+}
+
 export async function rebuildWithoutMcpHostSecret(
   host: HostCliClient,
   sandboxName: string,
