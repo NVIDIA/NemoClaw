@@ -3,7 +3,7 @@
 
 import { Errors, Flags } from "@oclif/core";
 
-const LOGS_SINCE_DURATION_RE = /^[1-9]\d*(?:ms|s|m|h|d)$/i;
+const LOGS_SINCE_DURATION_RE = /^[1-9]\d*[smh]$/;
 
 export function parseLogsSinceDuration(input: string): string {
   const trimmed = input.trim();
