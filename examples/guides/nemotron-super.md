@@ -123,7 +123,7 @@ Each harness gets a registration bound to its image's executables, using the sha
 Both sandboxes retain explicit process and filesystem policies, with writes limited to `/sandbox`.
 Hermes also reads its packaged source, Switchyard plugin, and the public CA bundle used for HTTPS, and can open pseudo-terminals in `/dev/pts`, which its [browser chat](../../docs/agents-inference/interfaces.md#hermess-browser-chat) needs.
 
-Follow the [Kubernetes prerequisites and image preparation](../../docs/build-deploy/kubernetes.md#prerequisites).
+Follow the Kubernetes [prerequisites and image preparation](../../docs/build-deploy/kubernetes.md#preparing-for-either-gateway) and the [cluster preparation for a managed gateway](../../docs/build-deploy/kubernetes.md#preparing-the-cluster).
 Select a Linux AMD64 image for each harness, push both to a registry the cluster can pull from, and supply their matching metadata bundles.
 
 For YAML, assign a fresh deployment UID and replace the cluster context, namespace, and both image digests before planning.
@@ -131,7 +131,7 @@ Set `NEMOCLAW_CLUSTER_KUBECONFIG` to the kubeconfig file for that context.
 NemoClaw installs the gateway and creates development authentication material; its providers use command-scoped loopback tunnels, so no `GATEWAY_*` credentials are required.
 The YAML enables PVC driver configuration through `spec.gateway.config`; the HCL sets the same Helm `gatewayConfig` value.
 Both paths install the gateway with the permissions needed to inspect PVCs.
-The [development authentication profile](../../docs/build-deploy/kubernetes.md#deploying-with-a-managed-gateway) is for development clusters; use the documented OIDC profile for an existing issuer.
+The [development authentication profile](../../docs/build-deploy/kubernetes.md#writing-the-managed-deployment-document) is for development clusters; use the documented OIDC profile for an existing issuer.
 
 Before applying either configuration, the platform operator must create `gtc-dc-openclaw-data` and `gtc-dc-hermes-data` in the sandbox namespace.
 Use `spec.gateway.target.kubernetes.namespace` for YAML or `var.namespace` for HCL; create that namespace before provisioning the claims if it does not exist.

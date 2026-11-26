@@ -11,6 +11,52 @@ use crate::release_assessment::release::{digest, hex};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Add suggestions derived from the exact image-owned metadata staged beside
+/// these release pins. Never infer an adapter from an image's repository name.
+#[cfg(feature = "sdk")]
+pub fn with_agent_metadata(pins: &str, directory: &std::path::Path) -> Result<String> {
+    use std::fs;
+    let mut pins: serde_json::Value = serde_json::from_str(pins).map_err(|e| e.to_string())?;
+    let mut images = Vec::new();
+    let mut paths = fs::read_dir(directory)
+        .map_err(|e| e.to_string())?
+        .map(|entry| entry.map(|entry| entry.path()).map_err(|e| e.to_string()))
+        .collect::<Result<Vec<_>>>()?;
+    paths.sort();
+    for path in paths {
+        let Some(name) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix(".metadata.json"))
+        else {
+            continue;
+        };
+        let reference = pins["components"][name]["image"]
+            .as_str()
+            .ok_or_else(|| format!("No release image for {name}"))?;
+        let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+        let observation = nemoclaw_sdk::image_metadata::verify(&bytes, reference)
+            .map_err(|_| format!("Invalid image metadata for {name}"))?;
+        let catalog = observation
+            .catalog
+            .ok_or_else(|| format!("No adapter catalog for {name}"))?;
+        if pins["components"]["fabric"]["version"].as_str()
+            != Some(catalog.fabric_revision.as_str())
+        {
+            return Err(format!("Image {name} uses another Fabric revision"));
+        }
+        images.push(serde_json::json!({
+            "reference": reference,
+            "adapters": catalog.adapters.iter().map(|adapter| adapter.adapter_id()).collect::<Vec<_>>()
+        }));
+    }
+    if images.is_empty() {
+        return Err("No agent image metadata was supplied".into());
+    }
+    pins["agentImages"] = serde_json::json!(images);
+    serde_json::to_string_pretty(&pins).map_err(|e| e.to_string())
+}
+
 type Result<T> = std::result::Result<T, String>;
 
 /// The Fabric source archive's URL up to its revision.
@@ -92,6 +138,7 @@ pub fn pins(versions: &[u8], inventory: &[u8], tag: &str) -> Result<String> {
     let mut components = BTreeMap::new();
     for (name, version, tool) in [
         ("opentofu", &versions.opentofu, "tofu"),
+        ("openshellCli", &versions.openshell, "openshell"),
         (
             "dockerProvider",
             &versions.docker_provider,

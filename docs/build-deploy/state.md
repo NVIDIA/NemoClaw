@@ -8,6 +8,8 @@ The CLI defaults to `.nemoclaw` in the working directory.
 Use `--state-dir` to select another directory.
 Separate deployments need separate state directories and deployment UUIDs.
 
+To run the `openshell` commands below against a deployment, use `nemoclaw osh --state-dir DIR --` in their place where [the bundled CLI applies](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace).
+
 ## Local Deployment Files
 
 The SDK and OpenTofu manage these files.

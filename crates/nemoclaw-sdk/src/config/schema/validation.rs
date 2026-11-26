@@ -374,7 +374,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         if gateway["properties"]["management"]["const"] == "external" {
             property(gateway, "endpoint", json!({"pattern": "^https?://"}));
             gateway["if"] = at("endpoint", json!({"pattern": "^http:"}), true);
-            gateway["then"] = forbid(&["credential", "tls"]);
+            gateway["then"] = forbid(&["credential", "tls", "oidc"]);
         }
     }
 

@@ -10,7 +10,7 @@ This guide covers installing the providers, keeping state, running from a pipeli
 The examples come from [`examples/features/travel/hcl`](../../examples/features/travel/hcl/main.tf), a Pi agent in an OpenShell sandbox answering with a local Ollama model, and [`examples/features/travel-team/hcl`](../../examples/features/travel-team/hcl/README.md), six agents with their own sandboxes, models, and grants.
 An integration test applies each example unchanged with the bundle's providers, a mocked Docker provider, and a fixture gateway, image engine, and model server.
 As the [provider reference](../references/provider.md#resource-and-state-ownership) states, no test qualifies a complete deployment from hand-written HCL on live resources.
-The steps use OpenTofu: the provider addresses are under `registry.opentofu.org`, and the providers are not tested under Terraform ([#14725](https://github.com/NVIDIA/NemoClaw/issues/14725)).
+The steps use OpenTofu: the examples require the Docker provider at `registry.opentofu.org/kreuzwerker/docker`, and the providers are not tested under Terraform ([#14725](https://github.com/NVIDIA/NemoClaw/issues/14725)).
 
 ## Choosing a Path
 
@@ -34,7 +34,8 @@ Choose the [CLI](../references/cli.md) or [SDK](../references/sdk.md) when one Y
 
 ## Installing the Providers From a Bundle
 
-The NemoClaw providers ship in the CLI bundle, not in a provider registry. OpenTofu installs them from the bundle's `providers` directory using a filesystem mirror.
+The NemoClaw providers ship in the CLI bundle, not in a provider registry.
+Their addresses, such as `nvidia.github.io/nemoclaw/openshell`, name a registry that isn't published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)), so OpenTofu installs them from the bundle's `providers` directory using a filesystem mirror, and the CLI configuration in step 3 keeps OpenTofu from contacting `nvidia.github.io`.
 Use the providers, agent images, and runtime images of one release, as [compatibility](../references/compatibility.md#using-one-release-together) describes.
 
 Before you start, you need:
@@ -66,9 +67,9 @@ To install the providers, perform the following steps from your project's root d
      required_version = "~> 1.12"
      required_providers {
        docker    = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.7.0" }
-       ollama    = { source = "registry.opentofu.org/nvidia/ollama", version = "0.1.0" }
-       openshell = { source = "registry.opentofu.org/nvidia/openshell", version = "0.1.0" }
-       fabric    = { source = "registry.opentofu.org/nvidia/fabric", version = "0.1.0" }
+       ollama    = { source = "nvidia.github.io/nemoclaw/ollama", version = "0.1.0" }
+       openshell = { source = "nvidia.github.io/nemoclaw/openshell", version = "0.1.0" }
+       fabric    = { source = "nvidia.github.io/nemoclaw/fabric", version = "0.1.0" }
      }
    }
    ```
@@ -81,10 +82,10 @@ To install the providers, perform the following steps from your project's root d
    provider_installation {
      filesystem_mirror {
        path    = "/absolute/path/to/bundle/providers"
-       include = ["registry.opentofu.org/nvidia/*"]
+       include = ["nvidia.github.io/nemoclaw/*"]
      }
      direct {
-       exclude = ["registry.opentofu.org/nvidia/*"]
+       exclude = ["nvidia.github.io/nemoclaw/*"]
      }
    }
    ```
@@ -177,9 +178,9 @@ Because the providers are not published, add each other runner platform's checks
 tofu providers lock \
   -fs-mirror=/absolute/path/to/linux_amd64/bundle/providers \
   -platform=linux_amd64 \
-  registry.opentofu.org/nvidia/ollama \
-  registry.opentofu.org/nvidia/openshell \
-  registry.opentofu.org/nvidia/fabric
+  nvidia.github.io/nemoclaw/ollama \
+  nvidia.github.io/nemoclaw/openshell \
+  nvidia.github.io/nemoclaw/fabric
 ```
 
 List the NVIDIA providers that your configuration requires.

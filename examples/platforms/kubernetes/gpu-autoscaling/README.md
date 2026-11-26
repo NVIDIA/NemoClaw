@@ -14,7 +14,7 @@ No automated test covers this procedure; [current limits](../../../../docs/resou
 
 ## Prerequisites
 
-- **The cluster, NemoClaw bundle and agent images** that [Deploying to Kubernetes or OpenShift](../../../../docs/build-deploy/kubernetes.md#prerequisites) lists.
+- **The cluster, NemoClaw bundle and agent images** that [Preparing for Either Gateway](../../../../docs/build-deploy/kubernetes.md#preparing-for-either-gateway) and [Preparing the Cluster](../../../../docs/build-deploy/kubernetes.md#preparing-the-cluster) list.
 - **For the chart:** NVIDIA GPU nodes with the NVIDIA GPU Operator and its DCGM exporter, Metrics Server, `helm` and `kubectl` with a context that can install cluster-wide charts, and `git`.
   The chart pins multi-platform image digests, so its pods run on `linux/amd64` and `linux/arm64` nodes; its [prerequisites](https://github.com/NVIDIA/nemoclaw-community/blob/17a5af9b7eac0a33cb3a2b2f82bc83585cee8595/examples/recipes/nvidia/kubernetes-gpu-autoscaling/README.md#prerequisites) list the images and what to check when you override one.
   The chart's [README](https://github.com/NVIDIA/nemoclaw-community/blob/17a5af9b7eac0a33cb3a2b2f82bc83585cee8595/examples/recipes/nvidia/kubernetes-gpu-autoscaling/README.md#install-details) describes its scheduling, storage and runtime options.
@@ -111,7 +111,7 @@ The agent image must match the architecture of the nodes that run the sandboxes;
 kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.nodeInfo.architecture}{"\n"}{end}'
 ```
 
-On a host of that architecture, from the NemoClaw repository root, build the agent image for its platform, `linux/arm64` or `linux/amd64`, and its metadata bundle, as [Preparing Agent Images](../../../../docs/build-deploy/kubernetes.md#preparing-agent-images) and [Building Agent Images](../../../../docs/build-deploy/build.md#building-agent-images) describe, then push the image and note the digest of the pushed index:
+On a host of that architecture, from the NemoClaw repository root, build the agent image for its platform, `linux/arm64` or `linux/amd64`, and its metadata bundle, as [Building Agent Images](../../../../docs/build-deploy/build.md#building-agent-images) and [Writing Image Metadata for Kubernetes or OpenShift](../../../../docs/build-deploy/build.md#writing-image-metadata-for-kubernetes-or-openshift) describe, then push the image and note the digest of the pushed index:
 
 ```sh
 mkdir -p .local/gpu-autoscaling
@@ -218,7 +218,7 @@ A request that reaches `TIMEOUT` counts as failed; the script stops waiting for 
 
 ## Remove the Deployment
 
-From the deployment directory, destroy the sandboxes and gateway, as [Destroying a Deployment](../../../../docs/build-deploy/kubernetes.md#destroying-a-deployment) describes:
+From the deployment directory, destroy the sandboxes and gateway, as [Destroying a Managed Deployment](../../../../docs/build-deploy/kubernetes.md#destroying-a-managed-deployment) describes:
 
 ```sh
 nemoclaw plan --destroy --state-dir state

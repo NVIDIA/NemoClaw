@@ -89,7 +89,7 @@ async fn container_readiness_exports_the_server_ref_with_its_observed_credential
             readiness["sandbox_endpoint"] = json!(endpoint);
         }
         let graph = json!({
-            "terraform": {"required_providers": {"vllm": {"source": "registry.opentofu.org/nvidia/vllm"}}},
+            "terraform": {"required_providers": {"vllm": {"source": "nvidia.github.io/nemoclaw/vllm"}}},
             "provider": {"vllm": {}},
             "data": {"vllm_readiness": {"qwen": readiness}},
             "output": {"server": {"value": "${data.vllm_readiness.qwen.ref}"}}

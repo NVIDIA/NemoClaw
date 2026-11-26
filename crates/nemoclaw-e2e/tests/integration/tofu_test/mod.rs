@@ -344,7 +344,7 @@ fn prepare(
 
 /// Add `version` to each NVIDIA provider requirement in `text`.
 fn pin_versions(text: &str, version: &str) -> String {
-    const SOURCE: &str = "source = \"registry.opentofu.org/nvidia/";
+    const SOURCE: &str = "source = \"nvidia.github.io/nemoclaw/";
     let mut pinned = String::new();
     let mut rest = text;
     while let Some(start) = rest.find(SOURCE) {
@@ -420,7 +420,7 @@ async fn run_shard(shard: usize) {
 
     let mirror = directory.path().join("fixture-provider");
     let platform = mirror
-        .join("registry.opentofu.org/nvidia/fixture/1.0.0")
+        .join("nvidia.github.io/nemoclaw/fixture/1.0.0")
         .join(bundle.root().file_name().unwrap());
     fs::create_dir_all(&platform).unwrap();
     fs::copy(
@@ -434,7 +434,7 @@ async fn run_shard(shard: usize) {
     fs::write(
         &configuration,
         format!(
-            "provider_installation {{\n  filesystem_mirror {{\n    path = {mirror:?}\n    include = [\"registry.opentofu.org/nvidia/fixture\"]\n  }}\n  filesystem_mirror {{\n    path = {:?}\n  }}\n}}\n",
+            "provider_installation {{\n  filesystem_mirror {{\n    path = {mirror:?}\n    include = [\"nvidia.github.io/nemoclaw/fixture\"]\n  }}\n  filesystem_mirror {{\n    path = {:?}\n  }}\n}}\n",
             bundle.root().join("providers"),
         ),
     )
@@ -656,7 +656,7 @@ fn for_tofu_test(graph: &mut Value) {
         }
     }
     graph["terraform"]["required_providers"]["fixture"] =
-        json!({"source": "registry.opentofu.org/nvidia/fixture", "version": "= 1.0.0"});
+        json!({"source": "nvidia.github.io/nemoclaw/fixture", "version": "= 1.0.0"});
 }
 
 fn copy(from: &Path, to: &Path) {

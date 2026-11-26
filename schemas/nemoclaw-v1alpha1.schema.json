@@ -833,6 +833,10 @@
               "description": "Whether this deployment manages the gateway.",
               "type": "string"
             },
+            "oidc": {
+              "$ref": "#/$defs/GatewayOidc",
+              "description": "Login settings for the bundled OpenShell CLI. OpenShell owns login and token renewal; deployment operations still use credential.env. The client secret, when needed, comes from OPENSHELL_OIDC_CLIENT_SECRET in the CLI process environment."
+            },
             "policyAuthority": {
               "$ref": "#/$defs/PolicyAuthority",
               "description": "Who authors sandbox policy on this gateway; omission means NemoClaw does."
@@ -862,6 +866,11 @@
                   "required": [
                     "tls"
                   ]
+                },
+                {
+                  "required": [
+                    "oidc"
+                  ]
                 }
               ]
             }
@@ -870,6 +879,42 @@
           "type": "object"
         }
       ]
+    },
+    "GatewayOidc": {
+      "additionalProperties": false,
+      "description": "OIDC login for the bundled OpenShell CLI, without credentials.",
+      "properties": {
+        "audience": {
+          "description": "API audience requested at login; omission uses the client ID.",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
+        },
+        "clientId": {
+          "description": "Identity-provider client registered for browser, device-code, or client-credentials login.",
+          "maxLength": 253,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f]+$",
+          "type": "string"
+        },
+        "issuer": {
+          "description": "HTTPS issuer URL, including its realm path when required.",
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string"
+        },
+        "scopes": {
+          "description": "Space-separated OAuth scopes requested at login.",
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "issuer",
+        "clientId"
+      ],
+      "type": "object"
     },
     "GatewayResourceList": {
       "additionalProperties": false,

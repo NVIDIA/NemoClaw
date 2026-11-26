@@ -31,6 +31,14 @@ A reachable endpoint does not establish successful inference; one successful req
 Passing tests do not establish product support or authorize actions on a user's resources.
 The [design decision](internal-docs/design/scope.md) defines the accepted scope.
 
+## Write and Review for the Target Release
+
+Write versioned product documentation for readers using the target release after publication.
+Use the final tag, download URLs, and versioned examples that readers will use.
+During review, treat planned release assets that are still unpublished as expected in a preview.
+Flag links, assets, and instructions that would fail for readers of the released version.
+Track publication and artifact verification in the [release process](internal-docs/contributing/releases.md).
+
 ## Review the Assigned Change
 
 Review changed text unless the task requests a broader audit; preserve accurate historical records and upstream notices.

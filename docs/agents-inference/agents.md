@@ -8,6 +8,8 @@ NVIDIA NeMo Fabric owns adapter identifiers, descriptors, native configuration s
 Use the descriptor installed in the selected image to establish what that adapter accepts.
 An SDK parser accepting a field doesn't establish native support.
 
+The sandbox commands below run through [`nemoclaw osh`](interfaces.md#selecting-the-gateway-and-workspace), which says when to use a standalone `openshell` instead.
+
 ## Configuring the Agent and the Harness
 
 Set `harness.kind` to the exact Fabric adapter identifier and select an image containing that adapter.
@@ -62,11 +64,11 @@ An agent's model choices don't restrict other processes within its sandbox beyon
 ### Running One Agent Request
 
 Every harness takes a request through the same Fabric command.
-The [headless OpenClaw request](#running-one-headless-openclaw-request) shows a complete example.
+For complete examples, follow the [headless OpenClaw request](#running-one-headless-openclaw-request) or [verifying a Hermes reply](../get-started/from-source.md#verifying-a-reply).
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
-Plan and apply print this command for each agent with both filled in, after the commands that select the deployment's gateway and workspace, and JSON results report them under `agents`.
+Plan and apply print this command for each agent with both filled in, and JSON results report them under `agents`.
 See [invoke an agent](interfaces.md#invoking-an-agent).
 Use `--input -` to read the value from stdin instead.
 See the [bridge commands](../../internal-docs/design/fabric-management.md#bridge-commands).
@@ -77,12 +79,19 @@ Don't assume a universal result shape.
 Check `result.status` as well as the outer `status`: the outer one only reports that `fabric-agent-ctl` completed the call, while a failed run reports `result.status: failed` with Fabric's error in `result.error`.
 `result.artifacts` names the files Fabric kept for that request, such as the adapter's output.
 
-To send a prompt from the client host and keep the full result, pipe a JSON string to `--input -` and save stdout, then show the statuses with `jq`:
+To send a prompt from your machine, pipe it in on stdin and save the result in a file only you can read, with the same `--state-dir` and `--bundle` options as apply.
+`set -C` refuses to overwrite an earlier result:
 
 ```sh
-printf '%s\n' '"Reply with exactly READY."' |
-  openshell sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent NAME --runtime-id ID --input - > reply.json
+(umask 077; set -C; printf '%s\n' '"Reply with exactly READY."' |
+  nemoclaw osh -- sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent NAME --runtime-id ID --input - > reply.json)
+```
+
+After exit 0, inspect the command and agent statuses:
+
+```sh
 jq '{status, result_status: .result.status, error: .result.error}' reply.json
+jq -e '.status == "succeeded" and .result.status == "succeeded"' reply.json
 ```
 
 The prompt keeps its double quotes because it is a JSON string; empty stdin is not a prompt.
@@ -111,7 +120,8 @@ Headless operation follows the same public Fabric invocation boundary.
 The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/76bde16c40747062001bd6ea5f5d13cadab3d706/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
-With the [v0.1.0 OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. Run these steps from the directory that holds `deployment.yaml`:
+With the [external gateway OpenClaw example](../get-started/first-deployment.md#using-an-existing-gateway-and-inference-endpoint) applied, use its sandbox key `assistant`, agent name `main`, and state directory.
+Run these steps from the directory that holds `deployment.yaml`.
 
 1. [Select the deployment's gateway and workspace](interfaces.md#selecting-the-gateway-and-workspace) in this terminal.
 
@@ -127,7 +137,7 @@ With the [v0.1.0 OpenClaw example](../get-started/first-deployment.md) applied, 
 3. Send one JSON prompt string to the agent.
 
    ```sh
-   openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id "$RUNTIME_ID" --input - <<'JSON'
+   nemoclaw osh -- sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id "$RUNTIME_ID" --input - <<'JSON'
    "Reply with exactly READY."
    JSON
    ```

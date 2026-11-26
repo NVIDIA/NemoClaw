@@ -171,7 +171,7 @@ Each bundle holds these programs; everything else in it is data: `manifest.json`
 | Program | Bundle path | Built by | Upstream provenance | macOS signature | Windows signature |
 |---|---|---|---|---|---|
 | `nemoclaw` | `bin/` | NVIDIA, from this repository | Not applicable | NVIDIA | NVIDIA |
-| NemoClaw providers `openshell`, `fabric`, `vllm`, `ollama`, `host` | `providers/registry.opentofu.org/nvidia/` | NVIDIA, from this repository | Not applicable | NVIDIA | NVIDIA |
+| NemoClaw providers `openshell`, `fabric`, `vllm`, `ollama`, `host` | `providers/nvidia.github.io/nemoclaw/` | NVIDIA, from this repository | Not applicable | NVIDIA | NVIDIA |
 | OpenTofu 1.13.10, `tofu` | `libexec/` | OpenTofu | `SHA256SUMS` and each archive have GPG and Sigstore cosign signatures. Upstream ships only an ad hoc macOS signature and no Authenticode signature. | NVIDIA | None, as upstream ships it |
 | Docker provider 4.7.0, `kreuzwerker/docker` | `providers/registry.opentofu.org/kreuzwerker/docker/` | kreuzwerker | `SHA256SUMS` is GPG-signed with key `F31236BA85096E3AE22A8C660DCE698927DAF8EC`. Upstream ships only an ad hoc macOS signature and no Authenticode signature. | NVIDIA | None, as upstream ships it |
 | Helm provider 3.3.0, `hashicorp/helm` | `providers/registry.opentofu.org/hashicorp/helm/` | HashiCorp | `SHA256SUMS` is GPG-signed with key `C874011F0AB405110D02105534365D9472D7468F`. | HashiCorp's Developer ID, team `D38WU7D763`, notarized | HashiCorp's timestamped Authenticode signature |

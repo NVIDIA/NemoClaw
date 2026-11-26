@@ -3149,6 +3149,7 @@ dependencies = [
  "nemoclaw-discovery",
  "nemoclaw-sdk",
  "ratatui",
+ "reqwest 0.13.5",
  "serde",
  "serde-saphyr 1.3.0",
  "serde_json",

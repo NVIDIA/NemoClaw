@@ -56,7 +56,7 @@ fn live_kind_requires_its_bundle_before_downloading_tools_or_creating_a_cluster(
         serde_json::json!({
             "rust":"1.98.1", "protobuf":"36.1", "nextest":"0.9.144",
             "opentofu":"1.12.6", "dockerProvider":"4.6.0", "helmProvider":"3.3.0",
-            "platforms":{}, "images":{"kindNode":"kindest/node@sha256:fixture"}
+            "platforms":{}, "openshellNotices":{}, "images":{"kindNode":"kindest/node@sha256:fixture"}
         })
         .to_string(),
     )
@@ -109,7 +109,7 @@ fn cargo_steps_do_not_inherit_the_package_description_from_cargo_run() {
         serde_json::json!({
             "rust":"1.98.1", "protobuf":"36.1", "nextest":"0.9.144",
             "opentofu":"1.12.6", "dockerProvider":"4.6.0", "helmProvider":"3.3.0",
-            "platforms":{}
+            "platforms":{}, "openshellNotices":{}
         })
         .to_string(),
     )

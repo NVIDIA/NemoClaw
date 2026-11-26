@@ -35,8 +35,8 @@ fn configure(
         format!(
             r#"terraform {{
   required_providers {{
-    vllm     = {{ source = "registry.opentofu.org/nvidia/vllm" }}
-    ollama   = {{ source = "registry.opentofu.org/nvidia/ollama" }}
+    vllm     = {{ source = "nvidia.github.io/nemoclaw/vllm" }}
+    ollama   = {{ source = "nvidia.github.io/nemoclaw/ollama" }}
   }}
 }}
 
@@ -259,7 +259,7 @@ async fn ollama_model_checks_its_digest_while_planning() {
             format!(
                 r#"terraform {{
   required_providers {{
-    ollama = {{ source = "registry.opentofu.org/nvidia/ollama" }}
+    ollama = {{ source = "nvidia.github.io/nemoclaw/ollama" }}
   }}
 }}
 

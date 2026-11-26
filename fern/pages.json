@@ -5,7 +5,7 @@
       "title": "About",
       "pages": [
         {
-          "title": "Overview",
+          "title": "Overview of NemoClaw Agent Configs",
           "source": "docs/about/overview.md",
           "slug": "overview"
         },
@@ -41,14 +41,14 @@
           "slug": "install"
         },
         {
-          "title": "Onboarding From Source on macOS or WSL2",
-          "source": "docs/get-started/from-source.md",
-          "slug": "from-source"
-        },
-        {
           "title": "Deploying Your First OpenClaw Agent",
           "source": "docs/get-started/first-deployment.md",
           "slug": "get-started"
+        },
+        {
+          "title": "Onboarding From Source on macOS or WSL2",
+          "source": "docs/get-started/from-source.md",
+          "slug": "from-source"
         },
         {
           "title": "Authoring Deployment YAML With Onboarding",
@@ -86,9 +86,14 @@
           "slug": "opentofu-project"
         },
         {
-          "title": "Deploying to Kubernetes or OpenShift",
+          "title": "Deploying to Kubernetes",
           "source": "docs/build-deploy/kubernetes.md",
           "slug": "kubernetes"
+        },
+        {
+          "title": "Deploying to OpenShift",
+          "source": "docs/build-deploy/openshift.md",
+          "slug": "openshift"
         },
         {
           "title": "Defining Once or Configuring Inline",

@@ -9,8 +9,24 @@ You reach them through OpenShell commands, not published host ports.
 
 ## Selecting the Gateway and Workspace
 
+For plaintext, mTLS, or external OIDC gateways on Linux and macOS Apple silicon, use the bundled CLI:
+
+```sh
+nemoclaw osh --state-dir .nemoclaw -- sandbox list
+```
+
+It selects the gateway and workspace from the saved deployment and uses the referenced mTLS files without changing your OpenShell profiles.
+Use the same state directory and TLS environment as apply.
+The commands below use this form; [`nemoclaw openshell`](../references/cli.md#running-openshell-against-a-deployment) describes it.
+For an external OIDC gateway, first run the `Register once:` command that plan and apply print, as [Logging In to an External OIDC Gateway](../references/cli.md#logging-in-to-an-external-oidc-gateway) describes.
+
+### Selecting a Standalone CLI for Bearer-Token Gateways
+
+For bearer-token gateways without OIDC login settings, including managed Kubernetes or OpenShift, use a separately configured OpenShell CLI instead.
+In the commands below, replace `nemoclaw osh --` with `openshell` after selecting the gateway and workspace as follows.
+
 Use an OpenShell CLI matching the deployment implementation revision on the client host.
-For the [first-deployment tutorial](../get-started/first-deployment.md), use the OpenShell version its [prerequisites](../get-started/prerequisites.md#before-the-first-deployment) name.
+Follow [Preparing the Standalone OpenShell CLI](../get-started/prerequisites.md#preparing-the-standalone-openshell-cli) to find and verify the matching client.
 These selectors choose an existing OpenShell gateway and deployment.
 They don't create services or provision credentials.
 Run them in every terminal used for forwarding or sandbox commands, from any directory.
@@ -86,22 +102,11 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 
 ## Invoking an Agent
 
-After [selecting the gateway and workspace](#selecting-the-gateway-and-workspace), send requests through `openshell sandbox exec`.
-Plan and apply print a command for each agent with a recorded runtime ID, as in this illustrative output:
-
-```text
-Agents:
-  In each terminal, select this deployment's gateway and workspace:
-    unset OPENSHELL_GATEWAY
-    export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
-    export OPENSHELL_WORKSPACE=nc-1234567890abcdef
-  claw: agent main, runtime RUNTIME_ID
-    Invoke:   openshell sandbox exec -n claw --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id RUNTIME_ID --input FILE
-  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents-inference/agents.md.
-```
+After [selecting the gateway and workspace](#selecting-the-gateway-and-workspace), send requests through `nemoclaw osh -- sandbox exec`.
+Plan and apply print an `Invoke:` command for each agent with a recorded runtime ID; [Run one request](agents.md#running-one-agent-request) shows how to send a prompt and read its result.
+Where the bundled CLI can't reach the gateway, they say why instead.
 
 JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`.
-If an apply result also lists interfaces, the CLI prints the gateway and workspace selection once under **Agents**, not again under **Agent interfaces**.
 A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
 A plan omits that section when no agent has a recorded runtime, such as before the first apply.
 Otherwise, an agent without a recorded runtime is listed with `no runtime recorded` and has no `runtimeId`.
@@ -118,7 +123,7 @@ Reach it from a private terminal on the client host:
 2. Forward the sandbox's loopback service, bound to client loopback.
 
    ```sh
-   openshell forward service REPLACE_WITH_SANDBOX --target-port REPLACE_WITH_PORT --local 127.0.0.1:REPLACE_WITH_PORT
+   nemoclaw osh -- forward service REPLACE_WITH_SANDBOX --target-port REPLACE_WITH_PORT --local 127.0.0.1:REPLACE_WITH_PORT
    ```
 
    The command stays in the foreground and forwards through the authenticated OpenShell connection.
@@ -183,37 +188,28 @@ Changing an agent's settings, including its interfaces, replaces its sandbox, de
 ### Forwarding, Reading the Token, and Signing In
 
 After apply, NemoClaw lists each enabled interface with the commands to reach it, and never prints a token.
-The following illustrative excerpt shows interface selection commands in isolation.
-In an apply result that also reports a recorded agent runtime, the **Agents** block supplies those commands instead:
+For example:
 
 ```text
 Agent interfaces:
-  In each terminal, select this deployment's gateway and workspace:
-    unset OPENSHELL_GATEWAY
-    export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
-    export OPENSHELL_WORKSPACE=nc-1234567890abcdef
   claw/dashboard on port 18789
-    Forward:  openshell forward service claw --target-port 18789 --local 127.0.0.1:18789
-    Token:    openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token
+    Forward:  nemoclaw osh -- forward service claw --target-port 18789 --local 127.0.0.1:18789
+    Token:    nemoclaw osh -- sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token
     Sign in:  open http://127.0.0.1:18789/#token=TOKEN, replacing TOKEN with the token
-    Terminal: openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN, replacing TOKEN with the token
+    Terminal: nemoclaw osh -- sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN, replacing TOKEN with the token
 ```
 
 JSON results carry the same facts under `interfaces`.
-The gateway selection follows [Selecting the Gateway and Workspace](#selecting-the-gateway-and-workspace).
-For a gateway that needs an OpenShell profile, the output asks for your profile's name.
 
-1. [Select the gateway and workspace](#selecting-the-gateway-and-workspace) in the terminal that will run the forward.
-2. Run the `Forward` command in that terminal and keep it running. Bind it to loopback; stopping the forward does not stop the runtime.
-3. Select the same gateway and workspace in a separate private terminal.
-4. If the interface requires a token, read it with the `Token` command in that terminal. Do not paste a token into shell history or shared logs.
+1. Run the `Forward` command in a terminal and keep it running. Bind it to loopback; stopping the forward does not stop the runtime.
+2. If the interface requires a token, read it with the `Token` command in a separate private terminal. Do not paste a token into shell history or shared logs.
    The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
    For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes or OpenClaw, it's at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
    The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user.
    Stopping the runtime removes it.
    After the runtime restarts, apply prints a new path.
    Repeat this step to read the new token.
-5. Sign in using the method for the selected interface:
+3. Sign in using the method for the selected interface:
 
    - OpenClaw: Open `http://127.0.0.1:PORT/#token=TOKEN` in a browser.
      The Control UI removes the token from the address bar.
@@ -223,7 +219,7 @@ For a gateway that needs an OpenShell profile, the output asks for your profile'
      It has no sign-in.
      Anyone who can reach its forward can use it.
 
-6. Send a short request through the signed-in interface to verify the model replies.
+4. Send a short request through the signed-in interface to verify the model replies.
    A successful forward or sign-in alone doesn't establish inference.
 
 NemoClaw stores no interface tokens in its state.
@@ -254,13 +250,13 @@ Keep the token out of shell history:
 1. Read the token into a variable with the `Token` command.
 
    ```sh
-   TOKEN=$(openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token)
+   TOKEN=$(nemoclaw osh -- sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token)
    ```
 
 2. Open the terminal UI.
 
    ```sh
-   openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
+   nemoclaw osh -- sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
    ```
 
 3. Press Ctrl+D to quit when finished.
@@ -306,7 +302,7 @@ Apply prints the command that opens the terminal UI on the interface's `Terminal
 ```text
   hermes/terminal
     Sign in:  the Terminal command reads the runtime's credential itself
-    Terminal: openshell sandbox exec -n hermes --tty -- /opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/AGENT/interfaces/tui.json
+    Terminal: nemoclaw osh -- sandbox exec -n hermes --tty -- /opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/AGENT/interfaces/tui.json
 ```
 
 Run it from a terminal on the client host with the gateway and workspace selected.

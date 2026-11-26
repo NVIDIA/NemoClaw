@@ -42,7 +42,7 @@ Build the artifacts in the following order:
 
 Run every command in this guide from the repository root.
 
-On an Apple silicon Mac or Windows ARM64, [onboarding from source](../get-started/from-source.md) connects these builds to a Hermes deployment on Docker Desktop.
+On an Apple silicon Mac or in WSL2 on Windows, [onboarding from source](../get-started/from-source.md) connects these builds to a Hermes deployment with a local Docker engine.
 Windows ARM64 has no native bundle; use the Linux ARM64 toolchain inside WSL2.
 
 | Artifact | Requirements |
@@ -264,7 +264,7 @@ Otherwise, continue with the [next steps](#next-steps).
 
 - **Docker or Podman with an inspection engine:** If the image isn't on the selected engine, plan defers the Fabric compatibility check instead of pulling the image. On this path, apply [acquires and checks the image](usage.md#pulling-from-private-registries) before creating the gateway or configuring the deployment. For an external gateway, set the target's `engine` to the engine used for sandbox images. NemoClaw doesn't assume the client host's Docker socket, and the engine setting doesn't make NemoClaw manage the external gateway.
 - **Missing inspection prerequisites:** A missing inspection engine on an external Docker or Podman target is not the same as an absent image on a configured engine. Fix the engine setting before retrying plan. If an image is present but lacks the required runtime metadata, use a compatible image or rebuild it with its catalog label.
-- **Kubernetes or OpenShift:** Supply the [metadata bundle that matches the image digest](kubernetes.md). Missing or invalid metadata blocks planning. The cluster pulls the image; NemoClaw doesn't use the Docker or Podman pull path for these targets.
+- **Kubernetes or OpenShift:** Supply the [metadata bundle that matches the image digest](kubernetes.md#preparing-agent-images). Missing or invalid metadata blocks planning. The cluster pulls the image; NemoClaw doesn't use the Docker or Podman pull path for these targets.
 
 ### Image Labels and Discovery
 
@@ -325,7 +325,7 @@ cargo images export-metadata IMAGE --output FILE
 Use the same digest in `image.ref`.
 For an image already in a registry, pass `--registry` and its `HOST/REPOSITORY@sha256:DIGEST` reference in place of `IMAGE`.
 `NEMOCLAW_REGISTRY_USERNAME` and `NEMOCLAW_REGISTRY_PASSWORD`, when set, answer the registry's token challenge.
-For the rest of the cluster procedure, refer to [cluster deployment](kubernetes.md).
+For the rest of the cluster procedure, refer to [Kubernetes deployment](kubernetes.md) or [OpenShift deployment](openshift.md).
 
 ### Agent Image Contents
 
@@ -488,6 +488,7 @@ Compatibility with another revision is not implied.
 ## Next Steps
 
 - Configure, plan, and apply a deployment with the bundle and images: [deployment usage](usage.md).
-- Deploy on Kubernetes or OpenShift: [cluster deployment](kubernetes.md).
+- Deploy on Kubernetes: [Kubernetes deployment](kubernetes.md).
+- Deploy on OpenShift: [OpenShift deployment](openshift.md).
 - Extend an agent image with your own skills and tools: [derived agent images](derived-images.md).
 - Follow the [first-deployment tutorial](../get-started/first-deployment.md) with its own pinned revision and that revision's copy of this guide, not the artifacts from this checkout.

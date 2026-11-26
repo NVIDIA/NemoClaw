@@ -9,7 +9,7 @@
 | [external-gateway.yaml](external-gateway.yaml) | Use an existing OpenShift gateway; supply its endpoint, bearer and TLS references, harness images, and inference settings. | Three OpenClaw agents on the external gateway. |
 | [published-route.yaml](published-route.yaml) | Configure an OIDC issuer and publish the gateway through an OpenShift Route. | A managed gateway and one OpenClaw sandbox. |
 
-Follow [OpenShift setup](../../../docs/build-deploy/kubernetes.md#deploying-to-openshift) and the [shared YAML run procedure](../../README.md#prepare-and-run-a-yaml-example).
+Follow [Deploying to OpenShift](../../../docs/build-deploy/openshift.md) and the [shared YAML run procedure](../../README.md#prepare-and-run-a-yaml-example).
 Replace each file's illustrative values and deployment UID before plan/apply.
 Use explicit agent requests to verify replies, then check unchanged apply and retained teardown.
 The external gateway remains under its operator's ownership.

@@ -1,22 +1,22 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Overview
+# Overview of NemoClaw Agent Configs
 
-NemoClaw Agent Configs uses a desired-state model to deploy sandboxed agents.
-In YAML, you declare the agents, sandboxes, and inference connections you want so you can review changes before applying them.
-Use the CLI to preview and apply the changes, or integrate the same operations into a Rust application.
-It combines NVIDIA OpenShell sandbox isolation and inference routing with agent runtimes managed by NVIDIA NeMo Fabric.
-Deployment state lets you check changes and recover interrupted operations, but it does not back up agent files or conversations.
+NemoClaw Agent Configs uses reusable YAML to deploy supported AI agents in NVIDIA OpenShell sandboxes.
+Define the gateway, inference connections, sandbox policies, and agent settings, then preview and apply changes with the CLI or Rust SDK.
+NVIDIA NeMo Fabric manages the selected agent runtime, and OpenShell provides sandbox isolation and inference routing.
+Deployment state supports change review and recovery from interrupted operations.
+For agent files and conversations, follow the [retention guidance for your harness](../build-deploy/state.md#choosing-what-to-retain-for-each-harness).
 
 ## What You Can Do
 
 Use the v0.1.0 bundle, configuration schema, and agent image together. The following workflows cover first deployment and ongoing operations:
 
-- [Deploy an OpenClaw agent](../get-started/first-deployment.md) with an existing gateway and model endpoint, then send a native request to verify the reply.
+- [Deploy an OpenClaw agent](../get-started/first-deployment.md) with local Docker and NVIDIA Endpoints, then send a native request to verify the reply.
 - [Manage multiple sandboxes](../build-deploy/usage.md#configuring-sandboxes-and-inference), each with one agent, and connect them to hosted or managed inference providers.
 - [Plan, apply, export, and destroy](../build-deploy/usage.md) resources, with retained state for recovery and separate cleanup for persistent data.
-- [Using the Rust SDK](../references/sdk.md) to integrate deployment operations, or [deploy to Kubernetes or OpenShift](../build-deploy/kubernetes.md) when the cluster prerequisites are available.
+- [Using the Rust SDK](../references/sdk.md) to integrate deployment operations, or deploy to [Kubernetes](../build-deploy/kubernetes.md) or [OpenShift](../build-deploy/openshift.md) when the cluster prerequisites are available.
 - [Use the providers from your own OpenTofu project](../build-deploy/opentofu-project.md), with your own pipelines and state backend, instead of the CLI or SDK.
 
 The CLI doesn't invoke agents, manage channels, or take snapshots. An apply checks configuration and runtime readiness, not a model response. Refer to [native agent access](../agents-inference/agents.md#choosing-native-access) and [current limits](../resources/limits.md) before choosing a workflow.

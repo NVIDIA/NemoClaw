@@ -21,16 +21,17 @@ Start with the product overview, then use the architecture and ecosystem guides 
 
 ## Getting Started
 
-Start with the prerequisites for your first deployment. If you use NemoClaw v0, evaluate NemoClaw Agent Configs in a separate deployment without changing the original.
+Start with prerequisites to choose a release deployment, a source build, or an existing gateway.
+On Windows, the first-reply tutorials run in WSL2, not in the native Windows CLI.
 
 | Reader goal | Guide |
 |---|---|
-| Check client, runtime, and model-host requirements | [Prerequisites](get-started/prerequisites.md) |
-| Install, upgrade, or uninstall a release's CLI | [Installing the CLI](get-started/install.md) |
-| Build and onboard from source on an Apple silicon Mac or Windows ARM64 | [Onboarding from source](get-started/from-source.md) |
-| Deploy OpenClaw with existing services and verify a reply | [First Deployment](get-started/first-deployment.md) |
+| Check client, runtime, and model-host requirements | [Checking Prerequisites](get-started/prerequisites.md) |
+| Install, upgrade, or uninstall the CLI using a platform installer or archive | [Installing the CLI](get-started/install.md) |
+| Deploy OpenClaw from the release with local Docker and NVIDIA Endpoints, or with existing services | [Deploying Your First OpenClaw Agent](get-started/first-deployment.md) |
+| Build from source and deploy Hermes with a managed Docker gateway on an Apple silicon Mac or in WSL2 | [Onboarding From Source on macOS or WSL2](get-started/from-source.md) |
 | Write YAML for a separate deployment | [Authoring Deployment YAML With Onboarding](get-started/onboard.md) |
-| Evaluate NemoClaw v0 settings without changing the original deployment | [Evaluate NemoClaw Agent Configs Alongside NemoClaw v0](get-started/migration.md) |
+| Evaluate NemoClaw v0 settings without changing the original deployment | [Evaluating NemoClaw Agent Configs Alongside NemoClaw v0](get-started/migration.md) |
 
 ## Building and Deploying
 
@@ -42,7 +43,8 @@ Choose the guide for the artifact or deployment operation you need to perform.
 | Extend an agent image with your own tools | [Derived Agent Images](build-deploy/derived-images.md) |
 | Configure, apply, export, recover, and destroy | [Use Desired State](build-deploy/usage.md) |
 | Run the providers from your own OpenTofu project and pipelines | [Your Own OpenTofu Project](build-deploy/opentofu-project.md) |
-| Deploy on Kubernetes or OpenShift | [Cluster Deployment](build-deploy/kubernetes.md) |
+| Deploy on Kubernetes with a managed or an external gateway | [Kubernetes Deployment](build-deploy/kubernetes.md) |
+| Deploy on OpenShift | [OpenShift Deployment](build-deploy/openshift.md) |
 | Share or inline definitions | [Definitions and References](build-deploy/configuration-references.md) |
 | Retain data and clean up safely | [Deployment State](build-deploy/state.md) |
 | Run an application-owned container on managed Docker | [Container Service](build-deploy/container-services.md) |

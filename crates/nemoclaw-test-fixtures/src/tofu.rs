@@ -35,13 +35,14 @@ fn stage(executable: &Path, staged: &Path) {
     fs::copy(executable, staged).unwrap();
 }
 
-/// A provider's registry address: `nvidia/NAME` unless `name` names its
-/// namespace.
+/// A provider's address: `nvidia.github.io/nemoclaw/NAME`, or
+/// `registry.opentofu.org/NAME` when `name` names a namespace, such as
+/// `kreuzwerker/docker`.
 pub(crate) fn provider_address(name: &str) -> String {
     if name.contains('/') {
         format!("registry.opentofu.org/{name}")
     } else {
-        format!("registry.opentofu.org/nvidia/{name}")
+        format!("nvidia.github.io/nemoclaw/{name}")
     }
 }
 
@@ -58,7 +59,7 @@ impl TofuWorkspace {
     }
 
     /// A workspace like [`Self::new`] that also serves a test fixture
-    /// provider, `fixture`, as `registry.opentofu.org/nvidia/nemoclaw`.
+    /// provider, `fixture`, as `nvidia.github.io/nemoclaw/nemoclaw`.
     pub fn with_fixture(bundle: &Bundle, fixture: impl AsRef<Path>) -> Self {
         Self::bundled(bundle, Some(fixture.as_ref()))
     }
@@ -82,8 +83,9 @@ impl TofuWorkspace {
     }
 
     /// A workspace whose OpenTofu uses only the given `(name, executable)`
-    /// providers: `registry.opentofu.org/nvidia/NAME`, or another namespace's
-    /// when `name` names it, such as `kreuzwerker/docker`.
+    /// providers: `nvidia.github.io/nemoclaw/NAME`, or
+    /// `registry.opentofu.org/NAME` when `name` names a namespace, such as
+    /// `kreuzwerker/docker`.
     pub fn with_providers(tofu: impl AsRef<Path>, providers: &[(&str, &Path)]) -> Self {
         let directory = tempfile::tempdir().unwrap();
         for (name, executable) in providers {
@@ -242,7 +244,7 @@ mod tests {
             assert_eq!(output.stdout, selected.as_bytes());
             assert_eq!(fs::read_to_string(&provider).unwrap(), script);
             let config = fs::read_to_string(workspace.path().join("tofu.rc")).unwrap();
-            assert!(config.contains("registry.opentofu.org/nvidia/nemoclaw"));
+            assert!(config.contains("nvidia.github.io/nemoclaw/nemoclaw"));
             assert!(config.contains(&serde_json::to_string(workspace.path()).unwrap()));
             workspaces.push(workspace);
         }

@@ -708,6 +708,44 @@ async fn changed_network_grants_keep_the_sandbox_and_its_agent() {
     lifecycle.destroy();
 }
 
+/// An explicit policy with an empty `network_policies` map, which grants no
+/// general egress, creates the sandbox with only NemoClaw's managed rule for
+/// its routed inference provider, and export reproduces the document.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn an_explicit_policy_without_network_rules_applies_exports_and_reapplies_unchanged() {
+    let mut document = serde_json::to_value(
+        Document::parse(
+            include_str!("../../../../../examples/features/explicit-policy.yaml").as_bytes(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    *document
+        .pointer_mut("/spec/sandboxes/assistant/network/policy/explicit/network_policies")
+        .unwrap() = serde_json::json!({});
+    let lifecycle = Lifecycle::start(&document.to_string()).await;
+    let effects = lifecycle.apply().await;
+    {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        let key = format!("{}/assistant", lifecycle.document.workspace());
+        let spec = state.sandboxes[&key].spec.as_ref().unwrap();
+        let rules: Vec<_> = spec
+            .policy
+            .as_ref()
+            .unwrap()
+            .network_policies
+            .keys()
+            .collect();
+        assert!(
+            matches!(rules.as_slice(), [rule] if rule.starts_with("nemoclaw-inference-local-")),
+            "{rules:?}"
+        );
+    }
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.destroy();
+}
+
 /// Progress events that the deployment's callback records.
 type Recorded<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
 

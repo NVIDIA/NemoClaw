@@ -19,6 +19,7 @@ ratatui.workspace = true
 tempfile.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+reqwest.workspace = true
 serde-saphyr.workspace = true
 url.workspace = true
 time.workspace = true
@@ -30,3 +31,6 @@ path = "src/main.rs"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "io-util"] }

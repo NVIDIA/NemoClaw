@@ -9,6 +9,8 @@ Do not rerun authoring and replace the deployment identity.
 Do not delete bindings or substitute a fresh state directory to bypass an ownership error.
 Refer to [state locations](../build-deploy/state.md) and the [recovery procedure](../build-deploy/usage.md#updates-and-recovery).
 
+To run the `openshell` diagnostic commands below against a deployment, use `nemoclaw osh --state-dir DIR --` in their place where [the bundled CLI applies](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace).
+
 ## Capturing the Failing Operation
 
 Record the command, exit status, stderr, source revision or bundle, state path, and the step at which the operation stopped.
@@ -47,9 +49,13 @@ Match the symptom to its next action:
 | `state is bound to a different deployment UID or gateway` | Restore the original `metadata.uid` and gateway `management`. To switch between a managed and an external gateway, create a new deployment. |
 | `state is bound to a different gateway endpoint` | Restore the port or endpoint the deployment was first planned with: the target's `port`, `expose.endpoint`, or an external gateway's `endpoint`. To use another, create a new deployment. |
 | `state is bound to a different gateway target` | Restore the target the deployment was first planned with. To use another, create a new deployment as [Adapting a Document to Another Target](../build-deploy/usage.md#adapting-a-document-to-another-target) describes. |
+| `state is bound to a different gateway exposure` | Restore `expose` as the deployment was first planned with: unset, a Service of the same type, or, on OpenShift, a Route. To publish the gateway another way, create a new deployment as [Writing the Managed Deployment Document](../build-deploy/kubernetes.md#writing-the-managed-deployment-document) describes. |
 | `state is bound to a different gateway StorageClass` | Restore the `dataStorageClass` the deployment was first planned with, or remove it if there was none. To use another class, create a new deployment. See [Choosing the Gateway's StorageClass and Resources](../build-deploy/kubernetes.md#choosing-the-gateways-storageclass-and-resources). |
+| `managed Kubernetes target or identity changed; resources retained` | The first apply fixed the target's `namespace`, `context`, `environment`, and `authentication` settings, the `kubeconfig` variable's name, and whether NemoClaw uses a kubeconfig or the pod's service account. Restore the values the deployment was first applied with. To change them, create a new deployment as [Writing the Managed Deployment Document](../build-deploy/kubernetes.md#writing-the-managed-deployment-document) describes. A renamed `kubeconfig` variable, or a switch to the pod's service account, usually fails with `observation authentication failed` instead. |
 | A gateway volume, network, or initializer container `belongs to another state directory or deployment` | Destroy kept that deployment's gateway storage. Apply with the state directory that created it, or [remove the retained resources](../build-deploy/usage.md#removing-retained-resources) and apply with a new `metadata.uid`. Nothing is adopted. |
+| `Secret NAMESPACE/RELEASE-kek already exists, and this deployment does not adopt it` | An earlier apply with the same `metadata.uid` created the gateway's key Secret on Kubernetes or OpenShift, and destroy keeps it. Apply with the state directory that created it. Otherwise, create a new deployment with a new `metadata.uid` and a namespace that no other NemoClaw deployment created, such as the old name after you [remove the retained resources](../build-deploy/usage.md#removing-retained-resources). Nothing is adopted. |
 | `the kubeconfig has no context named NAME` | The gateway target's `context` names a context that the kubeconfig lacks. Correct the context or the kubeconfig, then plan again. Nothing changed. |
+| `missing authorization header` | A managed Kubernetes or OpenShift gateway authenticates each request by its token, not by a client certificate, and refuses a client that presents the `<release>-client-tls` certificate without one. Send a token, as [Reaching the Gateway From the OpenShell CLI](../build-deploy/kubernetes.md#reaching-the-gateway-from-the-openshell-cli) does. |
 | Plan says the gateway's port is in use, or the gateway subnet overlaps an existing Docker network | Another deployment or process holds it. Before the deployment's first successful plan, set the target's `port` to a free port or its `networkCIDR` to a free private `/24` and plan again. A failed plan binds nothing. After that, the port is bound: free it instead. |
 | `unfinished apply has different intent` | Reapply the exact YAML from the unfinished operation before trying another configuration. |
 | Deployment lock error | Check for another operation using the same state directory. A lock failure does not authorize state deletion. |
@@ -124,17 +130,19 @@ Restore it before destroying them.
 ### Diagnosing a Kubernetes Gateway Startup Failure
 
 When a managed Kubernetes or OpenShift gateway cannot start, apply fails when Helm's 10-minute wait times out.
-Read the gateway's log with the deployment's context and namespace.
+Read the gateway's log with the deployment's kubeconfig file, context, and namespace.
 The gateway runs in the pod named after its release with `-0` appended.
 Find the release among the namespace's StatefulSets:
 
 ```sh
+deployment_kubeconfig="$NEMOCLAW_CLUSTER_KUBECONFIG"
 deployment_context=my-cluster
 deployment_namespace=nemoclaw-development
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" get statefulsets
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  --namespace "$deployment_namespace" get statefulsets
 deployment_release=REPLACE_WITH_STATEFULSET_NAME
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
-  logs "pod/$deployment_release-0"
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  --namespace "$deployment_namespace" logs "pod/$deployment_release-0"
 ```
 
 With the `development` profile, a log that ends with `OIDC discovery request failed: error sending request for url (https://<release>-oidc.<namespace>.svc.cluster.local:8443/.well-known/openid-configuration)` shows that the gateway's request to its development issuer failed.
@@ -142,8 +150,10 @@ Check that the issuer's pod is ready, then read the DNS search list of the names
 The gateway restarts too often to run a command in, and pods on the same node share the list:
 
 ```sh
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" get pods
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  --namespace "$deployment_namespace" get pods
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  --namespace "$deployment_namespace" \
   exec "deploy/$deployment_release-oidc" -- cat /etc/resolv.conf
 ```
 
@@ -158,8 +168,8 @@ When installing a cluster, name it under a domain without a wildcard record inst
 If the node did not restart, delete the gateway's pod so its StatefulSet recreates it with the new list:
 
 ```sh
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
-  delete pod "$deployment_release-0"
+kubectl --kubeconfig "$deployment_kubeconfig" --context "$deployment_context" \
+  --namespace "$deployment_namespace" delete pod "$deployment_release-0"
 ```
 
 ## Inference and Agent Readiness

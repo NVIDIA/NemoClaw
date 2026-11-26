@@ -3,6 +3,9 @@
 //! CLI integration tests, linked into one binary.
 //! Each file is a module; shared helpers are declared once here.
 
+#[cfg(unix)]
+#[path = "../../nemoclaw-sdk/tests/support/bundle.rs"]
+mod bundle;
 #[path = "commands.rs"]
 mod commands;
 #[cfg(unix)]
@@ -10,6 +13,8 @@ mod commands;
 mod executable;
 #[path = "exit_guards.rs"]
 mod exit_guards;
+#[cfg(unix)]
+mod openshell;
 #[path = "output_modes.rs"]
 mod output_modes;
 #[path = "telemetry.rs"]

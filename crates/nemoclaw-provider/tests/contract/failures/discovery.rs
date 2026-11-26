@@ -25,7 +25,7 @@ async fn authored_fabric_requirements_take_the_configuration_and_policy_reads_se
             format!(
                 r#"terraform {{
   required_providers {{
-    fabric = {{ source = "nvidia/fabric" }}
+    fabric = {{ source = "nvidia.github.io/nemoclaw/fabric" }}
   }}
 }}
 
@@ -161,7 +161,7 @@ async fn compiled_discovery_requires_the_image_runtime_metadata() {
         .unwrap()
         .retain(|name, _| !name.ends_with("_acquired"));
     let graph = json!({
-        "terraform":{"required_providers":{"host":{"source":"nvidia/host"},"fabric":{"source":"nvidia/fabric"}}},
+        "terraform":{"required_providers":{"host":{"source":"nvidia.github.io/nemoclaw/host"},"fabric":{"source":"nvidia.github.io/nemoclaw/fabric"}}},
         "provider":{"host":{},"fabric":{}},
         "data":{
             "host_engine":compiled["data"]["host_engine"],

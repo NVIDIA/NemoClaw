@@ -79,15 +79,18 @@ The bundle pins these providers:
 
 | Provider | Source Address | Version |
 |---|---|---|
-| OpenShell | `registry.opentofu.org/nvidia/openshell` | Source-derived, matching the bundle |
-| Fabric | `registry.opentofu.org/nvidia/fabric` | Source-derived, matching the bundle |
-| vLLM | `registry.opentofu.org/nvidia/vllm` | Source-derived, matching the bundle |
-| Ollama | `registry.opentofu.org/nvidia/ollama` | Source-derived, matching the bundle |
-| Host | `registry.opentofu.org/nvidia/host` | Source-derived, matching the bundle |
+| OpenShell | `nvidia.github.io/nemoclaw/openshell` | Source-derived, matching the bundle |
+| Fabric | `nvidia.github.io/nemoclaw/fabric` | Source-derived, matching the bundle |
+| vLLM | `nvidia.github.io/nemoclaw/vllm` | Source-derived, matching the bundle |
+| Ollama | `nvidia.github.io/nemoclaw/ollama` | Source-derived, matching the bundle |
+| Host | `nvidia.github.io/nemoclaw/host` | Source-derived, matching the bundle |
 | Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.7.0 |
 | Helm | `registry.opentofu.org/hashicorp/helm` | 3.3.0 |
 
 None of them exposes ephemeral resources or provider functions.
+
+The NemoClaw providers' addresses are under `nvidia.github.io/nemoclaw`.
+The registry behind that address isn't published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)): the CLI installs every provider only from the bundle's filesystem mirror, and [your own OpenTofu project](../build-deploy/opentofu-project.md#installing-the-providers-from-a-bundle) must install the NemoClaw providers the same way.
 
 ### OpenShell Resources and Data Sources
 
@@ -1066,7 +1069,7 @@ Ambient Helm and Kubernetes settings are excluded.
 Teardown removes the release before the issuer.
 The authentication resource must confirm through `release_present` that the Helm release records are absent before it deletes the issuer.
 The namespace, encryption key, and persistent volumes remain.
-[Managed Kubernetes ownership](../../internal-docs/design/architecture.md#managed-kubernetes-ownership) explains recovery when Helm loses its release binding, and [Deploying to Kubernetes or OpenShift](../build-deploy/kubernetes.md) gives the procedure.
+[Managed Kubernetes ownership](../../internal-docs/design/architecture.md#managed-kubernetes-ownership) explains recovery when Helm loses its release binding, and [Destroying a Managed Deployment](../build-deploy/kubernetes.md#destroying-a-managed-deployment) gives the procedure.
 
 ## Packaging and Qualification
 
