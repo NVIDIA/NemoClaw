@@ -612,6 +612,22 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
       (session) => void (session.compatibleEndpointReasoningEffort = "extreme"),
     ],
     [
+      'field "apfInterceptorRequested" must be a boolean',
+      (session) => void (session.apfInterceptorRequested = "invalid"),
+    ],
+    [
+      'field "cancellationRecovery" has incomplete recovery authority',
+      (session) => void (session.cancellationRecovery = "invalid"),
+    ],
+    [
+      'field "externalComponentActivation" has incomplete activation evidence',
+      (session) => void (session.externalComponentActivation = "invalid"),
+    ],
+    [
+      'field "pendingPolicySelection" is invalid',
+      (session) => void (session.pendingPolicySelection = "invalid"),
+    ],
+    [
       'field "checkpoint.sandboxIdentity" does not match "sandboxName" and "agent"',
       (session) => {
         const checkpoint = session.checkpoint as Record<string, Record<string, unknown>>;
@@ -632,7 +648,9 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     async (defect, corruptSession) => {
       const host = scope("nemoclaw-uninstall-portable-session-field-");
       completedOpenClawAuthority(host, "portable");
-      mutateJsonFile(path.join(host.stateDir, "onboard-session.json"), corruptSession);
+      const sessionFile = path.join(host.stateDir, "onboard-session.json");
+      mutateJsonFile(sessionFile, corruptSession);
+      const sessionBefore = fs.readFileSync(sessionFile);
       const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
       const result = await uninstall(host);
@@ -643,6 +661,7 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
           `Portable lifecycle state is unsafe: Completed onboarding session authority is incomplete: ${defect}. Keep onboard-session.json unchanged and report this message in a NemoClaw GitHub issue for recovery guidance.`,
         ),
       );
+      expect(fs.readFileSync(sessionFile)).toEqual(sessionBefore);
       expect(host.runModelCleanup).not.toHaveBeenCalled();
       expect(host.rmSync).not.toHaveBeenCalled();
       expect(host.runPortableCleanup).not.toHaveBeenCalled();

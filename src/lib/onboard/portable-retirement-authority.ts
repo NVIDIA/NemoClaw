@@ -9,6 +9,10 @@ import { isDeepStrictEqual, TextDecoder } from "node:util";
 import {
   acquireOnboardLock,
   assertOnboardLockOwned,
+  InvalidPersistedApfInterceptorIntentError,
+  InvalidPersistedCancellationRecoveryError,
+  InvalidPersistedExternalComponentActivationError,
+  InvalidPersistedPolicySelectionError,
   normalizeSession,
   releaseOnboardLock,
   type LockResult,
@@ -103,7 +107,20 @@ function completedSession(bytes: Buffer, expected?: Profile) {
   } catch {
     incompleteSession("the session record is malformed");
   }
-  const session = normalizeSession(raw as never);
+  let session: ReturnType<typeof normalizeSession>;
+  try {
+    session = normalizeSession(raw as never);
+  } catch (error) {
+    if (error instanceof InvalidPersistedApfInterceptorIntentError)
+      incompleteSession('field "apfInterceptorRequested" must be a boolean');
+    if (error instanceof InvalidPersistedCancellationRecoveryError)
+      incompleteSession('field "cancellationRecovery" has incomplete recovery authority');
+    if (error instanceof InvalidPersistedExternalComponentActivationError)
+      incompleteSession('field "externalComponentActivation" has incomplete activation evidence');
+    if (error instanceof InvalidPersistedPolicySelectionError)
+      incompleteSession('field "pendingPolicySelection" is invalid');
+    throw error;
+  }
   const rawMachine = raw.machine;
   const rawCheckpoint = raw.checkpoint;
   const rawMetadata = raw.metadata;

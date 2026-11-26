@@ -2553,7 +2553,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     collector: null,
     span: null,
   };
-  let [completed, preserveIncompleteSession, preserveDeferredExitSession] = [false, false, false];
+  let [completed, preserveIncompleteSession] = [false, false];
   const telemetryCompletion = onboardSessionBootstrap.createOnboardOperationCompletion({
     sandboxName: initialEntryOptions.requestedSandboxName ?? undefined,
     pending: opts.rebuildPolicySourcePath !== undefined,
@@ -3073,6 +3073,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         coreFlowResult.context.sandboxName || telemetryCompletion.sandboxName;
       if (isCoreFlowCompleteBeforeFinalization(coreFlowResult)) {
         sandboxCancelRollback.disarm();
+        preserveIncompleteSession = true;
         await portableRetirementEntry.supersede(lockedRuntime.checkpointProfile);
         completed = true;
         process.exitCode = 0;
@@ -3225,7 +3226,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     });
   } catch (error) {
     telemetryCompletion.reject(error);
-    preserveDeferredExitSession =
+    preserveIncompleteSession ||=
       onboardSessionBootstrap.shouldPreserveIncompleteOnboardSession(error);
     throw error;
   } finally {
@@ -3248,7 +3249,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       hostMountScope.restore();
     }
     telemetryCompletion.record(completed, telemetryGatewayName);
-    if (preserveDeferredExitSession) preserveIncompleteSession = true;
   }
   preserveIncompleteSession = true;
 }
