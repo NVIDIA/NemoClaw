@@ -4,7 +4,8 @@
 # Overview
 
 NVIDIA NemoClaw is an open source reference stack for running supported AI agents in NVIDIA OpenShell sandboxes.
-NemoClaw Agent Configs (v1) lets you capture the gateway, model connections, sandbox policies, and agent settings in reusable YAML.
+NemoClaw v0 uses agent-specific onboarding and operating commands.
+NemoClaw Agent Configs (v1) gives supported harnesses a common workflow and captures the gateway, model connections, sandbox policies, and agent settings in reusable YAML.
 Start from a reference configuration, adapt it to your task, and share the file so another developer can reproduce the setup.
 Use the CLI or Rust SDK to preview resource changes before applying them.
 
