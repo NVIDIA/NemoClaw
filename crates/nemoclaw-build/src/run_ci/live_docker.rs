@@ -6,7 +6,10 @@
 use super::*;
 use nemoclaw_build::ci::live::{self, GatewayInputs};
 
-const UID_LABEL: &str = "nemoclaw.nvidia.com/uid";
+#[cfg(all(test, feature = "sdk"))]
+use nemoclaw_build::ci::retained::SANDBOX_NAMESPACE_LABEL;
+#[cfg(test)]
+use nemoclaw_build::ci::retained::{UID_LABEL, sandbox_filter};
 
 fn docker() -> Command {
     let mut command = Command::new("docker");
@@ -96,78 +99,10 @@ impl Drop for Owned {
     }
 }
 
-/// OpenShell's Docker driver labels each sandbox's containers and volumes
-/// with its `sandbox_label`, which NemoClaw sets to the gateway's name.
-const SANDBOX_NAMESPACE_LABEL: &str = "openshell.ai/sandbox-namespace";
-
-/// Selects the OpenShell sandbox objects of a deployment's managed gateway,
-/// named after its workspace.
-fn sandbox_filter(uid: &str) -> String {
-    let digest = nemoclaw_build::hex(&Sha256::digest(uid.as_bytes()));
-    let workspace = format!("nc-{}", &digest[..16]);
-    format!("label={SANDBOX_NAMESPACE_LABEL}={workspace}-gateway")
-}
-
-/// Object kinds in removal order: Docker refuses to remove a volume or
-/// network that a container still uses.
-const RETAINED: [(&str, &[&str], &[&str]); 3] = [
-    (
-        "container",
-        &["container", "ls", "--all", "--quiet", "--filter"],
-        &["container", "rm", "--force"],
-    ),
-    (
-        "volume",
-        &["volume", "ls", "--quiet", "--filter"],
-        &["volume", "rm"],
-    ),
-    (
-        "network",
-        &["network", "ls", "--quiet", "--filter"],
-        &["network", "rm"],
-    ),
-];
-
 /// Remove each UID's labelled objects and its gateway's sandbox objects, then
 /// fail naming any sandbox object OpenShell left and anything that remains.
 fn remove_retained(docker: impl Fn() -> Command, uids: &[String]) -> Result<()> {
-    let list = |args: &[&str], filter: &str| live::docker_lines(docker().args(args).arg(filter));
-    let mut problems = Vec::new();
-    for uid in uids {
-        let sandbox = sandbox_filter(uid);
-        let owner = format!("label={UID_LABEL}={uid}");
-        for (kind, ls, _) in RETAINED {
-            problems.extend(
-                list(ls, &sandbox)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|id| format!("{kind} {id} left in the sandbox namespace")),
-            );
-        }
-        for (_, ls, rm) in RETAINED {
-            for filter in [&sandbox, &owner] {
-                for id in list(ls, filter).unwrap_or_default() {
-                    let _ = docker().args(rm).arg(&id).stdout(Stdio::null()).status();
-                }
-            }
-        }
-        for (kind, ls, _) in RETAINED {
-            for filter in [&sandbox, &owner] {
-                match list(ls, filter) {
-                    Some(ids) => problems.extend(
-                        ids.into_iter()
-                            .map(|id| format!("{kind} {id} remains after removal")),
-                    ),
-                    None => problems.push(format!("cannot list {kind}s with {filter}")),
-                }
-            }
-        }
-    }
-    if problems.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("live Docker cleanup failed: {}", problems.join(", ")).into())
-    }
+    nemoclaw_build::ci::retained::remove(docker, uids).map_err(Into::into)
 }
 
 /// Pull pinned images, build or load the agent and proxy images, write owned
@@ -712,6 +647,110 @@ esac
             fs::read_to_string(directory.path().join("resources")).unwrap(),
             format!("volume kept {UID_LABEL}=other\n")
         );
+    }
+
+    fn hardware_receipts(reports: &Path, case: &str) {
+        use serde_json::json;
+        fs::create_dir_all(reports).unwrap();
+        for (file, value) in [
+            ("identity.json", json!({"uid":"a", "case":case})),
+            ("destroy.json", json!({"outcome":"destroyed"})),
+            ("cleanup.json", json!({"succeeded":true})),
+            ("model-cache-cleanup.json", json!({"succeeded":true})),
+        ] {
+            fs::write(reports.join(file), value.to_string()).unwrap();
+        }
+    }
+
+    #[test]
+    fn hardware_runs_remove_retained_objects_without_touching_other_runs_or_the_host_cache() {
+        for case in [
+            "dgx-station-openclaw-nemotron",
+            "dgx-station-hermes-nemotron",
+            "dgx-spark-openclaw-nemotron",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let kept = format!("network other {UID_LABEL}=b\nvolume host-cache owner=host\n");
+            let resources = format!(
+                "container initializer {UID_LABEL}=a\nvolume data {UID_LABEL}=a\nnetwork gateway {UID_LABEL}=a\n{kept}"
+            );
+            let docker = fake_docker(directory.path(), &resources, "", "");
+            let reports = directory.path().join("reports");
+            hardware_receipts(&reports, case);
+            if case.starts_with("dgx-spark") {
+                fs::remove_file(reports.join("model-cache-cleanup.json")).unwrap();
+            }
+            for _ in 0..2 {
+                nemoclaw_build::ci::retained::cleanup_hardware(&docker, &reports, "a", case)
+                    .unwrap();
+                assert_eq!(
+                    fs::read_to_string(directory.path().join("resources")).unwrap(),
+                    kept,
+                    "{case} left retained objects or removed another owner's objects"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hardware_cleanup_preserves_recovery_resources_without_confirmed_teardown() {
+        let case = "dgx-station-openclaw-nemotron";
+        for (file, replacement) in [
+            ("destroy.json", None),
+            ("destroy.json", Some(r#"{"outcome":"failed"}"#)),
+            ("destroy.json", Some("not JSON")),
+            ("cleanup.json", Some(r#"{"succeeded":false}"#)),
+            ("model-cache-cleanup.json", None),
+            ("model-cache-cleanup.json", Some(r#"{"succeeded":false}"#)),
+            (
+                "identity.json",
+                Some(r#"{"uid":"other","case":"dgx-station-openclaw-nemotron"}"#),
+            ),
+            ("identity.json", Some(r#"{"uid":"a","case":"other"}"#)),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let resources =
+                format!("container init {UID_LABEL}=a\nnetwork gateway {UID_LABEL}=a\n");
+            let docker = fake_docker(directory.path(), &resources, "", "");
+            let reports = directory.path().join("reports");
+            hardware_receipts(&reports, case);
+            match replacement {
+                Some(value) => fs::write(reports.join(file), value).unwrap(),
+                None => fs::remove_file(reports.join(file)).unwrap(),
+            }
+            assert!(
+                nemoclaw_build::ci::retained::cleanup_hardware(&docker, &reports, "a", case)
+                    .is_err(),
+                "{file} did not establish teardown"
+            );
+            assert_eq!(
+                fs::read_to_string(directory.path().join("resources")).unwrap(),
+                resources
+            );
+        }
+    }
+
+    #[test]
+    fn hardware_cleanup_refuses_a_live_runtime_or_failed_inventory_even_after_destroy() {
+        for (running, unlistable) in [(true, ""), (false, "volume\n")] {
+            let directory = tempfile::tempdir().unwrap();
+            let resources = format!(
+                "container c1 {UID_LABEL}=a{}\nnetwork gateway {UID_LABEL}=a\n",
+                if running { " running" } else { "" }
+            );
+            let docker = fake_docker(directory.path(), &resources, "", unlistable);
+            let reports = directory.path().join("reports");
+            let case = "dgx-spark-openclaw-nemotron";
+            hardware_receipts(&reports, case);
+            assert!(
+                nemoclaw_build::ci::retained::cleanup_hardware(&docker, &reports, "a", case)
+                    .is_err()
+            );
+            assert_eq!(
+                fs::read_to_string(directory.path().join("resources")).unwrap(),
+                resources
+            );
+        }
     }
 
     #[test]

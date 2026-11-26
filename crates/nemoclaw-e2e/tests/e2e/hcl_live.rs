@@ -27,7 +27,13 @@ use nemoclaw_test_fixtures::Bundle;
 use openshell_provider::OpenShell;
 use serde_json::{Value, json};
 use std::{
-    env::var, fs, io::Write as _, path::PathBuf, process::Command, sync::Arc, time::Duration,
+    env::var,
+    fs,
+    io::Write as _,
+    path::PathBuf,
+    process::{Command, Stdio},
+    sync::Arc,
+    time::Duration,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -220,6 +226,38 @@ fn model_cache_cleanup() {
     )
     .unwrap();
     result.expect("host model cache recovery failed; preserve this run");
+}
+
+#[test]
+#[ignore = "live: remove this completed Station or Spark run's retained Docker objects"]
+fn retained_cleanup() {
+    assert_eq!(var("NEMOCLAW_HCL_PERSISTENT").as_deref(), Ok("true"));
+    let run = PathBuf::from(var("NEMOCLAW_HCL_RUN").unwrap());
+    let config = PathBuf::from(var("NEMOCLAW_HCL_DOCUMENT").unwrap());
+    assert_eq!(
+        fs::canonicalize(&config).unwrap().parent().unwrap(),
+        fs::canonicalize(&run).unwrap(),
+        "clean only the private document bound to this run"
+    );
+    let document = Document::parse(fs::File::open(config).unwrap()).unwrap();
+    let case = var("NEMOCLAW_HCL_CASE").unwrap();
+    let reports = run.join("reports");
+    let result = nemoclaw_build::ci::retained::cleanup_hardware(
+        || {
+            let mut command = Command::new("docker");
+            command.stdin(Stdio::null());
+            command
+        },
+        &reports,
+        &document.metadata.uid,
+        &case,
+    );
+    fs::write(
+        reports.join("retained-cleanup.json"),
+        json!({"succeeded": result.is_ok()}).to_string(),
+    )
+    .unwrap();
+    result.expect("retained hardware resources remain; preserve this run for recovery");
 }
 
 fn docker(args: &[&str]) -> String {
