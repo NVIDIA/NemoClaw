@@ -96,7 +96,7 @@ function strictJson(bytes: Buffer, description: string): Record<string, unknown>
 
 function incompleteSession(defect: string): never {
   throw new Error(
-    `Completed onboarding session authority is incomplete: ${defect}. Keep onboard-session.json unchanged and report this message in a NemoClaw GitHub issue for recovery guidance.`,
+    `Completed onboarding session authority is incomplete: ${defect}. Follow the uninstall guide to recover a completed onboarding session before retrying.`,
   );
 }
 

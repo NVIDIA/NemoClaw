@@ -430,6 +430,9 @@ esac
       const inventoryPath = writeFakeTools(fakeBin);
       const inventoryBefore = fs.readFileSync(inventoryPath);
       const sessionPath = path.join(seedCompletedDefaultAuthority(tmp), "onboard-session.json");
+      const stateDir = path.dirname(sessionPath);
+      const registryPath = path.join(stateDir, "sandboxes.json");
+      const registryBefore = fs.readFileSync(registryPath);
       const session = JSON.parse(fs.readFileSync(sessionPath, "utf8")) as {
         checkpoint: OnboardCheckpoint;
         metadata: { gatewayName: string };
@@ -459,7 +462,14 @@ esac
 
       const result = spawnSync(
         process.execPath,
-        [path.join(import.meta.dirname, "../../bin/nemoclaw.js"), "uninstall", "--yes"],
+        [
+          path.join(import.meta.dirname, "../../bin/nemoclaw.js"),
+          "uninstall",
+          "--all-gateway-ports",
+          "--delete-models",
+          "--destroy-user-data",
+          "--yes",
+        ],
         {
           cwd: tmp,
           encoding: "utf8",
@@ -477,9 +487,12 @@ esac
       expect(result.stderr).toContain(
         "Portable lifecycle state is unsafe: Completed onboarding session authority is incomplete: " +
           'field "metadata.gatewayName" does not match "checkpoint.gatewayAuthority". ' +
-          "Keep onboard-session.json unchanged and report this message in a NemoClaw GitHub issue for recovery guidance.",
+          "Follow the uninstall guide to recover a completed onboarding session before retrying.",
       );
       expect(fs.readFileSync(sessionPath)).toEqual(sessionBefore);
+      expect(fs.readFileSync(registryPath)).toEqual(registryBefore);
+      expect(fs.existsSync(path.join(stateDir, "portable-uninstall-retirement.json"))).toBe(false);
+      expect(fs.existsSync(path.join(stateDir, "portable-demo-lifecycle"))).toBe(false);
       expect(fs.readFileSync(inventoryPath)).toEqual(inventoryBefore);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

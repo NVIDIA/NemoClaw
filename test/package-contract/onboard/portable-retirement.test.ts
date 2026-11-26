@@ -110,7 +110,7 @@ ${provisioning}`,
     expect(result.status, result.error?.message ?? result.stderr).toBe(1);
     expect(result.stderr).toContain(
       `Completed onboarding session authority is incomplete: ${reason}. ` +
-        "Keep onboard-session.json unchanged and report this message in a NemoClaw GitHub issue for recovery guidance.",
+        "Follow the uninstall guide to recover a completed onboarding session before retrying.",
     );
     expect(result.stderr).not.toMatch(/Refusing to load the onboarding session|^\s+at /m);
     expect(fs.readFileSync(sessionPath)).toEqual(fs.readFileSync(beforeExit));

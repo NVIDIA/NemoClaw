@@ -121,7 +121,7 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
     await expect(
       supersedePortableRetirementAfterCompletedOnboard(target, "portable", deps),
     ).rejects.toThrow(
-      "Completed onboarding session authority is incomplete: the session record is malformed. Keep onboard-session.json unchanged and report this message in a NemoClaw GitHub issue for recovery guidance.",
+      "Completed onboarding session authority is incomplete: the session record is malformed. Follow the uninstall guide to recover a completed onboarding session before retrying.",
     );
     expect(withLifecycleLock).not.toHaveBeenCalled();
     expect(fs.readFileSync(target.sessionFile)).toEqual(malformed);

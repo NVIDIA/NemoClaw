@@ -10,8 +10,18 @@ import {
   createPodmanContainerEngine,
 } from "../../../src/lib/adapters/podman";
 import { portableDemoReceiptPath } from "../../../src/lib/onboard/experimental/portable-runtime-receipt-readiness";
+import { bindGatewayAuthorityToCheckpoint } from "../../../src/lib/onboard/gateway-authority-checkpoint";
+import { resolveGatewayTeardownAuthority } from "../../../src/lib/onboard/gateway-teardown-authority";
+import { deriveCheckpointFromSession } from "../../../src/lib/state/onboard-checkpoint-migrate";
+import {
+  completeSession,
+  createSession,
+  saveSession,
+  SESSION_FILE,
+} from "../../../src/lib/state/onboard-session";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { trustedShellCommand } from "../fixtures/shell-probe.ts";
 import {
   cleanupPodmanLifecycle,
   executableOnPath,
@@ -41,7 +51,8 @@ const E2E_PHASES = [
   "authenticate the workflow-owned pinned OpenShell gateway",
   "create receipt-owned and unrelated resources",
   "project portable selectors",
-  "run the exact full uninstall command",
+  "verify refusal preserves the selected gateway",
+  "run receipt-authorized full uninstall",
   "verify resource and lifecycle retirement",
   "restart the user Podman socket",
   "begin portable reinstall runtime selection",
@@ -128,7 +139,6 @@ test(
     expect(fs.existsSync("/var/run/docker.sock")).toBe(false);
     const socketAuthority = capturePodmanSocketAuthority(SOCKET_PATH);
     const engine = createPodmanContainerEngine({ operation: "sandbox-lifecycle", socketAuthority });
-    expect(engine.capture(["version", "--format", "json"]).status).toBe(0);
     const nemoclawBin = executableOnPath("nemoclaw");
     const openshellBin = executableOnPath("openshell");
 
@@ -194,9 +204,8 @@ test(
       createdContainerIds.push(sandboxContainerId);
 
       const unrelatedCreate = engine.capture(unrelatedCreateArgs());
-      expect(unrelatedCreate.status).toBe(0);
       const unrelatedContainerId = unrelatedCreate.stdout.trim();
-      expect(unrelatedContainerId).toMatch(/^[a-f0-9]{64}$/u);
+      expect(unrelatedContainerId, unrelatedCreate.stderr).toMatch(/^[a-f0-9]{64}$/u);
       createdContainerIds.push(unrelatedContainerId);
 
       const registryCreate = engine.capture([
@@ -209,9 +218,8 @@ test(
         "sleep",
         "infinity",
       ]);
-      expect(registryCreate.status).toBe(0);
       const registryContainerId = registryCreate.stdout.trim();
-      expect(registryContainerId).toMatch(/^[a-f0-9]{64}$/u);
+      expect(registryContainerId, registryCreate.stderr).toMatch(/^[a-f0-9]{64}$/u);
       createdContainerIds.push(registryContainerId);
       expect(
         createdContainerIds.every((containerId) =>
@@ -231,23 +239,6 @@ test(
       } as const;
       const receiptFile = portableDemoReceiptPath(SANDBOX_NAME, stateDir);
       fs.mkdirSync(path.dirname(receiptFile), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(
-        receiptFile,
-        `${JSON.stringify(
-          {
-            schemaVersion: 4,
-            sandboxName: SANDBOX_NAME,
-            sandboxId,
-            containerId: sandboxContainerId,
-            dashboardPort: 18789,
-            registryGeneration: sandboxContainerId,
-            runtimeAuthority,
-          },
-          null,
-          2,
-        )}\n`,
-        { mode: 0o600 },
-      );
       fs.writeFileSync(
         registryFile,
         `${JSON.stringify(
@@ -312,7 +303,71 @@ test(
         );
       };
 
-      progress.phase("run the exact full uninstall command");
+      progress.phase("verify refusal preserves the selected gateway");
+      expect(SESSION_FILE).toBe(path.join(stateDir, "onboard-session.json"));
+      const session = createSession({ agent: "openclaw", sandboxName: SANDBOX_NAME });
+      session.sandboxPromptProgress.sandboxName = true;
+      session.checkpoint = deriveCheckpointFromSession(session, {
+        profile: "portable",
+        runtimeAuthority,
+      });
+      const owner = resolveGatewayTeardownAuthority(
+        { gatewayName: "nemoclaw", gatewayPort: 8080 },
+        { env: cliEnv },
+      );
+      bindGatewayAuthorityToCheckpoint(session, owner);
+      saveSession(session);
+      completeSession({}, { emitEvents: false });
+      const original = fs.readFileSync(SESSION_FILE);
+      const originalRegistry = fs.readFileSync(registryFile);
+      const backup = path.join(stateDir, ".session-restore");
+      const retirementRecord = path.join(stateDir, "portable-uninstall-retirement.json");
+      const damagedSession = JSON.parse(original.toString("utf8")) as {
+        metadata: { gatewayName: string };
+      };
+      damagedSession.metadata.gatewayName = "other-gateway";
+      const damaged = Buffer.from(JSON.stringify(damagedSession));
+      fs.writeFileSync(SESSION_FILE, damaged);
+      const refusal = await shellProbe.run(
+        trustedShellCommand({
+          command: nemoclawBin,
+          args: UNINSTALL_ARGS,
+          reason: "verify a damaged Portable session cannot authorize sandbox removal",
+        }),
+        { artifactName: "podman-uninstall-wrong-gateway", env: cliEnv, timeoutMs: 60_000 },
+      );
+      expect(refusal.exitCode).toBe(1);
+      expect(refusal.stderr).toContain(
+        'Completed onboarding session authority is incomplete: field "metadata.gatewayName" does not match "checkpoint.gatewayAuthority". Follow the uninstall guide to recover a completed onboarding session before retrying.',
+      );
+      expect(fs.readFileSync(SESSION_FILE)).toEqual(damaged);
+      expect(fs.readFileSync(registryFile)).toEqual(originalRegistry);
+      const missingContainerIds = createdContainerIds.filter(
+        (id) => engine.capture(["container", "exists", id]).status !== 0,
+      );
+      expect(missingContainerIds).toEqual([]);
+      fs.writeFileSync(backup, original, { flag: "wx", mode: 0o600 });
+      fs.renameSync(backup, SESSION_FILE);
+
+      progress.phase("run receipt-authorized full uninstall");
+      fs.writeFileSync(
+        receiptFile,
+        `${JSON.stringify(
+          {
+            schemaVersion: 4,
+            sandboxName: SANDBOX_NAME,
+            sandboxId,
+            containerId: sandboxContainerId,
+            dashboardPort: 18789,
+            registryGeneration: sandboxContainerId,
+            runtimeAuthority,
+          },
+          null,
+          2,
+        )}\n`,
+        { flag: "wx", mode: 0o600 },
+      );
+
       await runCommand(shellProbe, nemoclawBin, UNINSTALL_ARGS, {
         artifactName: "podman-exact-full-uninstall",
         env: cliEnv,
@@ -330,9 +385,6 @@ test(
       expect(postUninstallEngine.capture(["image", "exists", BASE_IMAGE]).status).toBe(0);
       expect(postUninstallEngine.capture(["image", "exists", UNRELATED_IMAGE]).status).toBe(0);
       expect(postUninstallEngine.capture(["image", "exists", UNUSED_IMAGE]).status).toBe(0);
-      expect(fs.existsSync(receiptFile)).toBe(false);
-      const retirementRecord = path.join(stateDir, "portable-uninstall-retirement.json");
-      expect(fs.existsSync(retirementRecord)).toBe(true);
       expect(fs.statSync(stateDir).mode & 0o777).toBe(0o700);
       expect(fs.statSync(retirementRecord).mode & 0o777).toBe(0o600);
       const residualFiles = fs
@@ -340,7 +392,6 @@ test(
         .filter((entry) => entry.isFile() || entry.isSymbolicLink())
         .map((entry) => path.join(entry.parentPath, entry.name));
       expect(residualFiles).toEqual([retirementRecord]);
-      expect(fs.existsSync(path.dirname(expectedContainersConf))).toBe(false);
       expect(fs.existsSync(path.dirname(path.dirname(expectedContainersConf)))).toBe(false);
       const managerEnvironment = await runCommand(
         shellProbe,

@@ -334,10 +334,11 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     await expectOrdinaryUninstall(host);
   });
 
-  it("preserves a malformed session when uninstall rechecks completed Portable authority", async () => {
+  it("preserves the damaged session and refuses retry without a Portable receipt", async () => {
     const host = scope("nemoclaw-uninstall-malformed-completed-");
     completedOpenClawAuthority(host, "portable");
     const file = path.join(host.stateDir, "onboard-session.json");
+    const saved = fs.readFileSync(file);
     const malformed = Buffer.from('{"sessionId":"private-fixture-id"');
     const read = retirement.readPortableAuthoritySnapshot;
     vi.spyOn(retirement, "readPortableAuthoritySnapshot").mockImplementationOnce(
@@ -353,12 +354,24 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect((await uninstall(host)).exitCode).toBe(1);
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining(
-        "Completed onboarding session authority is incomplete: the session record is malformed. Keep onboard-session.json unchanged and report this message in a NemoClaw GitHub issue for recovery guidance.",
+        "Completed onboarding session authority is incomplete: the session record is malformed. Follow the uninstall guide to recover a completed onboarding session before retrying.",
       ),
     );
     expect(error.mock.calls.flat().join(" ")).not.toContain("private-fixture-id");
     expect(fs.readFileSync(file)).toEqual(malformed);
     expect(host.runModelCleanup).not.toHaveBeenCalled();
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+    expect(host.rmSync).not.toHaveBeenCalled();
+
+    fs.writeFileSync(file, saved);
+    error.mockClear();
+    expect((await uninstall(host)).exitCode).toBe(1);
+    expect(error).not.toHaveBeenCalledWith(
+      expect.stringContaining("session authority is incomplete"),
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Portable lifecycle state is unsafe"),
+    );
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
     expect(host.rmSync).not.toHaveBeenCalled();
   });
@@ -658,7 +671,7 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
       expect(result.exitCode).toBe(1);
       expect(error).toHaveBeenCalledWith(
         expect.stringContaining(
-          `Portable lifecycle state is unsafe: Completed onboarding session authority is incomplete: ${defect}. Keep onboard-session.json unchanged and report this message in a NemoClaw GitHub issue for recovery guidance.`,
+          `Portable lifecycle state is unsafe: Completed onboarding session authority is incomplete: ${defect}. Follow the uninstall guide to recover a completed onboarding session before retrying.`,
         ),
       );
       expect(fs.readFileSync(sessionFile)).toEqual(sessionBefore);

@@ -259,6 +259,7 @@ The install refuses package removals, preserving the runner's Docker and contain
   and retains bounded container-cgroup diagnostics if readiness fails. Unavailable
   diagnostics do not suppress the readiness failure.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
+  Its full uninstall scenario checks that a gateway mismatch without a Portable receipt leaves the session, registry, and live containers intact. It tests successful removal separately, with a receipt for the same resources.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
