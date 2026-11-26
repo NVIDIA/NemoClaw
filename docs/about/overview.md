@@ -8,18 +8,6 @@ NemoClaw Agent Configs (v1) lets you capture the gateway, model connections, san
 Start from a reference configuration, adapt it to your task, and share the file so another developer can reproduce the setup.
 Use the CLI or Rust SDK to preview resource changes before applying them.
 
-## How the Components Work Together
-
-| Component | Role |
-|---|---|
-| NemoClaw Agent Configs | Defines the deployment and manages its lifecycle through plan, apply, and destroy. |
-| NVIDIA NeMo Fabric | Integrates the selected harness, such as OpenClaw or Hermes, and manages the agent runtime. |
-| NVIDIA OpenShell | Isolates the agent in a sandbox, provides controls for file and network access, and routes inference requests. |
-
-Connect an agent to a compatible inference endpoint.
-For example, select a supported NVIDIA Nemotron model served by NVIDIA Endpoints.
-After deployment, use the agent's [native interface](../agents-inference/interfaces.md) to verify that it can perform the task.
-
 ## What You Can Do
 
 - **Run a sandboxed assistant.** [Deploy OpenClaw](../get-started/first-deployment.md) with local Docker and NVIDIA Endpoints, then send a request and check the reply.
@@ -39,4 +27,5 @@ Refer to the [release notes](../changelog/overview.md) for release-specific chan
 
 If you already use NemoClaw v0, [evaluate Agent Configs in a separate deployment](../get-started/migration.md).
 Check that it supports the capabilities your workflow needs and verify an agent response before switching.
-For component ownership and deployment flow, refer to [Architecture Overview](architecture-overview.md) and [Ecosystem](ecosystem.md).
+For component roles, refer to [Ecosystem](ecosystem.md#understanding-each-component).
+For deployment flow, refer to [Architecture Overview](architecture-overview.md).

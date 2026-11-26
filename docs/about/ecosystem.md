@@ -12,17 +12,18 @@ Choose the component responsible for the action you need rather than assuming Ne
 
 | Component | Responsibility |
 |---|---|
-| NemoClaw | Turn desired-state YAML into deployment resources, connect inference, and retain deployment state for recovery. |
-| [NVIDIA OpenShell](https://docs.nvidia.com/openshell/about/overview) | Manage sandboxes, enforce filesystem, process, and network policy, and deliver provider credentials at authorized destinations. |
-| [NVIDIA NeMo Fabric](https://docs.nvidia.com/nemo/fabric/) | Discover agent adapters, validate and map their native configuration, and start, invoke, and stop agent runtimes. |
+| NemoClaw Agent Configs | Turn desired-state YAML into deployment resources and connect inference. Manage the deployment through plan, apply, and destroy, and retain state for recovery. |
+| [NVIDIA OpenShell](https://docs.nvidia.com/openshell/about/overview) | Manage sandboxes that isolate agents and provide filesystem, process, and network controls. Route inference requests and deliver provider credentials at authorized destinations. |
+| [NVIDIA NeMo Fabric](https://docs.nvidia.com/nemo/fabric/) | Discover adapters and use them to integrate the selected harness. Validate and map native configuration, and start, invoke, and stop agent runtimes. |
 | Agent harness, such as OpenClaw, Hermes, or Pi | Handle user requests, call models and tools, and manage its native sessions and behavior. |
-| Inference service | Serve model requests through a hosted endpoint or a managed service such as Ollama or vLLM. |
+| Inference service | Serve model requests through a hosted endpoint, such as NVIDIA Endpoints for supported NVIDIA Nemotron models, or a managed service such as Ollama or vLLM. |
 
 NemoClaw's CLI and Rust SDK use [OpenTofu](../references/provider.md) to order resource operations and record resource state.
-OpenShell enforces the sandbox's access controls while Fabric runs the selected harness inside it.
 The [accepted scope](../../internal-docs/design/scope.md#upstream-boundaries) defines these ownership boundaries.
 
-For the configuration-to-request flow, refer to [Architecture Overview](architecture-overview.md). Use [desired-state operations](../build-deploy/usage.md) to change deployment resources and [native agent access](../agents-inference/agents.md#choosing-native-access) to send requests.
+For the configuration-to-request flow, refer to [Architecture Overview](architecture-overview.md).
+Use [desired-state operations](../build-deploy/usage.md) to change deployment resources.
+After deployment, send a request through the agent's [native interface](../agents-inference/interfaces.md) to verify that it can perform the task.
 
 ## Choosing Where to Start
 
