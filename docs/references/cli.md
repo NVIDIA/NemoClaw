@@ -69,10 +69,13 @@ nemoclaw osh --state-dir .nemoclaw-first -- gateway add https://gateway.example.
 
 Registering signs in; OpenShell owns sign-in, token storage, and renewal, as [its authentication guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx#oidc) describes.
 Deployment operations still use `GATEWAY_TOKEN`; the signed-in identity needs membership in the deployment's workspace.
-Run `nemoclaw osh --state-dir DIR -- gateway login` to sign in again, with the same state directory and bundle as apply.
+Run `nemoclaw osh --state-dir DIR -- gateway login` to sign in again, with the same state directory and bundle as apply; plan and apply print it as `Sign in again:`.
+Without a browser, set `OPENSHELL_NO_BROWSER=1` before registering or signing in, to sign in with a code on another device.
+For CI and other automation, set `OPENSHELL_OIDC_CLIENT_SECRET` to a confidential client's secret, and keep it set while commands run, because OpenShell gets each new token with it; never put it in YAML.
 After changing `gateway.oidc`, run `nemoclaw osh --state-dir DIR -- gateway remove NAME` with that selection, then register the gateway again.
 
 Bearer-token gateways without `gateway.oidc`, including managed Kubernetes gateways, still require a separately configured OpenShell CLI.
+A managed gateway with the `development` authentication profile doesn't support `nemoclaw osh` or any other OpenShell CLI: the profile is for isolated testing, and only NemoClaw gets tokens from its issuer.
 OpenShell publishes no Windows or Intel macOS CLI; use WSL 2 on Windows or a supported Linux or Apple silicon client.
 
 Apply can download models and check readiness.
