@@ -65,7 +65,7 @@ Keep both CLIs, the YAML, and deployment state on the Linux filesystem under you
    Expect both a client and a server.
 7. Continue with the path you chose:
 
-   - For a release deployment, use the **Linux and macOS Archives** tab in [Installing the CLI](install.md#installing-on-linux-or-macos).
+   - For a release deployment, <a href="./install?language=linux#installing-on-linux-or-macos">install the Linux bundle from the Linux and macOS Archives tab</a>.
      The archive procedure maps the Ubuntu architecture to the Linux bundle. Follow the post-install link to the OpenClaw tutorial.
    - For a source build, continue to [Preparing the Shell and Docker](from-source.md#preparing-the-shell-and-docker).
 
@@ -189,5 +189,6 @@ Replace the example deployment UUIDs, endpoints, and local image digests with va
 
 ## Platforms Not Yet Tested
 
-NVIDIA DGX Station, Linux AMD64 deployment, Windows/WSL and macOS GPU hosts, separate SSH model hosts, and distributed inference haven't been tested end to end.
+[Linux AMD64 live CI](../../internal-docs/contributing/testing.md#live-suites) exercises Docker and kind scenarios. That coverage does not qualify a specific release recipe.
+NVIDIA DGX Station, Windows/WSL and macOS GPU hosts, separate SSH model hosts, and distributed inference haven't been tested end to end.
 See [current limits](../resources/limits.md#platforms-models-and-placement) for each and its issue.

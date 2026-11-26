@@ -235,8 +235,11 @@ Destroy reads no image metadata or inference credentials.
 With the `oidc` profile, first put a fresh token in the variable that `token.env` names.
 From the directory that holds the state directory, follow these steps:
 
-1. Preview the removal with `nemoclaw plan --destroy --state-dir .local/kubernetes`.
-2. Review the preview, then run `nemoclaw destroy --state-dir .local/kubernetes`, which does not prompt.
+1. Preview the removal with `nemoclaw plan --destroy -o json --state-dir .local/kubernetes`.
+2. Check the exit status. If the preview failed, stop without running destroy.
+3. Check `complete` in the preview. If it is not `true`, stop and [troubleshoot the preview](usage.md#destroying) before running destroy.
+4. Review the planned removals and retained resources.
+5. Run `nemoclaw destroy --state-dir .local/kubernetes` only if you accept the removals. Destroy does not prompt.
 
 Destroy removes the sandboxes and their agents, the deployment's OpenShell workspace and provider registrations, the gateway's Helm release with its [cluster-wide objects](#preparing-the-cluster), and, with the `development` profile, the issuer.
 It keeps the namespace, the gateway's volume, the Secrets that hold its keys and certificates, and the chart's certificate hook ServiceAccount, Role, and RoleBinding, which Helm does not remove, as [Finding Retained Kubernetes Objects](state.md#finding-retained-kubernetes-objects) lists.
@@ -477,8 +480,11 @@ Run it with the same NemoClaw bundle and state directory as the deployment, with
 Destroy reads no image metadata or inference credentials.
 From the directory that holds the state directory, follow these steps:
 
-1. Preview the removal with `nemoclaw plan --destroy --state-dir .local/kubernetes`.
-2. Review the preview, then run `nemoclaw destroy --state-dir .local/kubernetes`, which does not prompt.
+1. Preview the removal with `nemoclaw plan --destroy -o json --state-dir .local/kubernetes`.
+2. Check the exit status. If the preview failed, stop without running destroy.
+3. Check `complete` in the preview. If it is not `true`, stop and [troubleshoot the preview](usage.md#destroying) before running destroy.
+4. Review the planned removals and retained resources.
+5. Run `nemoclaw destroy --state-dir .local/kubernetes` only if you accept the removals. Destroy does not prompt.
 
 If destroy stops partway, such as when the token expires, set a new token and run destroy again with the same state directory, because plan and apply refuse a state whose destroy is unfinished.
 

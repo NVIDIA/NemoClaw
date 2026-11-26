@@ -64,17 +64,27 @@ The [detailed field mappings](../../.agents/skills/nemoclaw-v0-migration/SKILL.m
    A refused export writes no YAML and prints one `<field> (<category>): <reason>` line per capability it cannot carry, such as messaging or host mounts.
    If export refuses, use the [task map](#mapping-the-user-task) to decide whether a fresh configuration meets your needs.
 2. Check the first line for `# nemoclaw-export-report: 1`. If the marker is absent, stop and [author fresh YAML](onboard.md) instead.
-3. Copy the export to a new `deployment.yaml`. Edit only this copy.
-4. Set `metadata.uid` to a fresh UUID from `uuidgen`.
-5. Choose a state directory for the new deployment only.
-6. Set a free gateway port in the gateway's compute target. The export keeps the earlier gateway's port.
-7. Check the gateway subnet for overlap. If it overlaps, set an unused `networkCIDR` in the target. Any managed service names and published ports also need to avoid collisions.
-8. Replace the sandbox's `image.ref` placeholder with a digest from the matching release or [build the image](../build-deploy/build.md#building-agent-images) from the bundle's revision.
-9. Match `harness.kind` to the selected image's exact adapter ID. For example, use `nvidia.fabric.openclaw` for the release OpenClaw image.
-10. Adapt any explicit policy to the selected image. Use its runtime settings for `filesystem_policy`, `process`, and `landlock`. Keep intended egress rules only where the paths and endpoints still match the new image and deployment. Refer to [image-specific policy checks](../../.agents/skills/nemoclaw-v0-migration/SKILL.md#6-check-the-rest-of-the-document).
-11. Review each report entry. Use the [field mappings](../../.agents/skills/nemoclaw-v0-migration/SKILL.md#5-handle-each-report-entry) and the selected image's adapter descriptor to identify settings you can carry over. For example, do not copy v0 sandbox proxy settings or OpenClaw reasoning overrides into Agent Configs. Export does not carry native data or manually attached OAuth refresh material.
-12. Record the settings you cannot carry over. If you need any of those settings, keep the earlier deployment available.
-13. [Evaluate the new deployment](#evaluating-v1-beside-the-existing-deployment) with its own YAML and state directory.
+
+### Separating the Exported Configuration
+
+Use a separate copy, identity, and state directory so the earlier deployment stays untouched.
+
+1. Copy the export to a new `deployment.yaml`. Edit only this copy.
+2. Set `metadata.uid` to a fresh UUID from `uuidgen`.
+3. Choose a state directory for the new deployment only.
+4. Set a free gateway port in the gateway's compute target. The export keeps the earlier gateway's port.
+5. Check the gateway subnet for overlap. If it overlaps, set an unused `networkCIDR` in the target. Any managed service names and published ports also need to avoid collisions.
+
+### Adapting the Image and Settings
+
+Use the report to decide which settings make sense for the new image and deployment.
+
+1. Replace the sandbox's `image.ref` placeholder with a digest from the matching release or [build the image](../build-deploy/build.md#building-agent-images) from the bundle's revision.
+2. Match `harness.kind` to the selected image's exact adapter ID. For example, use `nvidia.fabric.openclaw` for the release OpenClaw image.
+3. Adapt any explicit policy to the selected image. Use its runtime settings for `filesystem_policy`, `process`, and `landlock`. Keep intended egress rules only where the paths and endpoints still match the new image and deployment. Refer to [image-specific policy checks](../../.agents/skills/nemoclaw-v0-migration/SKILL.md#6-check-the-rest-of-the-document).
+4. Review each report entry. Use the [field mappings](../../.agents/skills/nemoclaw-v0-migration/SKILL.md#5-handle-each-report-entry) and the selected image's adapter descriptor to identify settings you can carry over. For example, do not copy v0 sandbox proxy settings or OpenClaw reasoning overrides into Agent Configs. Export does not carry native data or manually attached OAuth refresh material.
+5. Record the settings you cannot carry over. If you need any of those settings, keep the earlier deployment available.
+6. [Evaluate the new deployment](#evaluating-v1-beside-the-existing-deployment) with its own YAML and state directory.
 
 The skill lists the harnesses and revisions it has been run with.
 Deep Agents exports and exports with managed inference services are untested.
@@ -92,13 +102,23 @@ Use a separate identity and state directory so the comparison doesn't mutate an 
 3. [Install the v0.1.0 bundle](install.md).
 4. Confirm that the new deployment has a fresh UUID and dedicated state directory.
 5. Check resource names, exposed ports, model capacity, and credential scope for conflicts with the original deployment.
-6. [Preview changes](../build-deploy/usage.md#planning-and-applying) using only the new YAML and state directory.
-7. Review the changes, deferred checks, and unverified advisories. Resolve unexpected changes or missing prerequisites before apply.
-8. Apply the reviewed configuration to the new deployment.
-9. [Verify an agent reply](../agents-inference/agents.md#running-one-agent-request).
-10. Check [configuration export](../build-deploy/state.md).
-11. Check [unchanged reapply](../build-deploy/usage.md#verifying-an-unchanged-reapply).
-12. Validate each required task before switching to Agent Configs.
+
+### Reviewing and Applying the Evaluation Plan
+
+Use only the new YAML and state directory for the evaluation deployment.
+
+1. [Preview changes](../build-deploy/usage.md#planning-and-applying).
+2. Review the changes, deferred checks, and unverified advisories. Stop for unexpected changes or deferrals you cannot explain or resolve during apply.
+3. Apply the reviewed configuration to the new deployment.
+
+### Validating the Evaluation Deployment
+
+Check the new deployment against the workflows you need to keep.
+
+1. [Verify an agent reply](../agents-inference/agents.md#running-one-agent-request).
+2. Check [configuration export](../build-deploy/state.md).
+3. Check [unchanged reapply](../build-deploy/usage.md#verifying-an-unchanged-reapply).
+4. Validate each required task before switching to Agent Configs.
     An agent reply alone doesn't validate tools, channels, history continuity, or workload quality.
 
 If evaluation fails, the earlier deployment remains available. Diagnose Agent Configs with its own bundle and state.

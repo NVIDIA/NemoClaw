@@ -139,8 +139,12 @@ The archive requires `tar.exe`, which ships with Windows 10 version 1803 or late
    Stop on any failure.
    The MSI displays installation prompts. To install without prompts, add `'/qn'` to its argument list.
    The archive puts its `bin` directory first on `Path` for the current session only.
-2. Open a new PowerShell window after an MSI install to load the updated `Path`.
-3. Check the selected CLI path and version.
+### Checking the Windows MSI Installation
+
+Follow these steps only after an MSI install.
+
+1. Open a new PowerShell window to load the updated user `Path`.
+2. Check the selected CLI path and version.
 
    ```powershell
    Get-Command nemoclaw
@@ -149,24 +153,37 @@ The archive requires `tar.exe`, which ships with Windows 10 version 1803 or late
 
    Expect the new bundle's executable and the version you installed.
    For an MSI install, **Settings** > **Apps** > **Installed apps** lists the version under **NVIDIA NemoClaw Agent Configs**.
-4. If another bundle takes precedence over the MSI install, put the new bundle first for this session.
+3. If another bundle takes precedence over the MSI install, put the MSI bundle first for this session.
 
    ```powershell
    $env:Path = "$env:LOCALAPPDATA\Programs\NemoClaw\bin;$env:Path"
    ```
 
-5. Repeat the path and version check if you changed `Path`.
-   If `Get-Command` finds an alias or function, use the executable's full path for subsequent commands, such as `& "$env:LOCALAPPDATA\Programs\NemoClaw\bin\nemoclaw.exe" --version` for the MSI.
-6. For persistent archive access, add its `dist\windows_amd64\bin` directory to your user `Path` in **Edit environment variables for your account**.
+4. Repeat the path and version check if you changed `Path`.
+   If `Get-Command` finds an alias or function, use the MSI executable's full path: `& "$env:LOCALAPPDATA\Programs\NemoClaw\bin\nemoclaw.exe" --version`.
+
+### Checking the Windows Archive Installation
+
+Follow these steps only after extracting the archive. Keep using the PowerShell session that ran the extraction.
+
+1. Check the selected CLI path and version.
+
+   ```powershell
+   Get-Command nemoclaw
+   nemoclaw --version
+   ```
+
+   Expect the executable in the archive's `dist\windows_amd64\bin` directory and the version you extracted.
+2. If the check selects another bundle, an alias, or a function, use the archive executable by its full path for subsequent commands.
+3. For persistent archive access, add its `dist\windows_amd64\bin` directory to your user `Path` in **Edit environment variables for your account**.
 
 </Tab>
 <Tab title="Linux and macOS Archives" id="linux" language="linux">
 
 <Anchor id="installing-on-linux-or-macos">
 
-Use `linux_amd64` on `x86_64` or `linux_arm64` on `aarch64`, as reported by `uname -m` in Linux or WSL2.
 Linux requires glibc 2.35 or later.
-Use `darwin_arm64` on Apple silicon; the archive is tested on macOS 15.
+Bundle CI runs on macOS 15 for Apple silicon. It does not verify a browser-downloaded release archive.
 
 </Anchor>
 
@@ -177,6 +194,14 @@ If macOS blocks execution, stop and record the warning, archive name, release, a
 Do not remove quarantine or bypass Gatekeeper to qualify a release.
 
 1. Set the platform and installation path.
+   Replace the `PLATFORM` value in the command with the one for your shell:
+
+   | Shell | `PLATFORM` |
+   |---|---|
+   | Linux or WSL2 with `uname -m` reporting `x86_64` | `linux_amd64` |
+   | Linux or WSL2 with `uname -m` reporting `aarch64` | `linux_arm64` |
+   | macOS on Apple silicon | `darwin_arm64` |
+
    Set `INSTALL` to an unused directory if the default version directory exists.
 
    ```sh

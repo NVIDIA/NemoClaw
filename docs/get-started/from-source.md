@@ -15,6 +15,7 @@ For the release bundle and OpenClaw image, use the [release tutorial](first-depl
 Run the tutorial in Bash with Git, `curl`, `jq`, and [Rust](https://www.rust-lang.org/tools/install).
 On macOS, you also need Apple's Command Line Tools and [Docker Desktop](https://docs.docker.com/desktop/).
 On Windows, [prepare Ubuntu and Docker Engine in WSL2](prerequisites.md#preparing-windows-with-wsl2) and install the tools and a C toolchain inside Ubuntu.
+Install Docker Buildx before building the Hermes image. Use the same Docker engine for the build, image inspection, and onboarding.
 Keep the checkout and deployment files on the Linux filesystem in WSL2, such as under `~/src`.
 Refer to the [WSL2 qualification limits](prerequisites.md#preparing-windows-with-wsl2) before choosing that path.
 
@@ -39,7 +40,14 @@ Refer to the [WSL2 qualification limits](prerequisites.md#preparing-windows-with
    ```
 
    Expect both a Docker client and server.
-6. Check the image store.
+6. Check that Buildx is available.
+
+   ```sh
+   docker buildx version
+   ```
+
+   Expect a Buildx version. If the command fails, install or enable Buildx before continuing.
+7. Check the image store.
 
    ```sh
    docker info --format '{{json .DriverStatus}}'
@@ -144,11 +152,16 @@ Apply starts containers and installs the credential in OpenShell.
    ```
 
 5. Answer the [onboarding questions](onboard.md#starting-onboarding) for Hermes, a new deployment name, a managed Docker gateway, and NVIDIA Endpoints with a model available to your account.
-   For the image answer, use the digest you recorded. Tags, creation times, and revision labels help identify images but do not verify provenance.
+   Select the same Docker engine you used to build and inspect the image. For the image answer, use the digest you recorded. Tags, creation times, and revision labels help identify images but do not verify provenance.
 6. [Review the proposed YAML](onboard.md#reviewing-and-saving-the-yaml). Confirm that it names the image, Docker engine, and model you selected.
    Compatible image metadata does not establish runtime or inference readiness.
 7. Save `deployment.yaml` with **Enter** when there are no blocking conflicts.
-8. If another deployment uses the default gateway port or subnet, set free values under `spec.gateway.target.docker` before planning. Keep the generated `engine` value.
+
+### Reviewing the Plan
+
+Use the saved YAML to preview the deployment before applying it.
+
+1. If another deployment uses the default gateway port or subnet, set free values under `spec.gateway.target.docker` before planning. Keep the generated `engine` value.
 
    ```yaml
    spec:
@@ -159,24 +172,30 @@ Apply starts containers and installs the credential in OpenShell.
            networkCIDR: 10.203.0.0/24
    ```
 
-9. Preview changes with a new state directory.
+2. Preview changes with a new state directory.
 
    ```sh
    nemoclaw plan -o json --progress off --state-dir .local/first/state deployment.yaml
    ```
 
-10. Check the exit status. Stop on an error.
-11. Review the planned changes and `complete` field. A successful plan can still be incomplete.
-12. Review `deferred` checks separately from `unverified` advisories. A new gateway can defer checks until it is reachable, and the inference key can wait for the apply prompt. Advisories alone do not make the plan incomplete.
-13. Resolve unexpected changes or missing prerequisites before applying. If you edit the YAML, generate a new preview.
-14. Apply the reviewed YAML. The command saves its result to `apply.json`.
+3. Check the exit status. Stop on an error.
+4. Review the planned changes and `complete` field. A successful plan can still be incomplete.
+5. Review `deferred` checks separately from `unverified` advisories. Advisories alone do not make the plan incomplete.
+6. Proceed only if the planned changes are expected and you understand how every remaining deferral will resolve during apply. An incomplete initial plan is acceptable when, for example, apply must start the new gateway or prompt for the inference key.
+   Stop for unexpected changes, unexplained deferrals, or prerequisites that apply cannot resolve. If you edit the YAML, generate a new preview.
 
-    ```sh
-    nemoclaw apply -o json --progress off --state-dir .local/first/state deployment.yaml > apply.json
-    ```
+### Applying the Reviewed Configuration
 
-15. Check the exit status. On failure, stop and keep the bundle, YAML, and entire state directory for [operation recovery](../build-deploy/usage.md#recovering-an-interrupted-operation).
-16. Verify that `apply.json` reports `"outcome": "succeeded"`. Stop if it does not. Apply success does not verify inference.
+Use the same YAML and state directory you used for the preview.
+
+1. Apply the reviewed YAML. The command saves its result to `apply.json`.
+
+   ```sh
+   nemoclaw apply -o json --progress off --state-dir .local/first/state deployment.yaml > apply.json
+   ```
+
+2. Check the exit status. On failure, stop and keep the bundle, YAML, and entire state directory for [operation recovery](../build-deploy/usage.md#recovering-an-interrupted-operation).
+3. Verify that `apply.json` reports `"outcome": "succeeded"`. Stop if it does not. Apply success does not verify inference.
 
 ## Verifying a Reply
 

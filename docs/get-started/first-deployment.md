@@ -17,6 +17,7 @@ Use a shell on Linux or Apple silicon macOS with `curl`, `jq`, and `uuidgen`.
 On Windows AMD64 or ARM64, [prepare Ubuntu under WSL2](prerequisites.md#preparing-windows-with-wsl2) and run every command in that Linux shell.
 
 1. [Install the v0.1.0 CLI bundle](install.md).
+   In WSL2, use the <a href="./install?language=linux#installing-on-linux-or-macos">Linux archive</a> in Ubuntu, not the native Windows installer.
    The Linux and macOS bundles include OpenShell. A local Docker deployment needs no standalone client.
 2. Verify the version.
 
@@ -105,13 +106,11 @@ Keep credential values out of YAML and shell history.
 
 3. Check the exit status. Stop on an error.
 4. Review the planned changes and the `complete` field. A zero exit status does not mean the preview is complete.
-5. Review `deferred` prerequisites separately from `unverified` advisories.
-   A new managed gateway defers checks until apply makes it reachable.
-   An unset inference key can also be deferred until the apply prompt.
-   Apply can also pull and check a release image that is absent from the selected engine.
-   If the first plan fails because the gateway port or subnet is occupied, [choose unused values](../build-deploy/usage.md#recovering-an-interrupted-operation) and plan again.
-   Advisories alone do not make a plan incomplete.
-6. Resolve unexpected changes or missing prerequisites before proceeding. If you edit the YAML, generate a new preview.
+5. Review `deferred` checks separately from `unverified` advisories. Advisories alone do not make the plan incomplete.
+6. Proceed only if the changes are expected and every remaining deferral is expected to resolve during apply.
+   For example, an initial plan can be incomplete if apply must start a fresh gateway, prompt for a missing inference key, or pull an image absent from the engine.
+   Stop for unexpected changes, unexplained deferrals, or prerequisites that apply cannot resolve.
+   If a gateway port or subnet is occupied, [choose unused values](../build-deploy/usage.md#recovering-an-interrupted-operation). Generate a new preview after any YAML edit.
 7. Apply the reviewed YAML with the same state directory. The command saves the result to `apply.json`.
 
    ```sh
@@ -175,46 +174,56 @@ The sandbox's writable files and conversation history are lost.
 Externally managed services, images, and local deployment state remain.
 
 1. Preserve any agent files or conversations you need.
-2. Preview removal with the original bundle and state directory.
+2. For an external gateway, make sure any referenced gateway credential and TLS file paths are still available through their environment variables. Renew expired gateway credentials before preview and destroy; neither command prompts.
+3. Preview removal with the original bundle and state directory.
 
    ```sh
    nemoclaw plan --destroy -o json --state-dir .nemoclaw-first
    ```
 
-3. Check the preview's exit status. Stop on an error.
-4. Verify that the preview reports `"complete": true"`.
+4. Check the preview's exit status. Stop on an error.
+5. Verify that the preview reports `"complete": true"`.
    If it is incomplete, stop without running destroy.
    In either case, keep the state directory and consult [destroy troubleshooting](../build-deploy/usage.md#destroying).
-5. Review the planned removals and any retained resources.
-6. Destroy the deployment only if you accept the listed removals.
+6. Review the planned removals and any retained resources.
+7. Destroy the deployment only if you accept the listed removals.
 
    ```sh
    nemoclaw destroy --state-dir .nemoclaw-first
    ```
 
-7. Check the destroy result.
+8. Check the destroy result.
    If it fails, keep the entire state directory and [resume teardown](../build-deploy/usage.md#destroying) with the same state.
-8. Review [retention and explicit cleanup](../build-deploy/usage.md#removing-retained-resources) before deleting local state.
-9. Clear any caller-owned credential variables that you no longer need.
+9. Review [retention and explicit cleanup](../build-deploy/usage.md#removing-retained-resources) before deleting local state.
+10. Clear any caller-owned credential variables that you no longer need.
    This does not revoke the upstream credentials.
 
 ## Using an Existing Gateway and Inference Endpoint
 
 Use this configuration in place of local Docker and NVIDIA Endpoints. You need permission to create a workspace and sandbox on the existing gateway.
 
+### Checking Service Compatibility
+
+Check the gateway and inference endpoint before editing the deployment example.
+
 1. Complete [Preparing the Tools and Services](#preparing-the-tools-and-services).
 2. Obtain the gateway endpoint and credentials from its operator.
 3. Verify that the gateway reports the OpenShell version pinned as `components.gateway.version` in the release's [`version-pins.json`](../references/compatibility.md#using-one-release-together).
 4. Confirm the gateway's compute driver. This example supports Docker or Podman; your YAML target must match the reported driver.
 5. Verify that the inference endpoint is reachable from OpenShell and supports the chosen [request API](../agents-inference/inference.md#choosing-the-request-api).
-6. Download the [tagged external gateway example](https://github.com/NVIDIA/NemoClaw/blob/v0.1.0/examples/agents/openclaw.yaml).
+
+### Configuring the External Deployment
+
+Use the service settings you verified to prepare the external example.
+
+1. Download the [tagged external gateway example](https://github.com/NVIDIA/NemoClaw/blob/v0.1.0/examples/agents/openclaw.yaml).
 
    ```sh
    curl -fL https://raw.githubusercontent.com/NVIDIA/NemoClaw/v0.1.0/examples/agents/openclaw.yaml -o deployment.yaml
    ```
 
-7. Generate a fresh deployment UUID with `uuidgen`.
-8. Edit `deployment.yaml` for your services. Keep the `external` gateway mode, `local` provider key, and `assistant` sandbox key.
+2. Generate a fresh deployment UUID with `uuidgen`.
+3. Edit `deployment.yaml` for your services. Keep the `external` gateway mode, `local` provider key, and `assistant` sandbox key.
 
    | YAML Path | Value |
    |---|---|
@@ -228,17 +237,17 @@ Use this configuration in place of local Docker and NVIDIA Endpoints. You need p
    | `spec.sandboxes.assistant.agent.inference.routes[0].overrides.model` | The exact model ID the endpoint serves. |
    | `spec.sandboxes.assistant.agent.inference.routes[0].overrides.maxTokens` | A limit the model supports. You can omit this override. |
 
-9. Confirm that the sandbox engine can acquire the image digest. If it needs registry credentials, follow [private registry setup](../build-deploy/usage.md#pulling-from-private-registries).
-10. If the gateway requires authentication, [configure gateway credential or TLS references](../build-deploy/usage.md#supplying-credential-references). For OIDC, include the [operator-provided login settings](../references/cli.md#logging-in-to-an-external-oidc-gateway).
-11. For a credentialed HTTPS inference endpoint, add this reference under `spec.inferenceProviders.local`.
+4. Confirm that the sandbox engine can acquire the image digest. If it needs registry credentials, follow [private registry setup](../build-deploy/usage.md#pulling-from-private-registries).
+5. If the gateway requires authentication, [configure gateway credential or TLS references](../build-deploy/usage.md#supplying-credential-references). For OIDC, include the [operator-provided login settings](../references/cli.md#logging-in-to-an-external-oidc-gateway).
+6. For a credentialed HTTPS inference endpoint, add this reference under `spec.inferenceProviders.local`.
 
     ```yaml
     credential:
       env: INFERENCE_API_KEY
     ```
 
-12. Supply the referenced values through a protected environment facility.
-13. Follow [Planning and Applying](#planning-and-applying) with the external example.
+7. Supply the referenced values through a protected environment facility.
+8. Follow [Planning and Applying](#planning-and-applying) with the external example.
 
 ### Preparing Agent Access on an Existing Gateway
 
