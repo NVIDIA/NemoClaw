@@ -1,32 +1,29 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Overview
+# Overview of NemoClaw Agent Configs
 
-NVIDIA NemoClaw is an open source reference stack for running supported AI agents in NVIDIA OpenShell sandboxes.
-NemoClaw v0 uses agent-specific onboarding and operating commands.
-NemoClaw Agent Configs (v1) gives supported harnesses a common workflow and captures the gateway, model connections, sandbox policies, and agent settings in reusable YAML.
-Start from a reference configuration, adapt it to your task, and share the file so another developer can reproduce the setup.
-Use the CLI or Rust SDK to preview resource changes before applying them.
+NemoClaw Agent Configs uses reusable YAML to deploy supported AI agents in NVIDIA OpenShell sandboxes.
+Define the gateway, inference connections, sandbox policies, and agent settings, then preview and apply changes with the CLI or Rust SDK.
+NVIDIA NeMo Fabric manages the selected agent runtime, and OpenShell provides sandbox isolation and inference routing.
+Deployment state supports change review and recovery from interrupted operations.
+For agent files and conversations, follow the [retention guidance for your harness](../build-deploy/state.md#choosing-what-to-retain-for-each-harness).
 
 ## What You Can Do
 
-- **Run a sandboxed assistant.** [Deploy OpenClaw](../get-started/first-deployment.md) with local Docker and NVIDIA Endpoints, then send a request and check the reply.
-- **Repeat or compare an evaluation.** Adapt a [reference configuration](../../examples/README.md) by changing the instructions, tools, model connection, or access policy for a representative task. Share the YAML so another developer can run that setup, or run the same task with another supported model or harness and compare the results. Check [current limits](../resources/limits.md) for your image, adapter, model, and platform.
-- [**Run independent agents side by side.**](../agents-inference/agents.md#deploying-several-agents) Define one agent per sandbox with its own settings and access policy. Reuse an inference provider definition where the agents need the same endpoint.
-- **Review changes before deployment.** [Plan, apply, export, and destroy](../build-deploy/usage.md) through the same workflow. Review the plan for replacements and retain deployment state for recovery. Export preserves deployment configuration. Use [mounted storage and backups](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes) for agent files that must survive sandbox replacement.
+Use the v0.1.0 bundle, configuration schema, and agent image together. The following workflows cover first deployment and ongoing operations:
 
-For a supported Hermes setup, [configure NeMo Relay tracing and Switchyard routing](../agents-inference/agents.md#hermes-relay-tracing) using the harness settings.
-For automation, use the [Rust SDK](../references/sdk.md) or [OpenTofu providers](../build-deploy/opentofu-project.md).
-For cluster deployments, check the [Kubernetes](../build-deploy/kubernetes.md) or [OpenShift](../build-deploy/openshift.md) prerequisites.
+- [Deploy an OpenClaw agent](../get-started/first-deployment.md) with local Docker and NVIDIA Endpoints, then send a native request to verify the reply.
+- [Manage multiple sandboxes](../build-deploy/usage.md#configuring-sandboxes-and-inference), each with one agent, and connect them to hosted or managed inference providers.
+- [Plan, apply, export, and destroy](../build-deploy/usage.md) resources, with retained state for recovery and separate cleanup for persistent data.
+- [Using the Rust SDK](../references/sdk.md) to integrate deployment operations, or deploy to [Kubernetes](../build-deploy/kubernetes.md) or [OpenShift](../build-deploy/openshift.md) when the cluster prerequisites are available.
+- [Use the providers from your own OpenTofu project](../build-deploy/opentofu-project.md), with your own pipelines and state backend, instead of the CLI or SDK.
+
+The CLI doesn't invoke agents, manage channels, or take snapshots. An apply checks configuration and runtime readiness, not a model response. Refer to [native agent access](../agents-inference/agents.md#choosing-native-access) and [current limits](../resources/limits.md) before choosing a workflow.
+Refer to [Release Notes](../changelog/overview.md).
 
 ## Where to Start
 
-For a new deployment, use the [v0.1.0 CLI bundle](../get-started/install.md), configuration schema, and agent image together.
-Start with the [OpenClaw tutorial](../get-started/first-deployment.md) or use [interactive YAML authoring](../get-started/onboard.md) to create a configuration for your setup.
-Refer to the [release notes](../changelog/overview.md) for release-specific changes.
+If you use NemoClaw v0, start with [Evaluating NemoClaw Agent Configs Alongside NemoClaw v0](../get-started/migration.md).
 
-If you already use NemoClaw v0, [evaluate Agent Configs in a separate deployment](../get-started/migration.md).
-Check that it supports the capabilities your workflow needs and verify an agent response before switching.
-For component roles, refer to [Ecosystem](ecosystem.md#understanding-each-component).
-For deployment flow, refer to [Architecture Overview](architecture-overview.md).
+The [guided OpenClaw deployment](../get-started/first-deployment.md) leads from CLI installation to a verified reply. For a separate deployment of your own, use [interactive YAML authoring](../get-started/onboard.md). For a different environment, [Architecture Overview](architecture-overview.md) explains the deployment flow and ownership, and [Ecosystem](ecosystem.md) distinguishes the adjacent products. Before changing an existing deployment, [review data retention](../build-deploy/state.md#deletion-and-retention) and [recovery](../build-deploy/usage.md#updates-and-recovery).
