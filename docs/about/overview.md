@@ -1,13 +1,13 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Overview
+# Overview of NemoClaw Agent Configs
 
-NemoClaw Agent Configs uses a desired-state model to deploy sandboxed agents.
-In YAML, you declare the agents, sandboxes, and inference connections you want so you can review changes before applying them.
-Use the CLI to preview and apply the changes, or integrate the same operations into a Rust application.
-It combines NVIDIA OpenShell sandbox isolation and inference routing with agent runtimes managed by NVIDIA NeMo Fabric.
-Deployment state lets you check changes and recover interrupted operations, but it does not back up agent files or conversations.
+NemoClaw Agent Configs uses reusable YAML to deploy supported AI agents in NVIDIA OpenShell sandboxes.
+Define the gateway, inference connections, sandbox policies, and agent settings, then preview and apply changes with the CLI or Rust SDK.
+NVIDIA NeMo Fabric manages the selected agent runtime, and OpenShell provides sandbox isolation and inference routing.
+Deployment state supports change review and recovery from interrupted operations.
+For agent files and conversations, follow the [retention guidance for your harness](../build-deploy/state.md#choosing-what-to-retain-for-each-harness).
 
 ## What You Can Do
 

@@ -5,7 +5,7 @@
       "title": "About",
       "pages": [
         {
-          "title": "Overview",
+          "title": "Overview of NemoClaw Agent Configs",
           "source": "docs/about/overview.md",
           "slug": "overview"
         },
