@@ -6,10 +6,10 @@ import { createHash } from "node:crypto";
 
 import { MANAGED_IMAGE_REPOSITORIES } from "../../onboard/managed-image/contract";
 import {
-  readStoredManagedStartupProfileMetadata,
   MANAGED_STARTUP_PROFILE_MAX_BYTES,
   MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES,
 } from "../../onboard/managed-startup/profile";
+import { readStoredWorkloadProfile } from "../../onboard/managed-startup/stored-profile";
 import { parseNativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
 import type { SandboxWorkloadReceipt } from "./types";
 
@@ -141,9 +141,9 @@ export function cloneSandboxWorkloadReceipt(
   ) {
     return undefined;
   }
-  let profile: ReturnType<typeof readStoredManagedStartupProfileMetadata>;
+  let profile: ReturnType<typeof readStoredWorkloadProfile>;
   try {
-    profile = readStoredManagedStartupProfileMetadata(value.encodedProfile);
+    profile = readStoredWorkloadProfile(value.encodedProfile);
   } catch {
     return undefined;
   }
@@ -173,8 +173,11 @@ export function cloneSandboxWorkloadReceipt(
     sourceCohort: value.sourceCohort,
     capabilityContractVersion: value.capabilityContractVersion,
     startupProfileContractVersion: value.startupProfileContractVersion,
-    encodedProfile: value.encodedProfile,
-    startupProfileSha256: value.startupProfileSha256,
+    encodedProfile: profile.encodedProfile,
+    startupProfileSha256:
+      profile.encodedProfile === value.encodedProfile
+        ? value.startupProfileSha256
+        : createHash("sha256").update(profile.encodedProfile, "utf8").digest("hex"),
     credentialProxyReplayRequired: value.credentialProxyReplayRequired,
     ...(value.corporateCaB64 === undefined ? {} : { corporateCaB64: value.corporateCaB64 }),
     shared: true,
