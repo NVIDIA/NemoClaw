@@ -3,14 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "NVIDIA NemoClaw"
 sidebar-title: "Home"
-description: "NemoClaw is an open source reference stack for running supported and qualified candidate AI agents more safely with guided onboarding, managed inference, policy, and lifecycle operations."
-keywords: "NemoClaw, OpenClaw, Hermes, LangChain Deep Agents Code, Pi coding agent, dcode, OpenShell, AI agents, Markdown docs, sandboxing, inference routing"
+description: "Choose a NemoClaw version and its matching guide to configure and run supported AI agents in NVIDIA OpenShell sandboxes."
+keywords: "NemoClaw, NemoClaw Agent Configs, OpenShell, AI agents, sandboxing, YAML, deployment"
 layout: overview
 position: 1
 ---
 
 import { BadgeLinks } from "./_components/BadgeLinks";
-import { CommandTerminal } from "./_components/CommandTerminal";
 
 <BadgeLinks
   badges={[
@@ -32,120 +31,65 @@ import { CommandTerminal } from "./_components/CommandTerminal";
   ]}
 />
 
-NVIDIA NemoClaw is an open source reference stack for running supported and qualified candidate AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
-NemoClaw provides guided onboarding, managed inference, network policy, managed integrations, and lifecycle operations while keeping qualification-only candidates separate from supported agent runtimes.
-It installs OpenShell, part of NVIDIA Agent Toolkit, and applies the selected agent integration layer and versioned blueprint.
-OpenShell provides credential custody for managed inference and host-configured integration credentials.
+NVIDIA NemoClaw is an open source reference stack for building and running specialized AI agents in [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
+It brings together an agent harness, model connections, and runtime controls that you can adapt to your workflow.
+
+## Choosing Your Version
+
+**Start with NemoClaw Agent Configs (v1) for new deployments.**
+Define agents, model connections, and policies in reusable YAML, then preview and apply changes through a common CLI or Rust SDK.
+
+Keep using v0 to manage an existing v0 deployment or when your workflow depends on a v0 capability such as guided messaging setup.
+On a host with NemoClaw installed, run your deployment's CLI with `--version`, for example, `nemoclaw --version` or `nemohermes --version`.
+Releases in the `0.0.x` series use the **v0** documentation.
+NemoClaw Agent Configs starts at release `0.1.0` and uses the **v1** documentation.
+Use the product selector to switch guides.
+
+<Note title="Transition to Agent Configs">
+
+The transition from v0 to Agent Configs is planned to complete in the first quarter of 2027.
+If you use v0 today, follow the [migration guide](https://docs.nvidia.com/nemoclaw/v1/migration) to evaluate your workflows in a separate deployment.
+The [NemoClaw roadmap](https://github.com/NVIDIA/NemoClaw/milestones) tracks planned capabilities.
+
+</Note>
 
 ## Get Started
 
-Install NemoClaw and run the onboard wizard to get started.
-
-### From Your Coding Agent
-
-Copy the starter prompt into your local coding agent for a guided NemoClaw setup.
-It helps you choose an agent to run in an OpenShell sandbox, asks one question at a time, handles credentials locally and securely, and asks for approval before running commands.
-
-<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
-
-### From Your Terminal
-
-NemoClaw collects operation telemetry to help improve the project.
-Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed Production receiver by default.
-To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
-Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
-Paste this command into your terminal for the default installation process.
-
-<llms-ignore>
-
-<CommandTerminal command="curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash" />
-
-</llms-ignore>
-
-<llms-only>
-
-```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-```
-
-</llms-only>
-
-This starts the maintained last-known-good (`lkg`) installer and onboard wizard.
-Use the quickstart guides for scripted installs and failed-session recovery.
-
-By default, NemoClaw installs the OpenClaw agent. Use one of the following quickstart guides to get started with your preferred agent.
-
-| Agent | Guide |
-|-------|-------|
-| OpenClaw (default) | [Quickstart with OpenClaw](../openclaw/get-started/quickstart) |
-| Hermes | [Quickstart with Hermes](../hermes/get-started/quickstart) |
-| LangChain Deep Agents Code | [Quickstart with Deep Agents](../deepagents/get-started/quickstart) |
-| Pi (release candidate) | [Quickstart with Pi](../pi/get-started/quickstart) |
-
-<section>
-
-## NemoClaw Docs for AI Agents
-
-Use NemoClaw's Markdown docs or the docs-routing skill when you want your AI coding agent to help you install or operate a sandbox.
-The assistant fetches the same pages that power this site and applies them to your local environment.
-
-| Agent | Resource |
-|-------|----------|
-| OpenClaw | [Add Docs to Your Agent](../openclaw/resources/agent-skills) |
-| Hermes | [Add Docs to Your Agent](../hermes/resources/agent-skills) |
-| LangChain Deep Agents Code | [Add Docs to Your Agent](../deepagents/resources/agent-skills) |
-
-</section>
-
-<section>
-
-## Resources
-
-Use the following resources to explore NemoClaw end-to-end examples, showcases, and integrations.
-
-| Agent | Resource |
-|-------|----------|
-| OpenClaw | [Community Solutions](../openclaw/resources/community-contributions) |
-| Hermes | [Community Solutions](../hermes/resources/community-contributions) |
-| LangChain Deep Agents Code | [Community Solutions](../deepagents/resources/community-contributions) |
-
-</section>
-
-## Select User Guide Variant for Your Preferred Agent
-
-Select the user guide variant for your preferred agent to sandbox. You can also switch guide variants from the dropdown at the top of the left navigation pane.
-
 <Cards>
 
-<Card title="NemoClaw for OpenClaw" href="../openclaw/about/overview">
+<Card title="Install NemoClaw Agent Configs (v1)" href="https://docs.nvidia.com/nemoclaw/v1/install">
 
-Read the OpenClaw-focused overview before launching the default sandboxed agent.
+Choose the installer or archive for your operating system, then deploy your first agent from a reusable configuration.
 
-<Badge intent="tip" minimal outlined>Overview</Badge>
 </Card>
 
-<Card title="NemoClaw for Hermes" href="../hermes/about/overview">
+<Card title="Install NemoClaw v0" href="../openclaw/get-started/quickstart">
 
-Read the Hermes-focused overview before launching a Hermes sandboxed agent.
+Follow the v0 quickstart for guided onboarding with OpenClaw, or select the guide variant for your agent.
 
-<Badge intent="tip" minimal outlined>Overview</Badge>
-</Card>
-
-<Card title="NemoClaw for Deep Agents" href="../deepagents/about/overview">
-
-Read the Deep Agents-focused overview before launching a `dcode` sandboxed terminal agent.
-
-<Badge intent="tip" minimal outlined>Overview</Badge>
-</Card>
-
-<Card title="NemoClaw for Pi" href="../pi/get-started/quickstart">
-
-Review Pi's candidate status, initial support matrix, and terminal workflows before activation.
-
-<Badge intent="warning" minimal outlined>Release candidate</Badge>
 </Card>
 
 </Cards>
+
+### From Your Coding Agent
+
+Copy this prompt into your coding agent to get help with the version and installation path that match your deployment.
+
+<Prompt title="Set up NemoClaw with your coding agent">
+
+Help me choose and set up NVIDIA NemoClaw.
+Check my operating system, architecture, and installed NemoClaw version, if any.
+Recommend NemoClaw Agent Configs (v1) for a new deployment.
+Use v0 for an existing v0 deployment or a workflow that needs a v0 capability.
+Confirm which version I want before running an installer.
+
+- For NemoClaw v0, follow the quickstart for my agent under https://docs.nvidia.com/nemoclaw/v0/user-guide/. Use `openclaw/get-started/quickstart`, `hermes/get-started/quickstart`, or `deepagents/get-started/quickstart` as appropriate.
+- For NemoClaw Agent Configs (v1), follow https://docs.nvidia.com/nemoclaw/v1/install for my operating system, then https://docs.nvidia.com/nemoclaw/v1/get-started to deploy and verify a reply. If I already use v0, evaluate Agent Configs in a separate deployment.
+
+Ask before installing software or creating a deployment, and keep credentials out of chat.
+After setup, verify an agent reply.
+
+</Prompt>
 
 ---
 
