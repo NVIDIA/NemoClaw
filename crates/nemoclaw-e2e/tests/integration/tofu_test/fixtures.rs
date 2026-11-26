@@ -30,6 +30,8 @@ pub struct Shared {
     /// The images and containers a case declares.
     images: Mutex<Vec<Value>>,
     containers: Mutex<Vec<Value>>,
+    /// Whether the engine reports itself as Podman, for a managed Podman gateway.
+    podman: Mutex<bool>,
     upstream_endpoint: OnceLock<String>,
     upstream_requests: Mutex<Vec<String>>,
     /// The model IDs the upstream lists.
@@ -106,9 +108,38 @@ impl Shared {
                     "Architecture":"arm64", "OSType":"linux", "ServerVersion":"28.0"}));
             }
             (true, ["version"]) => {
-                return json(
-                    json!({"ApiVersion":"1.47", "Version":"28.0", "Os":"linux", "Arch":"arm64"}),
-                );
+                let mut version =
+                    json!({"ApiVersion":"1.47", "Version":"28.0", "Os":"linux", "Arch":"arm64"});
+                if *self.podman.lock().unwrap() {
+                    version["Components"] = json!([{"Name":"Podman Engine", "Version":"5.4.0"}]);
+                }
+                return json(version);
+            }
+            // A managed Podman gateway's storage pulls the gateway image itself,
+            // which then reports as present, as on a real engine. Docker
+            // scenarios pull only through the mocked Docker provider.
+            (false, ["images", "create"]) if *self.podman.lock().unwrap() => {
+                let reference = url
+                    .query_pairs()
+                    .find(|(key, _)| key == "fromImage")
+                    .map(|(_, value)| value.into_owned())
+                    .unwrap_or_default();
+                self.images
+                    .lock()
+                    .unwrap()
+                    .push(json!({"reference": reference, "id": format!("sha256:{:064}", 1)}));
+                return json(json!({"status": "Pull complete"}));
+            }
+            // Podman's native API, which a Podman gateway's prerequisites
+            // read, and which reports a container's capabilities.
+            (true, [_, "libpod", "info"]) if *self.podman.lock().unwrap() => {
+                return json(json!({"host":{"security":{"rootless":false}}}));
+            }
+            (true, [_, "libpod", "containers", id, "json"]) if *self.podman.lock().unwrap() => {
+                return match self.engine.lock().unwrap().container(id) {
+                    Some(_) => json(json!({"Id": id, "EffectiveCaps": [], "BoundingCaps": []})),
+                    None => missing(),
+                };
             }
             (true, ["containers", reference, operation]) => {
                 if let Some(container) = self.container(reference) {
@@ -185,6 +216,8 @@ impl Shared {
             let list = |key: &str| declared[key].as_array().cloned().unwrap_or_default();
             *self.images.lock().unwrap() = list("images");
             *self.containers.lock().unwrap() = list("containers");
+            *self.podman.lock().unwrap() = declared["podman"] == true;
+            self.engine.lock().unwrap().podman = declared["podman"] == true;
             *self.models.lock().unwrap() = list("models");
             self.gateway.lock().unwrap().declare(&declared);
         }
@@ -478,6 +511,7 @@ impl Fixtures {
         shared.engine_requests.lock().unwrap().clear();
         shared.images.lock().unwrap().clear();
         shared.containers.lock().unwrap().clear();
+        *shared.podman.lock().unwrap() = false;
         shared.upstream_requests.lock().unwrap().clear();
         shared.models.lock().unwrap().clear();
         *shared.credentials.lock().unwrap() = credentials;

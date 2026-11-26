@@ -6,6 +6,7 @@
 Teams that keep OpenTofu configuration in their own repositories and apply it from their own pipelines can use NemoClaw's providers directly, without the CLI or SDK.
 Your repository holds the HCL, and OpenTofu keeps the state in any backend it supports.
 This guide covers installing the providers, keeping state, running from a pipeline, passing credentials, replacing a sandbox with its agent, and tearing the configuration down.
+To start from a YAML configuration with a Docker, Podman, or external gateway, [`nemoclaw compile`](../references/cli.md#writing-a-configuration-out-as-hcl) writes it out once as such a project.
 
 The examples come from [`examples/features/travel/hcl`](../../examples/features/travel/hcl/main.tf), a Pi agent in an OpenShell sandbox answering with a local Ollama model, and [`examples/features/travel-team/hcl`](../../examples/features/travel-team/hcl/README.md), six agents with their own sandboxes, models, and grants.
 An integration test applies each example unchanged with the bundle's providers, a mocked Docker provider, and a fixture gateway, image engine, and model server.

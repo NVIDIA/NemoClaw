@@ -40,6 +40,7 @@ impl RenderContext {
             Command::Plan { file, .. } => ("Plan", file.clone()),
             Command::Apply { file, .. } => ("Apply", Some(file.clone())),
             Command::Destroy { .. } => ("Destroy", None),
+            Command::Compile { file, .. } => ("Compile", Some(file.clone())),
             Command::Export { .. } => ("Export", None),
             Command::Onboard { file, .. } => ("Onboard", file.clone()),
             Command::OpenShell { .. } => ("OpenShell", None),
@@ -163,6 +164,7 @@ pub(crate) fn render(
 ) -> Result<String, Box<dyn std::error::Error>> {
     match result {
         CommandResult::Export(document) => Ok(document.yaml()?),
+        CommandResult::Compiled { output, files } => Ok(compiled(&output, &files)),
         CommandResult::Authored { path, missing_credentials } => Ok(path
             .map(|path| {
                 let mut text = authored(&path, context);
@@ -192,6 +194,15 @@ pub(crate) fn render(
             }
         },
     }
+}
+
+/// What `compile` wrote, and where to start.
+fn compiled(output: &std::path::Path, files: &[String]) -> String {
+    let directory = terminal_text(&output.display().to_string());
+    format!(
+        "Wrote an OpenTofu project to {directory}: {}.\nThe CLI won't read it again. {directory}/README.md says how to install the providers, which credentials to set, and how to tear it down.\n",
+        files.join(", ")
+    )
 }
 
 /// The save confirmation, with commands that run as printed.
