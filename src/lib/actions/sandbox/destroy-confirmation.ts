@@ -7,6 +7,7 @@ import { R, YW } from "../../cli/terminal-style";
 import { prompt as askPrompt } from "../../credentials/store";
 import type { DestroySandboxOptions } from "../../domain/lifecycle/options";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
+import { getLatestBackup } from "../../state/sandbox";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
@@ -82,4 +83,26 @@ export async function confirmSandboxDestroy(
   }
   console.log("  Cancelled.");
   return false;
+}
+
+/** Report backup metadata without claiming the recorded location or archive is verified. */
+export function printRetainedBackupLocation(sandboxName: string): void {
+  let backupPath: string | null = null;
+  try {
+    backupPath = getLatestBackup(sandboxName)?.backupPath ?? null;
+  } catch {
+    console.error(
+      `  NemoClaw could not read the rebuild-backups directory for '${sandboxName}', so it cannot say whether a backup exists. Check the directory permissions before any manual cleanup.`,
+    );
+    return;
+  }
+  if (backupPath) {
+    console.error(
+      `  Latest backup record lists: ${backupPath} (native-home.tar should hold the agent home and workspace). NemoClaw has not verified this recorded location or archive. Confirm the location, copy the backup somewhere safe, and verify its contents before any manual cleanup.`,
+    );
+  } else {
+    console.error(
+      `  NemoClaw could not identify a backup location for '${sandboxName}'. Backup files or unreadable records may still exist under the NemoClaw rebuild-backups directory. Inspect it before any manual cleanup.`,
+    );
+  }
 }

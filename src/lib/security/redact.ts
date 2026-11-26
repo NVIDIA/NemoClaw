@@ -106,9 +106,9 @@ export function writeRedactedResult(
 // ── Full redaction (debug.ts style) ─────────────────────────────
 
 const UNDERSCORE_SECRET_ASSIGNMENT_KEY_SOURCE =
-  "(?:[A-Za-z0-9]{1,128}_(?:key|token|secret|credential|password|passwd|pass)|(?:x[-_])?api[-_]key|token|secret|credential|password|passwd|pass)";
+  "(?:[A-Za-z0-9]{1,128}_(?:key|token|secret|credential|password|passwd|passphrase|pass)|(?:x[-_])?api[-_]key|token|secret|credential|password|passwd|passphrase|pass)";
 const CAMEL_SECRET_ASSIGNMENT_KEY_SOURCE =
-  "(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))";
+  "(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Passphrase|Pass))";
 
 function quotedSecretAssignmentPatterns(keySource: string, flags: string): [RegExp, string][] {
   const prefix = `((?:^|[^A-Za-z0-9])${keySource}["']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32}))`;
@@ -164,11 +164,19 @@ const FULL_REDACT_PATTERNS: [RegExp, string][] = [
   ...quotedSecretAssignmentPatterns(CAMEL_SECRET_ASSIGNMENT_KEY_SOURCE, "g"),
   ...quotedSecretAssignmentPatterns("KEY", "g"),
   [
-    /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:key|token|secret|credential|password|passwd|pass)|(?:x[-_])?api[-_]key|token|secret|credential|password|passwd|pass)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]+((?:"|')?)/gi,
+    /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_)?passphrase["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32}(?![ \t]*[=:])))(?![ \t]*["'])[^\r\n]*/gi,
+    "$1<REDACTED>",
+  ],
+  [
+    /((?:^|[^A-Za-z0-9])[A-Za-z0-9]{1,128}Passphrase["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32}(?![ \t]*[=:])))(?![ \t]*["'])[^\r\n]*/g,
+    "$1<REDACTED>",
+  ],
+  [
+    /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:key|token|secret|credential|password|passwd|passphrase|pass)|(?:x[-_])?api[-_]key|token|secret|credential|password|passwd|passphrase|pass)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]+((?:"|')?)/gi,
     "$1<REDACTED>$2",
   ],
   [
-    /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]+((?:"|')?)/g,
+    /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Passphrase|Pass))["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]+((?:"|')?)/g,
     "$1<REDACTED>$2",
   ],
   [

@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createSandboxRecoveryContext,
+  formatCreateOutputTail,
+  formatRetainedSandboxRecoveryMessage,
+  unconfirmedCreateMessage,
   reportSandboxCreateFailure,
   reportSandboxReadinessFailure,
   type SandboxCreateFailureReportDeps,
@@ -361,5 +364,70 @@ describe("reportSandboxReadinessFailure", () => {
       reportSandboxReadinessFailure(readinessOptions({ createStatus: 255 }), deps),
     ).toThrow(ExitSignal);
     expect(deps.exitProcess).toHaveBeenCalledWith(255);
+  });
+});
+
+describe("unconfirmed create reporting (#14323)", () => {
+  it("does not claim the sandbox was created or reached Ready without an identity", () => {
+    const message = formatRetainedSandboxRecoveryMessage({
+      sandboxName: "alpha",
+      gatewayName: "gw",
+      createAttemptLabel: "label=abc",
+      sandboxIdentityFingerprint: null,
+    });
+    expect(message).not.toMatch(/reached Ready|was created/u);
+    expect(message).toContain("cannot confirm that this attempt created the sandbox");
+    expect(message).toContain("destroy");
+  });
+
+  it("states the diagnostic without asserting creation", () => {
+    const message = unconfirmedCreateMessage("alpha", "selector-execution-uncoded-error");
+    expect(message).not.toMatch(/was created,/u);
+    expect(message).toContain("cannot confirm the sandbox was created");
+    expect(message).toContain("selector-execution-uncoded-error");
+    expect(unconfirmedCreateMessage("alpha", null)).not.toContain("()");
+  });
+
+  it("shows a redacted tail of the create output", () => {
+    const output = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
+    const tail = formatCreateOutputTail(`${output}\nnvapi-abcdefghijklmnopqrstuvwxyz0123456789`);
+    expect(tail?.split("\n")).toHaveLength(12);
+    expect(tail).toContain("line 29");
+    expect(tail).not.toContain("line 0\n");
+    expect(tail).not.toContain("nvapi-abcdefghijklmnopqrstuvwxyz0123456789");
+  });
+
+  it("removes terminal controls before redacting split credential names", () => {
+    const output =
+      "\u001b[31mpass\u001b[0mphrase=opaquePhraseValue\r\n" +
+      "\u001b]52;c;Y2xpcGJvYXJkLWNhbmFyeQ==\u0007safe diagnostic\u0008\u0000";
+    expect(formatCreateOutputTail(output)).toBe("passphrase=<REDACTED>\nsafe diagnostic");
+  });
+
+  it("redacts bare-carriage-return headers before normalizing line endings", () => {
+    expect(formatCreateOutputTail("Authorization:\ropaque-bare-cr\rnext diagnostic")).toBe(
+      "Authorization: <REDACTED>\nnext diagnostic",
+    );
+  });
+
+  it.each(["\u200b", "\u202e", "\u2028", "\u2029"])(
+    "removes Unicode display control %j before redacting credential names",
+    (control) => {
+      expect(
+        formatCreateOutputTail(`pass${control}phrase=opaquePhraseValue\nsafe diagnostic`),
+      ).toBe("passphrase=<REDACTED>\nsafe diagnostic");
+    },
+  );
+
+  it("retains no words of an unquoted passphrase", () => {
+    expect(
+      formatCreateOutputTail("passphrase: correct horse battery staple\nnext diagnostic"),
+    ).toBe("passphrase: <REDACTED>\nnext diagnostic");
+  });
+
+  it("returns null for empty create output", () => {
+    expect(formatCreateOutputTail("")).toBeNull();
+    expect(formatCreateOutputTail("  \n \n")).toBeNull();
+    expect(formatCreateOutputTail(undefined)).toBeNull();
   });
 });

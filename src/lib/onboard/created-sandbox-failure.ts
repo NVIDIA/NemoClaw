@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { redact } from "../security/redact";
+import { stripVTControlCharacters } from "node:util";
+
+import { redact, redactFullWithUrls } from "../security/redact";
 import type { CreateOpenShellSandboxRequest } from "../adapters/openshell/sandbox-lifecycle";
 import { cliName } from "./branding";
 import type { CreatedSandboxReadinessResult } from "./sandbox-readiness-tracing";
@@ -17,8 +19,8 @@ export function formatRetainedSandboxRecoveryMessage(input: {
   if (!input.sandboxIdentityFingerprint) {
     return (
       createAttemptEvidence +
-      `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. ` +
-      "OpenShell did not return one exact durable sandbox identity for this create attempt. " +
+      `NemoClaw could not confirm one exact durable sandbox identity for this create attempt's label on '${input.sandboxName}' through gateway '${input.gatewayName}', ` +
+      "so it cannot confirm that this attempt created the sandbox. " +
       `Do not delete the sandbox by mutable name. Run '${cliName()} ${input.sandboxName} destroy'; it can clear retained recovery only after OpenShell confirms absence.`
     );
   }
@@ -30,6 +32,43 @@ export function formatRetainedSandboxRecoveryMessage(input: {
     "If OpenShell reports the sandbox present or cannot determine presence, the command removes nothing and preserves the recovery record. " +
     "Inspection is diagnostic only and does not authorize mutable-name deletion. " +
     `Recovery remains blocked while the sandbox is present or presence is unknown. Rerun '${cliName()} ${input.sandboxName} destroy --yes' after the owning gateway reports absence.`
+  );
+}
+
+const CREATE_OUTPUT_TAIL_LINES = 12;
+const CREATE_OUTPUT_LINE_MAX_CHARS = 500;
+
+/**
+ * Redacted tail of the OpenShell create stream, for failures that happen after
+ * the stream ended without a confirmed sandbox identity (#14323). Returns null
+ * when there is nothing to show, so callers print nothing instead of a blank.
+ */
+export function formatCreateOutputTail(output: string | null | undefined): string | null {
+  if (!output) return null;
+  // Normalize display controls before redaction so they cannot split credential names.
+  const visibleOutput = stripVTControlCharacters(output).replace(
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]/gu,
+    "",
+  );
+  const lines = redactFullWithUrls(visibleOutput)
+    .replace(/\r\n?/gu, "\n")
+    .split(/\r?\n/u)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) return null;
+  return lines.slice(-CREATE_OUTPUT_TAIL_LINES).map(boundCreateOutputLine).join("\n");
+}
+
+/** Keep the newest end of an overlong line, which is where a failure reason usually sits. */
+function boundCreateOutputLine(line: string): string {
+  if (line.length <= CREATE_OUTPUT_LINE_MAX_CHARS) return line;
+  return `[truncated] ...${line.slice(-CREATE_OUTPUT_LINE_MAX_CHARS)}`;
+}
+
+export function unconfirmedCreateMessage(sandboxName: string, diagnostic: string | null): string {
+  return (
+    `OpenShell did not return one exact durable identity for sandbox '${sandboxName}' from this create attempt, ` +
+    `so NemoClaw cannot confirm the sandbox was created${diagnostic ? ` (${diagnostic})` : ""}.`
   );
 }
 

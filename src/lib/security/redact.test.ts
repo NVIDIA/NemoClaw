@@ -38,6 +38,40 @@ describe("redactFullWithUrls", () => {
   ])("fully redacts URL credentials for %s", (_case, value, expected) => {
     expect(redactFullWithUrls(value)).toBe(expected);
   });
+  it.each([
+    ["passphrase=opaquePhraseValue", "passphrase=<REDACTED>"],
+    ["SSH_PASSPHRASE=opaquePhraseValue", "SSH_PASSPHRASE=<REDACTED>"],
+    ["sshPassphrase=opaquePhraseValue", "sshPassphrase=<REDACTED>"],
+  ])("redacts passphrase assignment vector %#", (input, expected) => {
+    expect(redactFull(input)).toBe(expected);
+    expect(redactFullWithUrls(input)).toBe(expected);
+  });
+
+  it.each(
+    ["passphrase", "SSH_PASSPHRASE", "sshPassphrase"].flatMap((key) =>
+      ["=", ": ", " ", " = ", " : "].map((separator) => [key, separator]),
+    ),
+  )("redacts complete unquoted %s values separated by %s", (key, separator) => {
+    const input = `${key}${separator}correct horse battery staple\nnext diagnostic`;
+    const expected = `${key}${separator}<REDACTED>\nnext diagnostic`;
+    expect(redactFull(input)).toBe(expected);
+    expect(redactFullWithUrls(input)).toBe(expected);
+    expect(redactFullWithUrls(expected)).toBe(expected);
+  });
+
+  it.each(
+    ["passphrase", "SSH_PASSPHRASE", "sshPassphrase"].flatMap((key) =>
+      [" = ", " : "].flatMap((separator) => ["'", '"'].map((quote) => [key, separator, quote])),
+    ),
+  )(
+    "preserves diagnostics after quoted %s assignments with separator %s and quote %s",
+    (key, separator, quote) => {
+      const input = `${key}${separator}${quote}synthetic multiword phrase${quote} safe diagnostic`;
+      const expected = `${key}${separator}${quote}<REDACTED>${quote} safe diagnostic`;
+      expect(redactFull(input)).toBe(expected);
+      expect(redactFullWithUrls(input)).toBe(expected);
+    },
+  );
 });
 
 describe("redact", () => {
@@ -125,6 +159,11 @@ describe("redactForLog", () => {
     [
       "CUSTOM_SECRET='opaque secret value' safe diagnostic",
       "CUSTOM_SECRET='<REDACTED>' safe diagnostic",
+    ],
+    ['passphrase="opaque phrase value" safe diagnostic', 'passphrase="<REDACTED>" safe diagnostic'],
+    [
+      "sshPassphrase='opaque phrase value' safe diagnostic",
+      "sshPassphrase='<REDACTED>' safe diagnostic",
     ],
   ])("redacts the complete quoted assignment in %s", (assignment, expected) => {
     expect(redactFull(assignment)).toBe(expected);
