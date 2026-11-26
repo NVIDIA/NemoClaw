@@ -361,6 +361,12 @@ processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => {
   return { ok: true };
 };
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
+processRecovery.restartSandboxGateway = async (sandboxName) => {
+  events.push({ kind: "gateway-restart", name: sandboxName });
+  return { ok: true };
+};
+const hermesGatewayHint = require(${JSON.stringify(path.join(repoRoot, "src/lib/actions/sandbox/snapshot-hermes-gateway-hint.ts"))});
+hermesGatewayHint.migrateHermesLegacyDashboardState = async () => ({ status: 0, stdout: "", stderr: "" });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command) => {
   const cmd = _n(command);
@@ -533,6 +539,9 @@ const { createSandbox } = require(${onboardPath});
       assert.equal(payload.nativeConfig.agents.defaults.model.primary, primary);
       const restart = events.find((event) => event.kind === "restart")?.primary;
       assert.equal(restart, agent === "openclaw" ? primary : undefined);
+      // A Hermes recreate restarts the gateway after the restore so it mints an API key (#14661).
+      const gatewayRestarts = events.filter((event) => event.kind === "gateway-restart");
+      assert.equal(gatewayRestarts.length, agent === "hermes" ? 1 : 0);
       assert.deepEqual(payload.nativeConfig.custom, { retained: true });
       assert.equal(payload.registered.model, "gpt-5.4");
       assert.equal(
