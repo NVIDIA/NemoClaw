@@ -34,10 +34,11 @@ import { BadgeLinks } from "./_components/BadgeLinks";
 **NVIDIA® NemoClaw™** is an open source reference stack for running supported AI agents on the OpenShell runtime.
 NemoClaw Agent Configs builds on NemoClaw with a reusable configuration and deployment workflow: define deployments in YAML, review the plan, and apply changes through the CLI or Rust SDK.
 
-## What Changes in NemoClaw
+## Deployment Changes in NemoClaw
 
-NemoClaw v0 supports several agent harnesses and sandboxes, with agent-specific commands for onboarding and operating agents.
-NemoClaw Agent Configs (v1) uses NeMo Fabric to manage agent runtimes and brings gateway, inference, sandbox, and agent settings together in one reusable YAML configuration.
+NemoClaw v0 supports several agent harnesses and sandboxes, with onboarding and operations tailored to each agent.
+NemoClaw Agent Configs (v1) moves deployment from agent-specific commands to a shared YAML workflow.
+It uses NeMo Fabric to manage agent runtimes and brings gateway, inference, sandbox, and agent settings together in one reusable configuration.
 Across supported harnesses, use the same CLI or Rust SDK to preview resource changes with **`plan`** and deploy with **`apply`**.
 
 ![Define the deployment in YAML, preview changes with plan, and deploy with apply.](./images/nemoclaw-agent-configs-workflow.png)
