@@ -89,7 +89,7 @@ Besides the namespace, the gateway adds two cluster-wide objects, the chart's Cl
 Choose the target's `authentication.profile` first, because it decides which example you start from and is fixed after the first apply:
 
 - `development`, in [managed-development.yaml](../../examples/platforms/kubernetes/managed-development.yaml): NemoClaw runs its own token issuer in the namespace (a Deployment, Service, NetworkPolicy, Secret, and ConfigMaps named `<release>-oidc` and `<release>-oidc-ca`), which only the gateway can reach.
-  Only NemoClaw gets tokens, signed with a key that never leaves the state directory, so you cannot invoke the agents or run `openshell` commands against the gateway yourself.
+  Only NemoClaw gets tokens, signed with a key that never leaves the state directory, so you cannot invoke the agents or run `openshell` or `nemoclaw osh` commands against the gateway yourself.
   The issuer's certificates are valid for 365 days, and NemoClaw does not renew them, so create a new deployment before they expire, as [Rotating Credentials](../security/credential-rotation.md#gateway-connections) describes.
 - `oidc`, in [managed-oidc.yaml](../../examples/platforms/kubernetes/managed-oidc.yaml): your identity provider issues tokens to NemoClaw and to people, who invoke agents and run `openshell` commands as [Reaching the Gateway From the OpenShell CLI](#reaching-the-gateway-from-the-openshell-cli) describes.
   Set up the issuer as [Authenticating Through an Existing OIDC Issuer](#authenticating-through-an-existing-oidc-issuer) describes.

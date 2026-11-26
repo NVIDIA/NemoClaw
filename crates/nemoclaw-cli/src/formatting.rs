@@ -620,7 +620,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         {
             let args: Vec<_> = args.iter().map(|arg| shell_argument(arg)).collect();
             output.push_str(&format!(
-                "\nOIDC gateway sign-in:\n  Register once: {}\n",
+                "\nOIDC gateway sign-in:\n  Register once: {}\n  Sign in again: {osh} gateway login\n",
                 terminal_text(&format!("{osh} {}", args.join(" ")))
             ));
         }
@@ -1305,31 +1305,33 @@ mod tests {
                 result,
             );
             assert_eq!(text.matches("Register once:").count(), 1, "{text}");
-            let printed = text
-                .lines()
-                .find_map(|line| line.trim().strip_prefix("Register once:"))
-                .unwrap()
-                .trim();
-            let output = Command::new("/bin/sh")
-                .args(["-c", printed])
-                .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
-                .env("REVIEW_EXPAND", "expanded")
-                .output()
-                .unwrap();
-            assert!(output.status.success(), "{printed}");
-            let args = String::from_utf8(output.stdout).unwrap();
-            let expected: Vec<&str> = [
+            let run = |label: &str| {
+                let printed = text
+                    .lines()
+                    .find_map(|line| line.trim().strip_prefix(label))
+                    .unwrap_or_else(|| panic!("missing {label}\n{text}"))
+                    .trim();
+                let output = Command::new("/bin/sh")
+                    .args(["-c", printed])
+                    .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+                    .env("REVIEW_EXPAND", "expanded")
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "{printed}");
+                String::from_utf8(output.stdout).unwrap()
+            };
+            let selection = [
                 "osh",
                 "--state-dir",
                 "state's directory",
                 "--bundle",
                 "bundle directory",
                 "--",
-            ]
-            .into_iter()
-            .chain(registration)
-            .collect();
-            assert_eq!(args.lines().collect::<Vec<_>>(), expected, "{printed}");
+            ];
+            let expected: Vec<&str> = selection.into_iter().chain(registration).collect();
+            assert_eq!(run("Register once:").lines().collect::<Vec<_>>(), expected);
+            let expected: Vec<&str> = selection.into_iter().chain(["gateway", "login"]).collect();
+            assert_eq!(run("Sign in again:").lines().collect::<Vec<_>>(), expected);
         }
     }
 
