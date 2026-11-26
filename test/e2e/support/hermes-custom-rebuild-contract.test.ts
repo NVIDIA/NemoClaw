@@ -216,6 +216,14 @@ describe("Hermes custom hosted rebuild evidence", () => {
   it.each<{ requests: FakeOpenAiCompatibleRequest[] }>([
     { requests: [] },
     { requests: [{ ...authenticatedRequest, auth: "rejected" }] },
+    { requests: [{ ...authenticatedRequest, auth: "rejected" }, authenticatedRequest] },
+    {
+      requests: [
+        { ...authenticatedRequest, hostHeader: "host.openshell.internal:11434" },
+        authenticatedRequest,
+      ],
+    },
+    { requests: [{ ...authenticatedRequest, path: "/chat/completions" }, authenticatedRequest] },
     { requests: [{ ...authenticatedRequest, auth: "missing" }, authenticatedRequest] },
     { requests: [{ ...authenticatedRequest, authorizationSent: false }, authenticatedRequest] },
     { requests: [{ ...authenticatedRequest, model: "wrong-model" }, authenticatedRequest] },

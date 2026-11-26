@@ -62,8 +62,8 @@ The archived provider must be the provider registered for the sandbox, and the r
 - Hermes Provider uses `${OPENAI_API_KEY}`. The endpoint is its default endpoint, or the endpoint returned by authenticated login when that is the endpoint registered for the sandbox.
 - Other OpenAI-compatible and Anthropic-compatible endpoints use `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}`.
   The archived endpoint must match the agent endpoint generated from the registered route and API, or its validated provider binding.
-  For an Anthropic-compatible route registered at `https://host.example/team`, the custom binding keeps `/team`.
-  With `openai-completions` or `openai-responses`, the Hermes agent endpoint uses `/team/v1`. With `anthropic-messages`, it stays at `/team`.
+  For example, if you register `https://host.example/team` for an Anthropic-compatible provider, managed Hermes uses `openai-completions`. The binding keeps `/team` as the registered endpoint, and Hermes uses `/team/v1` for chat.
+  When checking an existing archive, NemoClaw also recognizes validated `openai-responses` bindings with the `/team/v1` agent endpoint and `anthropic-messages` bindings with `/team`. These are archive compatibility rules, not additional API choices for managed Hermes.
   For a legacy registration with no provider attachment, NemoClaw checks the endpoint Hermes used at startup: `/team/v1` for this example, or the adapter endpoint for Bedrock Runtime.
   If registration conflicts with the binding's logical endpoint, API, or credential variable, NemoClaw strips the reference.
   It must not use `localhost`, `127.0.0.1`, `[::1]`, or `inference.local`.

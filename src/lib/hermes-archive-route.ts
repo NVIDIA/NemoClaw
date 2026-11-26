@@ -16,7 +16,7 @@ import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./inference/native-nvidia/contrac
 import { NVIDIA_INFERENCE_PLACEHOLDER } from "./inference-credential.ts";
 import { unsafeEndpointUrlViolation } from "./core/endpoint-url-safety.ts";
 import { nativeLocalCredentialReference } from "./inference/native-local/agent-config.ts";
-import { normalizeNativeProviderAttachment } from "./inference/native-provider/contract.ts";
+import { fixedNativeProviderForAttachment } from "./inference/native-provider/fixed.ts";
 
 /** Registered provider and authorized agent endpoint used by archive sanitation. */
 export type HermesRegisteredRoute = Readonly<{
@@ -44,15 +44,19 @@ export function hermesRegisteredRoute(
 ): HermesRegisteredRoute {
   const { provider, endpointUrl: logicalEndpointUrl } = selection;
   try {
-    if (logicalEndpointUrl) hermesArchiveEndpoint(logicalEndpointUrl);
+    const logicalEndpoint = logicalEndpointUrl && hermesArchiveEndpoint(logicalEndpointUrl);
     const customDefinition = customNativeProviderForSelection(selection);
     const attachment = selection.nativeHostedProviderAttachment;
     let attachmentEndpoint = attachment?.endpointUrl;
-    if (provider === "hermes-provider" && attachment && attachmentEndpoint === undefined) {
-      const fixed = hostedNativeProvider(provider)!;
-      if (!normalizeNativeProviderAttachment(attachment, fixed))
-        return { provider, endpointUrl: null };
-      attachmentEndpoint = fixed.endpoint;
+    if (provider === "hermes-provider") {
+      const fixedEndpoint = hostedNativeProvider(provider)!.endpoint;
+      if (attachment === undefined) {
+        if (logicalEndpoint !== fixedEndpoint) return { provider, endpointUrl: null };
+      } else {
+        const definition = fixedNativeProviderForAttachment(attachment);
+        if (definition.logicalProvider !== provider) return { provider, endpointUrl: null };
+        attachmentEndpoint = definition.endpointUrl ?? fixedEndpoint;
+      }
     }
     // The binding owner checks the logical endpoint, API and credential name,
     // then supplies the agent projection (for example /team -> /team/v1).

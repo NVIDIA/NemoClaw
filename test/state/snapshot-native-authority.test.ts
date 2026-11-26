@@ -262,6 +262,10 @@ describe("complete native-home machine authority", () => {
           writeSandboxRegistry("hermes-managed-archive", "hermes", {
             provider,
             endpointUrl: baseUrl,
+            attachmentEndpointUrl:
+              provider === "hermes-provider" && baseUrl !== hostedNativeProvider(provider)!.endpoint
+                ? baseUrl
+                : undefined,
           });
 
           const backup = sandboxState.backupSandboxState("hermes-managed-archive", {
@@ -555,7 +559,12 @@ describe("complete native-home machine authority", () => {
         retained: true,
       },
       { name: "attachment only", route: "", attachment: baseUrl, retained: true },
-      { name: "route only", route: baseUrl, attachment: undefined, retained: true },
+      {
+        name: "route only",
+        route: baseUrl,
+        attachment: undefined,
+        retained: provider !== "hermes-provider",
+      },
       { name: "neither endpoint", route: "", attachment: undefined, retained: false },
       {
         name: "malformed route",

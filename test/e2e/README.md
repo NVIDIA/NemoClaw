@@ -527,7 +527,7 @@ That endpoint uses the hosted `${COMPATIBLE_API_KEY}` reference.
 OpenShell resolves it at the HTTPS interception boundary; a plaintext fixture would receive the unresolved placeholder.
 Onboarding retains the endpoint admission and DNS pinning checks.
 After a baseline Hermes turn, the test rebuilds without a host `COMPATIBLE_API_KEY` and makes one native Hermes API request.
-Both turns must return `PONG`, and the endpoint must record each selected-model request with successful authentication.
+Both turns must return `PONG`. After rebuild, the first chat POST the fixture sees must use the hosted endpoint, canonical chat path, selected model and valid credentials. A later successful retry does not count. Readiness and model-inventory GETs are not chat requests.
 No route or credential rewrite occurs between rebuild and the first replacement request.
 
 The endpoint fixture owns the synthetic credential; OpenShell retains the provider binding across replacement.

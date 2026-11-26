@@ -456,6 +456,7 @@ export async function expectHermesEndpointTurn(options: {
   onEvidence: NonNullable<HermesProbeRetryOptions["onEvidence"]>;
   attempts?: number;
   requireFirstChat?: boolean;
+  hostedUrl?: URL;
 }): Promise<void> {
   const offset = options.endpoint.requests().length;
   const payload = JSON.stringify({
@@ -482,11 +483,19 @@ export async function expectHermesEndpointTurn(options: {
   const chats = options.endpoint
     .requests()
     .slice(offset)
-    .filter(({ method, path }) => method === "POST" && path === "/v1/chat/completions");
+    .filter(
+      ({ method, path }) =>
+        method === "POST" && ["/chat/completions", "/v1/chat/completions"].includes(path),
+    );
   const candidates = options.requireFirstChat ? chats.slice(0, 1) : chats;
+  const hosted = options.hostedUrl;
   expect(
     candidates.some(
-      ({ auth, model, authorizationSent }) =>
+      ({ path, hostHeader, auth, model, authorizationSent }) =>
+        path === "/v1/chat/completions" &&
+        (!hosted ||
+          hostHeader?.toLowerCase() === hosted.host ||
+          (!hosted.port && hostHeader?.toLowerCase() === `${hosted.hostname}:443`)) &&
         auth === "ok" &&
         model === options.model &&
         (!options.requireFirstChat || authorizationSent === true),
@@ -945,16 +954,6 @@ export async function rebuildHermesCustomBaseline({
   artifacts: InferenceSwitchRetryArtifactSink;
 }): Promise<void> {
   const hostedUrl = new URL(endpointUrl);
-  const hostedEndpoint = {
-    requests: () =>
-      endpoint.requests().filter(({ hostHeader }) => {
-        const authority = hostHeader?.toLowerCase();
-        return (
-          authority === hostedUrl.host ||
-          (!hostedUrl.port && authority === `${hostedUrl.hostname}:443`)
-        );
-      }),
-  };
   progress.phase("onboard and exercise the custom Hermes hosted route");
   // Match the archive regression: start with a custom hosted route. Child
   // gateway restarts after inference set retain the entrypoint's old provider
@@ -994,7 +993,8 @@ export async function rebuildHermesCustomBaseline({
   expectExitZero(configured, "onboard the custom hosted route before rebuild");
   await expectHermesEndpointTurn({
     sandbox,
-    endpoint: hostedEndpoint,
+    endpoint,
+    hostedUrl,
     model,
     redactionValues,
     attempts: 1,
@@ -1013,7 +1013,8 @@ export async function rebuildHermesCustomBaseline({
   expectExitZero(rebuilt, "rebuild Hermes custom route without a host credential");
   await expectHermesEndpointTurn({
     sandbox,
-    endpoint: hostedEndpoint,
+    endpoint,
+    hostedUrl,
     model,
     redactionValues,
     attempts: 1,
