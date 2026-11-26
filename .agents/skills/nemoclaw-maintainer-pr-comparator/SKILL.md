@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-pr-comparator
 description: "Compare competing NemoClaw PRs for one issue and recommend a merge or salvage candidate from review evidence."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

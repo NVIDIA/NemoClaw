@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-release-notes
 description: "Draft a post-tag NemoClaw Announcement from the verified release range and shipped PRs. Use when summarizing a release."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
