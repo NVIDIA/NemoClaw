@@ -527,26 +527,7 @@ async fn run_shard(shard: usize) {
     ]
     .map(|(name, value)| (name.to_owned(), value))
     .into();
-    // Windows programs need these to find system libraries, temporary
-    // directories, and executables.
-    if cfg!(windows) {
-        for name in [
-            "SystemRoot",
-            "SystemDrive",
-            "windir",
-            "ComSpec",
-            "PATHEXT",
-            "TEMP",
-            "TMP",
-            "USERPROFILE",
-            "APPDATA",
-            "LOCALAPPDATA",
-        ] {
-            if let Ok(value) = std::env::var(name) {
-                base.insert(name.into(), value);
-            }
-        }
-    }
+    add_platform_environment(&mut base);
     // Coverage-instrumented providers write their profiles where the caller asks.
     if let Ok(profile) = std::env::var("LLVM_PROFILE_FILE") {
         base.insert("LLVM_PROFILE_FILE".into(), profile);
@@ -689,6 +670,29 @@ fn record(scenario: &str, result: &str) {
             .open(Path::new(&root).join("results.tsv"))
             .and_then(|mut file| writeln!(file, "{scenario}\t{result}"))
             .unwrap();
+    }
+}
+
+/// Windows programs, OpenTofu's provider plugins among them, need these to
+/// find system libraries, temporary directories, and executables.
+fn add_platform_environment(environment: &mut BTreeMap<String, String>) {
+    if cfg!(windows) {
+        for name in [
+            "SystemRoot",
+            "SystemDrive",
+            "windir",
+            "ComSpec",
+            "PATHEXT",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+        ] {
+            if let Ok(value) = std::env::var(name) {
+                environment.insert(name.into(), value);
+            }
+        }
     }
 }
 

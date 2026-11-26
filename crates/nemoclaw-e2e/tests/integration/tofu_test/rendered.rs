@@ -68,17 +68,17 @@ async fn written_projects_configure_what_their_graphs_configure() {
         ),
     )
     .unwrap();
-    let environment: Arc<BTreeMap<String, String>> = Arc::new(
-        [
-            ("PATH", std::env::var("PATH").unwrap_or_default()),
-            ("HOME", directory.path().display().to_string()),
-            ("TF_CLI_CONFIG_FILE", configuration.display().to_string()),
-            ("TF_IN_AUTOMATION", "1".into()),
-            ("CHECKPOINT_DISABLE", "1".into()),
-        ]
-        .map(|(name, value)| (name.to_owned(), value))
-        .into(),
-    );
+    let mut environment: BTreeMap<String, String> = [
+        ("PATH", std::env::var("PATH").unwrap_or_default()),
+        ("HOME", directory.path().display().to_string()),
+        ("TF_CLI_CONFIG_FILE", configuration.display().to_string()),
+        ("TF_IN_AUTOMATION", "1".into()),
+        ("CHECKPOINT_DISABLE", "1".into()),
+    ]
+    .map(|(name, value)| (name.to_owned(), value))
+    .into();
+    super::add_platform_environment(&mut environment);
+    let environment = Arc::new(environment);
     let limit = Arc::new(tokio::sync::Semaphore::new(8));
     let mut checks = tokio::task::JoinSet::new();
     for (module, (document, graph)) in documents {
