@@ -202,10 +202,11 @@ describe("sandbox create intent machine boundary", () => {
           extraPlaceholderKeys: [],
         },
         recreate: false,
-        toolDisclosure: "progressive",
         observabilityEnabled: false,
         extraProviders: [],
       });
+      // Nothing selected a mode in any variant, so the seeded default is not a request.
+      expect(createIntent).not.toHaveProperty("toolDisclosure");
       const {
         reservePublishedRouteAfterBackup,
         recreateJournalTargetIntentFingerprint,

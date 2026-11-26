@@ -9,6 +9,7 @@ import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
 
 vi.mock("../../sandbox-registration", async (importOriginal) => ({
@@ -20,6 +21,10 @@ vi.mock("../../../state/registry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../state/registry")>()),
   getSandbox: vi.fn(() => null),
 }));
+
+/** The mode the create intent requests; undefined when only the session default exists. */
+const toolDisclosureRequest = (intent: unknown) =>
+  (intent as { toolDisclosure?: string }).toolDisclosure;
 
 const registeredEntry = (name: string, overrides: Record<string, unknown> = {}) => ({
   name,
@@ -125,44 +130,41 @@ describe("handleSandboxState tool disclosure", () => {
       });
 
       const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
-      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: mode });
+      expect(toolDisclosureRequest(createSandboxCall[15])).toBeUndefined();
     },
   );
 
   it.each([
     ["ollama-local", "openclaw", "direct"],
     ["vllm-local", "openclaw", "direct"],
-    ["nvidia-prod", "openclaw", "progressive"],
-    ["llama-cpp-local", "openclaw", "progressive"],
-    ["ollama-local", "hermes", "progressive"],
-    ["vllm-local", "langchain-deepagents-code", "progressive"],
-  ] as const)(
-    "uses %s/%s initial tool disclosure %s (#12106)",
-    async (provider, agentName, mode) => {
-      const session = createSession();
-      const { deps, calls } = createDeps(
-        {
-          getSandboxRegistryEntry: (name) =>
-            registeredEntry(name, {
-              provider,
-              pendingRouteReservation: true,
-              reservationSessionId: session.sessionId,
-            }),
-        },
-        session,
-      );
+    ["nvidia-prod", "openclaw", undefined],
+    ["llama-cpp-local", "openclaw", undefined],
+    ["ollama-local", "hermes", undefined],
+    ["vllm-local", "langchain-deepagents-code", undefined],
+  ] as const)("%s/%s sends the create request %s (#12106)", async (provider, agentName, mode) => {
+    const session = createSession();
+    const { deps, calls } = createDeps(
+      {
+        getSandboxRegistryEntry: (name) =>
+          registeredEntry(name, {
+            provider,
+            pendingRouteReservation: true,
+            reservationSessionId: session.sessionId,
+          }),
+      },
+      session,
+    );
 
-      await handleSandboxState({
-        ...baseOptions(deps, session),
-        provider,
-        agent: { name: agentName },
-      });
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      provider,
+      agent: { name: agentName },
+    });
 
-      const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
-      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: mode });
-      expect(calls.removeSandbox).not.toHaveBeenCalled();
-    },
-  );
+    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+    expect(toolDisclosureRequest(createSandboxCall[15])).toBe(mode);
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+  });
 
   it.each(["progressive", "direct"] as const)(
     "preserves an explicit %s choice for a fresh local OpenClaw sandbox (#12106)",
@@ -192,6 +194,33 @@ describe("handleSandboxState tool disclosure", () => {
     },
   );
 
+  it.each([
+    ["no selection", {}, undefined],
+    ["an explicit selection", { NEMOCLAW_TOOL_DISCLOSURE: "progressive" }, "progressive"],
+  ] as const)(
+    "requests a mode when re-onboarding a recorded sandbox with %s (#13975)",
+    async (_case, env, requested) => {
+      const session = createSession();
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: (name) => registeredEntry(name, { toolDisclosure: "direct" }),
+        },
+        session,
+      );
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        agent: { name: "hermes" },
+        env,
+      });
+
+      const createIntent = (calls.createSandbox.mock.calls[0] as unknown[])[15] as {
+        toolDisclosure?: string;
+      };
+      expect(createIntent.toolDisclosure).toBe(requested);
+    },
+  );
+
   it.each(["ollama-local", "vllm-local"])(
     "preserves progressive when %s creation targets registered state (#12106)",
     async (provider) => {
@@ -205,7 +234,7 @@ describe("handleSandboxState tool disclosure", () => {
       });
 
       const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
-      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: "progressive" });
+      expect(toolDisclosureRequest(createSandboxCall[15])).toBeUndefined();
       expect(calls.removeSandbox).not.toHaveBeenCalled();
     },
   );
@@ -239,7 +268,7 @@ describe("handleSandboxState tool disclosure", () => {
     ],
     [
       "a changed selection",
-      createSession({ toolDisclosure: "direct" }),
+      createSession({ toolDisclosure: "direct", toolDisclosureRequestedExplicitly: true }),
       "progressive" as const,
       "  [resume] Tool disclosure configuration changed; recreating sandbox.",
     ],
@@ -274,7 +303,11 @@ describe("handleSandboxState tool disclosure", () => {
   ] as const)(
     "passes resumed %s-to-%s tool-disclosure drift into the downstream create intent",
     async (recordedMode, requestedMode) => {
-      const session = createSession({ sandboxName: "saved", toolDisclosure: requestedMode });
+      const session = createSession({
+        sandboxName: "saved",
+        toolDisclosure: requestedMode,
+        toolDisclosureRequestedExplicitly: true,
+      });
       session.steps.sandbox.status = "complete";
       const { deps, calls } = createDeps({
         getSandboxReuseState: () => "ready",
@@ -322,6 +355,47 @@ describe("handleSandboxState tool disclosure", () => {
       });
     },
   );
+
+  it("keeps a recorded direct sandbox when a resumed session only holds the seeded default (#13975)", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name) =>
+        registeredEntry(name, { nemoclawVersion: "0.1.0", toolDisclosure: "direct" }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      endpointSource: "inference-set",
+      sandboxName: "saved",
+    });
+
+    expect(calls.note).not.toHaveBeenCalledWith(expect.stringContaining("Tool disclosure"));
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("omits the seeded default from the create intent when an interrupted session resumes (#13975)", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name) =>
+        registeredEntry(name, { nemoclawVersion: "0.1.0", toolDisclosure: "direct" }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      endpointSource: "inference-set",
+      sandboxName: "saved",
+    });
+
+    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+    expect(toolDisclosureRequest(createSandboxCall[15])).toBeUndefined();
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+  });
 
   it("recreates a legacy custom image so its tool-disclosure contract is validated", async () => {
     const session = createSession({ sandboxName: "saved", toolDisclosure: "progressive" });

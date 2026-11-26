@@ -60,6 +60,7 @@ describe("authoritative rebuild resume config", () => {
           provider: "nvidia-prod",
           model: "test-model",
           toolDisclosure: "progressive",
+          toolDisclosureRequestedExplicitly: true,
         },
         { toolDisclosure: "direct" },
       ),
@@ -68,6 +69,20 @@ describe("authoritative rebuild resume config", () => {
       requested: "direct",
       recorded: "progressive",
     });
+  });
+
+  it("accepts a tool-disclosure request on a session that only holds the seeded default (#13975)", () => {
+    expect(
+      getResumeConfigConflicts(
+        {
+          sandboxName: "demo",
+          provider: "nvidia-prod",
+          model: "test-model",
+          toolDisclosure: "progressive",
+        },
+        { toolDisclosure: "direct" },
+      ),
+    ).not.toContainEqual(expect.objectContaining({ field: "tool disclosure" }));
   });
 
   it("resumes an adopted external-image disclosure when the operator made no explicit choice", () => {
