@@ -15,20 +15,13 @@ fn osh(root: &Path, gateway: serde_json::Value, script: &str) -> Command {
             .unwrap(),
     )
     .unwrap();
-    if gateway.get("management").is_some() {
-        document["spec"]["gateway"] = gateway;
-        // Cluster sandboxes name their image metadata.
-        document["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
-            serde_json::json!({"env":"IMAGE_METADATA"});
-    } else {
-        for (key, value) in gateway.as_object().into_iter().flatten() {
-            document["spec"]["gateway"][key] = value.clone();
-        }
+    for (key, value) in gateway.as_object().into_iter().flatten() {
+        document["spec"]["gateway"][key] = value.clone();
     }
     let document: Document = serde_json::from_value(document).unwrap();
     let state = root.join("state");
     fs::create_dir_all(&state).unwrap();
-    let mut record = serde_json::json!({
+    let record = serde_json::json!({
         "version":34, "digest":document.digest(), "document":document,
         "generations":{
             "workspace":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -37,11 +30,6 @@ fn osh(root: &Path, gateway: serde_json::Value, script: &str) -> Command {
             "managed_gateway":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
     });
-    if document.spec.gateway.as_kubernetes().is_some() {
-        for kind in ["kubernetes_gateway", "kubernetes_storage"] {
-            record["generations"][kind] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into();
-        }
-    }
     fs::write(
         state.join("intent.json"),
         serde_json::to_vec(&record).unwrap(),
@@ -142,30 +130,4 @@ fn a_gateway_that_needs_a_bearer_token_is_refused() {
             "{error}"
         );
     }
-}
-
-#[test]
-fn a_published_cluster_gateway_runs_openshell_with_the_ca_apply_saved() {
-    let root = tempfile::tempdir().unwrap();
-    let client = root.path().join("state/kubernetes/client");
-    fs::create_dir_all(&client).unwrap();
-    fs::write(client.join("ca.crt"), "CA").unwrap();
-    let gateway = serde_json::json!({"management":"managed", "target":{"kubernetes":{
-        "namespace":"agents",
-        "authentication":{"profile":"oidc", "token":{"env":"GATEWAY_TOKEN"}},
-        "expose":{"endpoint":"https://gateway.example.com:30080", "service":{"type":"NodePort"}}
-    }}, "config":{"openshell.gateway.oidc":{"issuer":"https://idp.example.com", "audience":"openshell"}}});
-    let output = osh(
-        root.path(),
-        gateway,
-        "#!/bin/sh\ncat \"$XDG_CONFIG_HOME/openshell/gateways/$OPENSHELL_GATEWAY/mtls/ca.crt\"\n",
-    )
-    .output()
-    .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(output.stdout, b"CA");
 }

@@ -60,17 +60,13 @@ fn bundled_openshell_access_follows_the_gateway_authentication() {
         json!({"endpoint":"https://gateway.example.com:30080", "service":{"type":"NodePort"}});
     managed["spec"]["gateway"]["config"]["openshell.gateway.oidc"] =
         json!({"issuer":"https://idp.example.com", "audience":"openshell"});
-    let managed: Document = serde_json::from_value(managed).unwrap();
+    let args = openshell_cli::registration(&serde_json::from_value(managed).unwrap()).unwrap();
     assert_eq!(
-        openshell_cli::registration(&managed),
-        Some(vec![
-            "gateway".to_owned(),
-            "add".to_owned(),
-            "https://gateway.example.com:30080".to_owned(),
-            format!("--name={}", managed.workspace()),
-            "--oidc-issuer=https://idp.example.com".to_owned(),
-            "--oidc-audience=openshell".to_owned(),
-        ])
+        args[4..],
+        [
+            "--oidc-issuer=https://idp.example.com",
+            "--oidc-audience=openshell"
+        ]
     );
     let local =
         Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())

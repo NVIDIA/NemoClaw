@@ -36,37 +36,35 @@ pub(super) fn unavailable(gateway: &crate::config::Gateway) -> Option<&'static s
 /// The `openshell` arguments that register an OIDC gateway in the bundled
 /// CLI's configuration and sign in, once.
 pub(super) fn registration(document: &crate::config::Document) -> Option<Vec<String>> {
-    let (issuer, client_id, audience, scopes) = match &document.spec.gateway {
-        crate::config::Gateway::External(external) => {
-            let oidc = external.oidc.as_ref()?;
-            let client_id = Some(oidc.client_id.clone());
-            (
-                oidc.issuer.clone(),
-                client_id,
-                oidc.audience.clone(),
-                oidc.scopes.clone(),
-            )
-        }
+    let mut add = vec![
+        "gateway".into(),
+        "add".into(),
+        document.spec.gateway.endpoint()?,
+        format!("--name={}", document.workspace()),
+    ];
+    let oidc = match &document.spec.gateway {
+        crate::config::Gateway::External(external) => external.oidc.as_ref()?,
         // The gateway's own OIDC settings; OpenShell defaults the client ID.
         crate::config::Gateway::Managed(managed) => {
             let table = managed
                 .config
                 .as_ref()?
                 .get(crate::managed::gateway_config::OIDC_TABLE)?;
-            let field = |key: &str| table.get(key)?.as_str().map(str::to_owned);
-            (field("issuer")?, None, field("audience"), None)
+            add.push(format!("--oidc-issuer={}", table.get("issuer")?.as_str()?));
+            if let Some(audience) = table.get("audience").and_then(|it| it.as_str()) {
+                add.push(format!("--oidc-audience={audience}"));
+            }
+            return Some(add);
         }
     };
-    let mut add = vec![
-        "gateway".into(),
-        "add".into(),
-        document.spec.gateway.endpoint()?,
-        format!("--name={}", document.workspace()),
-        format!("--oidc-issuer={issuer}"),
-    ];
-    add.extend(client_id.map(|id| format!("--oidc-client-id={id}")));
-    add.extend(audience.map(|audience| format!("--oidc-audience={audience}")));
-    add.extend(scopes.map(|scopes| format!("--oidc-scopes={scopes}")));
+    add.push(format!("--oidc-issuer={}", oidc.issuer));
+    add.push(format!("--oidc-client-id={}", oidc.client_id));
+    if let Some(audience) = &oidc.audience {
+        add.push(format!("--oidc-audience={audience}"));
+    }
+    if let Some(scopes) = &oidc.scopes {
+        add.push(format!("--oidc-scopes={scopes}"));
+    }
     Some(add)
 }
 
