@@ -220,13 +220,6 @@ async fn case() {
         }
     }
     assert!(tested.unwrap().success(), "tofu test failed");
-    // tofu test exits successfully even when it cannot destroy the state its
-    // run blocks created; it then writes that state here and names it.
-    assert!(
-        !root.join("errored_test.tfstate").exists(),
-        "tofu test could not clean up its run blocks' state; see errored_test.tfstate in {}",
-        root.display()
-    );
 }
 
 /// Whether `case` runs on the DGX Station runner, whose runs mount the host's

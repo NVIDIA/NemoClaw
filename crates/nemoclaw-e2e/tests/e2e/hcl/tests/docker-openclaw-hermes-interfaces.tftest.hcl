@@ -368,7 +368,7 @@ run "commands" {
           except urllib.error.HTTPError as error: print(error.status)
           except urllib.error.URLError as error: print(errno.errorcode.get(error.reason.errno, error.reason))
         EOT
-        , "${trimsuffix(yamldecode(file(try(jsondecode(var.context), var.context).config)).spec.inferenceProviders.model.endpoint, "/v1")}/health"]
+        , "${trimsuffix(yamldecode(file(jsondecode(var.context).config)).spec.inferenceProviders.model.endpoint, "/v1")}/health"]
         contains = "401\n"
       }
       claw_undeclared_host = {
@@ -379,7 +379,7 @@ run "commands" {
           except urllib.error.HTTPError as error: print(error.status)
           except urllib.error.URLError as error: print(errno.errorcode.get(error.reason.errno, error.reason))
         EOT
-        , "http://${cidrhost(yamldecode(file(try(jsondecode(var.context), var.context).config)).spec.gateway.target.docker.networkCIDR, 2)}${regex(":[0-9]+$", run.apply.result.connection.gatewayEndpoint)}/"]
+        , "http://${cidrhost(yamldecode(file(jsondecode(var.context).config)).spec.gateway.target.docker.networkCIDR, 2)}${regex(":[0-9]+$", run.apply.result.connection.gatewayEndpoint)}/"]
         contains = "EACCES\n"
       }
     }
