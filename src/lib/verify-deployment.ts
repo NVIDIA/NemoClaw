@@ -54,7 +54,10 @@ import {
   type SandboxCommandExecutor,
 } from "./onboard/custom-openclaw-runtime-diagnosis";
 import { GATEWAY_PORT, resolveGatewayLogPathForPort } from "./onboard/gateway/state-dir";
-import { gatewayReachableCompatibleEndpointUrl } from "./onboard/inference-providers/compatible-endpoint-gateway-route";
+import {
+  gatewayReachableCompatibleEndpointUrl,
+  nativeLocalAttachmentMatchesSelectedRoute,
+} from "./onboard/inference-providers/compatible-endpoint-gateway-route";
 import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
 import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "./onboard/runtime-provider/host-local-inference-routing";
 
@@ -296,6 +299,8 @@ export type InferenceRouteContext = {
   switchyardEntry?: SwitchyardEntry;
   provider?: string | null;
   endpointUrl?: string | null;
+  /** Credential recorded for the selection; it identifies a no-authentication proxy route. */
+  credentialEnv?: string | null;
   gatewayName?: string;
   nativeLocalExpected?: boolean;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
@@ -451,7 +456,16 @@ function matchesNativeLocalVerificationRoute(
     ...attachment,
     endpointUrl: gatewayReachableCompatibleEndpointUrl(attachment.provider, context.endpointUrl),
   });
-  return selected?.endpointUrl === attachment.endpointUrl;
+  return (
+    selected?.endpointUrl === attachment.endpointUrl ||
+    nativeLocalAttachmentMatchesSelectedRoute(
+      attachment.provider,
+      context.endpointUrl,
+      attachment.endpointUrl,
+      undefined,
+      context.credentialEnv,
+    )
+  );
 }
 
 async function verifyInferenceRoute(
@@ -1036,6 +1050,7 @@ export function onboardInferenceVerificationContext(
         provider?: string | null;
         model?: string | null;
         endpointUrl?: string | null;
+        credentialEnv?: string | null;
         createdAt?: string | null;
         pendingRouteReservation?: boolean;
         hostLocalInferenceReceipt?: string | null;
@@ -1085,11 +1100,15 @@ export function onboardInferenceVerificationContext(
     )
       ? attachment.endpointUrl
       : (flow.endpointUrl ?? null);
+  const recordedCredential =
+    attachment?.provider === flow.provider ? attachment.credentialEnv : undefined;
+  const credentialEnv = recordedCredential ? { credentialEnv: recordedCredential } : {};
   return {
     route: {
       ...(switchyardEntry ? { switchyardEntry } : {}),
       provider: flow.provider,
       endpointUrl,
+      ...credentialEnv,
       gatewayName,
       nativeLocalExpected,
       nativeLocalProviderAttachment,
@@ -1103,6 +1122,7 @@ export function onboardInferenceVerificationContext(
       model: flow.model,
       provider: flow.provider,
       endpointUrl,
+      ...credentialEnv,
       preferredInferenceApi: flow.preferredInferenceApi,
       nativeLocalExpected,
       nativeLocalProviderAttachment,

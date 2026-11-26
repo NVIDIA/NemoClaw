@@ -2113,7 +2113,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         (deps.hasNativeLocalProviderAuthority ?? hasNativeLocalProviderAuthority)(
           sandboxName as string,
           gatewayName,
-          { provider: selectedProvider, endpointUrl, agent: agentName(agent) },
+          {
+            provider: selectedProvider,
+            endpointUrl,
+            agent: agentName(agent),
+            credentialEnv,
+          },
         ),
       routeReady: () => deps.isInferenceRouteReady(gatewayName, selectedProvider, selectedModel),
     });

@@ -29,6 +29,7 @@ Refer to [How Inference Routing Works](../about-inference-routing) for the quali
 New Hermes sandboxes use sandbox-attached OpenShell providers for hosted compatible endpoints outside the Personal policy tier and qualified host-local endpoints.
 Fresh Personal-tier hosted selections stay on `inference.local` without a native attachment.
 For an attached route, the agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
+A no-authentication loopback endpoint stays the recorded endpoint, but Hermes uses the token-protected proxy endpoint `http://host.openshell.internal:<proxy-port>/v1`.
 Retained shared routes and owned Local NVIDIA NIM use `inference.local`.
 Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
 </AgentOnly>
@@ -92,6 +93,9 @@ Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`80
 NemoClaw validates the entered URL from the host.
 Shared selections use `https://inference.local/v1` inside the sandbox.
 Attached selections use the recorded endpoint; qualified host-local selections may use `host.openshell.internal:<port>` to reach the host.
+<AgentOnly variant="hermes">
+A Hermes no-authentication loopback selection uses the token-protected proxy endpoint instead of the recorded endpoint.
+</AgentOnly>
 <AgentOnly variant="openclaw">
 Shared OpenClaw compatible selections use the base `inference.local` policy.
 New hosted selections outside the Personal tier use their endpoint-bound attached provider profile.
@@ -107,7 +111,8 @@ These routes do not require the `local-inference` preset.
 Refer to [Policy Tiers](../../reference/network-policies#policy-tiers) for the Personal-tier limitation and recovery steps.
 </AgentOnly>
 <AgentOnly variant="hermes">
-For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the Hermes runtime binaries.
+For qualified host-local endpoints, the attached provider profile authorizes the endpoint that Hermes uses and the Hermes runtime binaries.
+For a no-authentication loopback endpoint, that is the proxy endpoint, not the recorded loopback URL.
 New hosted compatible endpoints outside the Personal tier use an endpoint-bound attached provider.
 Fresh Personal-tier and retained shared selections use the base `inference.local` policy.
 These routes do not require adding the `local-inference` preset.

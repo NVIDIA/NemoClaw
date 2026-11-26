@@ -31,12 +31,6 @@ import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
 import { withCurrentPortableHostFenceTry } from "../state/portable-uninstall-retirement";
-import {
-  cloneSandboxHostLocalInferenceProvenance,
-  cloneSandboxHostLocalInferenceReceipt,
-  requireSandboxHostLocalInferenceProvenance,
-  nativeLocalAttachmentMatchesSelectedEndpoint,
-} from "../state/registry/host-local-inference";
 import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import {
   retainedNativeLocalProviderAttachment,
@@ -46,6 +40,7 @@ import {
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
+import { nativeLocalAttachmentMatchesSelectedRoute } from "./inference-providers/compatible-endpoint-gateway-route";
 import {
   classifyPortableLifecycleReceipt,
   portableLifecycleReceiptMatchesGeneration,
@@ -244,7 +239,7 @@ export function buildCreatedSandboxRegistryEntry(
       "Sandbox workload ownership receipt failed closed validation.",
     );
   }
-  const hostLocalInferenceReceipt = cloneSandboxHostLocalInferenceReceipt(
+  const hostLocalInferenceReceipt = registry.cloneSandboxHostLocalInferenceReceipt(
     input.hostLocalInferenceReceipt,
   );
   if (input.hostLocalInferenceReceipt !== undefined && hostLocalInferenceReceipt === undefined) {
@@ -252,7 +247,7 @@ export function buildCreatedSandboxRegistryEntry(
       "Sandbox host-local inference receipt failed closed validation.",
     );
   }
-  const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
+  const hostLocalInferenceProvenance = registry.cloneSandboxHostLocalInferenceProvenance(
     input.hostLocalInferenceProvenance,
   );
   const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
@@ -269,11 +264,12 @@ export function buildCreatedSandboxRegistryEntry(
       nativeLocalProviderAttachment.sandboxName === input.sandboxName &&
       nativeLocalProviderAttachment.gatewayName === input.gatewayName &&
       nativeLocalProviderAttachment.provider === input.inferenceSelection.provider &&
-      nativeLocalAttachmentMatchesSelectedEndpoint(
+      nativeLocalAttachmentMatchesSelectedRoute(
         input.inferenceSelection.provider,
         input.inferenceSelection.endpointUrl,
         nativeLocalProviderAttachment.endpointUrl,
         hostLocalInferenceReceipt,
+        input.inferenceSelection.credentialEnv,
       )
     )
   ) {
@@ -300,7 +296,7 @@ export function buildCreatedSandboxRegistryEntry(
     );
   }
   if (hostLocalInferenceProvenance && typeof hostLocalInferenceReceipt === "string") {
-    requireSandboxHostLocalInferenceProvenance(
+    registry.requireSandboxHostLocalInferenceProvenance(
       hostLocalInferenceProvenance,
       hostLocalInferenceReceipt,
     );
