@@ -1496,6 +1496,9 @@ It requires `jobs=hermes-gpu-startup` and empty `targets`. It defaults to false.
 Use it to diagnose native startup without invoking legacy fallback fixtures.
 It does not qualify fallback or compatibility-only; full qualification retains all three scenarios.
 Record the selection in the dispatch grant and preserve it for base replay.
+Native diagnostics use a separate concurrency group from full qualification.
+The run’s E2E Execution Plan summary identifies native-only scope and the two unqualified scenarios.
+Pinned PR-candidate diagnostics retain the existing reporting restriction and do not post a PR comment.
 
 The typed registry contains executable matrix cells only. Each cell must name
 executable platform, install, runtime, and onboarding routes plus resolved

@@ -1125,6 +1125,14 @@ export function renderE2eWorkflowPlanSummary(
     "| Target or job | Agent runtime | Observable outcome | Environment or inference endpoint | Source | Unresolved reason |",
     "| --- | --- | --- | --- | --- | --- |",
   ];
+  if (plan.nativeHermesGpuDiagnostic) {
+    lines.splice(
+      2,
+      0,
+      "**Scope:** Native Hermes GPU diagnostic only. Fallback and compatibility-only remain unqualified.",
+      "",
+    );
+  }
   for (const row of plan.coverageMatrix) {
     lines.push(
       `| \`${e2eExecutionLabel(row)}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | ${row.source} | ${row.unresolvedReason} |`,

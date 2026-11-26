@@ -84,7 +84,7 @@ Before either candidate dispatch or base replay:
 
 1. Read the shared task record with `node tools/task-continuation/checkpoint.mts resume "$TASK_RECORD"`.
 2. Compare the requested PR, jobs, targets, credential flags, cost bounds, and cleanup obligations with its recorded authorization.
-3. Check expiry, remaining run and comparison budgets, spent retries, and active matching runs.
+3. Check expiry, remaining run and comparison budgets, spent retries, and active matching runs, including the diagnostic flag.
 4. Stop before dispatch if authorization is absent, mismatched, expired, exhausted, or cannot be established from the record.
 5. Reuse a matching active run. Reconcile pending operations before another dispatch.
 6. Persist dispatch intent and its budget consumption through the shared task-continuation procedure before the external write.
@@ -229,8 +229,12 @@ at least one selector must be nonempty. Enumerate authorized jobs for a full run
 Do not populate missing authorization from environment values or from this recipe.
 For a native Hermes GPU diagnostic, record `nativeHermesGpuDiagnostic: true` in the grant.
 Set `NATIVE_HERMES_GPU_DIAGNOSTIC=true`, `E2E_JOBS=hermes-gpu-startup`, and empty `E2E_TARGETS`.
-Retain this flag for base replay. Omit the grant field for normal runs; the dispatch flag defaults to false.
+Retain this flag for base replay. Omit the grant field and optional dispatch input for normal runs.
+For diagnostics, verify support in the pinned trusted controller before recording dispatch intent.
 The diagnostic runs only the existing native scenario. Full qualification still requires native, fallback, and compatibility-only.
+Native diagnostics use a separate concurrency group from full qualification.
+The run’s E2E Execution Plan summary identifies native-only scope and the two unqualified scenarios.
+Pinned PR-candidate diagnostics retain the existing reporting restriction and do not post a PR comment.
 
 Retain these values for base replay; recheck its separate authorization and remaining comparison budget before dispatch:
 
@@ -249,6 +253,24 @@ ALLOW_JETSON_DISPATCH="${ALLOW_JETSON_DISPATCH:?Set the recorded credential flag
 INCLUDE_STAGING_BREV_LAUNCHABLE="${INCLUDE_STAGING_BREV_LAUNCHABLE:?Set the recorded credential flag}"
 [[ "$ALLOW_JETSON_DISPATCH" = true || "$ALLOW_JETSON_DISPATCH" = false ]]
 [[ "$INCLUDE_STAGING_BREV_LAUNCHABLE" = true || "$INCLUDE_STAGING_BREV_LAUNCHABLE" = false ]]
+NATIVE_HERMES_GPU_DIAGNOSTIC="${NATIVE_HERMES_GPU_DIAGNOSTIC:-false}"
+case "$NATIVE_HERMES_GPU_DIAGNOSTIC" in
+  true|false) ;;
+  *) echo "Native Hermes GPU diagnostic flag must be true or false" >&2; exit 1 ;;
+esac
+NATIVE_DIAGNOSTIC_ARGS=()
+if [[ "$NATIVE_HERMES_GPU_DIAGNOSTIC" = true ]]; then
+  # Inspect the pinned trusted controller before consuming dispatch budget.
+  node --input-type=module - "$WORKFLOW_SHA" <<'JS'
+import { execFileSync } from 'node:child_process';
+import YAML from 'yaml';
+const workflow = YAML.parse(execFileSync('git', ['show', `${process.argv[2]}:.github/workflows/e2e.yaml`], { encoding: 'utf8' }));
+if (workflow.on?.workflow_dispatch?.inputs?.native_hermes_gpu_diagnostic?.type !== 'boolean') {
+  throw new Error('Trusted main does not support native Hermes GPU diagnostics');
+}
+JS
+  NATIVE_DIAGNOSTIC_ARGS=(-f native_hermes_gpu_diagnostic=true)
+fi
 HEAD_CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 save_dispatch_intent candidate "$HEAD_CORRELATION_ID" \
   "${E2E_CANDIDATE_BUDGET:?Use the authorized candidate budget key}" \
@@ -260,7 +282,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "jobs=${E2E_JOBS}" \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
-  -f "native_hermes_gpu_diagnostic=${NATIVE_HERMES_GPU_DIAGNOSTIC:-false}" \
+  ${NATIVE_DIAGNOSTIC_ARGS[@]+"${NATIVE_DIAGNOSTIC_ARGS[@]}"} \
   -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${HEAD_SHA}" \
@@ -358,7 +380,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "jobs=${E2E_JOBS}" \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
-  -f "native_hermes_gpu_diagnostic=${NATIVE_HERMES_GPU_DIAGNOSTIC:-false}" \
+  ${NATIVE_DIAGNOSTIC_ARGS[@]+"${NATIVE_DIAGNOSTIC_ARGS[@]}"} \
   -f allow_jetson_dispatch=false \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${BASE_SHA}" \

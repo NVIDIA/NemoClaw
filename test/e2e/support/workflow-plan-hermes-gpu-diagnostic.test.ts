@@ -104,6 +104,11 @@ describe("native Hermes GPU diagnostic selection", () => {
           .find((value) => value.startsWith("hermes_gpu_native_diagnostic_matrix="))!;
         const axis = JSON.parse(line.slice(line.indexOf("=") + 1)) as boolean[];
         expect(axis).toEqual([diagnostic]);
+        expect(
+          readFileSync(path.join(directory, "summary"), "utf8").includes(
+            "**Scope:** Native Hermes GPU diagnostic only. Fallback and compatibility-only remain unqualified.",
+          ),
+        ).toBe(diagnostic);
         const plan = buildE2eWorkflowPlan({ jobs, nativeHermesGpuDiagnostic: axis[0] });
         expect(plan.coverageMatrix.map((row) => row.variant).sort()).toEqual(
           diagnostic

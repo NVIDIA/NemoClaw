@@ -2128,10 +2128,10 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && (inputs.checkout_sha == inputs.base_sha && format('pr-{0}-base-{1}-jobs-{2}-targets-{3}', inputs.pr_number, inputs.base_sha, toJSON(inputs.jobs), toJSON(inputs.targets)) || format('pr-{0}-candidate', inputs.pr_number)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && (inputs.checkout_sha == inputs.base_sha && format('pr-{0}-base-{1}-jobs-{2}-targets-{3}', inputs.pr_number, inputs.base_sha, toJSON(inputs.jobs), toJSON(inputs.targets)) || format('pr-{0}-candidate', inputs.pr_number)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}${{ inputs.native_hermes_gpu_diagnostic && '-native-hermes-gpu-diagnostic' || '' }}";
   if (concurrency.group !== expectedGroup) {
     errors.push(
-      "workflow concurrency must isolate baseline comparisons and each Launchable dispatch",
+      "workflow concurrency must isolate baseline comparisons, Launchable dispatches, and native Hermes GPU diagnostics",
     );
   }
   if (concurrency["cancel-in-progress"] !== MANUAL_PR_CANCEL_IN_PROGRESS) {
