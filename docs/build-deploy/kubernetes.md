@@ -174,58 +174,39 @@ From the directory holding `deployment.yaml`, follow these steps:
 
 ### Reaching the Gateway From the OpenShell CLI
 
-With the `oidc` profile, the OpenShell CLI can reach the gateway with your own token, to [invoke agents](../agents-inference/interfaces.md#invoking-an-agent) and run other `openshell` commands, through steps that no automated test covers ([current limits](../resources/limits.md#access-and-diagnostics)).
+With the `oidc` profile, people sign in with their own identity to [invoke agents](../agents-inference/interfaces.md#invoking-an-agent) and run OpenShell commands. No automated test covers these steps ([current limits](../resources/limits.md#access-and-diagnostics)).
 
 Before you start, check the following:
 
-- Your identity provider has registered a client for the OpenShell CLI that accepts the sign-in redirect to `http://127.0.0.1` on any port, path `/callback`.
-- The client host and the browser that opens for the sign-in trust the CA that signed the issuer's certificate.
-  For a CA that the host does not trust, such as the one in `caConfigMap`, set `SSL_CERT_FILE` to a PEM file holding it for every `openshell` command, which then trusts only that file's certificates.
+- Your identity provider has a client for the OpenShell CLI that accepts the sign-in redirect to `http://127.0.0.1` on any port, path `/callback`.
+- The host and the browser trust the CA that signed the issuer's certificate. Otherwise, set `SSL_CERT_FILE` to a PEM file holding it.
 
-For a [published gateway](#publishing-the-gateway-outside-the-cluster), skip step 2, and in step 3 add the gateway at `expose.endpoint` instead of `https://127.0.0.1:17671`.
-For a published gateway, you can use the bundled CLI instead: sign in as [Logging In to an OIDC Gateway](../references/cli.md#logging-in-to-an-oidc-gateway) describes, with the CA from step 1.
-To reach the gateway, follow these steps with your document's context and namespace in place of `my-cluster` and `nemoclaw-oidc`:
+For a [published gateway](#publishing-the-gateway-outside-the-cluster), follow these steps with WORKSPACE as the workspace that apply prints, and your document's context and namespace in place of `my-cluster` and `nemoclaw-oidc`:
 
-1. Set the deployment's release, then copy the CA certificate from the Secret `<release>-client-tls` to where the OpenShell CLI looks for the certificates of a gateway entry, named `nemoclaw-oidc` here:
+1. Copy the gateway's CA certificate from the Secret `WORKSPACE-gateway-client-tls`:
 
    ```sh
-   deployment_release=REPLACE_WITH_WORKSPACE-gateway # REPLACE_WITH_WORKSPACE: the workspace that plan and apply print, such as nc-0123456789abcdef; the result is also the gateway StatefulSet's name
-   mtls="${XDG_CONFIG_HOME:-$HOME/.config}/openshell/gateways/nemoclaw-oidc/mtls"
+   mtls=.local/kubernetes/openshell/openshell/gateways/WORKSPACE/mtls
    mkdir -p "$mtls"
    kubectl --kubeconfig "$NEMOCLAW_CLUSTER_KUBECONFIG" --context my-cluster --namespace nemoclaw-oidc \
-     get secret "$deployment_release-client-tls" -o 'go-template={{index .data "ca.crt"}}' \
-     | base64 -d > "$mtls/ca.crt"
+     get secret WORKSPACE-gateway-client-tls -o 'go-template={{index .data "ca.crt"}}' | base64 -d > "$mtls/ca.crt"
    ```
 
-2. Forward a free local port, 17671 here, to the gateway's port 8080 in the pod `<release>-0`, and leave the forward running.
-   The gateway's certificate names `127.0.0.1`, so keep that address.
+2. Sign in once at `expose.endpoint`, with the issuer and audience from `openshell.gateway.oidc`, as [Logging In to an OIDC Gateway](../references/cli.md#logging-in-to-an-oidc-gateway) describes:
 
    ```sh
-   kubectl --kubeconfig "$NEMOCLAW_CLUSTER_KUBECONFIG" --context my-cluster --namespace nemoclaw-oidc \
-     port-forward "pod/$deployment_release-0" 17671:8080
+   nemoclaw osh --state-dir .local/kubernetes -- gateway add https://gateway.agents.example.com:30080 --name WORKSPACE \
+     --oidc-issuer https://login.example.com/realms/openshell --oidc-client-id REPLACE_WITH_CLI_CLIENT_ID --oidc-audience openshell
    ```
 
-3. In another terminal, add the gateway entry at the forwarded port, with the issuer and audience from `openshell.gateway.oidc` and the CLI's client ID.
-   The CLI opens a browser to sign in, then sends your token with each request, and [OpenShell's authentication guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx#oidc) covers token refresh and sign-out.
+3. Run `nemoclaw osh --state-dir .local/kubernetes -- status`, and confirm that it reports the gateway as connected and authenticated.
+   With only the `user_role` role, it reports `authorization denied`, because that check needs admin access.
 
-   ```sh
-   openshell gateway add https://127.0.0.1:17671 \
-     --name nemoclaw-oidc \
-     --oidc-issuer https://login.example.com/realms/openshell \
-     --oidc-client-id REPLACE_WITH_CLI_CLIENT_ID \
-     --oidc-audience openshell
-   ```
+For an unpublished gateway, use a [standalone OpenShell CLI](../get-started/prerequisites.md#preparing-the-standalone-openshell-cli).
+Forward a local port with `kubectl port-forward pod/WORKSPACE-gateway-0 17671:8080`, put the CA in that CLI's `gateways/NAME/mtls/ca.crt`, add the gateway at `https://127.0.0.1:17671`, and [select it](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways).
 
-   Where no browser can open, such as in a CI job, pass the ID of a confidential client in `--oidc-client-id`; its tokens must carry the audience and a role from `openshell.gateway.oidc`.
-   Export its secret in `OPENSHELL_OIDC_CLIENT_SECRET` first, and keep it set while you run `openshell` commands, because the CLI gets each new token with it.
-
-4. Run `openshell status`, and confirm that it reports the gateway as connected and authenticated.
-   With only the `user_role` role, it reports `authorization denied`, because its check reads gateway details that only an admin can read.
-5. [Select the gateway and workspace](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=nemoclaw-oidc`, the entry name that apply's `REPLACE_WITH_PROFILE_NAME` stands for, and the workspace that apply prints.
-
-A token with only the `user_role` role, unlike one with `admin_role`, reaches the deployment's workspace only after a Platform Admin adds the token's subject: until then, sandbox commands fail with `not a member of workspace` and print the `openshell workspace member add` command to run.
-Reach a sandbox's services with [`openshell forward service`](../agents-inference/interfaces.md#forwarding-a-native-service), because service URLs need `enable_gateway_service_routing: true` in the `openshell.gateway` table of `spec.gateway.config`, and even then do not open as printed ([current limits](../resources/limits.md#access-and-diagnostics)).
-With that setting, [service URLs](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway) skip the gateway's sign-in, so each service must authenticate its own clients.
+With only the `user_role` role, a person reaches the deployment's workspace after a Platform Admin runs `openshell workspace member add` for them.
+Reach a sandbox's services with [`forward service`](../agents-inference/interfaces.md#forwarding-a-native-service), because service URLs skip the gateway's sign-in ([current limits](../resources/limits.md#access-and-diagnostics)).
 
 ### Destroying a Managed Deployment
 
