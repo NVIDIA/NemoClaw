@@ -187,8 +187,12 @@ Choose the gateway and model placement that matches the available engine and end
 Build images from a revision that implements the selected configuration features.
 Replace the example deployment UUIDs, endpoints, and local image digests with values for your resources.
 
-## Platforms Not Yet Tested
+<a name="platforms-not-yet-tested"></a>
+
+## Platform Qualification Limits
 
 [Linux AMD64 live CI](../../internal-docs/contributing/testing.md#live-suites) exercises Docker and kind scenarios. That coverage does not qualify a specific release recipe.
-NVIDIA DGX Station, Windows/WSL and macOS GPU hosts, separate SSH model hosts, and distributed inference haven't been tested end to end.
-See [current limits](../resources/limits.md#platforms-models-and-placement) for each and its issue.
+The [DGX Station validation records](../../examples/platforms/docker/vllm/dgx-station/README.md#qualification-boundary) cover full lifecycles and agent replies from source on Linux ARM64 with one GB300 and managed Qwen3-4B: OpenClaw alone, and OpenClaw and Pi in separate sandboxes sharing the model service.
+Those runs qualify only the recorded source and configurations, not this release or other DGX Station setups.
+Windows/WSL and macOS GPU hosts, separate SSH model hosts, and distributed inference haven't been tested end to end.
+See [current limits](../resources/limits.md#platforms-models-and-placement) for details.

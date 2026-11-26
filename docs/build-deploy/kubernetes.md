@@ -233,11 +233,12 @@ With that setting, [service URLs](../agents-inference/interfaces.md#exposing-a-s
 Run it with the same NemoClaw bundle and state directory as the deployment, and set the same kubeconfig and `environment` variables as for apply, because destroy reads them only from the environment and never asks for them.
 Destroy reads no image metadata or inference credentials.
 With the `oidc` profile, first put a fresh token in the variable that `token.env` names.
-From the directory that holds the state directory, follow these steps:
+To resume an interrupted Helm removal, follow [Helm removal recovery](usage.md#recovering-an-interrupted-helm-removal) with the original bundle, YAML, and state directory. A preview cannot restore the Helm binding.
+To start a new destroy, follow these steps from the directory that holds the state directory:
 
 1. Preview the removal with `nemoclaw plan --destroy -o json --state-dir .local/kubernetes`.
-2. Check the exit status. If the preview failed, stop without running destroy.
-3. Check `complete` in the preview. If it is not `true`, stop and [troubleshoot the preview](usage.md#destroying) before running destroy.
+2. Check the exit status. If the preview reports `Helm binding recovery is pending`, follow [Helm removal recovery](usage.md#recovering-an-interrupted-helm-removal) to resume the existing destroy. For other errors, stop and use the [recovery table below](#managed-cleanup-and-recovery).
+3. Check `complete` in the preview. If it is not `true`, stop and use the [recovery table below](#managed-cleanup-and-recovery).
 4. Review the planned removals and retained resources.
 5. Run `nemoclaw destroy --state-dir .local/kubernetes` only if you accept the removals. Destroy does not prompt.
 
@@ -247,7 +248,9 @@ It leaves the objects you created unchanged: a namespace that existed before the
 Applying the same document with the same state directory reinstalls the gateway on the kept volume and recreates the sandboxes.
 With `oidc`, a new deployment has a new CA, and `openshell gateway add` refuses an existing entry name, so before you reach a new deployment, run `openshell gateway remove nemoclaw-oidc`, with your entry's name, on each client host.
 
-Use the following procedure for each situation:
+#### Managed Cleanup and Recovery
+
+Keep the original state directory. Use the next action that matches the preview or destroy result.
 
 | Situation | Procedure |
 |---|---|
@@ -255,6 +258,7 @@ Use the following procedure for each situation:
 | Destroy failed or was interrupted while removing the gateway release | [Recovering an Interrupted Helm Removal](usage.md#recovering-an-interrupted-helm-removal) |
 | An apply failed or stopped while Helm installed the gateway release, or plan, apply, or destroy names a gateway release that the state does not record | [Recovering From an Unfinished Helm Install](usage.md#recovering-from-an-unfinished-helm-install) |
 | Destroy refuses, and names an object it recorded that is missing or was replaced | [Recovering When Destroy Refuses](usage.md#recovering-when-destroy-refuses) |
+| Other preview error or `complete` is not `true` | [Identify the failure](../observability/troubleshooting.md#identifying-the-failure) and resolve the reported error or deferred check. Rerun the preview before starting a new destroy. |
 
 ### Publishing the Gateway Outside the Cluster
 
@@ -481,15 +485,28 @@ Destroy reads no image metadata or inference credentials.
 From the directory that holds the state directory, follow these steps:
 
 1. Preview the removal with `nemoclaw plan --destroy -o json --state-dir .local/kubernetes`.
-2. Check the exit status. If the preview failed, stop without running destroy.
-3. Check `complete` in the preview. If it is not `true`, stop and [troubleshoot the preview](usage.md#destroying) before running destroy.
+2. Check the exit status. If the preview failed, stop and follow [External-Gateway Cleanup Recovery](#external-gateway-cleanup-recovery).
+3. Check `complete` in the preview. If it is not `true`, stop and follow [External-Gateway Cleanup Recovery](#external-gateway-cleanup-recovery).
 4. Review the planned removals and retained resources.
 5. Run `nemoclaw destroy --state-dir .local/kubernetes` only if you accept the removals. Destroy does not prompt.
 
-If destroy stops partway, such as when the token expires, set a new token and run destroy again with the same state directory, because plan and apply refuse a state whose destroy is unfinished.
-
 Destroy removes the deployment's sandboxes and agents, its provider registrations and profiles, and its OpenShell workspace, and leaves the gateway, its other workspaces, and the inference services.
 Under a StorageClass with the `Retain` reclaim policy, each workspace volume stays `Released` with its files, so ask the gateway operator to remove the ones you no longer need.
+
+#### External-Gateway Cleanup Recovery
+
+Keep the original bundle and state directory. The next action depends on whether teardown has already started.
+
+If no destroy is unfinished:
+
+1. [Diagnose the preview failure](../observability/troubleshooting.md#identifying-the-failure) or inspect the reported deferrals. For gateway access errors, check the token, TLS settings, and connectivity with the gateway operator.
+2. Resolve the reported blockers.
+3. Rerun the preview. Start destroy only after a successful, complete preview.
+
+If the state has an unfinished destroy, plan and apply refuse it. Resume the existing teardown instead:
+
+1. Correct the reported cause, such as an expired gateway token.
+2. Resume `nemoclaw destroy --state-dir .local/kubernetes` with the same bundle and state directory.
 
 ## Using a Model Server in the Cluster
 
@@ -518,7 +535,7 @@ Size the cluster for the sandboxes you declare, as this table does for 256:
 | Node CPU and memory | About 210 GiB of memory at about 0.85 GiB per OpenClaw sandbox, and for a sandbox that sets `cpu` or `memory`, that much allocatable, because Kubernetes makes it both the request and the limit ([CPU and Memory Limits](../agents-inference/agents.md#cpu-and-memory-limits)) | The cluster operator |
 | Workspace storage | 512 GiB, at 2 GiB per sandbox by default | `workspace_storage_class` and `workspace_default_storage_size` in the `openshell.drivers.kubernetes` table, which the gateway operator sets for an external gateway |
 | Gateway CPU and memory | Up to about 1.2 GiB of memory, within the managed gateway's [defaults](#choosing-the-gateways-storageclass-and-resources) of 250m CPU and 256 MiB requested and 1 CPU and 2 GiB limits | The target's `resources`, or for an external gateway, the gateway operator |
-| Open files | 800 to 1,000 for the gateway, which holds about three connections per sandbox | The node's container runtime: k3d nodes on Docker set a soft limit of 1,024, which 256 sandboxes exceed, so create them with `k3d cluster create --runtime-ulimit "nofile=1048576:1048576"` |
+| Open files | Estimated 800 to 1,000 for the gateway, which holds about three connections per sandbox. A soft limit of 1,024 leaves little headroom at the upper end of the estimate. | The cluster operator checks the gateway process's effective limit and allows headroom. The [recorded 256-sandbox k3d run](https://github.com/NVIDIA/NemoClaw/commit/a454d576b8257f48ee0c8f4c491ad72c57b796fa) used `--runtime-ulimit "nofile=1048576:1048576"`; that setting is not a universal minimum. |
 
 OpenShell deletes a sandbox whose pod has not started within five minutes, so add sandboxes in steps that the StorageClass provisions in that time, such as at most 64 per apply with k3s's local-path provisioner, which makes about one volume every two seconds.
 

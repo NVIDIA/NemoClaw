@@ -96,29 +96,51 @@ Plan previews resource changes without invoking inference or pulling images.
 Apply computes its own checked plan, starts the runtime, and installs any inference credential in OpenShell for routing.
 Keep credential values out of YAML and shell history.
 
+### Previewing the Deployment
+
+Use a new state directory for this deployment.
+
 1. Point the YAML's `# yaml-language-server: $schema=...` comment at `schemas/nemoclaw-v1alpha1.schema.json` in your bundle.
    The bundle root is `/usr/local/nemoclaw` for the macOS package or `dist/PLATFORM` in the archive's installation directory.
-2. Generate a preview with a new state directory.
+2. Generate a preview.
 
    ```sh
    nemoclaw plan -o json --progress off --state-dir .nemoclaw-first deployment.yaml
    ```
 
-3. Check the exit status. Stop on an error.
-4. Review the planned changes and the `complete` field. A zero exit status does not mean the preview is complete.
-5. Review `deferred` checks separately from `unverified` advisories. Advisories alone do not make the plan incomplete.
-6. Proceed only if the changes are expected and every remaining deferral is expected to resolve during apply.
+3. Check the exit status. If the preview failed, stop before reviewing or applying it.
+   If the first plan failed because the Docker gateway port is occupied or the subnet overlaps, follow these steps:
+
+   1. Set the target's `port` to a free port or its `networkCIDR` to a non-overlapping private `/24`, depending on the error.
+   2. Rerun the preview.
+
+   If a port conflict occurs after a successful plan, [free the bound port instead of changing it](../build-deploy/usage.md#recovering-an-interrupted-operation).
+   For other errors, see [deployment troubleshooting](../observability/troubleshooting.md#identifying-the-failure).
+
+### Reviewing the Plan
+
+A zero exit status does not mean the preview is complete.
+
+1. Review the planned changes. Stop if any change is unexpected.
+2. Check the `complete` field.
+3. Review `deferred` checks separately from `unverified` advisories. Advisories alone do not make the plan incomplete.
+   Proceed only if every remaining deferral is expected to resolve during apply.
    For example, an initial plan can be incomplete if apply must start a fresh gateway, prompt for a missing inference key, or pull an image absent from the engine.
-   Stop for unexpected changes, unexplained deferrals, or prerequisites that apply cannot resolve.
-   If a gateway port or subnet is occupied, [choose unused values](../build-deploy/usage.md#recovering-an-interrupted-operation). Generate a new preview after any YAML edit.
-7. Apply the reviewed YAML with the same state directory. The command saves the result to `apply.json`.
+   Stop for unexplained deferrals or prerequisites that apply cannot resolve.
+   Generate a new preview after any YAML edit.
+
+### Applying the Reviewed Configuration
+
+Apply only the YAML you reviewed.
+
+1. Apply the reviewed YAML with the same state directory. The command saves the result to `apply.json`.
 
    ```sh
    nemoclaw apply -o json --progress off --state-dir .nemoclaw-first deployment.yaml > apply.json
    ```
 
-8. Check the exit status. On failure, stop and keep the YAML, bundle, and entire state directory for [recovery](../build-deploy/usage.md#recovering-an-interrupted-operation).
-9. Verify that `apply.json` reports `"outcome": "succeeded"`. Stop if it does not. This result confirms deployment, not inference.
+2. Check the exit status. On failure, stop and keep the YAML, bundle, and entire state directory for [recovery](../build-deploy/usage.md#recovering-an-interrupted-operation).
+3. Verify that `apply.json` reports `"outcome": "succeeded"`. Stop if it does not. This result confirms deployment, not inference.
 
 ## Sending a Verification Request
 
@@ -173,29 +195,41 @@ It also removes a gateway created by the deployment.
 The sandbox's writable files and conversation history are lost.
 Externally managed services, images, and local deployment state remain.
 
+### Previewing Cleanup
+
+If the external gateway configuration references a credential or TLS files, set the corresponding environment variables before previewing cleanup. Use an unexpired credential. Neither preview nor destroy prompts for these values.
+
 1. Preserve any agent files or conversations you need.
-2. For an external gateway, make sure any referenced gateway credential and TLS file paths are still available through their environment variables. Renew expired gateway credentials before preview and destroy; neither command prompts.
-3. Preview removal with the original bundle and state directory.
+2. Preview removal with the original bundle and state directory.
 
    ```sh
    nemoclaw plan --destroy -o json --state-dir .nemoclaw-first
    ```
 
-4. Check the preview's exit status. Stop on an error.
-5. Verify that the preview reports `"complete": true"`.
-   If it is incomplete, stop without running destroy.
-   In either case, keep the state directory and consult [destroy troubleshooting](../build-deploy/usage.md#destroying).
-6. Review the planned removals and any retained resources.
-7. Destroy the deployment only if you accept the listed removals.
+3. Check the preview's exit status. On failure, stop, keep the state directory, and consult [deployment troubleshooting](../observability/troubleshooting.md#identifying-the-failure).
+4. Verify that the preview reports `"complete": true"`.
+   If it is incomplete, stop and resolve the reported blockers before continuing.
+5. Review the planned removals and any retained resources.
+
+### Removing the Reviewed Deployment
+
+Start a new destroy only after a successful, complete preview.
+
+1. Destroy the deployment only if you accept the listed removals.
 
    ```sh
    nemoclaw destroy --state-dir .nemoclaw-first
    ```
 
-8. Check the destroy result.
-   If it fails, keep the entire state directory and [resume teardown](../build-deploy/usage.md#destroying) with the same state.
-9. Review [retention and explicit cleanup](../build-deploy/usage.md#removing-retained-resources) before deleting local state.
-10. Clear any caller-owned credential variables that you no longer need.
+2. Check the destroy result.
+   If it fails, keep the entire state directory and follow the [teardown recovery guidance](../observability/troubleshooting.md#identifying-the-failure).
+
+### Handling Retained Resources and Credentials
+
+After destroy succeeds, decide whether to keep the remaining resources and local state.
+
+1. Review [retention and explicit cleanup](../build-deploy/usage.md#removing-retained-resources) before deleting local state.
+2. Clear any caller-owned credential variables that you no longer need.
    This does not revoke the upstream credentials.
 
 ## Using an Existing Gateway and Inference Endpoint
