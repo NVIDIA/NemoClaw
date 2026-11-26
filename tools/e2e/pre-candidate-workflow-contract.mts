@@ -47,6 +47,7 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
     EVENT_NAME: "${{ github.event_name }}",
     INCLUDE_STAGING_BREV_LAUNCHABLE:
       "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    NATIVE_HERMES_GPU_DIAGNOSTIC: "${{ inputs.native_hermes_gpu_diagnostic && 'true' || 'false' }}",
     PR_NUMBER: "${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}",
     REPOSITORY: "${{ github.repository }}",
     RUN_ATTEMPT: "${{ github.run_attempt }}",
@@ -65,6 +66,8 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
   "Install reviewed npm for trusted E2E planning": {},
   "Install trusted E2E planner dependencies": {},
   "Generate E2E target matrix": {
+    NEMOCLAW_E2E_NATIVE_HERMES_GPU_DIAGNOSTIC:
+      "${{ github.event_name == 'workflow_dispatch' && inputs.native_hermes_gpu_diagnostic && 'true' || 'false' }}",
     NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE:
       "${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     INFERENCE_MODE: "${{ inputs.inference_mode || 'mock' }}",

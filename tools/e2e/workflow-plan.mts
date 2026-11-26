@@ -67,9 +67,11 @@ import {
 export type WorkflowPlanSelectors = {
   jobs?: string;
   targets?: string;
+  nativeHermesGpuDiagnostic?: boolean;
 };
 
 export type E2eWorkflowPlan = {
+  nativeHermesGpuDiagnostic?: true;
   gatewayRuntimes: E2eGatewayRuntime[];
   matrix: LiveTargetMatrixEntry[];
   testMatrix: CredentialFreeTestMatrixRow[];
@@ -94,6 +96,7 @@ type WorkflowPlanCliOptions = WorkflowPlanSelectors & {
 
 const SAFE_SELECTOR_LIST_PATTERN = /^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/;
 const HERMES_JOB_ID = "hermes-e2e";
+const HERMES_GPU_JOB_ID = "hermes-gpu-startup";
 const STAGING_BREV_IDENTITY_JOB_ID = "staging-brev-launchable-identity";
 const COMMIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const INFERENCE_MODES = new Set(["mock", "internal-nvidia", "public-nvidia"]);
@@ -575,6 +578,10 @@ function coverageMatrixForPlan(
   const selectedJobs = new Set(plan.selectedJobs);
   const workflowRows = inventory.coverageRows
     .filter((row) => selectedJobs.has(row.id))
+    .filter(
+      (row) =>
+        !plan.nativeHermesGpuDiagnostic || row.id !== HERMES_GPU_JOB_ID || row.variant === "native",
+    )
     .flatMap((row) => {
       const support =
         inventory.gatewayRuntimesByCoverageRow.get(`${row.id}:${row.variant}`) ??
@@ -639,6 +646,21 @@ export function buildE2eWorkflowPlan(
   const gatewayRuntimes = e2eGatewayRuntimes((options.gatewayRuntimes ?? ["docker"]).join(","));
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
+
+  if (
+    selectors.nativeHermesGpuDiagnostic !== undefined &&
+    typeof selectors.nativeHermesGpuDiagnostic !== "boolean"
+  ) {
+    throw new Error("nativeHermesGpuDiagnostic must be boolean");
+  }
+  if (
+    selectors.nativeHermesGpuDiagnostic &&
+    (selectors.jobs !== HERMES_GPU_JOB_ID || Boolean(selectors.targets))
+  ) {
+    throw new Error(
+      "Native Hermes GPU diagnostics require only jobs=hermes-gpu-startup and no targets",
+    );
+  }
 
   if (
     (jobs.includes(DGX_STATION_DISPATCH_TARGET) || targets.includes(DGX_STATION_DISPATCH_TARGET)) &&
@@ -767,6 +789,9 @@ export function buildE2eWorkflowPlan(
         ),
         hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
         explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+        ...(selectors.nativeHermesGpuDiagnostic
+          ? { nativeHermesGpuDiagnostic: true as const }
+          : {}),
       },
       inventory,
     );
@@ -923,6 +948,7 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
       "runtimeProvidersByJob",
       "selectedJobs",
       "testMatrix",
+      ...(Object.hasOwn(plan, "nativeHermesGpuDiagnostic") ? ["nativeHermesGpuDiagnostic"] : []),
     ])
   ) {
     throw new Error("E2E planner returned an invalid output schema");
@@ -968,6 +994,15 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
     plan.gatewayRuntimes.every((runtime) => runtime === "docker" || runtime === "podman") &&
     new Set(plan.gatewayRuntimes).size === plan.gatewayRuntimes.length;
   const selectedJobsValue = plan.selectedJobs;
+  const validNativeHermesGpuDiagnostic =
+    !Object.hasOwn(plan, "nativeHermesGpuDiagnostic") ||
+    (plan.nativeHermesGpuDiagnostic === true &&
+      isDeepStrictEqual(selectedJobsValue, [HERMES_GPU_JOB_ID]) &&
+      Array.isArray(plan.matrix) &&
+      plan.matrix.length === 0 &&
+      Array.isArray(plan.testMatrix) &&
+      plan.testMatrix.length === 0 &&
+      Object.values(catalogueMatricesValue).every((rows) => rows.length === 0));
   const validRuntimeProvidersByJob =
     isRecord(plan.runtimeProvidersByJob) &&
     isStringArray(selectedJobsValue) &&
@@ -992,6 +1027,7 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
     !selectedJobsValue.every((job) => /^[A-Za-z0-9_-]+$/u.test(job)) ||
     !hasUniqueValues(selectedJobsValue, (id) => id) ||
     !validRuntimeProvidersByJob ||
+    !validNativeHermesGpuDiagnostic ||
     typeof plan.hermesSelected !== "boolean" ||
     !isStringArray(plan.explicitOnlyJobs) ||
     !plan.explicitOnlyJobs.every((job) => /^[A-Za-z0-9_-]+$/u.test(job)) ||
@@ -1171,13 +1207,30 @@ export function writeE2eWorkflowPlanCiOutput(
     environment.NEMOCLAW_GATEWAY_RUNTIMES ?? environment.NEMOCLAW_GATEWAY_RUNTIME,
   );
   const hasPlannerSelectors = Boolean(selectors.jobs || selectors.targets);
+  const nativeDiagnostic = environment.NEMOCLAW_E2E_NATIVE_HERMES_GPU_DIAGNOSTIC ?? "false";
+  if (nativeDiagnostic !== "true" && nativeDiagnostic !== "false") {
+    throw new Error("NEMOCLAW_E2E_NATIVE_HERMES_GPU_DIAGNOSTIC must be true or false");
+  }
+  if (selectors.nativeHermesGpuDiagnostic !== undefined) {
+    throw new Error("CI native Hermes GPU diagnostics must use the diagnostic environment input");
+  }
+  if (nativeDiagnostic === "true" && environment.EVENT_NAME !== "workflow_dispatch") {
+    throw new Error("Native Hermes GPU diagnostics require workflow_dispatch");
+  }
   const changedFiles = hasPlannerSelectors ? undefined : changedFilesFromEnvironment(environment);
-  const planned = buildE2eWorkflowPlan(selectors, {
-    changedFiles,
-    gatewayRuntimes,
-    includeStagingBrevLaunchable:
-      environment.NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE === "true",
-  });
+  const planned = buildE2eWorkflowPlan(
+    {
+      jobs: selectors.jobs,
+      targets: selectors.targets,
+      ...(nativeDiagnostic === "true" ? { nativeHermesGpuDiagnostic: true } : {}),
+    },
+    {
+      changedFiles,
+      gatewayRuntimes,
+      includeStagingBrevLaunchable:
+        environment.NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE === "true",
+    },
+  );
   const plan = validateE2eWorkflowPlan(planned);
   const expectedHermes = expectedHermesSelection(selectors);
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {
@@ -1202,6 +1255,7 @@ export function writeE2eWorkflowPlanCiOutput(
       `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
       `managed_image_required=${requiresManagedImages(selectedWorkflowJobs(plan))}`,
       `hermes_selected=${plan.hermesSelected}`,
+      `hermes_gpu_native_diagnostic_matrix=${JSON.stringify([plan.nativeHermesGpuDiagnostic === true])}`,
       `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
       `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
       "",
@@ -1227,6 +1281,10 @@ function parseArgs(argv: readonly string[]): WorkflowPlanCliOptions {
       options.summary = true;
       continue;
     }
+    if (arg === "--native-hermes-gpu-diagnostic") {
+      options.nativeHermesGpuDiagnostic = true;
+      continue;
+    }
     if (arg !== "--jobs" && arg !== "--targets") {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -1238,6 +1296,9 @@ function parseArgs(argv: readonly string[]): WorkflowPlanCliOptions {
   }
   if (options.ciOutput && options.summary) {
     throw new Error("--ci-output and --summary cannot be combined");
+  }
+  if (options.ciOutput && options.nativeHermesGpuDiagnostic) {
+    throw new Error("--ci-output requires the diagnostic environment input");
   }
   return options;
 }

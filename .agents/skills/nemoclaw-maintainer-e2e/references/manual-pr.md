@@ -145,11 +145,13 @@ save_dispatch_intent() {
     --arg owner "$E2E_CLEANUP_OWNER" --arg cleanup "$E2E_CLEANUP_OBLIGATION" \
     --arg cost "$E2E_COST_BOUNDS" --argjson jetson "$jetson" \
     --argjson launchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
+    --argjson nativeDiagnostic "${NATIVE_HERMES_GPU_DIAGNOSTIC:-false}" \
     '{phase:$phase,prNumber:$pr,checkoutSha:$checkout,repository:$repository,
       baseSha:$base,workflowSha:$workflow,jobs:$jobs,targets:$targets,
       correlationId:$correlation,budgetKey:$budget,cleanupOwner:$owner,
       cleanupObligation:$cleanup,costBounds:$cost,inferenceMode:"mock",
-      allowJetsonDispatch:$jetson,includeStagingBrevLaunchable:$launchable}')"
+      allowJetsonDispatch:$jetson,includeStagingBrevLaunchable:$launchable}
+      + (if $nativeDiagnostic then {nativeHermesGpuDiagnostic:true} else {} end)')"
   jq -e --arg key "manualE2E.authorization.${budget}" --argjson action "$action" '
     (.identities[$key] | fromjson) == ($action | del(.correlationId))
   ' <<<"$view" >/dev/null || {
@@ -160,7 +162,8 @@ save_dispatch_intent() {
     jq -e --arg key "manualE2E.authorization.${E2E_CANDIDATE_BUDGET:?Use the authorized candidate budget key}" \
       --argjson action "$action" '
       (.identities[$key] | fromjson) as $candidate |
-      $candidate.jobs == $action.jobs and $candidate.targets == $action.targets
+      $candidate.jobs == $action.jobs and $candidate.targets == $action.targets and
+      ($candidate.nativeHermesGpuDiagnostic // false) == ($action.nativeHermesGpuDiagnostic // false)
     ' <<<"$view" >/dev/null || {
       echo "Base selectors differ from recorded candidate authorization; stop before replay" >&2
       return 1
@@ -224,6 +227,11 @@ find_dispatch_run() {
 Use the values verified against that record. Set an unused selector explicitly to an empty string;
 at least one selector must be nonempty. Enumerate authorized jobs for a full run instead of using controller defaults.
 Do not populate missing authorization from environment values or from this recipe.
+For a native Hermes GPU diagnostic, record `nativeHermesGpuDiagnostic: true` in the grant.
+Set `NATIVE_HERMES_GPU_DIAGNOSTIC=true`, `E2E_JOBS=hermes-gpu-startup`, and empty `E2E_TARGETS`.
+Retain this flag for base replay. Omit the grant field for normal runs; the dispatch flag defaults to false.
+The diagnostic runs only the existing native scenario. Full qualification still requires native, fallback, and compatibility-only.
+
 Retain these values for base replay; recheck its separate authorization and remaining comparison budget before dispatch:
 
 ```bash
@@ -252,6 +260,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "jobs=${E2E_JOBS}" \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
+  -f "native_hermes_gpu_diagnostic=${NATIVE_HERMES_GPU_DIAGNOSTIC:-false}" \
   -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${HEAD_SHA}" \
@@ -349,6 +358,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "jobs=${E2E_JOBS}" \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
+  -f "native_hermes_gpu_diagnostic=${NATIVE_HERMES_GPU_DIAGNOSTIC:-false}" \
   -f allow_jetson_dispatch=false \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${BASE_SHA}" \

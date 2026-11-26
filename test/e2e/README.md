@@ -1451,6 +1451,7 @@ Add the existing `--jobs` or `--targets` selector to render a filtered plan:
 
 ```bash
 npx tsx tools/e2e/workflow-plan.mts --summary --jobs hermes-e2e
+npx tsx tools/e2e/workflow-plan.mts --summary --jobs hermes-gpu-startup --native-hermes-gpu-diagnostic
 npx tsx tools/e2e/workflow-plan.mts --summary --targets ubuntu-repo-cloud-openclaw
 ```
 
@@ -1489,6 +1490,12 @@ environment entries. Matrix jobs put variant-specific values in the correspondin
 snake-case include entries and use `coverage_variant` when one job contributes
 multiple rows. `tools/e2e/workflow-plan.mts` composes and validates these sources.
 Do not add a separate hand-maintained execution list.
+
+The optional `native_hermes_gpu_diagnostic` workflow input selects only the existing native Hermes GPU scenario.
+It requires `jobs=hermes-gpu-startup` and empty `targets`. It defaults to false.
+Use it to diagnose native startup without invoking legacy fallback fixtures.
+It does not qualify fallback or compatibility-only; full qualification retains all three scenarios.
+Record the selection in the dispatch grant and preserve it for base replay.
 
 The typed registry contains executable matrix cells only. Each cell must name
 executable platform, install, runtime, and onboarding routes plus resolved
