@@ -16,10 +16,50 @@ The earlier `v0.1.0-rc1` through `v0.1.0-rc12` tags and their draft releases wer
 The development branch provides desired-state YAML, a Rust SDK, the `onboard`/`plan`/`apply`/`export`/`destroy` CLI, and a bundled OpenTofu provider.
 Refer to [the overview](../../docs/about/overview.md) for implemented boundaries and [the CLI reference](../../docs/references/cli.md) for commands.
 
-### Changes Since v0.1.0-rc.5
+### Changes Since v0.1.0-rc.7
 
-These changes reached `v1` after `6da649ac6c`, the commit that `v0.1.0-rc.5` tagged.
-[Breaking changes](#breaking-changes-since-v010-rc5) are listed separately.
+No change since `fa6f2638c4`, the commit that `v0.1.0-rc.7` tagged, has reached `v1` yet.
+
+### Changes in v0.1.0-rc.7
+
+These changes reached `v1` between `ef68f94074` and `fa6f2638c4`, the commits that `v0.1.0-rc.6` and `v0.1.0-rc.7` tagged.
+None of them is a [breaking change](#breaking-changes-in-v010-rc7).
+
+OpenShell CLI:
+
+- `nemoclaw osh` runs against a managed `kubernetes` or `openshift` gateway with the `oidc` authentication profile, once `expose` publishes it, and refuses only the `development` profile, whose tokens only NemoClaw gets ([#14900](https://github.com/NVIDIA/NemoClaw/issues/14900)).
+  It links the gateway's CA, which apply keeps in the state directory, where OpenShell reads it.
+  Plan and apply print the `Register once:` command for such a gateway too, with the issuer and audience from `openshell.gateway.oidc` and OpenShell's default client ID, `openshell-cli`.
+  See [logging in to an OIDC gateway](../../docs/references/cli.md#logging-in-to-an-oidc-gateway).
+  Before, `osh` refused every managed Kubernetes and OpenShift gateway, and signing in to one took a separately configured OpenShell CLI, a port forward, and a CA copied from the gateway's Secret.
+- For an OIDC gateway, plan and apply print `Sign in again:`, the `nemoclaw osh -- gateway login` command with the same `--state-dir` and `--bundle` options, under `Register once:` ([#14899](https://github.com/NVIDIA/NemoClaw/issues/14899)).
+  The CLI reference describes signing in without a browser, with `OPENSHELL_NO_BROWSER=1`, and from automation, with `OPENSHELL_OIDC_CLIENT_SECRET`.
+  Before, plan and apply printed only the registration.
+
+OpenTofu projects:
+
+- `nemoclaw compile FILE --output DIR` writes a configuration out once as a new OpenTofu project in HCL, for a team that wants to keep `.tf` files instead of the YAML ([#14898](https://github.com/NVIDIA/NemoClaw/issues/14898)).
+  The project holds the graph that apply would compile, with new ownership generations and the providers of the bundle that wrote it; variables for the deployment UID, images, an external gateway's endpoint, and `destroy`; and a README that installs the providers, lists the credential variables, and tears the deployment down while keeping retained storage.
+  It holds no credential values, and the CLI never reads or updates it.
+  The command reads no state or target, and refuses a managed Kubernetes or OpenShift gateway.
+  See [writing a configuration out as HCL](../../docs/references/cli.md#writing-a-configuration-out-as-hcl) and [written OpenTofu projects](../../docs/references/compatibility.md#written-opentofu-projects).
+
+Plan and apply:
+
+- Apply succeeds when an inference provider's or API's credential reference names a new variable: it updates the registration in place and replaces the sandboxes that attach it, as [rotating credentials](../../docs/security/credential-rotation.md) describes ([#14904](https://github.com/NVIDIA/NemoClaw/issues/14904)).
+  Before, apply deleted those sandboxes and their agents, then failed with `observation is incomplete`, and every later apply failed the same way.
+- When a gateway CA, client certificate, or client key file can't be read, plan and apply name its reference with `cannot read the CA file that tls.ca names`, `cannot read the client certificate file that tls.certificate names`, or `cannot read the client key file that tls.key names` ([#14905](https://github.com/NVIDIA/NemoClaw/issues/14905)).
+  Before, they reported `observation authentication failed`, as for a token that the gateway rejects.
+
+Documentation:
+
+- [Deploying your first OpenClaw agent](../../docs/get-started/first-deployment.md) runs each deployment in a new directory and takes it through preview, apply, a verification request, and cleanup as separate steps, and [installing the CLI](../../docs/get-started/install.md) gives the Linux and macOS archives one tab ([#14895](https://github.com/NVIDIA/NemoClaw/issues/14895)).
+  [Deploying to Kubernetes](../../docs/build-deploy/kubernetes.md#managed-cleanup-and-recovery) tells starting a destroy apart from resuming one, and stops at a preview that fails or whose `complete` isn't `true`.
+
+### Changes in v0.1.0-rc.6
+
+These changes reached `v1` between `6da649ac6c` and `ef68f94074`, the commits that `v0.1.0-rc.5` and `v0.1.0-rc.6` tagged.
+[Breaking changes](#breaking-changes-in-v010-rc6) are listed separately.
 
 OpenShell CLI:
 
@@ -463,9 +503,17 @@ Examples and builds:
 Earlier CLI commands, schemas, and state formats have no compatibility guarantees.
 See [migration](../../docs/get-started/migration.md) for where each earlier task lives now, and [state](../../docs/build-deploy/state.md) for data preservation.
 
-### Breaking Changes Since v0.1.0-rc.5
+### Breaking Changes Since v0.1.0-rc.7
 
-These changes since `6da649ac6c`, the commit that `v0.1.0-rc.5` tagged, affect existing deployments or documents:
+No change since `fa6f2638c4`, the commit that `v0.1.0-rc.7` tagged, affects existing deployments or documents yet.
+
+### Breaking Changes in v0.1.0-rc.7
+
+No change between `ef68f94074` and `fa6f2638c4`, the commits that `v0.1.0-rc.6` and `v0.1.0-rc.7` tagged, affects existing deployments or documents.
+
+### Breaking Changes in v0.1.0-rc.6
+
+These changes between `6da649ac6c` and `ef68f94074`, the commits that `v0.1.0-rc.5` and `v0.1.0-rc.6` tagged, affect existing deployments or documents:
 
 - The intent record is now version 34, so this release refuses any deployment that `v0.1.0-rc.5` or an earlier build of this branch created, without changing its state ([#14864](https://github.com/NVIDIA/NemoClaw/issues/14864)).
   Destroy each one with the bundle that created it, then create it again with this release.
