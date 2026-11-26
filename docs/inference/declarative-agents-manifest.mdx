@@ -8,7 +8,7 @@ description-agent: "Documents the `nemoclaw onboard --agents <agents.yaml>` flag
 keywords:
   - "nemoclaw agents.yaml"
   - "declarative agents"
-  - "agents.list bake"
+  - "agents.entries"
   - "manager worker agents"
   - "subagents allowAgents"
   - "per-agent model"
@@ -26,10 +26,9 @@ agent-variants: ["openclaw"]
 
 NemoClaw can bake a multi-agent OpenClaw layout into a sandbox image from a single checked-in manifest.
 Supply the manifest at onboard time with `--agents <path>`.
-During the image build, NemoClaw embeds the resulting `agents.list` entries, per-agent overrides, and `agents.defaults.subagents` block into `openclaw.json`.
+NemoClaw writes each agent under its ID in `openclaw.json` at `agents.entries` and writes the shared sub-agent defaults at `agents.defaults.subagents`.
 
-The schema mirrors OpenClaw's `agents.list[]` field names.
-The manifest uses the same keys that appear in [OpenClaw's sub-agents reference](https://docs.openclaw.ai/tools/subagents).
+The manifest uses an `agents` array with an `id` on each entry. The generator uses that ID as the key in `agents.entries`.
 
 ## When to Use This
 
@@ -39,7 +38,7 @@ Use `--agents` when:
 - A secondary agent needs its own model (different size, different capability profile).
 - You want OpenClaw's `sessions_spawn` validator to enforce a fixed spawn allowlist, not the broad default.
 
-For a single primary agent on the configured inference route, no manifest is required because the canonical `main` agent is always baked in as the default.
+For a single primary agent on the configured inference route, omit the manifest. NemoClaw configures `main` automatically.
 
 ## Invocation
 
@@ -49,7 +48,7 @@ nemoclaw onboard --agents ./agents.yaml --name my-assistant
 
 NemoClaw reads the manifest on the host and sets `NEMOCLAW_EXTRA_AGENTS_JSON` for the Dockerfile patcher.
 Host preflight rejects selected provider-independent errors—including per-agent `subagents.maxSpawnDepth`—before onboarding starts.
-The OpenClaw config generator revalidates the complete payload, including provider-dependent fields, during the image build.
+The OpenClaw config generator revalidates the complete payload, including provider-dependent fields, before writing the config.
 Managed startup validates its profile before it starts the runtime.
 
 ## Define the Manifest
@@ -90,14 +89,14 @@ agents:                        # required when secondary agents are needed
 | Field | Purpose | Bakes Into |
 |---|---|---|
 | `defaults.subagents.maxSpawnDepth` | Maximum nesting depth for sub-agent spawning. Integer 1..5. | `agents.defaults.subagents.maxSpawnDepth` |
-| `main.tools` | Per-agent tool policy for the canonical `main` agent. | `agents.list[id=main].tools` |
-| `main.subagents` | Sub-agent delegation policy for `main`. Same shape as a secondary agent's `subagents` block. | `agents.list[id=main].subagents` |
-| `agents[]` | Secondary agents to append after `main` in `agents.list`. | `agents.list[]` |
+| `main.tools` | Per-agent tool policy for the canonical `main` agent. | `agents.entries.main.tools` |
+| `main.subagents` | Sub-agent delegation policy for `main`. Same shape as a secondary agent's `subagents` block. | `agents.entries.main.subagents` |
+| `agents[]` | Secondary agents keyed by their IDs. | `agents.entries.<id>` |
 
 ### Primary Agent
 
-NemoClaw always writes the `main` agent first into `agents.list` with `default: true`.
-You cannot set `default: true` on a secondary agent or rename the primary slot.
+NemoClaw writes the primary agent at `agents.entries.main`.
+The `main` ID is reserved. Omit `default` from manifest entries.
 
 ### Per-Agent Fields
 
@@ -114,7 +113,7 @@ You cannot set `default: true` on a secondary agent or rename the primary slot.
 ### Configure Sub-Agent Delegation
 
 Both `main.subagents` and `agents[].subagents` use the same shape.
-That shape mirrors OpenClaw's [`agents.list[].subagents`](https://docs.openclaw.ai/gateway/config-agents).
+These settings appear at `agents.entries.<id>.subagents` in the generated config.
 
 | Field | Type | Purpose |
 |---|---|---|
@@ -158,8 +157,8 @@ agents:
 
 This manifest produces the following baked `openclaw.json` configuration:
 
-- `agents.list[0]` is `main` with `default: true`, the operator-supplied `tools`/`subagents` merged in.
-- `agents.list[1]` is `logs-reader` at the canonical workspace/agentDir paths.
+- `agents.entries.main` contains the primary agent and its manifest overrides.
+- `agents.entries.logs-reader` contains the secondary agent with its workspace and agent directory paths.
 - The primary model stays whatever was selected at onboard.
 - `agents.defaults.subagents.maxSpawnDepth` is `2`.
 - `sessions_spawn` from `main` resolves to `logs-reader` only.
@@ -201,6 +200,5 @@ The `--non-interactive` flag makes the command fail fast when `--yes` is absent 
 Continue with these resources:
 
 - Refer to [OpenClaw Sub-Agents](https://docs.openclaw.ai/tools/subagents) for the runtime semantics of `sessions_spawn`, `subagents.allowAgents`, and nesting depth.
-- Refer to [Set Up Task-Specific Sub-Agents](set-up-sub-agent) for the in-sandbox path that edits `agents.list` directly without a rebuild.
 - Refer to [Switch Inference Providers](../inference/manage-inference/switch-providers) before swapping the primary onboard provider because per-agent `model` refs must share that provider.
 - Refer to [Understand Sandbox State](../manage-sandboxes/state-and-backups/understand-sandbox-state) to understand how per-agent `workspace-<id>` directories are provisioned and persisted across rebuilds.
