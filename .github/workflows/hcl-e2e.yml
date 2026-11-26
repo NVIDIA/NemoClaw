@@ -378,6 +378,7 @@ jobs:
         run: '"$GITHUB_WORKSPACE/.build/e2e" hcl_live::case --exact --ignored --nocapture'
       # A cancelled or timed-out job still runs this step; the test's process does not survive.
       - name: Destroy
+        id: destroy
         if: always()
         run: |
           [[ -n ${NEMOCLAW_HCL_RUN:-} ]] || exit 0
@@ -392,6 +393,7 @@ jobs:
           "$executable" hcl_live::docker_cleanup --exact --ignored --nocapture
           test "$destroyed" = true
       - name: Release this run's cached model mount
+        id: model_cache_cleanup
         if: always() && inputs.target == 'dgx-station'
         run: |
           [[ -n ${NEMOCLAW_HCL_RUN:-} && -f ${NEMOCLAW_HCL_DOCUMENT:-} ]] || exit 0
@@ -399,7 +401,10 @@ jobs:
           if [[ -x $NEMOCLAW_HCL_RUN/e2e ]]; then executable="$NEMOCLAW_HCL_RUN/e2e"; fi
           "$executable" hcl_live::model_cache_cleanup --exact --ignored --nocapture
       - name: Remove this hardware run's retained Docker resources
-        if: always() && (inputs.target == 'dgx-station' || inputs.target == 'dgx-spark')
+        if: >-
+          always() && steps.destroy.outcome == 'success' &&
+          (inputs.target == 'dgx-spark' ||
+          (inputs.target == 'dgx-station' && steps.model_cache_cleanup.outcome == 'success'))
         run: |
           [[ -n ${NEMOCLAW_HCL_RUN:-} && -d $NEMOCLAW_HCL_RUN/deployment ]] || exit 0
           executable="$GITHUB_WORKSPACE/.build/e2e"

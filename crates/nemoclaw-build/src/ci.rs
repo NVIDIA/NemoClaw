@@ -12,7 +12,6 @@ use std::{
 };
 
 pub mod model_cache;
-pub mod retained;
 
 /// One `CI / Bundle` step, in workflow order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

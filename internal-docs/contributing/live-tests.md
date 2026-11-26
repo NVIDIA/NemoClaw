@@ -207,14 +207,11 @@ The shared HCL workflow downloads CI / Bundle's Linux ARM64 bundle, test executa
 Each scenario applies, requires its selected agent to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup. Record the E2E commit, job URL, actual runner identity, and uploaded identity, inference and cleanup outcomes. A successful run establishes that case on that host; it does not establish renewal or replacement readiness. Leave #13934 open until its remaining capacity acceptance criteria have evidence.
 
 Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>-<case-id>/`. Published reports contain outcomes and candidate/UID/case identity only.
-After confirmed destroy and independent Docker cleanup, the Station and Spark jobs
-remove that attempt's UID-labeled initializer containers, volumes, and networks.
-Station also requires confirmed model-cache mount release first; its shared host
-model cache remains. `reports/retained-cleanup.json` records whether removal was
-confirmed. Missing or failed teardown receipts, a mismatched run identity, a live
-runtime, or unavailable Docker inventory leave resources for recovery. Later
-attempts use fresh UIDs and volumes. The saved state is diagnostic evidence after
-removal; do not reapply it.
+After successful destroy and Docker verification, Station and Spark jobs remove
+that attempt's UID-labeled initializer containers, volumes, and networks.
+Station releases its model-cache mount first; shared host model files remain.
+Failed teardown leaves resources for recovery. Later attempts use fresh UIDs and
+volumes; do not reapply an old attempt's state after cleanup.
 
 For the Station cases, Colorunner can install the root-owned
 `/usr/local/libexec/colorunner-model-cache` helper. A successful cold run publishes
