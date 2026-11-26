@@ -336,6 +336,18 @@ fn proxy_rejects_unpinned_models_nonlocal_daemons_and_ambiguous_ownership() {
 }
 
 #[test]
+fn proxy_rejects_an_endpoint_on_the_daemon_port() {
+    // The proxy shares the host network, so its own listener on a private
+    // address would fail its check that the daemon listens only on loopback.
+    let mut value = input();
+    value["spec"]["services"]["ollama-auth"]["endpoint"] = json!("http://172.20.0.1:11434/v1");
+    let error = Document::parse(value.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("port"), "{error}");
+}
+
+#[test]
 fn deep_agents_and_pi_use_authenticated_ollama_proxy_connections() {
     for harness in ["deepagents", "pi"] {
         let mut value = input();

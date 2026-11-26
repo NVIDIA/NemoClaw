@@ -120,9 +120,15 @@ impl OllamaProxy {
                 && endpoint.scheme() == "http"
                 && endpoint.path() == "/v1"
                 && endpoint.port().is_some()
-                && matches!(endpoint.host(), Some(url::Host::Ipv4(_)))
-                && self.endpoint != self.upstream.endpoint,
+                && matches!(endpoint.host(), Some(url::Host::Ipv4(_))),
             "Ollama proxy requires a local external daemon, pinned installed model, private endpoint, and local Docker runner",
+        )?;
+        // The proxy shares the host network and, before each request, rejects
+        // any non-loopback listener on the daemon's port, which would include
+        // its own listener on that port.
+        require(
+            endpoint.port() != upstream.port(),
+            "Ollama proxy endpoint must use a port other than its upstream daemon's",
         )
     }
 }
