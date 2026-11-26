@@ -78,6 +78,7 @@ export function materializeHostLocalVllmModel(
     maxModelLen: positiveIntegerArgument(recipe, "--max-model-len"),
     revision: recipe.spec.model.revision,
     reviewedCode: recipe.spec.model.reviewedCode,
+    trustRemoteCode: false,
     servedModelId: recipe.spec.model.servedName,
     modelArgs: hostLocalVllmModelArguments(recipe),
     gated: recipe.spec.model.gated,
@@ -176,6 +177,15 @@ export function materializeHostLocalVllmSelection(
   };
 }
 
+export function vllmPresetConflict(env: NodeJS.ProcessEnv): string | null {
+  if (!env.NEMOCLAW_SERVING_PRESET?.trim()) return null;
+  if (env.NEMOCLAW_VLLM_MODEL?.trim())
+    return "NEMOCLAW_SERVING_PRESET conflicts with NEMOCLAW_VLLM_MODEL";
+  if (env[VLLM_EXTRA_ARGS_ENV]?.trim())
+    return `NEMOCLAW_SERVING_PRESET conflicts with ${VLLM_EXTRA_ARGS_ENV}`;
+  return null;
+}
+
 export function resolveHostLocalVllmSelection(
   baseProfile: VllmProfile,
   env: NodeJS.ProcessEnv = process.env,
@@ -187,26 +197,13 @@ export function resolveHostLocalVllmSelection(
   const presetId = String(env.NEMOCLAW_SERVING_PRESET ?? "").trim();
   const model = String(env.NEMOCLAW_VLLM_MODEL ?? "").trim();
   if (!presetId && !model && !options.automatic) return { kind: "not-selected" };
-  if (presetId && model) {
-    return {
-      kind: "rejected",
-      reason: "NEMOCLAW_SERVING_PRESET conflicts with NEMOCLAW_VLLM_MODEL",
-    };
-  }
-  if (presetId && String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
-    return {
-      kind: "rejected",
-      reason: `NEMOCLAW_SERVING_PRESET conflicts with ${VLLM_EXTRA_ARGS_ENV}`,
-    };
-  }
-  // Operator-owned serve arguments are intentionally outside the declarative
-  // catalog contract. Let the established single-host installer parse and
-  // apply them when no preset was requested; a fixed catalog recipe still
-  // rejects them after materialization. This also preserves the documented
-  // model-plus-extra-arguments path for non-fixed recipes.
-  if (String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
-    return { kind: "not-selected" };
-  }
+  const conflict = vllmPresetConflict(env);
+  if (conflict) return { kind: "rejected", reason: conflict };
+  // Operator-owned serve arguments are appended to a catalog recipe's
+  // arguments, so they must not hide the recipe the host would otherwise get
+  // (#14016). A fixed recipe cannot take them, and a host the catalog cannot
+  // match never could, so those cases keep using the established installer.
+  const operatorServeArguments = Boolean(String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim());
   const readinessReports =
     options.readinessReports ??
     ([
@@ -225,6 +222,8 @@ export function resolveHostLocalVllmSelection(
         : { provider: "vllm" },
   });
   if (resolution.outcome !== "selected") {
+    if (operatorServeArguments && resolution.outcome === "no-match")
+      return { kind: "not-selected" };
     const hostFacts =
       resolution.outcome === "no-match"
         ? readinessReports[0]?.report.observations
@@ -265,10 +264,11 @@ export function resolveHostLocalVllmSelection(
       preset: resolution.preset,
       recipe: resolution.recipe,
     };
-    return {
-      kind: "selected",
-      ...materializeHostLocalVllmSelection(vllmResolution, baseProfile),
-    };
+    const materialized = materializeHostLocalVllmSelection(vllmResolution, baseProfile);
+    if (operatorServeArguments && materialized.model.fixedServeCommand) {
+      return { kind: "not-selected" };
+    }
+    return { kind: "selected", ...materialized };
   } catch (error) {
     return { kind: "rejected", reason: (error as Error).message };
   }

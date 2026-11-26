@@ -713,6 +713,16 @@ export function parseVllmExtraServeArgs(env: NodeJS.ProcessEnv = process.env): s
         `${VLLM_EXTRA_ARGS_ENV}[${String(index)}] must not contain control characters.`,
       );
     }
+    if (!trimmed.startsWith("--")) return trimmed;
+    const option = trimmed.split("=", 1)[0]!.replaceAll("_", "-");
+    if (
+      option.length > 2 &&
+      ["--trust-remote-code", "--config"].some((restricted) => restricted.startsWith(option))
+    ) {
+      throw new Error(
+        `${VLLM_EXTRA_ARGS_ENV} must not enable remote model code through trust options or config files.`,
+      );
+    }
     return trimmed;
   });
 }
@@ -748,6 +758,7 @@ export function resolveVllmGpuMemoryUtilization(
       : validateVllmGpuMemoryUtilization(recipeUtilization);
   for (let index = 0; index < extraServeArgs.length; index += 1) {
     const argument = extraServeArgs[index]!;
+    if (!argument.startsWith("--")) continue;
     const separator = argument.indexOf("=");
     const option = separator < 0 ? argument : argument.slice(0, separator);
     const normalizedOption = option.replaceAll("_", "-");

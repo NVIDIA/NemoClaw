@@ -253,20 +253,102 @@ describe("host-local vLLM selection", () => {
     );
   });
 
-  it.each([
-    [{ NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-num-seqs","2"]' }],
-    [
-      {
-        NEMOCLAW_VLLM_MODEL: "qwen3.6-35b-a3b-nvfp4",
-        NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-model-len","32768"]',
-      },
-    ],
-    [{ NEMOCLAW_VLLM_EXTRA_ARGS_JSON: "[]" }],
-  ])("defers operator-owned serve arguments to the established installer", (env) => {
-    expect(resolveHostLocalVllmSelection(baseProfile(), env, { automatic: true })).toEqual({
-      kind: "not-selected",
+  describe("with operator-owned serve arguments", () => {
+    const extraArguments = '["--max-num-seqs","2"]';
+
+    function nonFixedSelection(): ResolvedHostLocalInferenceSelection {
+      const selection = hostLocalSelection();
+      const { installPolicyRef: _installPolicyRef, ...plan } = selection.preset.spec.plan;
+      return {
+        ...selection,
+        preset: { ...selection.preset, spec: { ...selection.preset.spec, plan } },
+      };
+    }
+
+    it.each([
+      [{ NEMOCLAW_VLLM_EXTRA_ARGS_JSON: extraArguments }, { provider: "vllm" }],
+      [
+        {
+          NEMOCLAW_VLLM_MODEL: "qwen3.6-35b-a3b-nvfp4",
+          NEMOCLAW_VLLM_EXTRA_ARGS_JSON: extraArguments,
+        },
+        { provider: "vllm", vllmModel: "qwen3.6-35b-a3b-nvfp4" },
+      ],
+    ])("keeps the recipe the host would otherwise get (#14016)", (env, intent) => {
+      const selection = nonFixedSelection();
+      mocks.resolveManagedInferenceServing.mockReturnValue(selection);
+
+      expect(
+        resolveHostLocalVllmSelection(baseProfile(), env, {
+          automatic: true,
+          readinessReports: [],
+        }),
+      ).toMatchObject({
+        kind: "selected",
+        presetId: selection.preset.metadata.id,
+        recipeId: selection.recipe.metadata.id,
+      });
+      expect(mocks.resolveManagedInferenceServing).toHaveBeenCalledWith(
+        expect.objectContaining({ intent }),
+      );
     });
-    expect(mocks.resolveManagedInferenceServing).not.toHaveBeenCalled();
+
+    it("leaves a fixed recipe to the installer, which rejects the arguments", () => {
+      mocks.resolveManagedInferenceServing.mockReturnValue(hostLocalSelection());
+
+      expect(
+        resolveHostLocalVllmSelection(
+          baseProfile(),
+          { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: extraArguments },
+          { automatic: true, readinessReports: [] },
+        ),
+      ).toEqual({ kind: "not-selected" });
+    });
+
+    it.each([
+      [
+        "no match",
+        {
+          outcome: "no-match",
+          code: "requirements-not-met",
+          message: "No preset matches this host.",
+        },
+      ],
+      [
+        "an ambiguous match",
+        {
+          outcome: "rejected",
+          code: "ambiguous-selection",
+          message: "Several presets match.",
+        },
+      ],
+    ] as const)("preserves the selection outcome for %s", (_label, resolution) => {
+      mocks.resolveManagedInferenceServing.mockReturnValue(resolution);
+
+      expect(
+        resolveHostLocalVllmSelection(
+          baseProfile(),
+          { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: extraArguments },
+          { automatic: true, readinessReports: [] },
+        ),
+      ).toEqual(
+        resolution.outcome === "no-match"
+          ? { kind: "not-selected" }
+          : { kind: "rejected", reason: resolution.message },
+      );
+    });
+
+    it("still rejects the same unmatched host when no arguments are set", () => {
+      mocks.resolveManagedInferenceServing.mockReturnValue({
+        outcome: "no-match",
+        code: "requirements-not-met",
+        message: "No preset matches this host.",
+      });
+
+      expect(
+        resolveHostLocalVllmSelection(baseProfile(), {}, { automatic: true, readinessReports: [] }),
+      ).toMatchObject({ kind: "rejected" });
+    });
   });
 
   it.each([

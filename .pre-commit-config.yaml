@@ -219,12 +219,11 @@ repos:
       - id: shellcheck
         priority: 10
 
-  - repo: local
+  - repo: https://github.com/AleksaC/hadolint-py
+    rev: 458cb25edf664682e3e856a53a2f9af33e068297 # v2.14.0
     hooks:
       - id: hadolint
         name: hadolint
-        entry: hadolint
-        language: system
         files: (Dockerfile[^/]*|.*\.dockerfile)$
         types: [file]
         priority: 10

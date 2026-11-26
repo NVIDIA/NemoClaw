@@ -509,7 +509,7 @@ describe("fixed catalog vLLM installs", () => {
    * paths below run the real selection guard rather than a canned result.
    */
   async function withActualSelectionGuard(
-    readinessReports: ReturnType<typeof vllmInstallTestReadiness>,
+    readinessReports?: ReturnType<typeof vllmInstallTestReadiness>,
   ): Promise<void> {
     const actualSelection = await vi.importActual<
       typeof import("./serving/host-local-vllm-selection")
@@ -521,6 +521,53 @@ describe("fixed catalog vLLM installs", () => {
       }),
     );
   }
+
+  it("stops before the registry installer when a selected recipe is malformed with extra arguments", async () => {
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify(["--max-num-seqs", "2"]);
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const readinessReports = vllmInstallTestReadinessAtMemory(profile, 63_082_733_568);
+    const resolver = await import("./serving/resolver");
+    const selected = resolver.resolveManagedInferenceServing({
+      readinessReports,
+      topologyQualifications: [],
+      intent: { provider: "vllm" },
+    });
+    assert(
+      selected.outcome === "selected" &&
+        !("topologyQualification" in selected) &&
+        isHostLocalInferenceServingRecipe(selected.recipe),
+    );
+    const { recipe } = selected;
+    vi.spyOn(resolver, "resolveManagedInferenceServing").mockReturnValue({
+      ...selected,
+      recipe: {
+        ...recipe,
+        spec: {
+          ...recipe.spec,
+          serve: {
+            ...recipe.spec.serve,
+            arguments: recipe.spec.serve.arguments.filter(({ name }) => name !== "--max-model-len"),
+          },
+        },
+      },
+    });
+    await withActualSelectionGuard(readinessReports);
+    const promptFn = vi.fn();
+    expect(
+      await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn,
+        readinessReports,
+      }),
+    ).toEqual({ ok: false });
+    expect(spies.errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("host-local vLLM recipe must define one positive --max-model-len"),
+    );
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+  });
 
   it.each(["automatic", "picker", "resume"] as const)(
     "installs the bounded Spark recipe through %s selection at the reported 64 GB capacity",
@@ -555,6 +602,92 @@ describe("fixed catalog vLLM installs", () => {
       expect(command).not.toContain("--load-format fastsafetensors");
     },
   );
+
+  it.each([
+    ["automatic", ["--max-model-len", "8192"]],
+    ["automatic", ["--max-num-seqs", "2", "--disable-log-requests"]],
+    ["picker", ["--max-num-seqs", "2", "--disable-log-requests"]],
+  ] as const)(
+    "keeps the bounded Spark recipe through %s selection with %j (#14016)",
+    async (mode, extraArgs) => {
+      process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify(extraArgs);
+      const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+      const readinessReports = vllmInstallTestReadinessAtMemory(profile, 63_082_733_568);
+      await withActualSelectionGuard(readinessReports);
+      mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+      const result = await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: mode === "automatic",
+        promptFn: vi.fn(async (question: string) => (question.includes("Continue") ? "y" : "1")),
+        readinessReports,
+      });
+
+      expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
+      expect(spies.logSpy).toHaveBeenCalledWith(
+        "    Selected for your hardware: Qwen3.6 35B-A3B NVFP4 on one 64 GB DGX Spark",
+      );
+      expect(spies.logSpy).toHaveBeenCalledWith("    Recipe context limit: 32768 tokens");
+      expect(spies.logSpy).toHaveBeenCalledWith(
+        `    Extra serve args: ${extraArgs.length} token(s) from NEMOCLAW_VLLM_EXTRA_ARGS_JSON`,
+      );
+      const runArgs = mocks.dockerRunDetached.mock.calls[0]![0] as string[];
+      expect(runArgs).toContain("com.nvidia.nemoclaw.managed-vllm=true");
+      expect(runArgs.filter((arg) => arg.startsWith("com.nvidia.nemoclaw.serving-"))).toEqual([]);
+      const command = runArgs.at(-1) as string;
+      expect(command).toContain("--max-model-len 32768");
+      expect(command).toContain("--gpu-memory-utilization 0.5");
+      expect(command).toContain("--safetensors-load-strategy lazy");
+      expect(command).not.toContain("--load-format fastsafetensors");
+      expect(command).not.toContain("--trust-remote-code");
+      expect(command).toContain("--max-num-seqs 1 ");
+      expect(command.endsWith(" " + extraArgs.join(" "))).toBe(true);
+    },
+  );
+
+  it.each([
+    ...[
+      "--trust-remote-code",
+      "--trust_remote_code",
+      "--trust-remote-code=true",
+      "--trust_remote_code=true",
+      "--trust-remote-c",
+      "--trust_remote_c=true",
+      "--t",
+      "--config",
+      "--config=/tmp/vllm.yaml",
+      "--conf",
+    ].map((argument) => ({
+      raw: JSON.stringify([argument, "/tmp/vllm.yaml"]),
+      message: "must not enable remote model code",
+    })),
+    { raw: "not JSON", message: "must be a JSON array" },
+    { raw: '["--gpu-memory-utilization=2"]', message: "must be a decimal number" },
+    { raw: '["--served-model-name"]', message: "must specify exactly one safe model ID" },
+  ])("rejects $raw before managed dispatch or Docker work", async ({ raw, message }) => {
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = raw;
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    await withActualSelectionGuard();
+    const collector = vi
+      .spyOn(await import("../readiness/host"), "createHostReadinessReport")
+      .mockImplementation(() => {
+        throw new Error("unexpected readiness collection");
+      });
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(spies.errSpy).toHaveBeenCalledWith(expect.stringContaining(message));
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(collector).not.toHaveBeenCalled();
+    expect(mocks.tryInstallManagedClusterManagedVllm).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+  });
 
   it("resumes a checkpointed model under an explicitly selected serving preset", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
@@ -664,18 +797,11 @@ describe("fixed catalog vLLM installs", () => {
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
   });
 
-  it("defers non-interactive custom arguments to the established installer", async () => {
-    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-35b-a3b-nvfp4";
+  it("defers custom arguments to the registry when no automatic recipe matches", async () => {
     process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = '["--max-model-len","32768"]';
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    const actualSelection = await vi.importActual<
-      typeof import("./serving/host-local-vllm-selection")
-    >("./serving/host-local-vllm-selection");
-    const deferred = actualSelection.resolveHostLocalVllmSelection(profile, process.env, {
-      automatic: true,
-    });
-    expect(deferred).toEqual({ kind: "not-selected" });
-    mocks.resolveHostLocalVllmSelection.mockReturnValue(deferred);
+    const readinessReports = vllmInstallTestReadinessAtMemory(profile, 1_000_000_000);
+    await withActualSelectionGuard(readinessReports);
     mockSuccessfulVllmInstall(mocks, profile.containerName);
 
     const result = await installVllm(profile, {
@@ -685,6 +811,7 @@ describe("fixed catalog vLLM installs", () => {
     });
 
     expect(result).toEqual({ ok: true });
+    expect(mocks.resolveHostLocalVllmSelection).toHaveReturnedWith({ kind: "not-selected" });
     const [runArgs] = mocks.dockerRunDetached.mock.calls[0] as [string[]];
     expect(runArgs.at(-1)).toContain("--max-model-len");
     expect(runArgs.at(-1)).toContain("32768");
@@ -790,23 +917,18 @@ describe("fixed catalog vLLM installs", () => {
     process.env.NEMOCLAW_VLLM_MODEL = "muse-glimmer-30b";
     process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify(["--max-model-len", "4096"]);
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    const actualSelection = await vi.importActual<
-      typeof import("./serving/host-local-vllm-selection")
-    >("./serving/host-local-vllm-selection");
-    const deferred = actualSelection.resolveHostLocalVllmSelection(profile, process.env, {
-      automatic: true,
-    });
-    expect(deferred).toEqual({ kind: "not-selected" });
-    mocks.resolveHostLocalVllmSelection.mockReturnValue(deferred);
+    const readinessReports = vllmInstallTestReadiness(profile, "muse-glimmer-30b");
+    await withActualSelectionGuard(readinessReports);
 
     const result = await installVllm(profile, {
       hasImage: true,
       nonInteractive: true,
       promptFn: vi.fn(),
-      readinessReports: vllmInstallTestReadiness(profile),
+      readinessReports,
     });
 
     expect(result).toEqual({ ok: false });
+    expect(mocks.resolveHostLocalVllmSelection).toHaveReturnedWith({ kind: "not-selected" });
     expect(spies.errSpy).toHaveBeenCalledWith(
       expect.stringContaining("does not accept NEMOCLAW_VLLM_EXTRA_ARGS_JSON"),
     );

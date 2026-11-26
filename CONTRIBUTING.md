@@ -59,8 +59,8 @@ host, Docker, GitHub authentication, contributor identity, and commit-signing pr
 changing them. Follow its remediation and rerun the doctor until it
 passes.
 
-`hadolint` is optional for contributor setup. The doctor warns when it is missing. Dockerfile lint
-checks require `hadolint` on your `PATH`. Install it before running those checks.
+Dockerfile lint hooks install checksum-verified Hadolint v2.14.0 in an isolated hook environment.
+Local checks and CI use this pinned version. A host Hadolint installation is not required.
 
 Setup installs the required OpenShell SDK from the archive shipped with this checkout and verifies its lockfile checksum.
 SDK installation does not require GitHub credentials. The doctor also checks that the installed SDK can load.

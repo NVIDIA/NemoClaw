@@ -776,6 +776,46 @@ describe("parseVllmExtraServeArgs", () => {
     ).toEqual(["--max-num-seqs", "2"]);
   });
 
+  it.each(["__config", "__trust_remote_code", "__gpu_memory_utilization"])(
+    "preserves the served-model name %s as a value, not an option",
+    (name) => {
+      const argv = ["--served-model-name", name];
+      expect(parseVllmExtraServeArgs({ [VLLM_EXTRA_ARGS_ENV]: JSON.stringify(argv) })).toEqual(
+        argv,
+      );
+      expect(resolveVllmGpuMemoryUtilization(0.7, argv)).toBe(0.7);
+    },
+  );
+
+  it.each([
+    "--trust-remote-code",
+    "--trust_remote_code",
+    "--trust-remote-code=true",
+    "--trust_remote_code=false",
+    "--trust_remote-code",
+    "--trust-remote_code=true",
+    "--trust-remote-c",
+    "--trust_remote_c=true",
+    "--trust-remote_c",
+    "--trust_r=true",
+    "--tr",
+    "--t",
+    "--config",
+    "--config=/tmp/vllm.yaml",
+    "--conf",
+    "--con=/tmp/vllm.yaml",
+    "--c",
+  ])("rejects remote-code trust through %s", (argument) => {
+    const environment = {
+      [VLLM_EXTRA_ARGS_ENV]: JSON.stringify([argument, "/tmp/vllm.yaml"]),
+    };
+    expect(() => parseVllmExtraServeArgs(environment)).toThrow("must not enable remote model code");
+    expect(() =>
+      buildVllmServeCommand({ ...VLLM_MODELS[0]!, trustRemoteCode: false }, environment),
+    ).toThrow("must not enable remote model code");
+    expect(preflightVllmModelEnv(environment)).toMatchObject({ ok: false });
+  });
+
   it("rejects malformed managed-vLLM extra args before docker work starts", () => {
     expect(() =>
       parseVllmExtraServeArgs({

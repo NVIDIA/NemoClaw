@@ -8,9 +8,7 @@ import { DEFAULT_GATEWAY_PORT } from "../../../src/lib/core/ports.ts";
 import {
   isShippedManagedImageAgent,
   MANAGED_IMAGE_PLATFORMS,
-  MANAGED_IMAGE_REPOSITORIES,
   managedImagePlatformForNodeArchitecture,
-  SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImageContractV1,
   type ManagedImagePlatform,
   type ShippedManagedImageAgent,
@@ -24,6 +22,7 @@ import { readConfigFile } from "../../../src/lib/state/config-io.ts";
 import { parseSandboxRegistryEntries } from "../../../src/lib/state/registry-normalization.ts";
 import { cloneSandboxWorkloadReceipt } from "../../../src/lib/state/registry/workload.ts";
 import { nemoclawStateRoot } from "../../../src/lib/state/state-root.ts";
+import { parseManagedImageCohortReceipt } from "../../../tools/e2e/managed-image-cohort-contract.mts";
 
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
 
@@ -71,7 +70,7 @@ function selectedManagedImageAuthority(options: {
   readonly platform: unknown;
 }): SelectedManagedImageAuthority {
   const revision = options.environment.E2E_MANAGED_IMAGE_REVISION?.trim() ?? "";
-  const rawReceipt = options.environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT?.trim() ?? "";
+  const rawReceipt = options.environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT ?? "";
   if (!revision) {
     if (rawReceipt) {
       throw new Error(
@@ -96,66 +95,19 @@ function selectedManagedImageAuthority(options: {
       sourceRevision: contract.source.revision,
     };
   }
-  if (!REVISION_PATTERN.test(revision) || !rawReceipt || Buffer.byteLength(rawReceipt) > 8 * 1024) {
-    throw new Error("stock onboarding requires the complete selected managed-image cohort receipt");
-  }
-  let receipt: Record<string, unknown>;
-  try {
-    const parsed = JSON.parse(rawReceipt) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
-    receipt = parsed as Record<string, unknown>;
-  } catch {
-    throw new Error("stock onboarding selected managed-image cohort receipt is invalid");
-  }
-  const runId = receipt.runId;
-  const runAttempt = receipt.runAttempt;
-  const images = receipt.images;
-  const cohort = receipt.cohort;
-  if (
-    JSON.stringify(Object.keys(receipt).sort()) !==
-      JSON.stringify(["cohort", "images", "kind", "revision", "runAttempt", "runId"]) ||
-    receipt.kind !== "nemoclaw-managed-image-cohort-receipt-v1" ||
-    receipt.revision !== revision ||
-    !Number.isSafeInteger(runId) ||
-    Number(runId) < 1 ||
-    !Number.isSafeInteger(runAttempt) ||
-    Number(runAttempt) < 1 ||
-    cohort !== `ghrun-${String(runId)}-${String(runAttempt)}` ||
-    !images ||
-    typeof images !== "object" ||
-    Array.isArray(images) ||
-    JSON.stringify(Object.keys(images).sort()) !==
-      JSON.stringify([...SHIPPED_MANAGED_IMAGE_AGENTS].sort())
-  ) {
-    throw new Error("stock onboarding selected managed-image cohort receipt is invalid");
-  }
-
-  const agentImages = (images as Record<string, unknown>)[options.expectedAgent];
+  const receipt = parseManagedImageCohortReceipt(rawReceipt, revision);
   if (
     typeof options.platform !== "string" ||
-    !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(options.platform) ||
-    !agentImages ||
-    typeof agentImages !== "object" ||
-    Array.isArray(agentImages) ||
-    JSON.stringify(Object.keys(agentImages).sort()) !==
-      JSON.stringify([...MANAGED_IMAGE_PLATFORMS].sort())
+    !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(options.platform)
   ) {
     throw new Error("stock onboarding selected managed-image cohort receipt is invalid");
   }
-  const reference = (agentImages as Record<string, unknown>)[options.platform];
-  const referencePrefix = `${MANAGED_IMAGE_REPOSITORIES[options.expectedAgent]}@sha256:`;
-  if (
-    typeof reference !== "string" ||
-    !reference.startsWith(referencePrefix) ||
-    !/^[a-f0-9]{64}$/i.test(reference.slice(referencePrefix.length))
-  ) {
-    throw new Error("stock onboarding must use the exact agent image from the selected cohort");
-  }
+  const platform = options.platform as ManagedImagePlatform;
   return {
-    platform: options.platform as ManagedImagePlatform,
-    reference,
+    platform,
+    reference: receipt.images[options.expectedAgent][platform],
     release: null,
-    sourceCohort: cohort as string,
+    sourceCohort: receipt.cohort,
     sourceRevision: revision,
   };
 }
@@ -198,6 +150,7 @@ export function assertManagedImageReceiptMatchesSelectedCohort(options: {
 }
 
 export interface StockManagedImageReceiptEvidence {
+  readonly platform: ManagedImagePlatform;
   readonly agent: string;
   readonly reference: string;
   readonly sourceCohort: string;
@@ -221,6 +174,7 @@ function gatewayPort(environment: NodeJS.ProcessEnv): number {
 export function assertStockManagedImageReceipt(options: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly expectedAgent?: string;
+  readonly expectedPlatform?: ManagedImagePlatform;
   readonly sandboxName: string;
 }): StockManagedImageReceiptEvidence | null {
   const environment = options.environment ?? process.env;
@@ -253,6 +207,11 @@ export function assertStockManagedImageReceipt(options: {
       `stock sandbox '${options.sandboxName}' managed-image revision does not match the selected cohort`,
     );
   }
+  if (options.expectedPlatform && authority.contract.platform !== options.expectedPlatform) {
+    throw new Error(
+      `stock sandbox '${options.sandboxName}' must use a ${options.expectedPlatform} managed image`,
+    );
+  }
   if (options.expectedAgent && authority.agent !== options.expectedAgent) {
     throw new Error(`stock sandbox '${options.sandboxName}' managed-image agent does not match`);
   }
@@ -265,6 +224,7 @@ export function assertStockManagedImageReceipt(options: {
   }
   return {
     agent: authority.agent,
+    platform: authority.contract.platform,
     reference: authority.receipt.reference,
     sourceCohort: authority.receipt.sourceCohort,
     sourceRevision: authority.receipt.sourceRevision,

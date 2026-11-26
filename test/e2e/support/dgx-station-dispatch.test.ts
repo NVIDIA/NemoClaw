@@ -20,6 +20,7 @@ import {
   DGX_STATION_DISPATCH_AUDIENCE,
   dispatchJobId,
   parseDgxStationDispatchRequest,
+  parseDispatchRequest,
   parseDispatchArtifact,
   parseDispatchStatus,
   parseDispatchStatusResponse,
@@ -205,4 +206,14 @@ it("removes terminal controls from a dispatcher error before printing it", () =>
     "remote [2J 31m message",
   );
   expect(printableDispatchError(new Error("x".repeat(2000)))).toHaveLength(1000);
+});
+
+it("rejects Spark requests without a supported dispatch controller", () => {
+  expect(() =>
+    parseDispatchRequest({
+      ...vectors.request,
+      schemaVersion: 4,
+      target: "spark-vllm-extra-arguments",
+    }),
+  ).toThrow();
 });

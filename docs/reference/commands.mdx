@@ -4847,9 +4847,10 @@ the qualified peer endpoint and host-key binding from DGX Station pair preparati
 managed-vLLM install. The installer creates and clears this token; operators should not set or
 persist it. Missing, changed, or mismatched binding state fails before peer SSH or Docker work. | |
 `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` | JSON array of non-blank strings | Appends advanced operator-owned
-tokens to the managed `vllm serve` command after NemoClaw's registry defaults. Example:
-`["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, blank tokens, or an invalid
-`--gpu-memory-utilization` override fail before Docker work starts. The last memory-utilization
+tokens to the managed `vllm serve` command after the defaults of the recipe selected for the host. Example:
+`["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, blank tokens, remote-code trust options or `--config` files
+(including abbreviated option names, underscore spellings and assignment forms), or an invalid `--gpu-memory-utilization`
+override fail before Docker work starts. The last memory-utilization
 override also controls the early and immediate pre-launch GPU-memory checks. |
 <AgentOnly variant="openclaw">
   | `NEMOCLAW_MINIMAL_BOOTSTRAP` | `1` to enable | Skips default OpenClaw workspace-template seeding

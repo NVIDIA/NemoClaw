@@ -177,21 +177,16 @@ check_command() {
   local label="$1"
   local command_name="$2"
   local remediation="$3"
-  local mode="${4:-required}"
-  local reporter="fail"
   local output
 
-  if [ "${mode}" = "optional" ]; then
-    reporter="warn"
-  fi
   if ! command -v "${command_name}" >/dev/null 2>&1; then
-    "${reporter}" "${label}: not found" "${remediation}"
+    fail "${label}: not found" "${remediation}"
     return
   fi
   if output="$("${command_name}" --version 2>/dev/null)"; then
     pass "${label} $(first_line "${output}")"
   else
-    "${reporter}" "${label}: version check failed" "${remediation}"
+    fail "${label}: version check failed" "${remediation}"
   fi
 }
 
@@ -652,8 +647,6 @@ run_doctor() {
   fi
   check_command "Git" git "Install Git."
   check_command "GitHub CLI" gh "Install GitHub CLI."
-  check_command "hadolint" hadolint \
-    "Install hadolint before running Dockerfile lint checks (macOS: brew install hadolint)." optional
 
   if node "${REPO_ROOT}/scripts/lib/openshell-sdk-install.mts" check >/dev/null 2>&1; then
     pass "OpenShell SDK"
