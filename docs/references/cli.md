@@ -26,23 +26,34 @@ Each command takes the following input and has the following result:
 
 ### Running OpenShell Against a Deployment
 
-On Linux amd64, Linux arm64, and macOS Apple silicon, the bundle includes the OpenShell CLI pinned to its gateway version.
-Use the same state directory as apply; NemoClaw selects the deployment's gateway and workspace:
+`nemoclaw osh` runs the bundle's OpenShell CLI, pinned to the gateway version, against the deployment's gateway and workspace.
+The bundle includes it on Linux amd64, Linux arm64, and macOS Apple silicon; on Windows, use WSL 2.
 
 ```sh
-nemoclaw osh --state-dir .nemoclaw -- sandbox list
+nemoclaw osh --state-dir .nemoclaw sandbox list
 nemoclaw osh --state-dir .nemoclaw -- sandbox exec -n assistant --tty -- sh
 ```
 
-The `--` is optional. NemoClaw reads its own options, such as `--state-dir` and `--bundle`, up to the first OpenShell argument or `--`, and passes the rest to OpenShell unchanged.
-NemoClaw runs OpenShell in place of itself, so input, output, signals, and the exit status are OpenShell's.
+Use the same state directory and bundle as apply.
+NemoClaw reads its own options, such as `--state-dir` and `--bundle`, up to the first OpenShell argument or the optional `--`, and passes the rest to OpenShell unchanged.
+OpenShell replaces the NemoClaw process, so input, output, signals, and the exit status are OpenShell's.
+OpenShell keeps the deployment's configuration in `<state-dir>/openshell/`, apart from your own OpenShell profiles.
 
-OpenShell keeps this deployment's configuration in `<state-dir>/openshell/`, apart from your own OpenShell profiles.
-For mTLS, keep the files referenced by `spec.gateway.tls` and their environment variables available; NemoClaw links them into that configuration.
+`nemoclaw osh` supports these gateways:
+
+| Gateway | Authentication | Setup |
+|---|---|---|
+| Managed Docker or Podman | None | None. |
+| External | mTLS | Keep the files that `spec.gateway.tls` references, and their environment variables, available. NemoClaw links them into OpenShell's configuration. |
+| External | OIDC | Add `gateway.oidc` and sign in once, as [Logging In to an External OIDC Gateway](#logging-in-to-an-external-oidc-gateway) describes. |
+| Managed Kubernetes or OpenShift, published with `expose` | OIDC (`oidc` profile) | Set `authentication.clientId` and sign in once, as the same section describes. |
+
+An external gateway can run on any platform, including Kubernetes and OpenShift.
+Unpublished managed Kubernetes and OpenShift gateways, and external gateways that accept only a bearer token, need a [separately configured OpenShell CLI](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways).
 
 #### Logging In to an External OIDC Gateway
 
-Add the operator's OIDC login settings to the external gateway in your deployment YAML before applying it:
+Add the gateway operator's OIDC client settings to the deployment YAML:
 
 ```yaml
 gateway:
@@ -57,9 +68,12 @@ gateway:
 ```
 
 `audience` and `scopes` are optional.
-Register the gateway once, before any other `nemoclaw osh` command against it, with the `Register once:` command that plan and apply print.
-Until then, OpenShell treats the gateway as an mTLS one and reports missing certificate files.
-The printed command keeps custom `--state-dir` and `--bundle` options, such as:
+Plan and apply then print two commands, with the same `--state-dir` and `--bundle` options:
+
+- `Register once:` registers the gateway with OpenShell and signs in. Run it before any other `nemoclaw osh` command; until then, OpenShell reports missing mTLS certificate files.
+- `Sign in again:` runs `gateway login`, for when the session ends.
+
+For example:
 
 ```sh
 nemoclaw osh --state-dir .nemoclaw-first -- gateway add https://gateway.example.com --name=nc-3f9a1c2b7d4e8a60 \
@@ -67,18 +81,19 @@ nemoclaw osh --state-dir .nemoclaw-first -- gateway add https://gateway.example.
   --oidc-audience=openshell '--oidc-scopes=openid offline_access'
 ```
 
-Registering signs in; OpenShell owns sign-in, token storage, and renewal, as [its authentication guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx#oidc) describes.
-Deployment operations still use `GATEWAY_TOKEN`; the signed-in identity needs membership in the deployment's workspace.
-Run `nemoclaw osh --state-dir DIR -- gateway login` to sign in again, with the same state directory and bundle as apply; plan and apply print it as `Sign in again:`.
-Without a browser, set `OPENSHELL_NO_BROWSER=1` before registering or signing in, to sign in with a code on another device.
-For CI and other automation, set `OPENSHELL_OIDC_CLIENT_SECRET` to a confidential client's secret, and keep it set while commands run, because OpenShell gets each new token with it; never put it in YAML.
-After changing `gateway.oidc`, run `nemoclaw osh --state-dir DIR -- gateway remove NAME` with that selection, then register the gateway again.
-A published managed Kubernetes or OpenShift gateway with the `oidc` authentication profile works the same way: set `authentication.clientId` to the CLI's client ID, and plan and apply take the issuer and audience from `openshell.gateway.oidc`.
-NemoClaw supplies its CA certificate from the state directory.
+OpenShell handles sign-in, token storage, and renewal, as [its authentication guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/gateways/authentication.mdx#oidc) describes:
 
-Bearer-token gateways without `gateway.oidc`, and unpublished managed Kubernetes or OpenShift gateways, require a [separately configured OpenShell CLI](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways).
-The `development` profile, for isolated testing, gives no CLI access.
-OpenShell publishes no Windows or Intel macOS CLI; use WSL 2 on Windows or a supported Linux or Apple silicon client.
+- Without a browser, set `OPENSHELL_NO_BROWSER=1` before signing in to use a code on another device.
+- For automation, set `OPENSHELL_OIDC_CLIENT_SECRET` to a confidential client's secret, and keep it set while commands run. Never put it in YAML.
+
+The signed-in identity needs membership in the deployment's workspace.
+Deployment operations still authenticate with `credential`, or `authentication.token` on a managed gateway.
+After changing the login settings, run `nemoclaw osh -- gateway remove NAME` with the same options, then register again.
+
+A published managed Kubernetes or OpenShift gateway with the `oidc` authentication profile works the same way.
+Set `authentication.clientId` in its target to the CLI's client ID; plan and apply take the issuer and audience from `openshell.gateway.oidc`, and NemoClaw supplies the gateway's CA certificate from the state directory.
+
+The `development` authentication profile of managed Kubernetes and OpenShift gateways is for isolated testing and has no OpenShell CLI access.
 
 Apply can download models and check readiness.
 It does not request model or agent responses.
