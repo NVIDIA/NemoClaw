@@ -29,6 +29,9 @@ Those sandboxes use the new live route until another onboarding run or connectio
 When multiple sandboxes use the same provider name, their provider-global identity must match.
 For a custom provider, NemoClaw compares the normalized endpoint and API family.
 It also compares the credential environment-variable name for every provider.
+A local OpenAI-compatible endpoint onboarded without authentication records the local proxy credential name, so sandboxes that both select no authentication for the same endpoint match.
+A sandbox that uses an API key for that endpoint does not match one that uses no authentication.
+In interactive onboarding, NemoClaw checks this match once the credential choice is known, and stops before it stores an API key that does not match.
 Onboarding exits before provider or route mutation when those fields differ.
 
 Do not run `openshell inference set` directly on a shared NemoClaw gateway because that bypasses the registry compatibility checks.

@@ -45,10 +45,15 @@ export function stageBuildProviderKeyBridge(): void {
   process.env.NVIDIA_INFERENCE_API_KEY = providerKeyHint;
 }
 
-export function stageRemoteProviderKeyBridge(credentialEnv: string | null): void {
+/** `beforeSave` runs only when the bridge is about to stage a credential. */
+export function stageRemoteProviderKeyBridge(
+  credentialEnv: string | null,
+  beforeSave?: () => void,
+): void {
   if (!credentialEnv) return;
   const providerKeyHint = getProviderKeyBridgeHint();
   if (!isProviderKeyCredentialCandidate(providerKeyHint)) return;
   if (resolveProviderCredential(credentialEnv)) return;
+  beforeSave?.();
   saveCredential(credentialEnv, providerKeyHint);
 }
