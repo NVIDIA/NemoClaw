@@ -10,6 +10,8 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { testRepoRoot } from "../helpers/onboard-child-process-harness";
+import { simulatedProvisioning, writeSuccessfulOpenShell } from "../support/onboard-exit-flow";
 import { testTimeout } from "../helpers/timeouts";
 
 type OnboardModule = typeof import("../../src/lib/onboard") & {
@@ -39,12 +41,6 @@ function requireLoadedSession(sessionDeps = onboardSession) {
   const loaded = sessionDeps.loadSession();
   expect(loaded).not.toBeNull();
   return loaded ?? sessionDeps.createSession();
-}
-
-function writeSuccessfulOpenShell(tmpDir: string): string {
-  const openshellPath = path.join(tmpDir, "openshell");
-  fs.writeFileSync(openshellPath, `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o755 });
-  return openshellPath;
 }
 
 describe("onboard exit handler registration", () => {
@@ -501,38 +497,16 @@ const { onboard } = require(${onboardPath});
   );
 
   it("onboard() preserves a resumable session after a normal incomplete result (#9048)", () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
     const scriptPath = path.join(tmpDir, "onboard-exit-completed.cjs");
     const openshellPath = writeSuccessfulOpenShell(tmpDir);
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const initialPhasesPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "machine", "initial-flow-phases.ts"),
-    );
-    const corePhasesPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "machine", "core-flow-phases.ts"),
-    );
-    const finalPhasesPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "machine", "final-flow-phases.ts"),
-    );
-    const resultPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
-    );
-    const sessionPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
-    );
-
+    const onboardPath = path.join(testRepoRoot, "src/lib/onboard.ts");
     fs.writeFileSync(
       scriptPath,
-      `
-const initialPhases = require(${initialPhasesPath});
-const corePhases = require(${corePhasesPath});
-const finalPhases = require(${finalPhasesPath});
-const onboardSession = require(${sessionPath});
-const { advanceTo, branchTo, completeOnboardMachine } = require(${resultPath});
+      `${simulatedProvisioning(onboardPath)}
+const onboardSession = fromLib("./state/onboard-session");
 const exitListeners = [];
 const originalOnce = process.once;
 const originalExit = process.exit;
-
 process.once = function once(event, listener) {
   if (event === "exit") {
     exitListeners.push(listener);
@@ -544,68 +518,7 @@ process.exit = function exit(code) {
   throw new Error("process.exit:" + String(code));
 };
 
-initialPhases.runInitialOnboardFlowSlice = async ({ context, runtime }) => {
-  await runtime.applyResult(advanceTo("preflight", { metadata: { state: "init" } }));
-  await runtime.applyResult(advanceTo("gateway", { metadata: { state: "preflight" } }));
-  await runtime.applyResult(advanceTo("provider_selection", { metadata: { state: "gateway" } }));
-  const session = await runtime.session();
-  return {
-    context: {
-      ...context,
-      session,
-      gpu: null,
-      sandboxGpuConfig: { mode: "disabled", hostGpuPlatform: null },
-      gpuPassthrough: false,
-      requestedGpuPassthrough: false,
-      resumeHasResolvedGpuIntent: true,
-    },
-    session,
-  };
-};
-
-corePhases.runCoreOnboardFlowSlice = async ({ context, runtime }) => {
-  await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
-  await runtime.applyResult(advanceTo("sandbox", {
-    metadata: { state: "inference" },
-    updates: { provider: "nvidia", model: "nemotron-test" },
-  }));
-  await runtime.applyResult(branchTo("openclaw", {
-    metadata: { state: "sandbox" },
-    updates: { sandboxName: "complete-seam" },
-  }));
-  const session = await runtime.session();
-  return {
-    context: {
-      ...context,
-      session,
-      sandboxName: "complete-seam",
-      provider: "nvidia",
-      model: "nemotron-test",
-      endpointUrl: null,
-      credentialEnv: "NVIDIA_API_KEY",
-      nimContainer: null,
-      webSearchConfig: null,
-      webSearchSupported: false,
-      selectedMessagingChannels: [],
-    },
-    session,
-  };
-};
-
-finalPhases.runFinalOnboardFlowSlice = async ({ runtime }) => {
-  await runtime.applyResult(advanceTo("policies", { metadata: { state: "openclaw" } }));
-  await runtime.applyResult(advanceTo("finalizing", { metadata: { state: "policies" } }));
-  await runtime.applyResult(advanceTo("post_verify", { metadata: { state: "finalizing" } }));
-  if (process.env.NEMOCLAW_TEST_FINAL_STATE === "complete") {
-    await runtime.applyResult(completeOnboardMachine(
-      { sandboxName: "complete-seam", provider: "nvidia", model: "nemotron-test" },
-      { state: "post_verify" },
-    ));
-  }
-  return { context: null, session: await runtime.session() };
-};
-
-const { onboard } = require(${onboardPath});
+const { onboard } = require(${JSON.stringify(onboardPath)});
 
 (async () => {
   try {
@@ -634,7 +547,7 @@ const { onboard } = require(${onboardPath});
 
     const runOnboard = (home: string, finalState: "complete" | "incomplete") =>
       spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
+        cwd: testRepoRoot,
         encoding: "utf8",
         env: {
           ...process.env,

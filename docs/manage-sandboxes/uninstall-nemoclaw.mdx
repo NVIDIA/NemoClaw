@@ -60,6 +60,11 @@ If `lsof` is unavailable and no recorded process was stopped, uninstall warns th
 A selected-gateway uninstall uses only that gateway's process record and does not scan or signal a sibling adapter.
 Uninstall preserves an unrelated process that uses the same port.
 
+If uninstall reports `Portable lifecycle state is unsafe: Completed onboarding session authority is incomplete`, the affected gateway pass exits nonzero before it starts cleanup.
+With `--all-gateway-ports`, earlier passes may already have removed resources from other gateways.
+The message names the invalid field or gives a reason such as `the session record is malformed`.
+If uninstall, onboarding, or rebuild reports this error, see [Recover a completed onboarding session](#recover-a-completed-onboarding-session).
+
 | Flag | Effect |
 |---|---|
 | `--yes` | Skip the confirmation prompt. Backups for eligible registered sandboxes still run before deletion. |
@@ -105,6 +110,25 @@ If recovery cannot continue, the diagnostic distinguishes unreadable Docker inve
 NemoClaw can distinguish a same-name sibling container only when its immutable OpenShell identity matches that sibling's published registry row and the sibling's live gateway confirms the identity.
 An unknown runtime, unproven container identity, active resource, or failed inventory preserves the data for recovery.
 The same onboarding lock and state revalidation protect this cleanup.
+
+## Recover a completed onboarding session
+
+Do not delete `onboard-session.json`, edit the reported field, or use `onboard --fresh` to clear it. The session may be the only record of a Portable runtime. If you need help, report only the diagnostic. Do not share the session, registry, or receipts.
+
+First identify the onboarding profile from an integrity-verified host backup made after onboarding completed and before the file was damaged. Do not rely on the damaged session or the diagnostic to identify the profile. A sandbox workspace backup does not contain this host record.
+
+If the backup shows the default profile, or you cannot verify the profile, leave all files and resources in place and [report the diagnostic](https://github.com/NVIDIA/NemoClaw/issues/new). Default onboarding does not use a Portable receipt. Do not create one.
+
+If uninstall reports this diagnostic, it has not found a Portable lifecycle receipt for cleanup. Restoring the session alone does not supply the missing receipt. Preserve the state and report the diagnostic rather than retrying uninstall.
+
+For onboarding or rebuild with a verified Portable session:
+
+1. Ensure no lifecycle operation has run since the backup except the failed operation. Keep other writers off the host throughout verification and restore. Save the damaged file privately outside the state directory.
+2. Verify that the backup contains the original session bytes alongside the registry and receipt for this host, user, gateway, and sandbox generation. Compare the backed-up registry and receipt byte-for-byte with the current files. Confirm that the live sandbox and container IDs match the receipt on the recorded runtime. The retirement record must be absent from both locations or present and byte-for-byte identical in both. Otherwise, stop without restoring the session. A retirement record alone does not identify the current sandbox.
+3. Use your host backup tool to atomically restore only `onboard-session.json` at its original path. Restore a regular file owned by the original user, mode `0600`, with no other links. Leave the registry, receipts, and retirement record unchanged.
+4. Retry the failed command for the affected gateway only. If another check refuses, stop rather than changing another record.
+
+If any check fails, keep the files in place and report the diagnostic.
 
 ## Stop the Amazon Bedrock Runtime Adapter
 

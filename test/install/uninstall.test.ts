@@ -28,6 +28,7 @@ import {
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
 } from "../../src/lib/onboard/docker-driver-gateway-service";
 import { deriveCheckpointFromSession } from "../../src/lib/state/onboard-checkpoint-migrate";
+import type { OnboardCheckpoint } from "../../src/lib/state/onboard-checkpoint-types";
 import { createSession } from "../../src/lib/state/onboard-session";
 
 const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "../..", "uninstall.sh");
@@ -421,6 +422,82 @@ esac
     );
     expect(output).not.toMatch(/NemoClaw Uninstaller/);
   });
+
+  it("reports a Portable session gateway mismatch on stderr and preserves the session and sandbox", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-portable-mismatch-"));
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      const inventoryPath = writeFakeTools(fakeBin);
+      const inventoryBefore = fs.readFileSync(inventoryPath);
+      const sessionPath = path.join(seedCompletedDefaultAuthority(tmp), "onboard-session.json");
+      const stateDir = path.dirname(sessionPath);
+      const registryPath = path.join(stateDir, "sandboxes.json");
+      const registryBefore = fs.readFileSync(registryPath);
+      const session = JSON.parse(fs.readFileSync(sessionPath, "utf8")) as {
+        checkpoint: OnboardCheckpoint;
+        metadata: { gatewayName: string };
+      };
+      const uid = os.userInfo().uid;
+      const runtimeDir = path.join("/run/user", String(uid));
+      session.checkpoint = {
+        ...session.checkpoint,
+        profile: { kind: "selected", value: "portable" },
+        runtimeAuthority: {
+          kind: "selected",
+          value: {
+            schemaVersion: 1,
+            kind: "podman",
+            ownership: "current-user",
+            uid,
+            homeDir: tmp,
+            configHome: path.join(tmp, ".config"),
+            runtimeDir,
+            socketPath: path.join(runtimeDir, "podman/podman.sock"),
+          },
+        },
+      };
+      session.metadata.gatewayName = "other-gateway";
+      const sessionBefore = Buffer.from(`${JSON.stringify(session)}\n`);
+      fs.writeFileSync(sessionPath, sessionBefore);
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.join(import.meta.dirname, "../../bin/nemoclaw.js"),
+          "uninstall",
+          "--all-gateway-ports",
+          "--delete-models",
+          "--destroy-user-data",
+          "--yes",
+        ],
+        {
+          cwd: tmp,
+          encoding: "utf8",
+          env: {
+            HOME: tmp,
+            TMPDIR: tmp,
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+            NEMOCLAW_NODE: process.execPath,
+          },
+          timeout: 30_000,
+        },
+      );
+
+      expect(result.status, result.error?.message ?? result.stderr).toBe(1);
+      expect(result.stderr).toContain(
+        "Portable lifecycle state is unsafe: Completed onboarding session authority is incomplete: " +
+          'field "metadata.gatewayName" does not match "checkpoint.gatewayAuthority". ' +
+          "Follow the uninstall guide to recover a completed onboarding session before retrying.",
+      );
+      expect(fs.readFileSync(sessionPath)).toEqual(sessionBefore);
+      expect(fs.readFileSync(registryPath)).toEqual(registryBefore);
+      expect(fs.existsSync(path.join(stateDir, "portable-uninstall-retirement.json"))).toBe(false);
+      expect(fs.existsSync(path.join(stateDir, "portable-demo-lifecycle"))).toBe(false);
+      expect(fs.readFileSync(inventoryPath)).toEqual(inventoryBefore);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("backs up never-rebuilt workspace state before --yes removes the sandbox", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-yes-"));

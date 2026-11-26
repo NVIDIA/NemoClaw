@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { withSuccessfulPreUninstallBackup } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import { createSession } from "../../state/onboard-session";
+import * as retirement from "../../state/portable-uninstall-retirement";
 import { hasPortableRuntimeCleanup } from "./portable-runtime-cleanup";
 import {
   type RunResult,
@@ -333,6 +334,48 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     await expectOrdinaryUninstall(host);
   });
 
+  it("preserves the damaged session and refuses retry without a Portable receipt", async () => {
+    const host = scope("nemoclaw-uninstall-malformed-completed-");
+    completedOpenClawAuthority(host, "portable");
+    const file = path.join(host.stateDir, "onboard-session.json");
+    const saved = fs.readFileSync(file);
+    const malformed = Buffer.from('{"sessionId":"private-fixture-id"');
+    const read = retirement.readPortableAuthoritySnapshot;
+    vi.spyOn(retirement, "readPortableAuthoritySnapshot").mockImplementationOnce(
+      (target, limit) => {
+        expect(target).toBe(file);
+        const bytes = read(target, limit);
+        fs.writeFileSync(file, malformed);
+        return bytes;
+      },
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect((await uninstall(host)).exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Completed onboarding session authority is incomplete: the session record is malformed. Follow the uninstall guide to recover a completed onboarding session before retrying.",
+      ),
+    );
+    expect(error.mock.calls.flat().join(" ")).not.toContain("private-fixture-id");
+    expect(fs.readFileSync(file)).toEqual(malformed);
+    expect(host.runModelCleanup).not.toHaveBeenCalled();
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+    expect(host.rmSync).not.toHaveBeenCalled();
+
+    fs.writeFileSync(file, saved);
+    error.mockClear();
+    expect((await uninstall(host)).exitCode).toBe(1);
+    expect(error).not.toHaveBeenCalledWith(
+      expect.stringContaining("session authority is incomplete"),
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Portable lifecycle state is unsafe"),
+    );
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+    expect(host.rmSync).not.toHaveBeenCalled();
+  });
+
   it.each<[string, (session: Record<string, unknown>) => void]>([
     [
       "session machine is incomplete",
@@ -552,10 +595,91 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining("Portable lifecycle state is unsafe"),
     );
+    expect(error).not.toHaveBeenCalledWith(
+      expect.stringContaining("Completed onboarding session authority is incomplete"),
+    );
     expect(host.runModelCleanup).not.toHaveBeenCalled();
     expect(host.rmSync).not.toHaveBeenCalled();
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
+
+  it.each<[string, (session: Record<string, unknown>) => void]>([
+    ['field "version" is not 1', (session) => void (session.version = 2)],
+    ['field "sessionId" must be a nonempty string', (session) => void (session.sessionId = "")],
+    [
+      'field "sandboxName" must be a nonempty string',
+      (session) => void (session.sandboxName = null),
+    ],
+    ['field "agent" is not a string or null', (session) => void (session.agent = 7)],
+    [
+      'field "machine" is not a complete version 1 snapshot',
+      (session) => void ((session.machine as Record<string, unknown>).revision = -1),
+    ],
+    [
+      'field "checkpoint" is not a complete schema 4 checkpoint for this session',
+      (session) =>
+        void ((session.checkpoint as Record<string, unknown>).machineState = "preflight"),
+    ],
+    [
+      "the session record does not load as a completed onboarding session",
+      (session) => void (session.compatibleEndpointReasoningEffort = "extreme"),
+    ],
+    [
+      'field "apfInterceptorRequested" must be a boolean',
+      (session) => void (session.apfInterceptorRequested = "invalid"),
+    ],
+    [
+      'field "cancellationRecovery" has incomplete recovery authority',
+      (session) => void (session.cancellationRecovery = "invalid"),
+    ],
+    [
+      'field "externalComponentActivation" has incomplete activation evidence',
+      (session) => void (session.externalComponentActivation = "invalid"),
+    ],
+    [
+      'field "pendingPolicySelection" is invalid',
+      (session) => void (session.pendingPolicySelection = "invalid"),
+    ],
+    [
+      'field "checkpoint.sandboxIdentity" does not match "sandboxName" and "agent"',
+      (session) => {
+        const checkpoint = session.checkpoint as Record<string, Record<string, unknown>>;
+        checkpoint.sandboxIdentity.value = { name: "openclaw-sandbox", agent: "hermes" };
+      },
+    ],
+    [
+      'field "checkpoint.gatewayAuthority" is not selected',
+      (session) =>
+        void ((session.checkpoint as Record<string, unknown>).gatewayAuthority = { kind: "unset" }),
+    ],
+    [
+      'field "metadata.gatewayName" does not match "checkpoint.gatewayAuthority"',
+      (session) => void ((session.metadata as Record<string, unknown>).gatewayName = "other"),
+    ],
+  ])(
+    "names completed Portable session %s and its recovery (#14352)",
+    async (defect, corruptSession) => {
+      const host = scope("nemoclaw-uninstall-portable-session-field-");
+      completedOpenClawAuthority(host, "portable");
+      const sessionFile = path.join(host.stateDir, "onboard-session.json");
+      mutateJsonFile(sessionFile, corruptSession);
+      const sessionBefore = fs.readFileSync(sessionFile);
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const result = await uninstall(host);
+
+      expect(result.exitCode).toBe(1);
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `Portable lifecycle state is unsafe: Completed onboarding session authority is incomplete: ${defect}. Follow the uninstall guide to recover a completed onboarding session before retrying.`,
+        ),
+      );
+      expect(fs.readFileSync(sessionFile)).toEqual(sessionBefore);
+      expect(host.runModelCleanup).not.toHaveBeenCalled();
+      expect(host.rmSync).not.toHaveBeenCalled();
+      expect(host.runPortableCleanup).not.toHaveBeenCalled();
+    },
+  );
 
   it("removes the state directory a failed onboarding left behind (#9573)", async () => {
     const host = scope("nemoclaw-uninstall-state-");

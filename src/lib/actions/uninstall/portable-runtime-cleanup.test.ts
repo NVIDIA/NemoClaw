@@ -566,22 +566,29 @@ describe("portable runtime uninstall cleanup", () => {
     expect(hasPortableRuntimeCleanup(ordinary.stateDir)).toBe(false);
   });
 
-  it.each([false, true])(
-    "supersedes the retry record only after durable completed onboarding (portable=%s) (#9189)",
-    async (portable) => {
-      const { authority, test } = retiredOnboardAuthority(portable);
-      const record = path.join(test.stateDir, "portable-uninstall-retirement.json");
-
+  const malformed = (file: string) => fs.writeFileSync(file, "{");
+  const wrongGateway = (file: string) =>
+    rewriteJson(file, (raw) => (raw.metadata.gatewayName = "other-gateway"));
+  it.each([
+    ["default", "session record is malformed", malformed],
+    ["portable", "session record is malformed", malformed],
+    ["portable", 'field "metadata.gatewayName"', wrongGateway],
+  ] as const)(
+    "retires the previous record after restoring the %s session: %s",
+    async (profile, reason, damage) => {
+      const { authority, test } = retiredOnboardAuthority(profile === "portable");
+      const { sessionFile, registryFile } = authority.boundary;
+      const saved = fs.readFileSync(sessionFile);
+      const registry = fs.readFileSync(registryFile);
+      damage(sessionFile);
+      await expect(supersedeCompleted(authority)).rejects.toThrow(reason);
+      expect(hasPortableRetirementRecord(test.homeDir)).toBe(true);
+      fs.writeFileSync(sessionFile, saved);
       await supersedeCompleted(authority);
-
-      expect(fs.existsSync(record)).toBe(false);
-      expect(
-        fs
-          .readdirSync(test.stateDir)
-          .filter((name) => name.includes("portable-uninstall-retirement")),
-      ).toEqual([]);
-      expect(fs.existsSync(authority.boundary.sessionFile)).toBe(true);
-      expect(fs.existsSync(authority.boundary.registryFile)).toBe(true);
+      const files = fs.readdirSync(test.stateDir);
+      expect(files.filter((name) => name.includes("portable-uninstall-retirement"))).toEqual([]);
+      expect(fs.readFileSync(sessionFile)).toEqual(saved);
+      expect(fs.readFileSync(registryFile)).toEqual(registry);
     },
   );
 
@@ -819,6 +826,14 @@ describe("portable runtime uninstall cleanup", () => {
 
     await expect(supersedeCompleted(scope.authority)).rejects.toThrow();
     expect(hasPortableRetirementRecord(scope.test.homeDir)).toBe(true);
+  });
+
+  it("names a completed onboarding profile mismatch before supersession (#14352)", async () => {
+    const { authority, test } = retiredOnboardAuthority(false);
+    await expect(supersedeCompleted({ ...authority, profile: "portable" })).rejects.toThrow(
+      'authority is incomplete: field "checkpoint.profile" is not "portable".',
+    );
+    expect(hasPortableRetirementRecord(test.homeDir)).toBe(true);
   });
 
   it.each([

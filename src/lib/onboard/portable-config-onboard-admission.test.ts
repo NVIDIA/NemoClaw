@@ -7,7 +7,12 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { readPortableAuthorityDirectory } from "../state/portable-uninstall-retirement";
+import {
+  hasPortableRetirementRecord,
+  preparePortableRetirement,
+  publishAndRetirePortableEvidence,
+  readPortableAuthorityDirectory,
+} from "../state/portable-uninstall-retirement";
 import {
   type PortableOnboardRetirementBoundary,
   type PortableRetirementAuthorityDeps,
@@ -31,11 +36,11 @@ function boundary(stateDir = path.join(homeDir, ".nemoclaw")): PortableOnboardRe
   };
 }
 
-function writeLifecycleReceipt(): void {
+function writeLifecycleReceipt(name = "sandbox.json"): void {
   const receipts = path.join(homeDir, ".nemoclaw/portable-demo-lifecycle");
   fs.mkdirSync(receipts, { recursive: true, mode: 0o700 });
   fs.chmodSync(receipts, 0o700);
-  fs.writeFileSync(path.join(receipts, "sandbox.json"), "{}\n", { mode: 0o600 });
+  fs.writeFileSync(path.join(receipts, name), "{}\n", { mode: 0o600 });
 }
 
 function makePortableConfigDir(mode: number): string {
@@ -94,6 +99,33 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
     await expect(
       supersedePortableRetirementAfterCompletedOnboard(boundary(), "default", deps),
     ).resolves.toBeUndefined();
+  });
+
+  it("keeps the retirement record when completed Portable onboarding cannot decode its session", async () => {
+    const target = { ...boundary(), registryFile: path.join(homeDir, ".nemoclaw/sandboxes.json") };
+    const receipt = `${"a".repeat(64)}.json`;
+    writeLifecycleReceipt(receipt);
+    fs.writeFileSync(path.join(makePortableConfigDir(0o700), "containers.conf"), "[engine]\n", {
+      mode: 0o600,
+    });
+    fs.writeFileSync(target.registryFile, "{}\n", { mode: 0o600 });
+    publishAndRetirePortableEvidence(preparePortableRetirement(homeDir, [receipt]));
+    const malformed = Buffer.concat([
+      Buffer.from('{"id":"'),
+      Buffer.from([0xff]),
+      Buffer.from('"}'),
+    ]);
+    fs.writeFileSync(target.sessionFile, malformed, { mode: 0o600 });
+    const withLifecycleLock = vi.spyOn(deps, "withLifecycleLock");
+
+    await expect(
+      supersedePortableRetirementAfterCompletedOnboard(target, "portable", deps),
+    ).rejects.toThrow(
+      "Completed onboarding session authority is incomplete: the session record is malformed. Follow the uninstall guide to recover a completed onboarding session before retrying.",
+    );
+    expect(withLifecycleLock).not.toHaveBeenCalled();
+    expect(fs.readFileSync(target.sessionFile)).toEqual(malformed);
+    expect(hasPortableRetirementRecord(homeDir)).toBe(true);
   });
 
   it("leaves the abandoned directory untouched", async () => {
