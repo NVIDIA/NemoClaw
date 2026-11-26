@@ -5,7 +5,14 @@ import type { ModelSelectionProvenance } from "../domain/telemetry/provenance";
 import type { NimStartReceipt } from "../inference/nim";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { canonicalEndpoint, normalizeProviderBaseUrl } from "../core/url-utils";
-import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
+import {
+  MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  parsePositiveInteger,
+} from "../inference/ollama-runtime-context";
+import {
+  applyCompatibleEndpointContextWindow,
+  isAutoDetectedCompatibleContextWindow,
+} from "../inference/compatible-endpoint-context";
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import { getProbeExtraHeaders } from "../inference/onboard-probes";
@@ -52,6 +59,7 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   allowToolsIncompatible: boolean;
   /** Minimum Ollama daemon context length to request for this agent. */
   ollamaContextWindowFloor?: number;
+  nonInteractive?: boolean;
   skipHostInferenceSmoke?: boolean;
   /** Public addresses approved for the selected custom endpoint. */
   endpointPinnedAddresses?: string[];
@@ -411,6 +419,20 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
             selectedModel,
             { credentialEnv: selectedCredentialEnv },
           );
+          const contextWindow = parsePositiveInteger(process.env.NEMOCLAW_CONTEXT_WINDOW);
+          const floor = state.ollamaContextWindowFloor ?? 0;
+          if (
+            floor > MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW &&
+            contextWindow !== null &&
+            contextWindow < floor
+          ) {
+            const message = isAutoDetectedCompatibleContextWindow()
+              ? `${selectedModel} has a ${contextWindow}-token context window, below the ${floor} this agent requires. Choose a larger model.`
+              : `NEMOCLAW_CONTEXT_WINDOW=${contextWindow} is below the ${floor} tokens this agent requires. Raise or unset NEMOCLAW_CONTEXT_WINDOW.`;
+            if (state.nonInteractive) throw new Error(message);
+            (deps.log ?? console.log)(`  ✗ ${message}`);
+            return "retry-model";
+          }
           const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
           if (
             explicitApi &&
