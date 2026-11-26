@@ -200,6 +200,9 @@ Restore the most recent backup or a specific timestamp:
 ./scripts/backup-workspace.sh restore my-assistant 20260320-120000
 ```
 
+If an upload fails, the helper still tries the remaining items, then exits with a nonzero status and names the items that did not restore.
+Fix the reported errors, then run the same restore command again.
+
 Verify the saved files:
 
 ```bash
