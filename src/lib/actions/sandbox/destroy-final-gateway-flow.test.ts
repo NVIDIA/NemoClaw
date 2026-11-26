@@ -8,6 +8,7 @@ import {
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+import type { SandboxEntry } from "../../state/registry";
 import type { SandboxDestroyExecutionResult } from "./destroy-execution";
 
 const TERMINATING_ALPHA_LIST =
@@ -207,5 +208,100 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
     expect(warnOutput(harness)).toContain(
       "the local sandbox registry no longer confirms this was the last sandbox",
     );
+  });
+
+  it("refuses --cleanup-gateway with a nonzero exit when a peer sandbox still uses the gateway (#14426)", async () => {
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+    });
+    // The peer survives this destroy and stays registered on the same gateway,
+    // so the gateway is legitimately kept and --cleanup-gateway applies to nothing.
+    harness.setCrossRootGatewayCleanupOwners([
+      {
+        name: "cleanup-peer",
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19080,
+      } as SandboxEntry,
+    ]);
+
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+    ).rejects.toThrow("process.exit(1)");
+
+    expect(harness.executeSandboxDestroySpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.finalGatewaySleepSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    // Preserving the gateway is the correct outcome, but the requested cleanup
+    // was not applied, so the exit status must not report success.
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(warnOutput(harness)).toContain("--cleanup-gateway was not applied");
+    expect(warnOutput(harness)).toContain("sandbox 'cleanup-peer'");
+    expect(warnOutput(harness)).toContain("openshell gateway remove nemoclaw-19080");
+  });
+
+  it("emits the residual-provider hint before the nonzero exit when a peer blocks the cleanup (#14426)", async () => {
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: {
+        ...SUCCESSFUL_DESTROY_RESULT,
+        detachOutcome: {
+          detached: [],
+          failures: [{ name: "provider-a", output: "detach failed" }],
+        },
+      },
+    });
+    // Run the real emitter: a stubbed helper proves only that the action called
+    // something before exiting, not that the operator receives the guidance.
+    harness.emitProviderDetachResidualHintSpy.mockRestore();
+    harness.setCrossRootGatewayCleanupOwners([
+      {
+        name: "cleanup-peer",
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19080,
+      } as SandboxEntry,
+    ]);
+
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+    ).rejects.toThrow("process.exit(1)");
+
+    // The refusal must not swallow the provider names and the detach-then-delete
+    // commands: those are the only remediation the operator gets. Assert the text
+    // the operator actually sees rather than that a helper was called, because a
+    // stubbed helper proves the call order and nothing about the guidance.
+    expect(warnOutput(harness)).toContain("provider-a");
+    expect(warnOutput(harness)).toContain("openshell sandbox provider detach alpha <name>");
+    expect(warnOutput(harness)).toContain("openshell provider delete <name>");
+    // The success line is the other half of what the refusal used to skip, so pin
+    // it too: the operator is told the sandbox went away *and* why cleanup didn't.
+    const logOutput = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logOutput).toContain("Sandbox 'alpha' destroyed");
+    // Ordering is still the point of the fix: the residual guidance and the
+    // destroyed line both precede exit 1, so neither is dropped by the refusal.
+    const outputOrder = harness.warnSpy.mock.invocationCallOrder[0]!;
+    expect(outputOrder).toBeLessThan(exitSpy.mock.invocationCallOrder[0]!);
+    const exitOrder = exitSpy.mock.invocationCallOrder[0]!;
+    expect(harness.logSpy.mock.invocationCallOrder[0]!).toBeLessThan(exitOrder);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("stays silent about gateway cleanup when a peer remains and cleanup was not requested (#14426)", async () => {
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+    });
+    harness.setCrossRootGatewayCleanupOwners([
+      {
+        name: "cleanup-peer",
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19080,
+      } as SandboxEntry,
+    ]);
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(warnOutput(harness)).not.toContain("--cleanup-gateway was not applied");
   });
 });

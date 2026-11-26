@@ -67,6 +67,7 @@ export type DestroyHarness = {
   portableDestroyVerifyAbsentSpy: MockInstance;
   revokeHttpsPinRuntimeAdapterRouteSpy: MockInstance;
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
+  emitProviderDetachResidualHintSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSandboxProviderPreDeleteCleanupSpy: MockInstance;
   sessionState: Session;
@@ -695,9 +696,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       events.push("detach");
       return { detached: options.detachedProviders ?? [], failures: [] };
     });
-  vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
-    () => undefined,
-  );
+  const emitProviderDetachResidualHintSpy = vi
+    .spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint")
+    .mockImplementation(() => undefined);
   const removeManagedAgentStateVolumesSpy = vi
     .spyOn(sandboxProviderCleanup, "removeManagedAgentStateVolumes")
     .mockReturnValue(options.managedAgentStateVolumeCleanupResults ?? []);
@@ -833,6 +834,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     retirePortableLifecycleReceiptSpy,
     revokeHttpsPinRuntimeAdapterRouteSpy,
     restoreMcpBridgesAfterDestroyAbortSpy,
+    emitProviderDetachResidualHintSpy,
     runOpenshellSpy,
     sessionState,
     setDockerIdentityResult: (result) => {
