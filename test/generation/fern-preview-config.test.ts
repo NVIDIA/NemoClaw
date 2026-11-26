@@ -25,7 +25,11 @@ describe("Fern preview configuration", () => {
       mkdirSync(generated);
       writeFileSync(
         path.join(repo, "docs/index.mdx"),
-        "[Quickstart](../openclaw/get-started/quickstart)",
+        [
+          "[Quickstart](../openclaw/get-started/quickstart)",
+          '<Card href="https://docs.nvidia.com/nemoclaw/v1/install">Install Agent Configs</Card>',
+          "[Migration guide](https://docs.nvidia.com/nemoclaw/v1/migration)",
+        ].join("\n"),
       );
       const site =
         "products:\n  - display-name: v0\n    slug: v0\n    path: ../docs/index.yml\n  - display-name: v1\n    href: https://docs.nvidia.com/nemoclaw/v1/home\n    target: _self\n";
@@ -44,6 +48,9 @@ describe("Fern preview configuration", () => {
       expect(
         parse(readFileSync(path.join(staging, "fern/docs.yml"), "utf8")).products[1].href,
       ).toBe("https://preview.example.com/docs/v1/home");
+      expect(readFileSync(path.join(staging, "docs/index.mdx"), "utf8")).toContain(
+        'href="https://preview.example.com/docs/v1/install"',
+      );
       expect(readdirSync(path.join(staging, "fern"))).toEqual(["docs.yml"]);
 
       prepareStagingProject(repo, destination, generated);
@@ -65,8 +72,14 @@ describe("Fern preview configuration", () => {
       const [home, overview] = navigation;
       expect([home.slug, overview.slug]).toEqual(["home", "overview"]);
       const directory = path.dirname(navigationFile);
-      expect(readFileSync(path.resolve(directory, home.path), "utf8")).toBe(
+      const v1Home = readFileSync(path.resolve(directory, home.path), "utf8");
+      expect(v1Home).toContain(
         "[Quickstart](/nemoclaw/v0/user-guide/openclaw/get-started/quickstart)",
+      );
+      expect(v1Home).toContain('href="/nemoclaw/v1/install"');
+      expect(v1Home).toContain("[Migration guide](/nemoclaw/v1/migration)");
+      expect(readFileSync(path.join(destination, "docs/index.mdx"), "utf8")).toContain(
+        'href="/nemoclaw/v1/install"',
       );
       expect(readFileSync(path.resolve(directory, overview.path), "utf8")).toBe(
         "# v1 deployment guide",
