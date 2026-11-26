@@ -107,7 +107,7 @@ run "middleware" {
               try: print(urllib.request.urlopen(url, timeout=10).status)
               except urllib.error.HTTPError as error: print(error.status)
         EOT
-        , jsonencode(yamldecode(file(jsondecode(var.context).config)).spec.sandboxes.assistant.network.policy.explicit.network_policies.fixture.endpoints)]
+        , jsonencode(yamldecode(file(try(jsondecode(var.context), var.context).config)).spec.sandboxes.assistant.network.policy.explicit.network_policies.fixture.endpoints)]
         contains = "200\n403\n200\n403\n"
       }
     }

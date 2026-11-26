@@ -320,22 +320,41 @@ fn local_image(engine: &str, repository: &str, tag: &str) -> Result<String, Stri
 }
 
 /// Destroys the deployment and removes every container, volume, and network
-/// labelled with its UID or in its gateway's sandbox namespace, when dropped.
+/// labelled with its UID or in its gateway's sandbox namespace: through
+/// [`Cleanup::run`], which reports what it could not remove, or when dropped,
+/// such as after a panic.
 struct Cleanup {
     cli: PathBuf,
     state: PathBuf,
     engine: String,
     uid: String,
     workspace: String,
+    done: bool,
 }
 
-impl Drop for Cleanup {
-    fn drop(&mut self) {
+impl Cleanup {
+    /// Fails when destroy fails, when Docker can't list the objects, or when an
+    /// object named after the deployment's workspace remains.
+    fn run(&mut self) -> Result<(), String> {
+        self.done = true;
+        let mut problems = Vec::new();
         if self.state.exists() {
-            let _ = Command::new(&self.cli)
-                .args(["destroy", "--output", "json", "--state-dir"])
+            let destroyed = Command::new(&self.cli)
+                .args([
+                    "destroy",
+                    "--output",
+                    "json",
+                    "--progress",
+                    "off",
+                    "--state-dir",
+                ])
                 .arg(&self.state)
-                .status();
+                .stdout(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+            if !destroyed {
+                problems.push("nemoclaw destroy failed".to_owned());
+            }
         }
         let owner = format!("label=nemoclaw.nvidia.com/uid={}", self.uid);
         let sandboxes = format!(
@@ -362,20 +381,38 @@ impl Drop for Cleanup {
                 let _ = docker(&self.engine, &[kind, "rm", &id]);
             }
         }
-        let left: Vec<String> = ["container", "volume", "network"]
-            .iter()
-            .flat_map(|kind| {
-                let args: &[&str] = match *kind {
-                    "container" => &["container", "ls", "--all", "--format", "{{.Names}}"],
-                    "volume" => &["volume", "ls", "--format", "{{.Name}}"],
-                    _ => &["network", "ls", "--format", "{{.Name}}"],
-                };
-                docker(&self.engine, args).unwrap_or_default()
-            })
-            .filter(|name| name.starts_with(&self.workspace))
-            .collect();
+        let mut left = Vec::new();
+        for args in [
+            &["container", "ls", "--all", "--format", "{{.Names}}"][..],
+            &["volume", "ls", "--format", "{{.Name}}"],
+            &["network", "ls", "--format", "{{.Name}}"],
+        ] {
+            match docker(&self.engine, args) {
+                Some(names) => left.extend(
+                    names
+                        .into_iter()
+                        .filter(|name| name.starts_with(&self.workspace)),
+                ),
+                None => problems.push(format!("cannot list Docker's {}s", args[0])),
+            }
+        }
         if !left.is_empty() {
-            eprintln!("cleanup left {}: remove them by hand", left.join(", "));
+            problems.push(format!("left {}; remove them by hand", left.join(", ")));
+        }
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("cleanup: {}", problems.join("; ")))
+        }
+    }
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        if !self.done
+            && let Err(error) = self.run()
+        {
+            eprintln!("{error}");
         }
     }
 }
@@ -488,7 +525,7 @@ fn run_row(
     for name in &bound.stub_credentials {
         fs::write(credentials.join(name), &key).map_err(|e| e.to_string())?;
     }
-    let _cleanup = Cleanup {
+    let mut cleanup = Cleanup {
         cli: bundle
             .root()
             .join("bin")
@@ -497,6 +534,7 @@ fn run_row(
         engine: engine.clone(),
         uid: parsed.metadata.uid.to_string(),
         workspace: parsed.workspace(),
+        done: false,
     };
     let scenario = json!({
         "stub": row.stub,
@@ -531,9 +569,11 @@ fn run_row(
     if !bound.replans {
         outcomes.insert(UNCHANGED_PLAN, "not run: the example serves a model");
     }
+    // A failed cleanup fails the row even when every check passed.
+    cleanup.run()?;
     if !output.status.success() && !outcomes.values().any(|outcome| *outcome == "FAILED") {
         return Err(format!(
-            "the lifecycle failed before its cases; see {}",
+            "hcl_live::case failed although no check did; see its output and {}",
             run.display()
         ));
     }

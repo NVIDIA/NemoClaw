@@ -76,9 +76,12 @@ run "case_005_reply" {
 
   # READY, then 391, from every agent the deployment names, as 005-DEPLOY
   # asks.
+  # var.context is a JSON string while the run block runs and the root
+  # module's object when tofu test destroys the run's state afterward, so
+  # read it either way; jsondecode alone fails that cleanup.
   variables {
     targets = merge([
-      for name, sandbox in yamldecode(file(jsondecode(var.context).config)).spec.sandboxes : {
+      for name, sandbox in yamldecode(file(try(jsondecode(var.context), var.context).config)).spec.sandboxes : {
         "${name}-ready" = {
           agent            = sandbox.agent.name
           request          = "Reply with exactly READY."
