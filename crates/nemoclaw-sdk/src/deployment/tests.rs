@@ -36,20 +36,45 @@ fn pod_document() -> Document {
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
 }
 
-/// The bundled CLI can't take a cluster gateway's bearer token, so plan and
-/// apply say why and link the issue that tracks it; an external OIDC gateway
-/// instead gets the OpenShell arguments that register it once.
+/// Only NemoClaw gets a development cluster's tokens, and an unpublished
+/// cluster has no address for the CLI, so plan and apply say why; an OIDC
+/// gateway, external or a published managed cluster, instead gets the
+/// OpenShell arguments that register it once.
 #[test]
 fn bundled_openshell_access_follows_the_gateway_authentication() {
     let (cluster, _) = kubernetes_context();
+    let mut value = serde_json::to_value(&cluster).unwrap();
+    value["spec"]["gateway"]["target"]["kubernetes"]["authentication"] = json!({
+        "profile":"oidc", "token":{"env":"TEST_TOKEN"}, "clientId":"openshell-cli"
+    });
+    value["spec"]["gateway"]["config"] = json!({"openshell.gateway.oidc": {
+        "issuer":"https://idp.example.com/realms/openshell", "audience":"openshell"
+    }});
+    let unpublished = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    value["spec"]["gateway"]["target"]["kubernetes"]["expose"] = json!({
+        "endpoint":"https://gateway.example.com:30080", "service":{"type":"NodePort"}
+    });
+    let published = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     if crate::bundle::openshell_available() {
-        let reason = openshell_cli::unavailable(&cluster.spec.gateway).unwrap();
-        assert!(
-            reason.contains("https://github.com/NVIDIA/NemoClaw/issues/14880"),
-            "{reason}"
-        );
+        for (document, expected) in [(&cluster, "testing"), (&unpublished, "expose")] {
+            let reason = openshell_cli::unavailable(&document.spec.gateway).unwrap();
+            assert!(reason.contains(expected), "{reason}");
+        }
+        assert_eq!(openshell_cli::unavailable(&published.spec.gateway), None);
     }
     assert_eq!(openshell_cli::registration(&cluster), None);
+    assert_eq!(
+        openshell_cli::registration(&published),
+        Some(vec![
+            "gateway".to_owned(),
+            "add".to_owned(),
+            "https://gateway.example.com:30080".to_owned(),
+            format!("--name={}", published.workspace()),
+            "--oidc-issuer=https://idp.example.com/realms/openshell".to_owned(),
+            "--oidc-client-id=openshell-cli".to_owned(),
+            "--oidc-audience=openshell".to_owned(),
+        ])
+    );
     let local =
         Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
             .unwrap();

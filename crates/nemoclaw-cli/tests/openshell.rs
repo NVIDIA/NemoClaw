@@ -15,14 +15,21 @@ fn osh(root: &Path, gateway: serde_json::Value, script: &str) -> Command {
             .unwrap(),
     )
     .unwrap();
-    for (key, value) in gateway.as_object().into_iter().flatten() {
-        document["spec"]["gateway"][key] = value.clone();
+    if gateway.get("management").is_some() {
+        document["spec"]["gateway"] = gateway;
+        // Cluster sandboxes name their image metadata.
+        document["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+            serde_json::json!({"env":"IMAGE_METADATA"});
+    } else {
+        for (key, value) in gateway.as_object().into_iter().flatten() {
+            document["spec"]["gateway"][key] = value.clone();
+        }
     }
     let document: Document = serde_json::from_value(document).unwrap();
     let state = root.join("state");
     fs::create_dir_all(&state).unwrap();
-    let record = serde_json::json!({
-        "version":34, "digest":document.digest(), "document":document,
+    let mut record = serde_json::json!({
+        "version":35, "digest":document.digest(), "document":document,
         "generations":{
             "workspace":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "sandbox":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -30,6 +37,11 @@ fn osh(root: &Path, gateway: serde_json::Value, script: &str) -> Command {
             "managed_gateway":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
     });
+    if document.spec.gateway.as_kubernetes().is_some() {
+        for kind in ["kubernetes_gateway", "kubernetes_storage"] {
+            record["generations"][kind] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into();
+        }
+    }
     fs::write(
         state.join("intent.json"),
         serde_json::to_vec(&record).unwrap(),
@@ -100,6 +112,42 @@ fn an_oidc_gateway_runs_openshell_directly() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(output.stdout, b"ran status\n");
+}
+
+/// A published managed cluster with an OIDC issuer is reached at its endpoint
+/// with the CA that apply keeps in the state directory.
+#[test]
+fn a_published_managed_oidc_gateway_runs_openshell_with_its_ca() {
+    let root = tempfile::tempdir().unwrap();
+    let client = root.path().join("state/kubernetes/client");
+    fs::create_dir_all(&client).unwrap();
+    fs::write(client.join("ca.crt"), "CA").unwrap();
+    let gateway = serde_json::json!({
+        "management":"managed",
+        "target":{"kubernetes":{
+            "namespace":"agents",
+            "authentication":{"profile":"oidc", "token":{"env":"GATEWAY_TOKEN"}, "clientId":"openshell-cli"},
+            "expose":{"endpoint":"https://gateway.example.com:30080", "service":{"type":"NodePort"}}
+        }},
+        "config":{"openshell.gateway.oidc":{"issuer":"https://idp.example.com", "audience":"openshell"}}
+    });
+    let output = osh(
+        root.path(),
+        gateway,
+        "#!/bin/sh\nprintf '%s\\n' \"$OPENSHELL_GATEWAY_ENDPOINT\"\ncd \"$XDG_CONFIG_HOME/openshell/gateways/$OPENSHELL_GATEWAY/mtls\" && cat ca.crt\n",
+    )
+    .arg("status")
+    .output()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "https://gateway.example.com:30080\nCA"
+    );
 }
 
 /// The bundled CLI can't carry a bearer token, so a gateway that needs one is

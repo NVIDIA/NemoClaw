@@ -1625,6 +1625,13 @@
           "type": "string",
           "x-nemoclaw-error": "caConfigMap must be a Kubernetes ConfigMap name"
         },
+        "clientId": {
+          "description": "Identity-provider client that `nemoclaw osh` signs in with, for `oidc` on a gateway that `expose` publishes.",
+          "maxLength": 253,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f]+$",
+          "type": "string"
+        },
         "profile": {
           "description": "`development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer, configured in spec.gateway.config's openshell.gateway.oidc table.",
           "oneOf": [

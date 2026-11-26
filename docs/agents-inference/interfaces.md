@@ -9,7 +9,7 @@ You reach them through OpenShell commands, not published host ports.
 
 ## Selecting the Gateway and Workspace
 
-For plaintext, mTLS, or external OIDC gateways on Linux and macOS Apple silicon, use the bundled CLI:
+For plaintext, mTLS, or OIDC gateways on Linux and macOS Apple silicon, use the bundled CLI:
 
 ```sh
 nemoclaw osh --state-dir .nemoclaw -- sandbox list
@@ -22,7 +22,7 @@ For an external OIDC gateway, first run the `Register once:` command that plan a
 
 ### Selecting a Standalone CLI for Bearer-Token Gateways
 
-For bearer-token gateways without OIDC login settings, including managed Kubernetes or OpenShift, use a separately configured OpenShell CLI instead.
+For bearer-token gateways without OIDC login settings, and unpublished managed Kubernetes or OpenShift gateways, use a separately configured OpenShell CLI instead.
 In the commands below, replace `nemoclaw osh --` with `openshell` after selecting the gateway and workspace as follows.
 
 Use an OpenShell CLI matching the deployment implementation revision on the client host.
