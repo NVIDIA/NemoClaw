@@ -48,7 +48,7 @@ OpenShell keeps the deployment's configuration in `<state-dir>/openshell/`, apar
 | OIDC | Sign in once, as [Logging In to an OIDC Gateway](#logging-in-to-an-oidc-gateway) describes. |
 
 The gateway must have an endpoint that this host can reach; for a managed Kubernetes or OpenShift gateway, publish it with `expose`.
-For a gateway without one, or one that accepts only a bearer token, use a [separately configured OpenShell CLI](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways).
+An external gateway needs sign-in settings (`gateway.oidc`) in the YAML; with only a token (`credential`), or without an endpoint, use a [separately configured OpenShell CLI](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways).
 
 #### Logging In to an OIDC Gateway
 

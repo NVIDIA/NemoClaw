@@ -22,7 +22,7 @@ For an OIDC gateway, first sign in once, as [Logging In to an OIDC Gateway](../r
 
 ### Selecting a Standalone CLI for Bearer-Token Gateways
 
-For a gateway that accepts only a bearer token, or that this host can't reach at an endpoint, use a separately configured OpenShell CLI instead.
+For an external gateway with only a token (`credential`) and no sign-in settings (`gateway.oidc`), or a gateway that this host can't reach at an endpoint, use a separately configured OpenShell CLI instead.
 In the commands below, replace `nemoclaw osh --` with `openshell` after selecting the gateway and workspace as follows.
 
 Use an OpenShell CLI matching the deployment implementation revision on the client host.

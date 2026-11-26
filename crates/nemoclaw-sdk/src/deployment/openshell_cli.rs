@@ -30,7 +30,7 @@ pub(super) fn unavailable(gateway: &crate::config::Gateway) -> Option<&'static s
             external.credential.is_some() && external.oidc.is_none()
         }
     };
-    bearer.then_some("the bundled OpenShell CLI cannot use this gateway's bearer token yet (https://github.com/NVIDIA/NemoClaw/issues/14880); use a separately authenticated OpenShell CLI where supported")
+    bearer.then_some("this gateway has a token but no sign-in settings; add gateway.oidc to sign in with nemoclaw osh, or use a separately configured OpenShell CLI")
 }
 
 /// The `openshell` arguments that register an OIDC gateway in the bundled
