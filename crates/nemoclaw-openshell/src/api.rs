@@ -148,16 +148,13 @@ fn policy_endpoint(
 ) -> Result<serde_json::Value, ObservationError> {
     nemoclaw_backend::validate_endpoint_url(endpoint).map_err(|_| ObservationError::Query)?;
     let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
-    let host = url.host_str().ok_or(ObservationError::Query)?;
+    let (host, ip) = crate::profile::policy_host(&url).ok_or(ObservationError::Query)?;
     if host.contains(['*', '?', '{', '}']) || url.path().contains(['*', '?', '[', ']']) {
         return Err(ObservationError::Query);
     }
     // Match inference profiles: authorize only a selected literal IP, never
     // its surrounding private network. DNS destinations remain OpenShell's.
-    let allowed_ips: Vec<String> = host
-        .trim_matches(['[', ']'])
-        .parse::<std::net::IpAddr>()
-        .ok()
+    let allowed_ips: Vec<String> = ip
         .into_iter()
         .map(|ip| format!("{ip}/{}", if ip.is_ipv4() { 32 } else { 128 }))
         .collect();
@@ -328,12 +325,7 @@ mod tests {
                 8080,
                 vec!["10.42.0.7/32"],
             ),
-            (
-                "https://[fd00::7]/mcp",
-                "[fd00::7]",
-                443,
-                vec!["fd00::7/128"],
-            ),
+            ("https://[fd00::7]/mcp", "fd00::7", 443, vec!["fd00::7/128"]),
             (
                 "https://booking.example.com/mcp",
                 "booking.example.com",

@@ -61,12 +61,22 @@ pub fn definition(
     // OpenShell checks the destination when sandboxes connect.
     nemoclaw_backend::validate_endpoint_url(endpoint).map_err(|_| ObservationError::Query)?;
     let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
-    let allowed_ips = url
-        .host_str()
-        .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+    let allowed_ips = policy_host(&url)
+        .and_then(|(_, ip)| ip)
         .into_iter()
         .collect::<Vec<_>>();
     profile(name, endpoint, kind, authenticated, &allowed_ips)
+}
+
+/// The host a policy endpoint names for `url`, and its address when the host
+/// is a literal IP. OpenShell's proxy strips the brackets from an IPv6
+/// request host before matching, so the policy names it without them.
+pub(crate) fn policy_host(url: &url::Url) -> Option<(String, Option<std::net::IpAddr>)> {
+    Some(match url.host()? {
+        url::Host::Domain(name) => (name.to_owned(), None),
+        url::Host::Ipv4(ip) => (ip.to_string(), Some(ip.into())),
+        url::Host::Ipv6(ip) => (ip.to_string(), Some(ip.into())),
+    })
 }
 
 /// Build a profile for a caller-verified cluster service endpoint.
@@ -129,7 +139,7 @@ fn profile(
     {
         return Err(ObservationError::Query);
     }
-    let host = url.host_str().ok_or(ObservationError::Query)?;
+    let (host, _) = policy_host(&url).ok_or(ObservationError::Query)?;
     let port = url.port_or_known_default().ok_or(ObservationError::Query)?;
     let id = format!("nemoclaw-inference-{name}");
     let key = inference_key_env(name);
@@ -309,6 +319,24 @@ mod tests {
         assert!(profile.binaries.is_empty());
         assert_eq!(profile.endpoints.len(), 1);
         assert_eq!(profile.endpoints[0].allowed_ips, ["172.20.0.1/32"]);
+    }
+
+    #[test]
+    fn ipv6_literal_endpoints_grant_their_address_under_the_host_the_proxy_matches() {
+        // OpenShell's proxy strips the brackets from a request's IPv6 host
+        // before it matches the policy's endpoint host.
+        let profile = definition(
+            "local",
+            "http://[fd00::1]:11434/v1",
+            InferenceProviderKind::Openai,
+            false,
+        )
+        .unwrap();
+        assert_eq!(profile.endpoints.len(), 1);
+        let endpoint = &profile.endpoints[0];
+        assert_eq!(endpoint.host, "fd00::1");
+        assert_eq!(endpoint.port, 11434);
+        assert_eq!(endpoint.allowed_ips, ["fd00::1/128"]);
     }
 
     #[test]
