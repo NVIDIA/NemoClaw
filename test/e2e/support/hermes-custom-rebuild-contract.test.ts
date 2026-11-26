@@ -131,7 +131,13 @@ function harness(
 describe("Hermes custom hosted rebuild evidence", () => {
   it("starts the custom credential with the entrypoint before an unassisted rebuild", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "ambient-key-must-not-repair-restore");
-    const h = harness();
+    const inventory = {
+      ...authenticatedRequest,
+      method: "GET",
+      path: "/v1/models",
+      auth: "missing",
+    };
+    const h = harness({ requests: [inventory, authenticatedRequest] });
     await h.run();
     expect(h.operations).toEqual(["destroy", "configure", "baseline", "rebuild", "post"]);
     expect(h.command.mock.calls[0]!.slice(0, 2)).toEqual([
@@ -210,12 +216,15 @@ describe("Hermes custom hosted rebuild evidence", () => {
   it.each<{ requests: FakeOpenAiCompatibleRequest[] }>([
     { requests: [] },
     { requests: [{ ...authenticatedRequest, auth: "rejected" }] },
+    { requests: [{ ...authenticatedRequest, auth: "missing" }, authenticatedRequest] },
+    { requests: [{ ...authenticatedRequest, authorizationSent: false }, authenticatedRequest] },
+    { requests: [{ ...authenticatedRequest, model: "wrong-model" }, authenticatedRequest] },
     { requests: [{ ...authenticatedRequest, hostHeader: undefined }] },
     { requests: [{ ...authenticatedRequest, hostHeader: "custom-fixture.example:8443" }] },
     { requests: [{ ...authenticatedRequest, model: "wrong-model" }] },
     { requests: [{ ...authenticatedRequest, path: "/v1/models", method: "GET" }] },
   ])(
-    "rejects PONG without a fresh authenticated selected-model request: %j",
+    "rejects PONG unless the first fresh hosted chat authenticates for the selected model: %j",
     async ({ requests }) => {
       const h = harness({ requests });
       await expect(h.run()).rejects.toThrow();

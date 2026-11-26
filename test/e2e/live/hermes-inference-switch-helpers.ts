@@ -455,6 +455,7 @@ export async function expectHermesEndpointTurn(options: {
   redactionValues: string[];
   onEvidence: NonNullable<HermesProbeRetryOptions["onEvidence"]>;
   attempts?: number;
+  requireFirstChat?: boolean;
 }): Promise<void> {
   const offset = options.endpoint.requests().length;
   const payload = JSON.stringify({
@@ -478,17 +479,18 @@ export async function expectHermesEndpointTurn(options: {
         },
       ),
   });
+  const chats = options.endpoint
+    .requests()
+    .slice(offset)
+    .filter(({ method, path }) => method === "POST" && path === "/v1/chat/completions");
+  const candidates = options.requireFirstChat ? chats.slice(0, 1) : chats;
   expect(
-    options.endpoint
-      .requests()
-      .slice(offset)
-      .some(
-        (request) =>
-          request.auth === "ok" &&
-          request.method === "POST" &&
-          request.path === "/v1/chat/completions" &&
-          request.model === options.model,
-      ),
+    candidates.some(
+      ({ auth, model, authorizationSent }) =>
+        auth === "ok" &&
+        model === options.model &&
+        (!options.requireFirstChat || authorizationSent === true),
+    ),
   ).toBe(true);
 }
 
@@ -1015,6 +1017,7 @@ export async function rebuildHermesCustomBaseline({
     model,
     redactionValues,
     attempts: 1,
+    requireFirstChat: true,
     artifactName: "hermes-custom-after-rebuild",
     onEvidence: async (evidence) => {
       await artifacts.writeJson("retry/hermes-custom-after-rebuild.json", evidence);
