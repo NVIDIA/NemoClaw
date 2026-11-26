@@ -28,15 +28,17 @@ On Windows AMD64 or ARM64, [prepare Ubuntu under WSL2](prerequisites.md#preparin
 3. Create a new private working directory.
 
    ```sh
-   mkdir -m 700 "$HOME/nemoclaw-first"
+   deployment_dir=$(mktemp -d "$HOME/nemoclaw-first.XXXXXXXX")
    ```
 
-   If the directory already exists, choose a different unused path.
-4. Change to the new directory. Run the rest of the tutorial there.
+   Continue only if the command succeeds. Each run creates a separate directory under your home directory.
+4. Change to the new directory in the same shell.
 
    ```sh
-   cd "$HOME/nemoclaw-first"
+   cd "${deployment_dir:?Create the working directory first}"
    ```
+
+   Run the rest of the tutorial from this directory. Stop if `cd` fails.
 
 5. Find the OpenClaw `NAME@sha256:DIGEST` in the **Images** table of the [v0.1.0 release notes](https://github.com/NVIDIA/NemoClaw/releases/tag/v0.1.0).
    Use the digest from the same release as the CLI bundle.

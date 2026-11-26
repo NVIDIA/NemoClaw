@@ -503,7 +503,9 @@ If no destroy is unfinished:
 2. Resolve the reported blockers.
 3. Rerun the preview. Start destroy only after a successful, complete preview.
 
-If the state has an unfinished destroy, plan and apply refuse it. Resume the existing teardown instead:
+If the state has an unfinished destroy, `nemoclaw plan deployment.yaml` and `nemoclaw apply deployment.yaml` refuse to proceed.
+`nemoclaw plan --destroy` can still inspect the remaining removals without resuming teardown.
+To resume the existing teardown:
 
 1. Correct the reported cause, such as an expired gateway token.
 2. Resume `nemoclaw destroy --state-dir .local/kubernetes` with the same bundle and state directory.
