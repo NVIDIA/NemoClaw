@@ -20,15 +20,17 @@ const routes = [
   ["compatible-anthropic-endpoint", "openai-responses", "/team", "/team/v1"],
 ] as const;
 
-function selectionFor(provider: string, api: string, logicalPath: string) {
-  const endpointUrl = `https://host.example.test${logicalPath}`;
-  const definition = customNativeProvider({
-    provider,
-    api,
-    endpointUrl,
-    credentialEnv: "TEAM_KEY",
-    allowedIps: ["8.8.8.8"],
-  });
+function selectionFor(provider: string, api: string, endpointUrl: string) {
+  const definition =
+    provider === "hermes-provider"
+      ? hostedNativeProvider(provider, endpointUrl)!
+      : customNativeProvider({
+          provider,
+          api,
+          endpointUrl,
+          credentialEnv: "TEAM_KEY",
+          allowedIps: ["8.8.8.8"],
+        });
   return {
     provider,
     endpointUrl,
@@ -40,7 +42,7 @@ function selectionFor(provider: string, api: string, logicalPath: string) {
       providerName: definition.providerName,
       providerId: "provider-id",
       endpointUrl: definition.endpointUrl,
-      allowedIps: definition.allowedIps,
+      allowedIps: ["8.8.8.8"],
       custom: definition.custom,
     },
   };
@@ -138,10 +140,99 @@ describe("Hermes archive route authority", () => {
     },
   );
 
+  describe.each([
+    ["compatible-endpoint", "openai-completions", "http://203.0.113.10:11541/v1"],
+    ["compatible-anthropic-endpoint", null, "https://llm.example.test/anthropic"],
+    ["hermes-provider", null, "https://portal.example.test/v1"],
+    ["compatible-anthropic-endpoint", "openai-completions", "https://llm.example.test/anthropic"],
+    ["compatible-anthropic-endpoint", "openai-responses", "https://llm.example.test/anthropic"],
+  ] as const)("%s %s registered endpoint authorities", (provider, api, baseUrl) => {
+    const writer = resolveManagedStartupInferenceRoute(
+      "hermes",
+      provider,
+      "m",
+      api ?? "openai-completions",
+      true,
+      baseUrl,
+    );
+    it.each([
+      {
+        name: "conflicting attachment",
+        route: baseUrl,
+        attachment: "https://other.example/route",
+        retained: false,
+      },
+      {
+        name: "conflicting route",
+        route: "https://other.example/route",
+        attachment: baseUrl,
+        retained: false,
+      },
+      { name: "matching records", route: baseUrl, attachment: baseUrl, retained: true },
+      {
+        name: "equivalent URL spelling",
+        route: `${baseUrl}/`,
+        attachment: baseUrl,
+        retained: true,
+      },
+      { name: "attachment only", route: "", attachment: baseUrl, retained: true },
+      {
+        name: "route only",
+        route: baseUrl,
+        attachment: undefined,
+        retained: provider !== "hermes-provider",
+      },
+      { name: "neither endpoint", route: "", attachment: undefined, retained: false },
+      {
+        name: "malformed route",
+        route: "invalid-endpoint",
+        attachment: baseUrl,
+        retained: false,
+      },
+      {
+        name: "credential-bearing route",
+        route: baseUrl.replace("://", "://user:secret@"),
+        attachment: baseUrl,
+        retained: false,
+      },
+      {
+        name: "query-bearing route",
+        route: `${baseUrl}?key=secret`,
+        attachment: baseUrl,
+        retained: false,
+      },
+      {
+        name: "fragment-bearing route",
+        route: `${baseUrl}#other`,
+        attachment: baseUrl,
+        retained: false,
+      },
+    ])("requires one consistent endpoint: $name (#14300)", ({ route, attachment, retained }) => {
+      const bound =
+        attachment === undefined
+          ? undefined
+          : selectionFor(provider, api ?? writer.inferenceApi, attachment);
+      const registered = hermesRegisteredRoute({
+        ...bound,
+        provider,
+        endpointUrl: route || undefined,
+        preferredInferenceApi: bound?.preferredInferenceApi ?? api,
+      });
+      const reference = hermesManagedRouteReference(provider, writer.inferenceBaseUrl, registered);
+      const expected =
+        provider === "hermes-provider"
+          ? "${OPENAI_API_KEY}"
+          : provider === "compatible-endpoint"
+            ? "${COMPATIBLE_API_KEY}"
+            : "${COMPATIBLE_ANTHROPIC_API_KEY}";
+      expect(reference?.template ?? null).toBe(retained ? expected : null);
+    });
+  });
+
   it.each(routes)(
     "validates %s %s archives against the agent endpoint (#14300)",
     (provider, api, logicalPath, agentPath) => {
-      const selection = selectionFor(provider, api, logicalPath);
+      const selection = selectionFor(provider, api, `https://host.example.test${logicalPath}`);
       const definition = customNativeProviderForSelection(selection)!;
       const agentEndpointUrl = `https://host.example.test${agentPath}`;
       expect(definition.custom.endpointUrl).toBe(selection.endpointUrl);
@@ -158,7 +249,7 @@ describe("Hermes archive route authority", () => {
   it.each(routes)(
     "rejects a conflicting logical endpoint for %s %s archives (#14300)",
     (provider, api, logicalPath, agentPath) => {
-      const selection = selectionFor(provider, api, logicalPath);
+      const selection = selectionFor(provider, api, `https://host.example.test${logicalPath}`);
       selection.endpointUrl = "https://other.example.test/team";
       const registered = hermesRegisteredRoute(selection);
       expect(registered).toEqual({ provider, endpointUrl: null });
@@ -171,7 +262,11 @@ describe("Hermes archive route authority", () => {
   it.each(["openai-completions", "openai-responses"])(
     "rejects the logical Anthropic endpoint in an archive using %s (#14300)",
     (api) => {
-      const selection = selectionFor("compatible-anthropic-endpoint", api, "/team");
+      const selection = selectionFor(
+        "compatible-anthropic-endpoint",
+        api,
+        "https://host.example.test/team",
+      );
       const registered = hermesRegisteredRoute(selection);
       expect(
         hermesManagedRouteReference(selection.provider, selection.endpointUrl, registered),

@@ -82,10 +82,16 @@ test(
         "exercise sandbox inference and Hermes API",
         "run Hermes CLI adapter forms against switched provider",
         "reapply Hermes inference after CLI and verify integrity",
-        "verify NVIDIA inference after Discord state rebuild",
+        ...(SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+          ? ["verify NVIDIA inference after Discord state rebuild"]
+          : []),
         "prove split provider/model credential resolution",
-        "onboard and exercise the custom Hermes hosted route",
-        "rebuild the custom Hermes route without a host credential",
+        ...(SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+          ? [
+              "onboard and exercise the custom Hermes hosted route",
+              "rebuild the custom Hermes route without a host credential",
+            ]
+          : []),
       ],
     },
   },

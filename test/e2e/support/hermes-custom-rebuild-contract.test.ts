@@ -49,6 +49,7 @@ function harness(
     destroy?: ShellProbeResult;
     configure?: ShellProbeResult;
     baselineHost?: string;
+    beforeBaselineChat?: FakeOpenAiCompatibleRequest[];
     rebuild?: ShellProbeResult;
     requests?: FakeOpenAiCompatibleRequest[];
     post?: ShellProbeResult;
@@ -78,7 +79,7 @@ function harness(
       const startupHasCustomCredential =
         startup?.[1]?.includes("onboard") && startup[2]?.env?.COMPATIBLE_API_KEY === "fixture-key";
 
-      requests.push({
+      requests.push(...(options.beforeBaselineChat ?? []), {
         ...authenticatedRequest,
         hostHeader: options.baselineHost ?? authenticatedRequest.hostHeader,
         auth: startupHasCustomCredential ? "ok" : "missing",
@@ -137,7 +138,10 @@ describe("Hermes custom hosted rebuild evidence", () => {
       path: "/v1/models",
       auth: "missing",
     };
-    const h = harness({ requests: [inventory, authenticatedRequest] });
+    const h = harness({
+      beforeBaselineChat: [inventory],
+      requests: [inventory, authenticatedRequest],
+    });
     await h.run();
     expect(h.operations).toEqual(["destroy", "configure", "baseline", "rebuild", "post"]);
     expect(h.command.mock.calls[0]!.slice(0, 2)).toEqual([
@@ -204,6 +208,12 @@ describe("Hermes custom hosted rebuild evidence", () => {
     expect(addedBudget).toBe(780_000);
   });
 
+  it("stops before rebuild when the first baseline POST is rejected even if the next returns PONG", async () => {
+    const h = harness({ beforeBaselineChat: [{ ...authenticatedRequest, auth: "rejected" }] });
+    await expect(h.run()).rejects.toThrow();
+    expect(h.operations).toEqual(["destroy", "configure", "baseline"]);
+  });
+
   it.each([{ destroy: result(1) }, { configure: result(1) }, { rebuild: result(1) }])(
     "rejects unsuccessful setup or replacement before a post-rebuild turn: %j",
     async (options) => {
@@ -224,6 +234,12 @@ describe("Hermes custom hosted rebuild evidence", () => {
       ],
     },
     { requests: [{ ...authenticatedRequest, path: "/chat/completions" }, authenticatedRequest] },
+    {
+      requests: [
+        { ...authenticatedRequest, path: "/v1/v1/chat/completions" },
+        authenticatedRequest,
+      ],
+    },
     { requests: [{ ...authenticatedRequest, auth: "missing" }, authenticatedRequest] },
     { requests: [{ ...authenticatedRequest, authorizationSent: false }, authenticatedRequest] },
     { requests: [{ ...authenticatedRequest, model: "wrong-model" }, authenticatedRequest] },

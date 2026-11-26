@@ -480,14 +480,11 @@ export async function expectHermesEndpointTurn(options: {
         },
       ),
   });
-  const chats = options.endpoint
+  const posts = options.endpoint
     .requests()
     .slice(offset)
-    .filter(
-      ({ method, path }) =>
-        method === "POST" && ["/chat/completions", "/v1/chat/completions"].includes(path),
-    );
-  const candidates = options.requireFirstChat ? chats.slice(0, 1) : chats;
+    .filter(({ method }) => method === "POST");
+  const candidates = options.requireFirstChat ? posts.slice(0, 1) : posts;
   const hosted = options.hostedUrl;
   expect(
     candidates.some(
@@ -998,6 +995,7 @@ export async function rebuildHermesCustomBaseline({
     model,
     redactionValues,
     attempts: 1,
+    requireFirstChat: true,
     artifactName: "hermes-custom-before-rebuild",
     onEvidence: async (evidence) => {
       await artifacts.writeJson("retry/hermes-custom-before-rebuild.json", evidence);

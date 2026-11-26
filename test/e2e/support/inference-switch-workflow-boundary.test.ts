@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   catalogueTarget,
@@ -18,6 +18,30 @@ import { PUBLIC_NVIDIA_SWITCH_MODEL } from "../live/public-nvidia-switch-provide
 readFreeStandingJobsInventory();
 
 describe("inference-switch catalogue boundary", () => {
+  it.each([
+    ["hermes-inference-switch", "rebuild the custom Hermes route without a host credential"],
+    [
+      "hermes-compatible-anthropic-inference-switch",
+      "prove split provider/model credential resolution",
+    ],
+  ] as const)("ends %s at its last executed phase", async (targetId, finalPhase) => {
+    const register = vi.fn();
+    vi.resetModules();
+    vi.stubEnv(
+      "NEMOCLAW_SWITCH_PROVIDER",
+      catalogueTarget(targetId).environment.NEMOCLAW_SWITCH_PROVIDER,
+    );
+    vi.doMock("../fixtures/e2e-test.ts", () => ({ expect, test: register }));
+    try {
+      await import("../live/hermes-inference-switch.test.ts");
+      expect(register.mock.calls[0]![1].meta.e2ePhases.at(-1)).toBe(finalPhase);
+    } finally {
+      vi.doUnmock("../fixtures/e2e-test.ts");
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
   it.each([
     "src/lib/state/sandbox.ts",
     "src/lib/hermes-managed-route.ts",
