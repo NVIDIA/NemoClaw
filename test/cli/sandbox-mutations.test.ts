@@ -80,6 +80,23 @@ describe.concurrent("CLI dispatch", () => {
     expect(connect.out).not.toContain("sandbox:connect");
   });
 
+  it("prints the sandbox-name placeholder for bare connect help regardless of default sandbox (#14079)", async ({
+    testHome,
+  }) => {
+    const { home } = testHome;
+    writeSandboxRegistry(home);
+
+    const longHelp = await runWithEnvAsync("connect --help", testHome.environment());
+    expect(longHelp.code).toBe(0);
+    expect(longHelp.out).toContain("Usage: nemoclaw <name> connect");
+    expect(longHelp.out).not.toContain("Usage: nemoclaw alpha connect");
+
+    const shortHelp = await runWithEnvAsync("connect -h", testHome.environment());
+    expect(shortHelp.code).toBe(0);
+    expect(shortHelp.out).toContain("Usage: nemoclaw <name> connect");
+    expect(shortHelp.out).not.toContain("Usage: nemoclaw alpha connect");
+  });
+
   it(
     "keeps public compatibility help routes for sandbox command families",
     testTimeoutOptions(30_000),
@@ -90,27 +107,32 @@ describe.concurrent("CLI dispatch", () => {
       const logs = await runWithEnvAsync("alpha logs --help", testHome.environment());
       expect(logs.code).toBe(0);
       expect(logs.out).toContain("$ nemoclaw alpha logs");
+      expect(logs.out.match(/USAGE/g)).toHaveLength(1);
       expect(logs.out).not.toContain("$ nemoclaw sandbox logs");
       expect(logs.out).toContain("--tail");
 
       const policy = await runWithEnvAsync("alpha policy-add --help", testHome.environment());
       expect(policy.code).toBe(0);
       expect(policy.out).toContain("$ nemoclaw alpha policy add");
+      expect(policy.out.match(/USAGE/g)).toHaveLength(1);
       expect(policy.out).not.toContain("$ nemoclaw sandbox policy add");
 
       const hosts = await runWithEnvAsync("alpha hosts-add --help", testHome.environment());
       expect(hosts.code).toBe(0);
       expect(hosts.out).toContain("$ nemoclaw alpha hosts-add");
+      expect(hosts.out.match(/USAGE/g)).toHaveLength(1);
       expect(hosts.out).not.toContain("$ nemoclaw sandbox hosts add");
 
       const channels = await runWithEnvAsync("alpha channels add --help", testHome.environment());
       expect(channels.code).toBe(0);
       expect(channels.out).toContain("$ nemoclaw alpha channels add");
+      expect(channels.out.match(/USAGE/g)).toHaveLength(1);
       expect(channels.out).not.toContain("$ nemoclaw sandbox channels add");
 
       const config = await runWithEnvAsync("alpha config get --help", testHome.environment());
       expect(config.code).toBe(0);
       expect(config.out).toContain("$ nemoclaw alpha config get");
+      expect(config.out.match(/USAGE/g)).toHaveLength(1);
       expect(config.out).not.toContain("$ nemoclaw sandbox config get");
       expect(config.out).toContain("--format json|yaml");
 
