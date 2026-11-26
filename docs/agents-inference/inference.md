@@ -485,6 +485,7 @@ The service's `upstream.endpoint` identifies the external daemon.
 Its `endpoint` identifies the managed proxy and supplies the native inference URL.
 The route's model must match `upstream.model.name`, including its tag, such as `qwen3:4b`.
 The proxy uses the host network and checks that the daemon has no listener on a non-loopback address.
+The proxy's `endpoint` must use a port other than the daemon's, because that check would also find the proxy's own listener.
 Don't declare `endpoint` or `credential` on this provider.
 The referenced service supplies its connection and generated credential.
 The service declaration manages only the proxy.
