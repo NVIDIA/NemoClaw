@@ -774,13 +774,45 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.capture).not.toHaveBeenCalled();
   });
 
-  it("preserves recovery owned by a different runtime provider (#12260)", async () => {
-    const h = await setup();
-    h.writeRuntime(null, new Date(Date.parse(h.record.recordedAt) - 1_000).toISOString(), "podman");
+  function expectPodmanRecoveryRefusal(h: Harness, force: boolean): void {
     const before = h.snapshot();
-    expect(h.run).toThrow(/owning Docker runtime/u);
+    expect(() => h.run(force)).toThrow(
+      "retained recovery is unavailable for Podman gateways. No sandbox resources were removed. " +
+        "The retained recovery record remains unresolved. " +
+        "To start another sandbox, run 'NEMOCLAW_GATEWAY_RUNTIME=podman nemoclaw onboard --name <new-sandbox-name>'.",
+    );
     expect(h.snapshot()).toEqual(before);
-  });
+    expect(h.capture).not.toHaveBeenCalled();
+    expect(h.containers).not.toHaveBeenCalled();
+  }
+
+  it.each([
+    { marker: "accepted", offset: -1_000, configuredRuntime: undefined, force: false },
+    { marker: "accepted", offset: -1_000, configuredRuntime: undefined, force: true },
+    { marker: "newer", offset: 1_000, configuredRuntime: "podman", force: false },
+  ])(
+    "explains the Podman recovery refusal with a $marker marker and force=$force",
+    async ({ offset, configuredRuntime, force }) => {
+      const h = await setup();
+      h.writeRuntime(
+        null,
+        new Date(Date.parse(h.record.recordedAt) + offset).toISOString(),
+        "podman",
+      );
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", configuredRuntime);
+      expectPodmanRecoveryRefusal(h, force);
+    },
+  );
+
+  it.each([false, true])(
+    "explains the Podman recovery refusal without a marker and force=%s",
+    async (force) => {
+      const h = await setup();
+      h.clearRuntime();
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+      expectPodmanRecoveryRefusal(h, force);
+    },
+  );
 
   it("preserves records when more than one failed create uses the same name (#12260)", async () => {
     const h = await setup();

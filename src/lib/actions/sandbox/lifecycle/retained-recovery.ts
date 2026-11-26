@@ -13,6 +13,7 @@ import {
 } from "../../../onboard/sandbox-recreate-transaction";
 import { MANAGED_IMAGE_AGENTS } from "../../../onboard/managed-image/agents";
 import { managedStartupStateRootOwnership } from "../../../onboard/managed-startup/state-roots";
+import { NEMOCLAW_GATEWAY_RUNTIME_ENV } from "../../../onboard/runtime-provider/configured-runtime";
 import type { registryEntryGatewayPort } from "../../../state/gateway-registry";
 import type * as OnboardSession from "../../../state/onboard-session";
 import { resolveNemoclawStateGatewayPort } from "../../../state/paths";
@@ -30,7 +31,7 @@ import {
 } from "../destroy-presence";
 
 type Recovery = OnboardSession.RetainedSandboxRecoveryRecord;
-type RefuseRecovery = (name: string, reason: string) => never;
+type RefuseRecovery = (name: string, reason: string, guidance?: string) => never;
 type RecoveryState = {
   observeSandbox(gatewayName: string): DestroySandboxPresence;
   registryEntryGatewayPort: typeof registryEntryGatewayPort;
@@ -58,14 +59,30 @@ function requireOwnedRuntime(
   state: RecoveryState,
   refuseRecovery: RefuseRecovery = refuse,
 ): void {
-  if (
-    resolveGatewayCleanupRuntimeProviderId(record.gatewayName, entry?.openshellDriver, {
+  const runtimeProviderId = resolveGatewayCleanupRuntimeProviderId(
+    record.gatewayName,
+    entry?.openshellDriver,
+    {
       requireOwnedRuntime: true,
       ...(state.forceLocal || record.createAuthority
         ? { requireDefaultDockerDaemon: true }
         : { recoveryRecordedAt: record.recordedAt }),
-    }) !== "docker"
-  ) {
+    },
+  );
+  if (runtimeProviderId !== "docker") {
+    // Runtime configuration can explain a refusal when ownership is unverified.
+    if (
+      runtimeProviderId === "podman" ||
+      (runtimeProviderId === null &&
+        process.env[NEMOCLAW_GATEWAY_RUNTIME_ENV]?.trim().toLowerCase() === "podman")
+    ) {
+      refuseRecovery(
+        record.sandboxName,
+        "retained recovery is unavailable for Podman gateways",
+        "The retained recovery record remains unresolved. " +
+          `To start another sandbox, run '${NEMOCLAW_GATEWAY_RUNTIME_ENV}=podman nemoclaw onboard --name <new-sandbox-name>'.`,
+      );
+    }
     refuseRecovery(
       record.sandboxName,
       "the owning Docker runtime on the original default daemon could not be established",
@@ -115,17 +132,23 @@ function unpublished(entry: Registry.SandboxEntry | null): boolean {
   );
 }
 
-function refuse(name: string, reason: string): never {
+function refuse(
+  name: string,
+  reason: string,
+  guidance = "Recovery remains unresolved; correct the reported condition, then rerun destroy.",
+): never {
   throw new Error(
-    `Cannot reconcile retained sandbox '${name}': ${reason}. No sandbox resources were removed. ` +
-      "Recovery remains unresolved; correct the reported condition, then rerun destroy.",
+    `Cannot reconcile retained sandbox '${name}': ${reason}. No sandbox resources were removed. ${guidance}`,
   );
 }
 
-function refuseRebuild(name: string, reason: string): never {
+function refuseRebuild(
+  name: string,
+  reason: string,
+  guidance = "Recovery remains unresolved; correct the reported condition, then rerun rebuild.",
+): never {
   throw new Error(
-    `Cannot resume rebuild for retained sandbox '${name}': ${reason}. No sandbox resources were removed. ` +
-      "Recovery remains unresolved; correct the reported condition, then rerun rebuild.",
+    `Cannot resume rebuild for retained sandbox '${name}': ${reason}. No sandbox resources were removed. ${guidance}`,
   );
 }
 
