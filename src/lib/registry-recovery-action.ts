@@ -65,8 +65,9 @@ type RecoveredSandboxMetadata = Partial<
 
 /**
  * Build a minimal-safe registry entry for a recovered sandbox from whatever
- * metadata is known, asserting `agent` only when the seed actually provides it
- * so recovery never clobbers a persisted agent or invents one.
+ * metadata is known, asserting optional fields (`agent`, `observabilityEnabled`,
+ * `gpuEnabled`, `nimContainer`) only when the seed actually provides them so
+ * recovery never clobbers a persisted value or invents one.
  */
 function buildRecoveredSandboxEntry(
   name: string,
@@ -76,22 +77,28 @@ function buildRecoveredSandboxEntry(
     name,
     model: metadata.model || null,
     provider: metadata.provider || null,
-    gpuEnabled: metadata.gpuEnabled === true,
-    nimContainer: metadata.nimContainer || null,
     endpointUrl: metadata.endpointUrl ?? null,
     credentialEnv: metadata.credentialEnv ?? null,
     preferredInferenceApi: metadata.preferredInferenceApi ?? null,
   };
-  // Only assert `agent` when recovery actually knows it. Object.assign in
-  // updateSandbox would otherwise overwrite a persisted agent (e.g. "hermes")
-  // with null whenever the recovery seed has no source of truth — the live
-  // OpenShell gateway does not surface NemoClaw's agent type, and a session
-  // sandbox seed never set this field, so the existing entry must win.
+  // Only assert a field when recovery actually knows it. The shallow merge in
+  // updateSandbox would otherwise overwrite a persisted value whenever the
+  // recovery seed has no source of truth — the live OpenShell gateway does not
+  // surface NemoClaw's agent type, GPU mode, or NIM container, and a session
+  // sandbox seed never set `gpuEnabled`, so the existing entry must win. A
+  // reset `gpuEnabled: false` would also contradict the surviving
+  // `sandboxGpuEnabled`/`sandboxGpuProof` fields, which recovery never writes.
   if (metadata.agent !== undefined && metadata.agent !== null) {
     entry.agent = metadata.agent;
   }
   if (typeof metadata.observabilityEnabled === "boolean") {
     entry.observabilityEnabled = metadata.observabilityEnabled;
+  }
+  if (typeof metadata.gpuEnabled === "boolean") {
+    entry.gpuEnabled = metadata.gpuEnabled;
+  }
+  if (metadata.nimContainer !== undefined && metadata.nimContainer !== null) {
+    entry.nimContainer = metadata.nimContainer;
   }
   return entry;
 }
