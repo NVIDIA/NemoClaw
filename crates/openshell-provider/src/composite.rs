@@ -54,12 +54,15 @@ fn rows(kind: &str, row: &Row) -> Result<(Row, Row), ObservationError> {
     .ok_or(ObservationError::Query)
 }
 
-/// The registration fields an observation reports back to the resource.
+/// The registration fields an observation reports back to the resource. Its
+/// credential variable isn't one: OpenShell keeps a provider's labels when it
+/// updates the provider, so the registration's label names the variable it was
+/// created with, and the resource keeps the variable its state records.
 fn registration_fields(kind: &str) -> &'static [&'static str] {
     match kind {
-        INFERENCE => &["endpoint", "credential_env", "credential_source"],
-        API => &["endpoints_json", "credential_env"],
-        _ => &["credential_env"],
+        INFERENCE => &["endpoint", "credential_source"],
+        API => &["endpoints_json"],
+        _ => &[],
     }
 }
 

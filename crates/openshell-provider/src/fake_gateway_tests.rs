@@ -344,6 +344,7 @@ async fn credential_requests_reads_and_exec_keep_backend_rejection_text_private(
             "UpdateProvider" => {
                 let mut provider = bindings["provider"].clone();
                 provider.insert("credential_env".into(), "SECOND_KEY".into());
+                provider.insert(crate::credential::REGISTER.into(), "true".into());
                 client.ensure("provider", &provider).await.error().unwrap()
             }
             "GetSandbox" => client
@@ -411,9 +412,15 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
             .is_some()
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // A new variable alone sends nothing: the resource asks to register the
+    // credential whenever its variable changes.
     provider.insert("credential_env".into(), "SECOND_KEY".into());
+    let unregistered = client.ensure("provider", &provider).await;
+    assert!(unregistered.error().is_none(), "{:?}", unregistered.error());
+    assert_eq!(fixture.state.lock().unwrap().conditional_updates, 0);
+    provider.insert(crate::credential::REGISTER.into(), "true".into());
     let updated = client.ensure("provider", &provider).await;
-    assert!(updated.error().is_none());
+    assert!(updated.error().is_none(), "{:?}", updated.error());
     assert_eq!(updated.into_parts().0.unwrap()["id"], id);
     assert_eq!(fixture.state.lock().unwrap().conditional_updates, 1);
     fixture.state.lock().unwrap().fail_read = Some(("provider", tonic::Code::Unauthenticated));

@@ -348,7 +348,17 @@ impl OpenShell {
         } else {
             self.observe(kind, workspace, name, false).await
         };
-        let settled = settled(kind, established, want, readback);
+        let mut expected = want.clone();
+        if kind == "provider" && !created {
+            // OpenShell keeps a provider's labels when it updates the
+            // provider, so the registration still names the variable it was
+            // created with.
+            expected.insert(
+                "credential_env".into(),
+                value(&established, "credential_env").into(),
+            );
+        }
+        let settled = settled(kind, established, &expected, readback);
         if kind != "provider" || value(want, crate::credential::REGISTER) != "true" {
             return Ok(settled);
         }
