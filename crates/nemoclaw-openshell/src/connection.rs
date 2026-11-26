@@ -37,6 +37,36 @@ pub struct IdentityFiles {
     pub key_env: String,
 }
 
+/// The TLS files a connection reads, each named by a configuration field.
+#[derive(Clone, Copy)]
+enum TlsFile {
+    Ca,
+    Certificate,
+    Key,
+}
+
+impl TlsFile {
+    /// The diagnostic for a file that cannot be read: the field, never the path.
+    const fn unreadable(self) -> &'static str {
+        match self {
+            Self::Ca => "cannot read the CA file that tls.ca names",
+            Self::Certificate => {
+                "cannot read the client certificate file that tls.certificate names"
+            }
+            Self::Key => "cannot read the client key file that tls.key names",
+        }
+    }
+}
+
+fn read_tls(
+    secrets: &dyn Secrets,
+    reference: &str,
+    file: TlsFile,
+) -> Result<Vec<u8>, ObservationError> {
+    std::fs::read(secrets.resolve(reference)?)
+        .map_err(|_| ObservationError::Backend(file.unreadable()))
+}
+
 /// Configure a lazy channel without network mutation or automatic RPC retry.
 /// Secret references are resolved locally; raw credentials never leave this client.
 pub fn client(
@@ -57,19 +87,16 @@ pub fn client(
     if endpoint.starts_with("https:") {
         let mut tls = ClientTlsConfig::new().with_native_roots();
         if let Some(references) = &connection.tls {
-            let file = |name: &str| -> Result<Vec<u8>, ObservationError> {
-                std::fs::read(secrets.resolve(name)?).map_err(|_| ObservationError::Authentication)
-            };
             // A CA alone pins the gateway's certificate without a client
             // identity, as OpenShell's own client connects to a gateway that
             // authenticates clients by token.
-            tls = ClientTlsConfig::new()
-                .ca_certificate(Certificate::from_pem(file(&references.ca_env)?));
+            let ca = read_tls(secrets, &references.ca_env, TlsFile::Ca)?;
+            tls = ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca));
             if let Some(identity) = &references.identity {
-                tls = tls.identity(Identity::from_pem(
-                    file(&identity.certificate_env)?,
-                    file(&identity.key_env)?,
-                ));
+                let certificate =
+                    read_tls(secrets, &identity.certificate_env, TlsFile::Certificate)?;
+                let key = read_tls(secrets, &identity.key_env, TlsFile::Key)?;
+                tls = tls.identity(Identity::from_pem(certificate, key));
             }
         }
         channel = channel
@@ -343,6 +370,31 @@ mod tests {
                     .contains("credential-sentinel")
             );
         }
+    }
+
+    struct Paths(&'static str);
+    impl Secrets for Paths {
+        fn resolve(&self, _: &str) -> Result<String, ObservationError> {
+            Ok(self.0.into())
+        }
+    }
+
+    #[test]
+    fn an_unreadable_tls_file_names_its_reference_without_its_path() {
+        let missing = "/nonexistent/sentinel-path.pem";
+        let connection = Connection {
+            endpoint: "https://gateway.example:8080".into(),
+            tls: Some(TlsFiles {
+                ca_env: "CA".into(),
+                identity: None,
+            }),
+            ..Default::default()
+        };
+        let error = client(&connection, &Paths(missing)).err().unwrap();
+        assert_eq!(
+            error.to_string(),
+            "cannot read the CA file that tls.ca names"
+        );
     }
 
     #[test]
