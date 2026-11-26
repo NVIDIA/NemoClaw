@@ -47,7 +47,7 @@ OpenShell keeps the deployment's configuration in `<state-dir>/openshell/`, apar
 | mTLS | Keep the files that `spec.gateway.tls` references, and their environment variables, available. NemoClaw links them into OpenShell's configuration. |
 | OIDC | Sign in once, as [Logging In to an OIDC Gateway](#logging-in-to-an-oidc-gateway) describes. |
 
-The gateway must have an endpoint that this host can reach; a managed Kubernetes or OpenShift gateway has one when `expose` publishes it.
+The gateway must have an endpoint that this host can reach; for a managed Kubernetes or OpenShift gateway, publish it with `expose`.
 For a gateway without one, or one that accepts only a bearer token, use a [separately configured OpenShell CLI](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways).
 
 #### Logging In to an OIDC Gateway

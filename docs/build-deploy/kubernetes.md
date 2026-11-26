@@ -181,7 +181,7 @@ Before you start, check the following:
 - Your identity provider has a client for the OpenShell CLI that accepts the sign-in redirect to `http://127.0.0.1` on any port, path `/callback`.
 - The host and the browser trust the CA that signed the issuer's certificate. Otherwise, set `SSL_CERT_FILE` to a PEM file holding it.
 
-For a [published gateway](#publishing-the-gateway-outside-the-cluster), follow these steps with WORKSPACE as the workspace that apply prints, and your document's context and namespace in place of `my-cluster` and `nemoclaw-oidc`:
+`nemoclaw osh` needs the gateway [published with `expose`](#publishing-the-gateway-outside-the-cluster). Then follow these steps with WORKSPACE as the workspace that apply prints, and your document's context and namespace in place of `my-cluster` and `nemoclaw-oidc`:
 
 1. Copy the gateway's CA certificate from the Secret `WORKSPACE-gateway-client-tls`:
 
@@ -202,7 +202,7 @@ For a [published gateway](#publishing-the-gateway-outside-the-cluster), follow t
 3. Run `nemoclaw osh --state-dir .local/kubernetes -- status`, and confirm that it reports the gateway as connected and authenticated.
    With only the `user_role` role, it reports `authorization denied`, because that check needs admin access.
 
-For an unpublished gateway, use a [standalone OpenShell CLI](../get-started/prerequisites.md#preparing-the-standalone-openshell-cli).
+Without `expose`, use a [standalone OpenShell CLI](../get-started/prerequisites.md#preparing-the-standalone-openshell-cli).
 Forward a local port with `kubectl port-forward pod/WORKSPACE-gateway-0 17671:8080`, put the CA in that CLI's `gateways/NAME/mtls/ca.crt`, add the gateway at `https://127.0.0.1:17671`, and [select it](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways).
 
 With only the `user_role` role, a person reaches the deployment's workspace after a Platform Admin runs `openshell workspace member add` for them.
