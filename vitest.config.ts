@@ -189,6 +189,14 @@ export default defineConfig({
           // Source-backed process fixtures can exceed the unit-test budget
           // when several coverage shards transpile and spawn them concurrently.
           testTimeout: testTimeout(15_000),
+          // beforeAll in test/automation/pull-requests/growth-guardrails.test.ts
+          // calls loadGrowthGuardrailDiff(), which can run two sequential git
+          // fetches (base history + PR head) each individually budgeted up to
+          // 30s in preparePullRequestTree(). Vitest's unconfigured hookTimeout
+          // default (10s) is shorter than that budget, so the hook can time out
+          // on a real PR event even when every fetch succeeds within its own
+          // allowance. Size this comfortably above two sequential 30s fetches.
+          hookTimeout: testTimeout(70_000),
           setupFiles: [
             fixtureUmaskSetup,
             isolatedTestStateSetup,
