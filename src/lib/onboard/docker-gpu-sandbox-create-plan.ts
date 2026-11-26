@@ -4,6 +4,7 @@
 import { type DockerGpuRoutePlan, resolveDockerGpuRoutePlan } from "./docker-gpu-route";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import { detectWslDockerDesktopStatus } from "./wsl-docker-desktop-gpu";
+import { prepareWslNvidiaCdi } from "./wsl-nvidia-cdi/prepare";
 
 type DockerGpuSandboxConfig = {
   sandboxGpuEnabled: boolean;
@@ -65,6 +66,7 @@ export function resolveDockerGpuSandboxCreatePlan(
     dockerDriverGateway: boolean;
     dockerDesktopWsl?: boolean;
     detectDockerDesktopWsl?: () => boolean;
+    prepareWslNvidiaCdi?: typeof prepareWslNvidiaCdi;
     env?: NodeJS.ProcessEnv;
     portableLifecycle?: boolean;
     platform?: NodeJS.Platform;
@@ -82,6 +84,12 @@ export function resolveDockerGpuSandboxCreatePlan(
     // container substitution out of that lifecycle path.
     dockerDriverGateway: options.dockerDriverGateway && !portableLifecycle,
     dockerDesktopWsl,
+    wslNvidiaCdiReady:
+      config.sandboxGpuEnabled &&
+      options.dockerDriverGateway &&
+      !portableLifecycle &&
+      dockerDesktopWsl &&
+      (options.prepareWslNvidiaCdi ?? prepareWslNvidiaCdi)({ env }),
     env,
     platform: options.platform,
     log: options.log,

@@ -63,7 +63,7 @@ function listOpenshellReleaseTagsViaGh(): string[] | null {
       "release",
       "list",
       "--repo",
-      "NVIDIA/OpenShell",
+      "ai-openshell/openshell",
       "--limit",
       String(GH_LIMIT),
       "--json",
@@ -92,7 +92,7 @@ function listOpenshellReleaseTagsViaCurl(): string[] | null {
         "-fsSL",
         "-H",
         "Accept: application/vnd.github+json",
-        `https://api.github.com/repos/NVIDIA/OpenShell/releases?per_page=${PER_PAGE}&page=${page}`,
+        `https://api.github.com/repos/ai-openshell/openshell/releases?per_page=${PER_PAGE}&page=${page}`,
       ],
       { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
     );
@@ -174,9 +174,7 @@ export function computeOpenshellInstallEnv(
   if (channel === "dev") {
     const error = deps.error ?? ((m: string) => console.error(m));
     error("");
-    error(
-      "  ✗ NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported.",
-    );
+    error("  ✗ NemoClaw requires exact stable OpenShell 0.1.10; the dev channel is not supported.");
     error("");
     return { env: null };
   }
@@ -231,7 +229,7 @@ export function prependInstalledUserLocalOpenshellPath(
 }
 
 /**
- * Execute `scripts/install-openshell.sh`, wiring in the blueprint-driven pin
+ * Execute the guarded product installer, wiring in the blueprint-driven pin
  * resolution and the host-side state updates onboard.ts cares about (binary
  * path, PATH augmentation, `OPENSHELL_BIN` cache). Lives in this submodule so
  * the top-level onboard entrypoint stays net-neutral (#3404 follow-up).

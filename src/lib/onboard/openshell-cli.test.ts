@@ -7,6 +7,7 @@ import path from "node:path";
 import { expect, it, vi } from "vitest";
 import { redactFullWithUrls } from "../security/redact";
 import { createOpenshellCliHelpers } from "./openshell-cli";
+import * as openshellResolver from "../adapters/openshell/resolve";
 
 it("binds typed gateway capabilities to the onboarding executable", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-capabilities-"));
@@ -131,5 +132,33 @@ exit 17
     expect(diagnostic).not.toContain("route-query-secret");
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("directs missing-binary recovery to the current OpenShell releases", () => {
+  const resolve = vi.spyOn(openshellResolver, "resolveOpenshell").mockReturnValue(null);
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+    throw new Error("exit 1");
+  });
+  const setCachedBinary = vi.fn();
+  try {
+    const helpers = createOpenshellCliHelpers({
+      getCachedBinary: () => null,
+      setCachedBinary,
+      getGatewayPort: () => 8091,
+      getDockerDriverGatewayEndpoint: () => "http://127.0.0.1:8091",
+    });
+
+    expect(() => helpers.getOpenshellBinary()).toThrow("exit 1");
+    expect(error).toHaveBeenCalledWith(
+      "  Install manually: https://github.com/ai-openshell/openshell/releases",
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(setCachedBinary).not.toHaveBeenCalled();
+  } finally {
+    resolve.mockRestore();
+    error.mockRestore();
+    exit.mockRestore();
   }
 });

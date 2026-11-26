@@ -4,7 +4,7 @@
 
 [Unit]
 Description=OpenShell Gateway
-Documentation=https://github.com/NVIDIA/OpenShell
+Documentation=https://github.com/ai-openshell/openshell
 After=default.target
 
 [Service]

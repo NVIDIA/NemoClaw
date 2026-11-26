@@ -16,6 +16,24 @@ export const SWITCHYARD_BOUNDARY_CREDENTIAL_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_T
 export const SWITCHYARD_PEER_CREDENTIAL_ENV = "NEMOCLAW_E2E_SWITCHYARD_PEER_TOKEN";
 export const SWITCHYARD_BODY_CANARY = "switchyard-provider-body-must-not-enter-diagnostics";
 
+/** Recognize only explicit HTTP denial or an observed native connect/EACCES rejection. */
+export function isSwitchyardCallbackPolicyDenial(outcome: Record<string, unknown>): boolean {
+  if (outcome.failed !== true || outcome.passthrough !== true || outcome.answer !== null)
+    return false;
+  if (outcome.callback_status === 403) {
+    return (
+      outcome.failure_category === "http_error" ||
+      outcome.failure_category === "proxy_connect_denied"
+    );
+  }
+  return (
+    outcome.callback_status === null &&
+    outcome.callback_errno === 13 &&
+    outcome.callback_syscall === "connect" &&
+    outcome.failure_category === "transport_error"
+  );
+}
+
 async function listen(server: Server, host: string): Promise<number> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -42,6 +60,7 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
     answer: 0,
     redirects: 0,
     errors: 0,
+    failedTargets: [] as Array<"efficient" | "capable" | "unexpected">,
     forbidden: 0,
     badAuth: 0,
     callerLeaked: false,
@@ -55,7 +74,7 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
   const forbiddenPort = await listen(forbidden, bindHost);
   const upstream = createServer(async (request, response) => {
     evidence.requests++;
-    // Retain only counts/booleans, never headers, bodies, or credentials in evidence.
+    // Retain counts, flags, and bounded fixture labels, never headers, bodies, or credentials.
     let text = "";
     try {
       for await (const chunk of request) {
@@ -88,13 +107,6 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
         .end();
       return;
     }
-    if (fail) {
-      evidence.errors++;
-      response
-        .writeHead(500, { "content-type": "application/json" })
-        .end(JSON.stringify({ error: { message: `${SWITCHYARD_BODY_CANARY}:${credential}` } }));
-      return;
-    }
     let body: { model?: string; response_format?: unknown };
     try {
       body = JSON.parse(text);
@@ -103,14 +115,29 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
       return;
     }
     const judge = Boolean(body.response_format);
+    if (fail && !judge) {
+      evidence.errors++;
+      if (evidence.failedTargets.length < 3) {
+        evidence.failedTargets.push(
+          body.model === "fixture-efficient"
+            ? "efficient"
+            : body.model === "fixture-capable"
+              ? "capable"
+              : "unexpected",
+        );
+      }
+      response
+        .writeHead(500, { "content-type": "application/json" })
+        .end(JSON.stringify({ error: { message: `${SWITCHYARD_BODY_CANARY}:${credential}` } }));
+      return;
+    }
     evidence[judge ? "judge" : "answer"]++;
     const content = judge
       ? JSON.stringify({
+          crux: "bounded fixture task",
+          primary_rule: "SUP-1",
+          capability_boundary: "supported",
           p_solve: 0.99,
-          confidence: 0.99,
-          difficulty: "easy",
-          category: "general",
-          reason: "fixture",
         })
       : SWITCHYARD_BOUNDARY_ANSWER;
     response.writeHead(200, { "content-type": "application/json" }).end(
@@ -178,7 +205,7 @@ export function switchyardBoundaryProbe(
     "-I",
     "-c",
     String.raw`
-import asyncio, base64, json, os, signal, ssl, sys
+import asyncio, base64, json, os, signal, socket, ssl, sys
 import urllib.error, urllib.request
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -205,7 +232,7 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
         os.environ[key] = os.environ[payload['credentialEnv']]
     runtime = relay_runtime.RelayRuntime()
     outcome = {'active': False, 'failed': False, 'passthrough': False, 'answer': None,
-        'callback_status': None, 'failure_category': None}
+        'callback_status': None, 'callback_errno': None, 'callback_syscall': None, 'failure_category': None}
     try:
         outcome['active'] = runtime.managed_execution_enabled()
         if not outcome['active'] and payload['mode'] != 'unmanaged':
@@ -223,6 +250,17 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
+            original_connect = socket.socket.connect
+            connect_error = None
+            def observed_connect(sock, address):
+                nonlocal connect_error
+                connect_error = None
+                try:
+                    return original_connect(sock, address)
+                except OSError as error:
+                    connect_error = error
+                    raise
+            socket.socket.connect = observed_connect
             try:
                 with urllib.request.urlopen(request, timeout=20, context=context) as response:
                     outcome['callback_status'] = response.status
@@ -233,12 +271,18 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
                 outcome['failure_category'] = 'http_error'
                 raise RuntimeError('Provider callback failed') from None
             except urllib.error.URLError as error:
+                errno = getattr(error.reason, 'errno', None)
+                outcome['callback_errno'] = errno if type(errno) is int and 0 <= errno <= 4095 else None
+                if type(errno) is int and error.reason is connect_error:
+                    outcome['callback_syscall'] = 'connect'
                 if 'tunnel connection failed: 403' in str(error.reason).lower():
                     outcome['callback_status'] = 403
                     outcome['failure_category'] = 'proxy_connect_denied'
                 else:
                     outcome['failure_category'] = 'transport_error'
                 raise RuntimeError('Provider callback failed') from None
+            finally:
+                socket.socket.connect = original_connect
         async def execute():
             if not outcome['active']:
                 return await provider_callback(None)

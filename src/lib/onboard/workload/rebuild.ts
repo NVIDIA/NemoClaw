@@ -270,6 +270,7 @@ export function managedWorkloadRebuildHandoffMatchesEntry(
 }
 
 export interface ManagedWorkloadRebuildProfileOverrides {
+  readonly openClawSelectedModel?: Readonly<Record<string, unknown>>;
   readonly openClawContextWindow?: number;
   readonly openClawReasoning?: boolean;
   readonly openClawReasoningEffort?: ManagedStartupReasoningEffort;
@@ -293,19 +294,30 @@ export function managedWorkloadRebuildProfileEnvironment(
   const previous = handoff.previousProfile;
   if (previous.agent === "openclaw" && previous.agentConfig.agent === "openclaw") {
     const config = previous.agentConfig;
-    const contextWindow = overrides.openClawContextWindow ?? previous.tuning.contextWindow;
+    const selectedModel = overrides.openClawSelectedModel;
+    const contextWindow = selectedModel
+      ? (selectedModel.contextWindow ?? null)
+      : (overrides.openClawContextWindow ?? previous.tuning.contextWindow);
     if (contextWindow !== null) result.NEMOCLAW_CONTEXT_WINDOW = String(contextWindow);
-    if (previous.tuning.maxTokens !== null) {
-      result.NEMOCLAW_MAX_TOKENS = String(previous.tuning.maxTokens);
-    }
-    const reasoning = overrides.openClawReasoning ?? previous.tuning.reasoning;
+    const maxTokens = selectedModel ? (selectedModel.maxTokens ?? null) : previous.tuning.maxTokens;
+    if (maxTokens !== null) result.NEMOCLAW_MAX_TOKENS = String(maxTokens);
+    const reasoning = selectedModel
+      ? (selectedModel.reasoning ?? false)
+      : (overrides.openClawReasoning ?? previous.tuning.reasoning);
     if (reasoning !== null) result.NEMOCLAW_REASONING = String(reasoning);
-    const reasoningEffort = overrides.openClawReasoningEffort ?? previous.tuning.reasoningEffort;
+    const reasoningEffort = selectedModel
+      ? "default"
+      : (overrides.openClawReasoningEffort ?? previous.tuning.reasoningEffort);
     if (reasoningEffort !== null) result.NEMOCLAW_REASONING_EFFORT = reasoningEffort;
-    if (previous.inference?.inputModalities != null) {
-      result.NEMOCLAW_INFERENCE_INPUTS = previous.inference.inputModalities.join(",");
+    const inputs = selectedModel
+      ? (selectedModel.input ?? ["text"])
+      : previous.inference?.inputModalities;
+    if (inputs != null) {
+      if (!Array.isArray(inputs) || inputs.some((value) => typeof value !== "string"))
+        throw new Error("Selected OpenClaw model has invalid input modalities.");
+      result.NEMOCLAW_INFERENCE_INPUTS = inputs.join(",");
     }
-    if (previous.inference?.servingPreset) {
+    if (!selectedModel && previous.inference?.servingPreset) {
       result.NEMOCLAW_SERVING_PRESET = previous.inference.servingPreset;
     }
     result.NEMOCLAW_AGENT_TIMEOUT = String(config.agentTimeoutSeconds);

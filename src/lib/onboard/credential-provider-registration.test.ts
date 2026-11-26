@@ -72,7 +72,22 @@ const BRAVE_PROFILE = {
 
 const MESSAGING_PROFILE = {
   id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-  credentials: [],
+  credentials: [
+    "TELEGRAM_BOT_TOKEN",
+    "DISCORD_BOT_TOKEN",
+    "WECHAT_BOT_TOKEN",
+    "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
+    "MSTEAMS_APP_PASSWORD",
+  ].map((name) => ({
+    name,
+    env_vars: [name],
+    required: false,
+    auth_style: name === "TELEGRAM_BOT_TOKEN" ? "path_subtree" : "",
+    path_template: name === "TELEGRAM_BOT_TOKEN" ? "/bot{credential}" : undefined,
+    header_name: "",
+    query_param: "",
+  })),
   endpoints: [],
   binaries: [],
   inference_capable: false,
@@ -300,7 +315,7 @@ describe("credential provider registration", () => {
     expect(
       await registration.inspectGatewayCredential(
         "alpha-telegram-bridge",
-        "nemoclaw-mcp-v1",
+        "nemoclaw-messaging-v1",
         "TELEGRAM_BOT_TOKEN",
       ),
     ).toEqual(expected);
@@ -685,7 +700,7 @@ describe("credential provider registration", () => {
                 name: providerName,
                 envKey: "DISCORD_BOT_TOKEN",
                 token: DISCORD_SECRET,
-                providerType: "nemoclaw-mcp-v1",
+                providerType: "nemoclaw-messaging-v1",
               },
             ],
             { allowedSandboxes: ["alpha"] },
@@ -745,7 +760,7 @@ describe("credential provider registration", () => {
             name: providerName,
             envKey: "DISCORD_BOT_TOKEN",
             token: DISCORD_SECRET,
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "nemoclaw-messaging-v1",
           },
         ])
         .catch((error: unknown) => error);
@@ -809,7 +824,7 @@ describe("credential provider registration", () => {
           name: messagingProviderName,
           envKey: "DISCORD_BOT_TOKEN",
           token: DISCORD_SECRET,
-          providerType: "nemoclaw-mcp-v1",
+          providerType: "nemoclaw-messaging-v1",
         },
         {
           name: webSearchProviderName,
@@ -826,7 +841,7 @@ describe("credential provider registration", () => {
           definitions: [
             expect.objectContaining({
               providerName: messagingProviderName,
-              providerType: "nemoclaw-mcp-v1",
+              providerType: "nemoclaw-messaging-v1",
             }),
             expect.objectContaining({
               providerName: webSearchProviderName,
@@ -898,7 +913,7 @@ describe("credential provider registration", () => {
               name: typedProviderName,
               envKey: "DISCORD_BOT_TOKEN",
               token: DISCORD_SECRET,
-              providerType: "nemoclaw-mcp-v1",
+              providerType: "nemoclaw-messaging-v1",
             },
             {
               name: fallbackProviderName,

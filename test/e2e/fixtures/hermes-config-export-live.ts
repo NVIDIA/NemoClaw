@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, stripVTControlCharacters } from "node:util";
 
 import YAML from "yaml";
 
@@ -199,7 +199,7 @@ function validateHermesConsumers(
       actual[alias] = validate(raw);
     } catch (error) {
       const diagnostic = redactString(
-        error instanceof Error ? error.message : String(error),
+        stripVTControlCharacters(error instanceof Error ? error.message : String(error)),
         input.redactionValues,
       );
       const diagnosticSafe = inspectConfigExportArtifactSafety(
@@ -207,6 +207,9 @@ function validateHermesConsumers(
         input.redactionValues,
         diagnostic,
       ).knownSecretsAbsent;
+      const safeDiagnostic = diagnosticSafe
+        ? diagnostic
+        : "[REDACTED] Consumer diagnostic contained credential material.";
       return {
         expected,
         actual,
@@ -215,10 +218,10 @@ function validateHermesConsumers(
           alias,
           operation: "parse-export-with-pinned-v1",
           revision: V1ALPHA1_CHECKED_REVISION,
-          diagnostic: (diagnosticSafe
-            ? diagnostic
-            : "[REDACTED] Consumer diagnostic contained credential material."
-          ).slice(0, 2000),
+          diagnostic:
+            safeDiagnostic.length <= 2000
+              ? safeDiagnostic
+              : `${safeDiagnostic.slice(0, 998)}\n...\n${safeDiagnostic.slice(-997)}`,
         },
       };
     }

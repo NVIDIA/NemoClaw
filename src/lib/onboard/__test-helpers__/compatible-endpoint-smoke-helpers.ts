@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { buildProviderNeutralInferenceSandboxSmokeScript } from "../compatible-endpoint-smoke";
+import type { NativeLocalProviderAttachment } from "../../inference/native-local/contract";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -127,7 +128,7 @@ export function runSmokeScript(script: string, tmpDir: string, binDir: string) {
   });
 }
 
-type ProviderNeutralAuthority = NonNullable<
+export type ProviderNeutralAuthority = NonNullable<
   Parameters<typeof buildProviderNeutralInferenceSandboxSmokeScript>[1]
 >;
 
@@ -162,6 +163,7 @@ export function providerNeutralResponses(
 
 export function runProviderNeutralScript(options: {
   authority: ProviderNeutralAuthority;
+  local?: NativeLocalProviderAttachment;
   model?: string;
   script?: string;
   responses?: unknown[];
@@ -180,6 +182,7 @@ export function runProviderNeutralScript(options: {
   inferenceUrl?: string;
   expectedAuthorization?: string;
   runtimeEnvironment?: NodeJS.ProcessEnv;
+  inferenceError?: "refused" | "dns" | "permission" | "timeout" | "unknown";
 }) {
   const model = options.model ?? "qwen3.5-9b";
   const directAuthority = `host.openshell.internal:${String(options.authority.directHostPort)}`;
@@ -195,6 +198,12 @@ export function runProviderNeutralScript(options: {
   const denialBody = options.denialOversized
     ? 'b"x" * 1048577'
     : `bytes(${JSON.stringify(denialBytes)})`;
+  const inferenceUrl =
+    options.inferenceUrl ??
+    `${options.local?.endpointUrl ?? "https://inference.local/v1"}/chat/completions`;
+  const expectedAuthorization =
+    options.expectedAuthorization ??
+    (options.local ? "Bearer openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN" : undefined);
   const prelude = `
 import atexit
 import errno
@@ -224,6 +233,7 @@ managed_proxy_request_count = []
 managed_proxy_request_urls = []
 sleep_delays = []
 direct_error = ${options.directError === undefined ? "None" : JSON.stringify(options.directError)}
+inference_error = ${options.inferenceError === undefined ? "None" : JSON.stringify(options.inferenceError)}
 
 def emit_request_evidence():
     print("INFERENCE_REQUEST_TOKENS=" + ",".join(str(value) for value in inference_request_tokens))
@@ -259,8 +269,8 @@ class FakeDirectResponse:
 
 class FakeOpener:
     def open(self, request, timeout):
-        if request.full_url == ${JSON.stringify(options.inferenceUrl ?? "https://inference.local/v1/chat/completions")}:
-            assert request.get_header("Authorization") == ${options.expectedAuthorization ? JSON.stringify(options.expectedAuthorization) : "None"}
+        if request.full_url == ${JSON.stringify(inferenceUrl)}:
+            assert request.get_header("Authorization") == ${expectedAuthorization ? JSON.stringify(expectedAuthorization) : "None"}
             if not responses:
                 raise RuntimeError("test response queue exhausted")
             request_data = json.loads(request.data.decode("utf-8"))
@@ -271,6 +281,16 @@ class FakeOpener:
                 raise TimeoutError("timed out after %s seconds" % timeout)
             if responses[0] == "__wrapped_timeout__":
                 raise urllib.error.URLError(TimeoutError("timed out after %s seconds" % timeout))
+            if inference_error:
+                private_detail = "private-credential-value"
+                reason = {
+                    "refused": ConnectionRefusedError(errno.ECONNREFUSED, private_detail),
+                    "dns": socket.gaierror(socket.EAI_NONAME, private_detail),
+                    "permission": PermissionError(errno.EACCES, private_detail),
+                    "timeout": TimeoutError(errno.ETIMEDOUT, private_detail),
+                    "unknown": private_detail,
+                }[inference_error]
+                raise urllib.error.URLError(reason)
             return FakeResponse(200, responses.pop(0))
         raise RuntimeError("unexpected direct request through inference opener")
 
@@ -348,12 +368,22 @@ urllib.request.build_opener = build_test_opener
 time.sleep = lambda seconds: sleep_delays.append(seconds)
 `;
   const script =
-    options.script ?? buildProviderNeutralInferenceSandboxSmokeScript(model, options.authority);
+    options.script ??
+    buildProviderNeutralInferenceSandboxSmokeScript(model, options.authority, options.local);
   return spawnSync("python3", ["-c", `${prelude}\n${script}`], {
     encoding: "utf8",
     env:
       options.managedProxyResponses === undefined
-        ? { ...process.env, ...options.runtimeEnvironment }
+        ? {
+            ...process.env,
+            ...(options.local
+              ? {
+                  NEMOCLAW_LOCAL_INFERENCE_TOKEN:
+                    "openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+                }
+              : {}),
+            ...options.runtimeEnvironment,
+          }
         : {
             ...process.env,
             HTTPS_PROXY: "http://openshell-runtime-proxy.invalid:8080",

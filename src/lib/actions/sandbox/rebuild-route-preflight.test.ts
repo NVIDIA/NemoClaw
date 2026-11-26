@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry, SandboxRegistry } from "../../state/registry/types";
@@ -468,4 +470,34 @@ describe("revalidateRebuildRouteBeforeDelete", () => {
       message: "Sandbox inference route changed before sandbox deletion.",
     });
   });
+});
+
+it("keeps external rebuild independent while retaining damaged shared-peer denial", () => {
+  const f = registeredInferenceFixture();
+  const binding = { ...f.binding, gatewayName: "nemoclaw", sandboxName: "target" };
+  const target = sandbox("target", binding.providerName, {
+    endpointUrl: binding.endpointUrl,
+    credentialEnv: binding.credentialEnv,
+    preferredInferenceApi: binding.inferenceApi,
+    registeredInferenceProviderAttachment: binding,
+  });
+  const peer = sandbox("peer", "compatible-endpoint", { credentialEnv: "COMPATIBLE_API_KEY" });
+  const valid = transactionDependencies(registry(target, peer));
+  expect(
+    commitRebuildRoutePreflight(
+      { sandboxName: "target", gatewayName: "nemoclaw", targetUpdate: targetUpdate(target) },
+      valid.dependencies,
+    ),
+  ).toMatchObject({ ok: true, receipt: { migratedSandboxNames: [] } });
+  expect(valid.persisted().sandboxes.peer).toEqual(peer);
+  const damaged = transactionDependencies(
+    registry(target, { ...peer, endpointUrl: null, credentialEnv: null }),
+  );
+  expect(
+    commitRebuildRoutePreflight(
+      { sandboxName: "target", gatewayName: "nemoclaw", targetUpdate: targetUpdate(target) },
+      damaged.dependencies,
+    ),
+  ).toMatchObject({ ok: false });
+  expect(damaged.save).not.toHaveBeenCalled();
 });

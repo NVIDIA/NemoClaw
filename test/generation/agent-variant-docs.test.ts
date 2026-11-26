@@ -169,7 +169,7 @@ describe("agent variant docs", () => {
   });
 
   it.each(["reference/commands.mdx", "manage-sandboxes/gateway-lifecycle-control.mdx"])(
-    "limits the supervised recovery exception to Hermes in %s",
+    "documents stopped native gateways without promising supervised recovery in %s",
     (sourcePath) => {
       const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
       const render = (variant: (typeof agentVariants)[number]) =>
@@ -177,14 +177,9 @@ describe("agent variant docs", () => {
       const supervisedRecovery =
         "`recover` requests a supervised gateway relaunch before verification.";
 
-      expect(render("hermes")).toContain(supervisedRecovery);
-      expect(render("hermes")).toContain("after a clean exit or exit status `79`");
-      expect(render("hermes")).toContain("authenticated gated recovery");
-      expect(render("hermes")).not.toContain(
-        "If a built-in gateway is stopped, `recover` reports that state instead of relaunching the process.",
-      );
+      expect(render("hermes")).not.toContain(supervisedRecovery);
       expect(render("hermes")).toContain(
-        "Otherwise, `recover` reports a stopped gateway without relaunching it.",
+        "If the Hermes gateway is stopped, `recover` reports it without relaunching it.",
       );
       expect(render("openclaw")).toContain(
         "If the OpenClaw gateway is stopped, `recover` reports it without relaunching it.",

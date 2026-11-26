@@ -65,6 +65,122 @@ function createProviderRequest() {
   };
 }
 
+function credentialFreeProfileFixture() {
+  const profile = { ...PROFILE, credentials: [] };
+  let exported = JSON.stringify(profile);
+  const run = vi.fn<RunProviderCommand>((args) =>
+    args[1] === "profile" ? captured(0, exported) : captured(0),
+  );
+  const adapter = createCliOpenShellProviderAdapter({
+    run,
+    readProfileFile: () => JSON.stringify(profile),
+  });
+  const verified = adapter.importProviderProfile({
+    target: TARGET,
+    profilePath: "/repo/profile.yaml",
+  });
+  return {
+    adapter,
+    run,
+    verified,
+    setExport: (source: string) => {
+      exported = source;
+    },
+  };
+}
+
+describe("credential-free provider creation", () => {
+  it("creates a provider without importing credentials after verifying a credential-free profile", async () => {
+    const f = credentialFreeProfileFixture();
+    expect(f.verified).toEqual({ ok: true });
+    await expect(
+      f.adapter.createProvider({ ...createProviderRequest(), credentials: [] }),
+    ).resolves.toEqual({ ok: true });
+    const create = f.run.mock.calls.find(([args]) => args[1] === "create");
+    expect(create?.[0]).toEqual([
+      "provider",
+      "create",
+      "-g",
+      "nemoclaw",
+      "--name",
+      "test-provider",
+      "--type",
+      PROFILE.id,
+    ]);
+    expect(create?.[1].env).toBeUndefined();
+  });
+
+  it.each([
+    ["credential declaration", JSON.stringify(PROFILE)],
+    [
+      "policy boundary",
+      JSON.stringify({ ...PROFILE, credentials: [], binaries: ["/tmp/widened"] }),
+    ],
+    ["malformed export", "not JSON"],
+  ])("rejects a changed %s before credential-free creation", async (_label, source) => {
+    const f = credentialFreeProfileFixture();
+    expect(f.verified).toEqual({ ok: true });
+    f.setExport(source);
+    await expect(
+      f.adapter.createProvider({ ...createProviderRequest(), credentials: [] }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "command", reason: "profile_incompatible" },
+    });
+    expect(f.run.mock.calls.some(([args]) => args[1] === "create")).toBe(false);
+  });
+
+  it("does not transfer credential-free profile verification to another gateway", async () => {
+    const f = credentialFreeProfileFixture();
+    expect(f.verified).toEqual({ ok: true });
+    f.run.mockClear();
+    await expect(
+      f.adapter.createProvider({
+        ...createProviderRequest(),
+        credentials: [],
+        target: namedOpenShellGateway("other-gateway"),
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { kind: "validation" } });
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { credentials: [{ name: "TEST_TOKEN", value: SECRET }], fromExisting: false },
+    { credentials: [], fromExisting: true },
+  ])(
+    "rejects credential input or discovery for a verified credential-free profile: %j",
+    async (input) => {
+      const f = credentialFreeProfileFixture();
+      expect(f.verified).toEqual({ ok: true });
+      f.run.mockClear();
+      await expect(
+        f.adapter.createProvider({ ...createProviderRequest(), ...input }),
+      ).resolves.toMatchObject({ ok: false, error: { kind: "validation" } });
+      expect(f.run).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [captured(null, "", SECRET, Object.assign(new Error(), { code: "ETIMEDOUT" })), "timeout"],
+    [captured(1, "", `forbidden ${SECRET}`), "authentication"],
+    [captured(1, "", SECRET), "command"],
+  ] as const)(
+    "stops credential-free creation when profile inspection fails: %j",
+    async (failure, kind) => {
+      const f = credentialFreeProfileFixture();
+      expect(f.verified).toEqual({ ok: true });
+      f.run.mockReturnValueOnce(failure);
+      const result = await f.adapter.createProvider({
+        ...createProviderRequest(),
+        credentials: [],
+      });
+      expect(result).toMatchObject({ ok: false, error: { kind } });
+      expect(JSON.stringify(result)).not.toContain(SECRET);
+      expect(f.run.mock.calls.some(([args]) => args[1] === "create")).toBe(false);
+    },
+  );
+});
+
 describe("provider profile inspection and binding warnings (#12940, #13343)", () => {
   it.each([
     ["matching export", captured(0, JSON.stringify(PROFILE)), null],

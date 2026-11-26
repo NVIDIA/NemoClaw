@@ -946,6 +946,20 @@
         },
         "allow_all_known_mcp_methods": {
           "type": "boolean"
+        },
+        "versions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "2025-03-26",
+              "2025-06-18",
+              "2025-11-25",
+              "2026-07-28"
+            ]
+          }
         }
       }
     },

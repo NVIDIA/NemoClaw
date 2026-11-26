@@ -149,7 +149,7 @@ export async function githubRequest(route, token) {
         const key = parsed.pathname + parsed.search;
         return new Response(JSON.stringify(responses[key] ?? {}), { status: key in responses ? 200 : 404 });
       };
-      process.argv[1] = ${JSON.stringify(path.join(root, "scripts/checks/prepare-ci-npm-install.mts"))};
+      process.argv[1] = ${JSON.stringify(fs.realpathSync(path.join(root, "scripts/checks/prepare-ci-npm-install.mts")))};
       await import('./scripts/checks/prepare-ci-npm-install.mts');
     `,
         ],
@@ -259,17 +259,17 @@ export async function githubRequest(route, token) {
     expect(artifactDirectory).toBe(source.output);
     expect(fs.readdirSync(artifactDirectory).sort()).toEqual([
       "nvidia-openshell-sdk-0.0.116.tgz",
-      "nvidia-openshell-sdk-0.1.5.tgz",
+      "nvidia-openshell-sdk-0.1.10.tgz",
     ]);
     expect(source.requests.map(({ packageSpec }) => packageSpec)).toEqual([
       "@nvidia/openshell-sdk@0.0.116",
-      "@nvidia/openshell-sdk@0.1.5",
+      "@nvidia/openshell-sdk@0.1.10",
     ]);
     expect(source.requests[1]).toMatchObject({
       expectedIntegrity:
-        "sha512-pqeumlEkIoFko9kL8EmemULuEPGf7dbFz1DXac9mB5H5e0+vGs24T1S+jT/UOtjhYEdmBSR3WjMojBBAyh6lSQ==",
+        "sha512-IGRHqQZ38AHbtx6mfyrpVRrHjSwg+jaSxKVOsuqKUUftdrN4FNe0FosNUbIq/KDmTQPRURbm+JPWg9mRmvaetg==",
       tarballUrl:
-        "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.5/141f111b92761575225e0ae977e1cf86d2c6515e",
+        "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.10/09792a4aca8e55bc312bda80bfebc4dec441c0e3",
     });
     expect(source.remove).toHaveBeenCalledTimes(2);
   });
@@ -281,7 +281,7 @@ export async function githubRequest(route, token) {
     expect(artifactDirectory).toBe(source.output);
     expect(source.requests.map(({ packageSpec }) => packageSpec)).toEqual([
       "@nvidia/openshell-sdk@0.0.116",
-      "@nvidia/openshell-sdk@0.1.5",
+      "@nvidia/openshell-sdk@0.1.10",
     ]);
   });
 

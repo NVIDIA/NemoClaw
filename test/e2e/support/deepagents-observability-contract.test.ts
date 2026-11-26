@@ -293,7 +293,7 @@ describe("Deep Agents observability policy proof", () => {
       encoding: "utf8",
       env: { PATH: process.env.PATH },
       input:
-        'FAILED:HTTPError:HTTP Error 403: Forbidden:{"error":"policy_denied","detail":"POST example.com:4318/v1/traces not permitted by policy"}\n',
+        'FAILED:HTTPError:HTTP Error 403: Forbidden:{"error":"policy_denied","policy":"observability-otlp-local","rule":"POST /not-traces","detail":"POST /not-traces not permitted by policy","layer":"l7","protocol":"rest","method":"POST","path":"/not-traces","host":"host.openshell.internal","port":4318,"binary":"/opt/venv/bin/python3","rule_missing":{"type":"rest_allow","layer":"l7","method":"POST","path":"/not-traces","host":"host.openshell.internal","port":4318,"binary":"/opt/venv/bin/python3"},"next_steps":[]}\n',
     });
     expect(proxyDenial.status, proxyDenial.stderr).toBe(0);
     expect(proxyDenial.stdout.trim()).toBe("policy-denied");
@@ -307,6 +307,44 @@ describe("Deep Agents observability policy proof", () => {
     expect(interleavedCurlDenial.status, interleavedCurlDenial.stderr).toBe(0);
     expect(interleavedCurlDenial.stdout.trim()).toBe("policy-denied");
   });
+
+  it.each([
+    ["7", "000", "* Immediate connect fail for 198.18.0.1: Permission denied", true],
+    ["7", "000", "curl: (7) Could not connect to server", false],
+    ["7", "000", "* Immediate connect fail for 198.18.0.1: Connection refused", false],
+    [
+      "7",
+      "000",
+      "* Immediate connect fail for 198.18.0.1: Permission denied\n* Immediate connect fail for fd00::1: Connection refused",
+      false,
+    ],
+    ["28", "000", "* Immediate connect fail for 198.18.0.1: Permission denied", false],
+    ["7", "200", "* Immediate connect fail for 198.18.0.1: Permission denied", false],
+    [
+      "7",
+      "000\nNEMOCLAW_OTLP_CURL_HTTP_CODE=000",
+      "* Immediate connect fail for 198.18.0.1: Permission denied",
+      false,
+    ],
+    ["7", "", "* Immediate connect fail for 198.18.0.1: Permission denied", false],
+  ])(
+    "requires native connect denial evidence for curl exit %s, HTTP %s, and %s",
+    (code, http, diagnostic, denied) => {
+      const result = spawnSync(
+        path.join(process.cwd(), "node_modules", ".bin", "tsx"),
+        ["test/e2e/live/deepagents-observability-contract.ts", "denial-state", code],
+        {
+          encoding: "utf8",
+          env: { PATH: process.env.PATH },
+          input: `${http ? `NEMOCLAW_OTLP_CURL_HTTP_CODE=${http}\n` : ""}${diagnostic}\n`,
+        },
+      );
+      expect({ exit: result.status, state: result.stdout.trim() }, result.stderr).toEqual({
+        exit: 0,
+        state: denied ? "policy-denied" : "other-failure",
+      });
+    },
+  );
 });
 
 describe("bounded private OTLP capture server", () => {

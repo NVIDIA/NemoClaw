@@ -5,7 +5,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import {
-  hostedNativeProvider,
+  fixedHostedNativeProvider,
   HOSTED_NATIVE_PROVIDERS,
   nativeHostedAgentConfig,
 } from "./inference/native-provider/agent-config.ts";
@@ -342,7 +342,7 @@ export function switchyardClientProfile(
       extraHeaders: {},
     });
   }
-  const definition = hostedNativeProvider(providerId);
+  const definition = fixedHostedNativeProvider(providerId);
   if (!definition || definition.logicalProvider === "hermes-provider") {
     return fail("provider profile is not supported by Switchyard onboarding");
   }
@@ -520,6 +520,28 @@ export class SwitchyardProviderBindingError extends Error {
   }
 }
 
+/** Switchyard roles must remain the sole recorded inference authority. */
+export function assertSwitchyardInferenceAuthority(selection: {
+  hermesSwitchyard?: unknown;
+  registeredInferenceProviderAttachment?: unknown;
+  nativeLocalProviderAttachment?: unknown;
+  nativeNvidiaProviderAttachment?: unknown;
+  nativeHostedProviderAttachment?: unknown;
+}): void {
+  if (
+    selection.hermesSwitchyard !== undefined &&
+    [
+      selection.registeredInferenceProviderAttachment,
+      selection.nativeLocalProviderAttachment,
+      selection.nativeNvidiaProviderAttachment,
+      selection.nativeHostedProviderAttachment,
+    ].some((attachment) => attachment !== undefined)
+  )
+    throw new SwitchyardProviderBindingError(
+      "Switchyard cannot share a recorded native inference attachment.",
+    );
+}
+
 function failBinding(): never {
   throw new SwitchyardProviderBindingError("missing, invalid, or ambiguous provider state.");
 }
@@ -573,7 +595,7 @@ export function validateSwitchyardProviderBindings(
         "credentialEnv",
       ]);
       const logicalProvider = logicalProviders[index];
-      const definition = hostedNativeProvider(logicalProvider);
+      const definition = fixedHostedNativeProvider(logicalProvider);
       const profileId =
         logicalProvider === "nvidia-prod" ? NVIDIA_HOSTED_NATIVE_PROFILE_ID : definition?.profileId;
       const endpointUrl =

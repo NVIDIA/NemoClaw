@@ -169,7 +169,7 @@ describe("configured E2E runtime provider fixture", () => {
         "--filter",
         "label=openshell.ai/sandbox-name=alpha",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Label "openshell.ai/isolation-role"}}',
       ],
       expect.objectContaining({ artifactName: "privileged-id-resource" }),
     );
@@ -180,6 +180,7 @@ describe("configured E2E runtime provider fixture", () => {
         "--url",
         "unix:///run/user/1001/podman/podman.sock",
         "container",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "exec",
         "--user",
         "root",
@@ -190,4 +191,44 @@ describe("configured E2E runtime provider fixture", () => {
       expect.objectContaining({ artifactName: "privileged-id" }),
     );
   });
+
+  it.each(["docker", "podman"])(
+    "selects the workload without its %s supervisor",
+    async (provider) => {
+      const workload = "a".repeat(64);
+      const supervisor = "b".repeat(64);
+      const command = vi
+        .fn<HostCliClient["command"]>()
+        .mockResolvedValue(
+          successfulProbeWithStdout(`${workload}\tsandbox\n${supervisor}\tsupervisor\n`),
+        );
+      const runtime = new RuntimeProviderPrerequisite({ command }, undefined, {
+        NEMOCLAW_GATEWAY_RUNTIME: provider,
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+      });
+      await expect(runtime.resolveSandboxResourceHandle("alpha")).resolves.toBe(workload);
+      expect(command).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    "",
+    `${"a".repeat(64)}\n${"c".repeat(64)}`,
+    "--privileged",
+    `${"a".repeat(64)}\tsupervisor`,
+    `${"a".repeat(64)}\tunknown`,
+    `${"a".repeat(64)}\tsandbox\textra`,
+  ])(
+    "refuses root execution for missing, ambiguous, or malformed workloads: %j",
+    async (stdout) => {
+      const command = vi
+        .fn<HostCliClient["command"]>()
+        .mockResolvedValue(successfulProbeWithStdout(stdout));
+      const runtime = new RuntimeProviderPrerequisite({ command }, undefined, {
+        NEMOCLAW_GATEWAY_RUNTIME: "docker",
+      });
+      await expect(runtime.execSandboxAsRoot("alpha", ["id", "-u"])).rejects.toThrow(/resource/);
+      expect(command).toHaveBeenCalledOnce();
+    },
+  );
 });

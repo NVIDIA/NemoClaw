@@ -135,16 +135,19 @@ runAgentTurnLatencyTest(
     expect(openclawInstall.exitCode, resultText(openclawInstall)).toBe(0);
     progress.phase("validate OpenClaw inference route");
     const openclawRoute = await route(
-      host,
+      sandbox,
       OPENCLAW_SANDBOX,
       "openclaw",
       inference,
       "openclaw-route",
       progress,
     );
-    expect(openclawRoute.exitCode, resultText(openclawRoute)).toBe(0);
-    for (const expected of [inference.expectedRouteProvider, inference.model]) {
-      expect(resultText(openclawRoute)).toContain(expected);
+    expect(openclawRoute).not.toBeNull();
+    for (const [field, expected] of [
+      ["provider", inference.expectedRouteProvider],
+      ["model", inference.model],
+    ] as const) {
+      expect(openclawRoute?.[field]).toBe(expected);
     }
     progress.phase("run OpenClaw hosted inference turn");
     const firstTurn = await openclawTurn(host, inference, progress, {
@@ -202,16 +205,19 @@ runAgentTurnLatencyTest(
     expect(hermesInstall.exitCode, resultText(hermesInstall)).toBe(0);
     progress.phase("validate Hermes inference route");
     const hermesRoute = await route(
-      host,
+      sandbox,
       HERMES_SANDBOX,
       "hermes",
       inference,
       "hermes-route",
       progress,
     );
-    expect(hermesRoute.exitCode, resultText(hermesRoute)).toBe(0);
-    for (const expected of [inference.expectedRouteProvider, inference.model]) {
-      expect(resultText(hermesRoute)).toContain(expected);
+    expect(hermesRoute).not.toBeNull();
+    for (const [field, expected] of [
+      ["provider", inference.expectedRouteProvider],
+      ["model", inference.model],
+    ] as const) {
+      expect(hermesRoute?.[field]).toBe(expected);
     }
 
     const payload = JSON.stringify({

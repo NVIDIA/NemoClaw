@@ -3,6 +3,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import fs from "node:fs";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { messagingCredentialProviderProfilePath } from "../provider-profile";
 
 import {
   createBuiltInChannelManifestRegistry,
@@ -40,13 +43,9 @@ const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
 
 const EXACT_MESSAGING_PROFILE = {
   status: 0,
-  stdout: JSON.stringify({
-    id: "nemoclaw-mcp-v1",
-    credentials: [],
-    endpoints: [],
-    binaries: [],
-    inference_capable: false,
-  }),
+  stdout: JSON.stringify(
+    YAML.parse(fs.readFileSync(messagingCredentialProviderProfilePath(REPOSITORY_ROOT), "utf8")),
+  ),
 };
 
 const ALL_CHANNEL_ENV = {
@@ -424,7 +423,7 @@ describe("MessagingSetupApplier", () => {
           return credentialKey
             ? {
                 status: 0,
-                stdout: `Name: ${name}\nType: nemoclaw-mcp-v1\nCredential keys: ${credentialKey}\nConfig keys: <none>\n`,
+                stdout: `Name: ${name}\nType: nemoclaw-messaging-v1\nCredential keys: ${credentialKey}\nConfig keys: <none>\n`,
               }
             : { status: 1, stderr: `provider '${name}' not found` };
         }
@@ -447,18 +446,18 @@ describe("MessagingSetupApplier", () => {
       ["provider", "get", "demo-telegram-bridge"],
       ["provider", "get", "demo-slack-bridge"],
       ["provider", "get", "demo-slack-app"],
-      ["provider", "profile", "export", "nemoclaw-mcp-v1", "--output", "json"],
+      ["provider", "profile", "export", "nemoclaw-messaging-v1", "--output", "json"],
       [
         "provider",
         "create",
         "--name",
         "demo-telegram-bridge",
         "--type",
-        "nemoclaw-mcp-v1",
+        "nemoclaw-messaging-v1",
         "--credential",
         "TELEGRAM_BOT_TOKEN",
       ],
-      ["provider", "profile", "export", "nemoclaw-mcp-v1", "--output", "json"],
+      ["provider", "profile", "export", "nemoclaw-messaging-v1", "--output", "json"],
       ["provider", "get", "demo-telegram-bridge"],
       ["provider", "update", "demo-slack-bridge", "--credential", "SLACK_BOT_TOKEN"],
       ["provider", "get", "demo-slack-bridge"],
@@ -468,11 +467,11 @@ describe("MessagingSetupApplier", () => {
         "--name",
         "demo-slack-app",
         "--type",
-        "nemoclaw-mcp-v1",
+        "nemoclaw-messaging-v1",
         "--credential",
         "SLACK_APP_TOKEN",
       ],
-      ["provider", "profile", "export", "nemoclaw-mcp-v1", "--output", "json"],
+      ["provider", "profile", "export", "nemoclaw-messaging-v1", "--output", "json"],
       ["provider", "get", "demo-slack-app"],
     ]);
     expect(calls[4]?.env).toEqual({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" });
@@ -538,7 +537,7 @@ describe("MessagingSetupApplier", () => {
               return {
                 status: 0,
                 stdout: JSON.stringify({
-                  id: "nemoclaw-mcp-v1",
+                  id: "nemoclaw-messaging-v1",
                   credentials: [],
                   endpoints: ["https://foreign.invalid"],
                   binaries: [],
@@ -549,7 +548,7 @@ describe("MessagingSetupApplier", () => {
               return {
                 status: 0,
                 stdout:
-                  "Name: demo-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
+                  "Name: demo-telegram-bridge\nType: nemoclaw-messaging-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
               };
           }
         },
@@ -850,7 +849,7 @@ describe("MessagingSetupApplier", () => {
             return credentialKey
               ? {
                   status: 0,
-                  stdout: `Name: ${name}\nType: nemoclaw-mcp-v1\nCredential keys: ${credentialKey}\nConfig keys: <none>\n`,
+                  stdout: `Name: ${name}\nType: nemoclaw-messaging-v1\nCredential keys: ${credentialKey}\nConfig keys: <none>\n`,
                 }
               : { status: 1, stderr: `provider '${name}' not found` };
           }
@@ -999,7 +998,7 @@ describe("MessagingSetupApplier", () => {
             return credentialKey
               ? {
                   status: 0,
-                  stdout: `Name: ${name}\nType: nemoclaw-mcp-v1\nCredential keys: ${credentialKey}\nConfig keys: <none>\n`,
+                  stdout: `Name: ${name}\nType: nemoclaw-messaging-v1\nCredential keys: ${credentialKey}\nConfig keys: <none>\n`,
                 }
               : { status: 1, stderr: `provider '${name}' not found` };
           }

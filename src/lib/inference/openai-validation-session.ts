@@ -27,6 +27,7 @@ import { RETRIABLE_HTTP_PROBE_STATUSES } from "./probe/transient-http-policy";
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
 
 export interface OpenAiValidationOptions {
+  provider?: string;
   authMode?: "bearer" | "query-param";
   extraHeaders?: readonly string[];
   requireResponsesToolCalling?: boolean;
@@ -103,9 +104,10 @@ function failedChatValidation(
   result: CurlProbeResult,
   failureMessage: string,
   diagnosticCodes?: string[],
+  probeName = "Chat Completions API with tool calling",
 ): OpenAiValidationResult {
   const failure = {
-    name: "Chat Completions API with tool calling",
+    name: probeName,
     httpStatus: result.httpStatus,
     curlStatus: result.curlStatus,
     message: failureMessage,
@@ -415,8 +417,16 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
         : nativeFailureFallback("native_chat_failure");
     }
     if (!chat.ok) {
-      return retriedReasoningTruncation
-        ? failedChatValidation(chat, chat.message)
+      // Replaying an exhausted NVIDIA HTTP 500 through curl would reset the
+      // four-request budget without changing the request or endpoint.
+      return retriedReasoningTruncation ||
+        (options.provider === "nvidia-prod" && chat.httpStatus === 500)
+        ? failedChatValidation(
+            chat,
+            chat.message,
+            undefined,
+            requireToolCall ? "Chat Completions API with tool calling" : "Chat Completions API",
+          )
         : nativeFailureFallback("native_terminal_http_failure");
     }
     if (requireToolCall) {

@@ -67,7 +67,7 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
   });
 
   it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1")(
-    "parses strict Deep Agents policy with the pinned v1 SDK",
+    "parses fail-closed Deep Agents policy with the pinned v1 SDK",
     testTimeoutOptions(12 * 60_000),
     async () => {
       const dcode = dcodeSnapshot();
@@ -75,7 +75,7 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
         ...dcode,
         policy: {
           ...dcode.policy,
-          document: dcode.policy.document + "landlock:\n  compatibility: strict\n",
+          document: dcode.policy.document + "landlock:\n  compatibility: hard_requirement\n",
         },
       };
       const result = await exportSnapshots([strictDcode]);

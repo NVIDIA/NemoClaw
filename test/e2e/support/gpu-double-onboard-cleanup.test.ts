@@ -22,11 +22,18 @@ async function runCleanupPaths() {
   const run = captured.test.mock.calls[0]![2] as (fixtures: object) => Promise<void>;
   const stop = new Error("stop before onboarding");
   const disposables = new Map<string, () => Promise<void>>();
-  const host = { command: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }) };
+  const host = {
+    command: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+    openshellCommandPath: "/fixture/openshell",
+    isCommandAvailable: vi.fn().mockResolvedValue(true),
+    cleanupGatewayRegistration: vi.fn().mockResolvedValue(undefined),
+  };
+  const lifecycle = { stopGatewayRuntime: vi.fn().mockResolvedValue(undefined) };
   const execution = run({
     artifacts: { target: { declare: vi.fn() } },
     runtimeProvider: { requireAvailable: vi.fn() },
     host,
+    lifecycle,
     sandbox: { openshell: vi.fn().mockResolvedValue({ exitCode: 0 }) },
     cleanup: {
       trackDisposable: (name: string, dispose: () => Promise<void>) =>
@@ -45,6 +52,16 @@ async function runCleanupPaths() {
     skip: vi.fn(),
   });
   await expect(execution).rejects.toBe(stop);
+  expect(lifecycle.stopGatewayRuntime).toHaveBeenCalledWith(
+    expect.objectContaining({ userServiceMode: "permanent" }),
+  );
+  expect(host.cleanupGatewayRegistration).toHaveBeenCalledWith(
+    "nemoclaw",
+    expect.objectContaining({ artifactName: "pre-cleanup-openshell-gateway" }),
+  );
+  expect(lifecycle.stopGatewayRuntime.mock.invocationCallOrder[0]).toBeLessThan(
+    host.cleanupGatewayRegistration.mock.invocationCallOrder[0]!,
+  );
   const dispose = disposables.get("stop gpu double-onboard Ollama processes")!;
   return { host, dispose };
 }

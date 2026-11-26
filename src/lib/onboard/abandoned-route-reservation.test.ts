@@ -361,6 +361,7 @@ describe("abandoned inference route reservation (#11051)", () => {
       provider: "compatible-endpoint",
       endpointUrl: "https://api.example.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions" as const,
     };
     registry.registerSandbox({
       name: SANDBOX,
@@ -374,7 +375,57 @@ describe("abandoned inference route reservation (#11051)", () => {
     await onboardingSessionUnderLock("current-session", "onboard --fresh");
     const locked = async <T>(_key: string | number, operation: () => Promise<T> | T) =>
       await operation();
+    const { customNativeProvider } = await import("../inference/native-provider/custom");
+    const definition = customNativeProvider({
+      provider: route.provider,
+      endpointUrl: route.endpointUrl,
+      api: "openai-completions",
+      credentialEnv: route.credentialEnv,
+      allowedIps: ["93.184.216.34"],
+    });
+    let providerPresent = false;
     const setup = createSetupInference({
+      providerAdapter: {
+        importProviderProfile: async () => ({ ok: true }),
+        ensureProviderPolicyComposition: async () => ({ ok: true, value: undefined }),
+        getProvider: async () =>
+          providerPresent
+            ? {
+                ok: true,
+                value: {
+                  name: definition.providerName,
+                  type: definition.profileId,
+                  credentialKeys: [definition.credentialEnv],
+                  configKeys: [],
+                  revision: { id: "11111111-2222-4333-8444-555555555555", resourceVersion: 1 },
+                },
+              }
+            : { ok: false, error: { kind: "command", reason: "not_found", message: "absent" } },
+        createProvider: async () => {
+          providerPresent = true;
+          return { ok: true };
+        },
+      },
+      sandboxPolicyReader: {
+        readSandboxPolicy: async () => ({
+          ok: true,
+          value: {
+            document: JSON.stringify({
+              version: 1,
+              network_policies: {
+                fixture: {
+                  endpoints: [
+                    { host: "api.example.test", port: 443, allowed_ips: ["93.184.216.34"] },
+                  ],
+                },
+              },
+            }),
+            appliedRevision: 1,
+          },
+        }),
+      },
+      getNativeHostedProviderAuthority: () => undefined,
+      setNativeHostedProviderAuthority: vi.fn(),
       checkGatewayRouteCompatibility: () => ({ ok: true }),
       withSandboxMutationLock: locked,
       withGatewayRouteMutationLock: locked,
@@ -383,7 +434,7 @@ describe("abandoned inference route reservation (#11051)", () => {
       step: vi.fn(),
       getGatewayName: () => GATEWAY,
       getSandbox: registry.getSandbox,
-      // Personal custom endpoints use the shared route even for pending reservations.
+      // Custom endpoints retain reservation ownership while attaching their native provider.
       resolvePolicyTier: async () => "personal",
       localInference: { loadPendingOllamaModelCleanup: () => [] },
       bedrockRuntimeOnboard: {

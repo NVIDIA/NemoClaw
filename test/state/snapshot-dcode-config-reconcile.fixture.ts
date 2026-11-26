@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { writeExecutable, writeFakeOpenshell, writeFakeSsh } from "../support/native-snapshot";
+import { writeFakeOpenshell, writeFakeSsh } from "../support/native-snapshot";
 
 export function prepareDcodeConfigRestoreFixture(fixture: string, layout: string) {
   const binDir = path.join(fixture, "bin");
@@ -25,14 +25,6 @@ export function prepareDcodeConfigRestoreFixture(fixture: string, layout: string
   }
   writeFakeOpenshell(binDir);
   writeFakeSsh(binDir);
-  writeExecutable(
-    path.join(binDir, "stat"),
-    `#!/usr/bin/env node
-const fs = require("node:fs");
-if (process.argv[2] !== "-c" || process.argv[3] !== "%u") process.exit(95);
-process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
-`,
-  );
   return {
     binDir,
     nativeRoot,

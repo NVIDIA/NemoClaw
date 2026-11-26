@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createDockerGpuDiagnosticRedactor } from "../docker-gpu-diagnostic-redaction";
+import {
+  createDockerGpuDiagnosticRedactor,
+  type DockerGpuDiagnosticRedactor,
+} from "../docker-gpu-diagnostic-redaction";
 import type {
   DockerContainerInspect,
   DockerContainerState,
@@ -80,6 +83,9 @@ export function captureDockerContainerFailureEvidence(
   deps: DockerContainerFailureEvidenceDeps,
   options: {
     enrichInspect?: boolean;
+    redactor?: DockerGpuDiagnosticRedactor;
+    /** Identity-bound inventory captured before any sibling logs are read. */
+    inspect?: DockerContainerInspect;
     /** Shared deadline; later Docker calls get only the remaining time and are skipped after it. */
     deadlineMs?: number;
     now?: () => number;
@@ -92,10 +98,10 @@ export function captureDockerContainerFailureEvidence(
     const remaining = Math.floor(options.deadlineMs - now());
     return remaining > 0 ? Math.min(FAILURE_EVIDENCE_CALL_TIMEOUT_MS, remaining) : null;
   };
-  const redactor = createDockerGpuDiagnosticRedactor();
-  let state: DockerContainerState | null = null;
-  let inspect: DockerContainerInspect | null = null;
-  const stateTimeout = callTimeout();
+  const redactor = options.redactor ?? createDockerGpuDiagnosticRedactor();
+  let inspect: DockerContainerInspect | null = options.inspect ?? null;
+  let state: DockerContainerState | null = inspect?.State ?? null;
+  const stateTimeout = inspect ? null : callTimeout();
   try {
     if (stateTimeout !== null) {
       const output = capture(["inspect", "--format", "{{json .State}}", containerId], {

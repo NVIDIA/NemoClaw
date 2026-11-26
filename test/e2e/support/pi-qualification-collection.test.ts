@@ -22,7 +22,7 @@ const AUTHORITY = "src/lib/agent/candidate-authority.ts";
 const receiptPath = (arch: string) => `ci/pi-agent-qualification-v1-linux-${arch}.json`;
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 
-function fixture() {
+function fixture(attempt = 1) {
   const pr = {
     number: 12,
     state: "open",
@@ -31,7 +31,7 @@ function fixture() {
   };
   const run = {
     id: 20,
-    run_attempt: 1,
+    run_attempt: attempt,
     workflow_id: 30,
     name: "Images / Build, Test, and Publish Managed Images",
     path: ".github/workflows/managed-images.yaml",
@@ -52,7 +52,12 @@ function fixture() {
       image: "ghcr.io/nvidia/nemoclaw/pi-sandbox",
       digest,
       reference: `ghcr.io/nvidia/nemoclaw/pi-sandbox@${digest}`,
-      source: { repository: REPOSITORY, revision: SHA, cohort: "ghrun-20-1", release: "v0.1.0" },
+      source: {
+        repository: REPOSITORY,
+        revision: SHA,
+        cohort: `ghrun-20-${attempt}`,
+        release: "v0.1.0",
+      },
       startupProfileContractVersion: 1,
       capabilityContractVersion: 1,
     };
@@ -69,9 +74,30 @@ function fixture() {
     ],
     [`/repos/${REPOSITORY}/actions/runs/20`, () => structuredClone(run)],
   ]);
+  const jobs = [
+    "Record managed image publication identity",
+    ...["amd64", "arm64"].map(
+      (arch) => `Build and validate the Pi candidate managed image (${arch})`,
+    ),
+  ].map((name, index) => ({
+    id: 100 + index,
+    run_id: 20,
+    run_attempt: attempt,
+    head_sha: SHA,
+    name,
+    status: "completed",
+    conclusion: "success",
+    runner_id: 200 + index,
+    started_at: "2026-11-17T00:00:00Z",
+    completed_at: "2026-11-17T00:10:00Z",
+  }));
+  responses.set(`/repos/${REPOSITORY}/actions/runs/20/jobs?filter=latest&per_page=100`, () => ({
+    total_count: jobs.length,
+    jobs,
+  }));
   ["amd64", "arm64"].forEach((arch, index) => {
     responses.set(
-      `/repos/${REPOSITORY}/actions/runs/20/artifacts?name=managed-candidate-contract-20-1-pi-${arch}&per_page=100`,
+      `/repos/${REPOSITORY}/actions/runs/20/artifacts?name=managed-candidate-contract-20-${attempt}-pi-${arch}&per_page=100`,
       () => {
         const archive = archives()[index]!;
         return {
@@ -79,8 +105,9 @@ function fixture() {
           artifacts: [
             {
               id: index + 40,
-              name: `managed-candidate-contract-20-1-pi-${arch}`,
+              name: `managed-candidate-contract-20-${attempt}-pi-${arch}`,
               expired: false,
+              created_at: "2026-11-17T00:09:00Z",
               size_in_bytes: archive.length,
               digest: `sha256:${hash(archive)}`,
               archive_download_url: `https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${index + 40}/zip`,
@@ -91,26 +118,203 @@ function fixture() {
       },
     );
   });
+  responses.set(`/repos/${REPOSITORY}/actions/runs/20/artifacts?per_page=100`, () => {
+    const artifacts = ["amd64", "arm64"].flatMap((arch) => {
+      const page = responses.get(
+        `/repos/${REPOSITORY}/actions/runs/20/artifacts?name=managed-candidate-contract-20-${attempt}-pi-${arch}&per_page=100`,
+      )!() as { artifacts: unknown[] };
+      return page.artifacts;
+    });
+    return { total_count: artifacts.length, artifacts };
+  });
   const request = vi.fn(async (apiPath: string): Promise<unknown> => responses.get(apiPath)!());
   const download = vi.fn(async (identity: { id: number }) => archives()[identity.id - 40]!);
   const collect = () =>
     collectPiQualification({ candidateSha: SHA, prNumber: 12, runId: 20 }, request, download);
-  return { pr, run, contracts, request, download, collect, responses };
+  return { pr, run, contracts, request, download, collect, responses, jobs };
 }
 
 type Fixture = ReturnType<typeof fixture>;
 
 describe("Pi qualification collection", () => {
-  it("preserves authenticated receipt bytes and calculates both authority hashes", async () => {
+  function retainedProducers() {
     const input = fixture();
-    const result = await input.collect();
-    expect(result.digests).toEqual(
-      ["amd64", "arm64"].map((arch) => hash(result.receipts[receiptPath(arch)]!)),
+    const original = structuredClone(input.jobs);
+    input.run.run_attempt = 2;
+    input.jobs.forEach((job) => {
+      job.run_attempt = 2;
+      job.id += 10;
+    });
+    input.responses.set(
+      `/repos/${REPOSITORY}/actions/runs/20/attempts/1/jobs?per_page=100`,
+      () => ({ total_count: original.length, jobs: original }),
     );
-    expect(JSON.parse(result.receipts[receiptPath("arm64")]!)).toEqual(input.contracts[1]);
-    expect(input.request.mock.calls.filter(([url]) => url.endsWith("/pulls/12"))).toHaveLength(2);
+    return { ...input, original };
+  }
+
+  it("collects retained passing Pi executions after the complete workflow succeeds on rerun", async () => {
+    const input = retainedProducers();
+    const result = await input.collect();
+    expect(JSON.parse(result.receipts[receiptPath("amd64")]!).source.cohort).toBe("ghrun-20-1");
     expect(input.download).toHaveBeenCalledTimes(2);
   });
+
+  type RetainedFixture = ReturnType<typeof retainedProducers>;
+
+  it.each([
+    [
+      "failed-original",
+      (input: RetainedFixture) => {
+        input.original[1]!.conclusion = "failure";
+      },
+    ],
+    [
+      "changed-execution",
+      (input: RetainedFixture) => {
+        input.original[1]!.started_at = "2026-11-16T00:00:00Z";
+      },
+    ],
+    [
+      "changed-runner",
+      (input: RetainedFixture) => {
+        input.original[1]!.runner_id += 1;
+      },
+    ],
+    [
+      "wrong-source-attempt",
+      (input: RetainedFixture) => {
+        input.original[1]!.run_attempt = 2;
+      },
+    ],
+    [
+      "failed-publication",
+      (input: RetainedFixture) => {
+        input.original[0]!.conclusion = "failure";
+      },
+    ],
+    [
+      "changed-publication",
+      (input: RetainedFixture) => {
+        input.original[0]!.started_at = "2026-11-16T00:00:00Z";
+      },
+    ],
+  ] as const)("rejects retained receipts with %s producer evidence", async (_scenario, mutate) => {
+    const input = retainedProducers();
+    mutate(input);
+    await expect(input.collect()).rejects.toThrow();
+    expect(input.download).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "failed",
+      (input: Fixture) => {
+        input.jobs[1]!.conclusion = "failure";
+      },
+    ],
+    [
+      "missing",
+      (input: Fixture) => {
+        input.jobs.splice(1, 1);
+      },
+    ],
+    [
+      "duplicate",
+      (input: Fixture) => {
+        input.jobs.push({ ...input.jobs[1]! });
+      },
+    ],
+    [
+      "wrong-head",
+      (input: Fixture) => {
+        input.jobs[1]!.head_sha = "b".repeat(40);
+      },
+    ],
+    [
+      "wrong-run",
+      (input: Fixture) => {
+        input.jobs[1]!.run_id = 21;
+      },
+    ],
+    [
+      "invalid-time",
+      (input: Fixture) => {
+        input.jobs[1]!.started_at = "invalid";
+      },
+    ],
+    [
+      "noncanonical-time",
+      (input: Fixture) => {
+        input.jobs[1]!.started_at = "0";
+      },
+    ],
+    [
+      "new-execution",
+      (input: Fixture) => {
+        input.jobs[1]!.started_at = "2026-11-17T00:09:30Z";
+      },
+    ],
+  ] as const)("rejects %s current Pi producer evidence", async (_scenario, mutate) => {
+    const input = fixture();
+    mutate(input);
+    await expect(input.collect()).rejects.toThrow();
+    expect(input.download).not.toHaveBeenCalled();
+  });
+
+  it.each(["jobs", "artifacts"] as const)("rejects incomplete %s evidence", async (key) => {
+    const input = fixture();
+    const url = `/repos/${REPOSITORY}/actions/runs/20/${key}?${key === "jobs" ? "filter=latest&" : ""}per_page=100`;
+    input.responses.set(url, () => ({ total_count: 101, [key]: [] }));
+    await expect(input.collect()).rejects.toThrow("listing is incomplete");
+    expect(input.download).not.toHaveBeenCalled();
+  });
+
+  it.each([2, 3])(
+    "rejects ARM64 artifacts from attempt %s beside retained attempt 1",
+    async (attempt) => {
+      const input = retainedProducers();
+      const url = `/repos/${REPOSITORY}/actions/runs/20/artifacts?name=managed-candidate-contract-20-1-pi-arm64&per_page=100`;
+      const original = input.responses.get(url)!;
+      input.responses.set(url, () => {
+        const page = original() as { total_count: number; artifacts: Record<string, unknown>[] };
+        return {
+          ...page,
+          artifacts: page.artifacts.map((artifact) => ({
+            ...artifact,
+            name: `managed-candidate-contract-20-${attempt}-pi-arm64`,
+          })),
+        };
+      });
+      await expect(input.collect()).rejects.toThrow();
+      expect(input.download).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects two artifacts inside the same successful Pi execution", async () => {
+    const input = fixture();
+    const url = `/repos/${REPOSITORY}/actions/runs/20/artifacts?name=managed-candidate-contract-20-1-pi-amd64&per_page=100`;
+    const original = input.responses.get(url)!;
+    input.responses.set(url, () => {
+      const page = original() as { artifacts: Record<string, unknown>[] };
+      return { total_count: 2, artifacts: [page.artifacts[0], { ...page.artifacts[0], id: 99 }] };
+    });
+    await expect(input.collect()).rejects.toThrow("missing or ambiguous");
+    expect(input.download).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 2])(
+    "preserves authenticated receipt bytes and authority hashes on attempt %s",
+    async (attempt) => {
+      const input = fixture(attempt);
+      const result = await input.collect();
+      expect(result.digests).toEqual(
+        ["amd64", "arm64"].map((arch) => hash(result.receipts[receiptPath(arch)]!)),
+      );
+      expect(JSON.parse(result.receipts[receiptPath("arm64")]!)).toEqual(input.contracts[1]);
+      expect(input.request.mock.calls.filter(([url]) => url.endsWith("/pulls/12"))).toHaveLength(2);
+      expect(input.download).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it.each(["pending", "failure", "cancelled", "skipped"])(
     "rejects %s publication before downloading receipts",
@@ -263,6 +467,13 @@ describe("Pi qualification collection", () => {
       },
       "attempt changed",
     ],
+    [
+      "qualification",
+      (input: Fixture) => {
+        input.run.conclusion = "failure";
+      },
+      "must complete successfully",
+    ],
   ] as const)(
     "rejects a changed %s after artifact acquisition",
     async (_changed, mutate, message) => {
@@ -357,6 +568,9 @@ describe("Pi qualification collection", () => {
       const sha = git("rev-parse", "HEAD").trim();
       input.pr.head.sha = sha;
       input.run.head_sha = sha;
+      input.jobs.forEach((job) => {
+        job.head_sha = sha;
+      });
       input.contracts.forEach((contract) => {
         contract.source.revision = sha;
       });
@@ -365,6 +579,8 @@ describe("Pi qualification collection", () => {
           "pulls/12",
           "actions/workflows/managed-images.yaml",
           "actions/runs/20",
+          "actions/runs/20/jobs?filter=latest&per_page=100",
+          "actions/runs/20/artifacts?per_page=100",
           ...["amd64", "arm64"].map(
             (arch) =>
               `actions/runs/20/artifacts?name=managed-candidate-contract-20-1-pi-${arch}&per_page=100`,

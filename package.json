@@ -1,7 +1,7 @@
 {
   "name": "nemoclaw",
   "version": "0.0.0",
-  "description": "NemoClaw — run OpenClaw inside OpenShell with NVIDIA inference",
+  "description": "NemoClaw \u2014 run OpenClaw inside OpenShell with NVIDIA inference",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -163,12 +163,14 @@
     "vitest": "^4.1.9"
   },
   "optionalDependencies": {
-    "@bufbuild/protobuf": "2.12.1",
-    "@connectrpc/connect": "2.1.2",
-    "@connectrpc/connect-node": "2.1.2",
-    "@nvidia/openshell-sdk": "0.0.116"
+    "@ai-openshell/sdk": "0.1.10",
+    "@bufbuild/protobuf": "2.17.0",
+    "@connectrpc/connect": "2.3.0",
+    "@connectrpc/connect-node": "2.3.0",
+    "@nvidia/openshell-sdk": "0.1.10"
   },
   "bundleDependencies": [
+    "@ai-openshell/sdk",
     "@nvidia/openshell-sdk",
     "p-retry"
   ],

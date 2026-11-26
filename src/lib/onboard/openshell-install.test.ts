@@ -49,6 +49,24 @@ function makeDeps(overrides: Partial<OpenShellInstallDeps> = {}) {
 }
 
 describe("ensureOpenshellForOnboard", () => {
+  it("directs a failed install to the current OpenShell release repository", () => {
+    const afterSuccessfulInstall = vi.fn();
+    const deps = makeDeps({
+      isOpenshellInstalled: () => false,
+      installOpenshell: () => ({
+        installed: false,
+        localBin: null,
+        futureShellPathHint: null,
+      }),
+    });
+
+    expect(() => ensureOpenshellForOnboard(deps, { afterSuccessfulInstall })).toThrow("exit 1");
+    expect(deps.error).toHaveBeenCalledWith(
+      "  Install manually: https://github.com/ai-openshell/openshell/releases",
+    );
+    expect(afterSuccessfulInstall).not.toHaveBeenCalled();
+  });
+
   it("binds lazy install dependencies and forwards trusted-owner persistence", () => {
     const installResult: OpenShellInstallResult = {
       installed: true,
@@ -137,7 +155,7 @@ describe("ensureOpenshellForOnboard", () => {
     );
   });
 
-  it("applies the 0.0.116 floor during final validation when the blueprint omits a minimum", () => {
+  it("applies the 0.1.10 floor during final validation when the blueprint omits a minimum", () => {
     const deps = makeDeps({
       isOpenshellInstalled: () => false,
       getInstalledOpenshellVersion: () => "0.0.81",
@@ -151,22 +169,22 @@ describe("ensureOpenshellForOnboard", () => {
     expect(deps.error).toHaveBeenCalledWith(
       "  \u2717 openshell 0.0.81 is below the minimum required by this NemoClaw release.",
     );
-    expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml min_openshell_version: 0.0.116");
+    expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml min_openshell_version: 0.1.10");
   });
 
-  it("applies the exact 0.0.116 ceiling when the blueprint omits a maximum", () => {
+  it("applies the exact 0.1.10 ceiling when the blueprint omits a maximum", () => {
     const deps = makeDeps({
-      getInstalledOpenshellVersion: () => "0.0.117",
+      getInstalledOpenshellVersion: () => "0.1.11",
       getBlueprintMinOpenshellVersion: () => null,
       getBlueprintMaxOpenshellVersion: () => null,
-      runCaptureOpenshell: () => "openshell 0.0.117",
+      runCaptureOpenshell: () => "openshell 0.1.11",
     });
 
     expect(() => ensureOpenshellForOnboard(deps)).toThrow("exit 1");
     expect(deps.error).toHaveBeenCalledWith(
-      "  \u2717 openshell 0.0.117 is above the maximum supported by this NemoClaw release.",
+      "  \u2717 openshell 0.1.11 is above the maximum supported by this NemoClaw release.",
     );
-    expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml max_openshell_version: 0.0.116");
+    expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml max_openshell_version: 0.1.10");
   });
 
   it("fails closed when the installed version remains unknown after installation", () => {
@@ -181,8 +199,6 @@ describe("ensureOpenshellForOnboard", () => {
     expect(deps.error).toHaveBeenCalledWith(
       "  \u2717 OpenShell version could not be determined after installation.",
     );
-    expect(deps.error).toHaveBeenCalledWith(
-      "    Install exact stable OpenShell 0.0.116 and retry.",
-    );
+    expect(deps.error).toHaveBeenCalledWith("    Install exact stable OpenShell 0.1.10 and retry.");
   });
 });

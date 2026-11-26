@@ -181,6 +181,7 @@ export function patchOpenClawSecondaryAgentMainSessionDelete(distDir: string): P
         resolvedDist,
         process.execPath,
         path.join(import.meta.dirname, "patch-openclaw-worker-proxy.mts"),
+        "--native",
       ],
       { encoding: "utf8", timeout: 120000, maxBuffer: 1024 * 1024 },
     );

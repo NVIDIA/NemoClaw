@@ -194,12 +194,12 @@ export function ensureOpenshellForOnboard(
     localBin: null,
     futureShellPathHint: null,
   };
-  const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.116";
+  const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.1.10";
 
   if (deps.shouldUseOpenshellDevChannel()) {
     deps.error("");
     deps.error(
-      "  ✗ NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported.",
+      "  ✗ NemoClaw requires exact stable OpenShell 0.1.10; the dev channel is not supported.",
     );
     deps.error("");
     deps.exit(1);
@@ -210,7 +210,7 @@ export function ensureOpenshellForOnboard(
     openshellInstall = deps.installOpenshell();
     if (!openshellInstall.installed) {
       deps.error("  Failed to install openshell CLI.");
-      deps.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+      deps.error("  Install manually: https://github.com/ai-openshell/openshell/releases");
       deps.exit(1);
     }
   } else {
@@ -220,7 +220,7 @@ export function ensureOpenshellForOnboard(
       openshellInstall = deps.installOpenshell();
       if (!openshellInstall.installed) {
         deps.error("  Failed to reinstall openshell CLI.");
-        deps.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+        deps.error("  Install manually: https://github.com/ai-openshell/openshell/releases");
         deps.exit(1);
       }
     } else {
@@ -240,7 +240,7 @@ export function ensureOpenshellForOnboard(
       if (needsUpgrade) {
         if (needsStableRelease) {
           deps.log(
-            "  OpenShell development builds are unsupported. Reinstalling exact stable 0.0.116...",
+            "  OpenShell development builds are unsupported. Reinstalling exact stable 0.1.10...",
           );
         } else if (needsDockerDriverBinaries) {
           const required = platform === "linux" ? "gateway and sandbox" : "gateway";
@@ -257,7 +257,7 @@ export function ensureOpenshellForOnboard(
         openshellInstall = deps.installOpenshell();
         if (!openshellInstall.installed) {
           deps.error("  Failed to upgrade openshell CLI.");
-          deps.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+          deps.error("  Install manually: https://github.com/ai-openshell/openshell/releases");
           deps.exit(1);
         }
       }
@@ -272,14 +272,14 @@ export function ensureOpenshellForOnboard(
   if (!installedOpenshellVersion) {
     deps.error("");
     deps.error("  \u2717 OpenShell version could not be determined after installation.");
-    deps.error("    Install exact stable OpenShell 0.0.116 and retry.");
+    deps.error("    Install exact stable OpenShell 0.1.10 and retry.");
     deps.error("");
     deps.exit(1);
   }
   if (deps.isOpenshellDevVersion(openshellVersionOutput)) {
     deps.error("");
     deps.error("  ✗ OpenShell development builds are not supported by this NemoClaw release.");
-    deps.error("    Install exact stable OpenShell 0.0.116 and retry.");
+    deps.error("    Install exact stable OpenShell 0.1.10 and retry.");
     deps.error("");
     deps.exit(1);
   }
@@ -295,7 +295,7 @@ export function ensureOpenshellForOnboard(
     deps.error(`    blueprint.yaml min_openshell_version: ${minOpenshellVersion}`);
     deps.error("");
     deps.error("    Upgrade openshell and retry:");
-    deps.error("      https://github.com/NVIDIA/OpenShell/releases");
+    deps.error("      https://github.com/ai-openshell/openshell/releases");
     deps.error("    Or remove the existing binary so the installer can re-fetch a current build:");
     deps.error('      command -v openshell && rm -f "$(command -v openshell)"');
     deps.error("");
@@ -309,12 +309,12 @@ export function ensureOpenshellForOnboard(
     );
     deps.error("");
     deps.error("    Install a supported OpenShell build and retry:");
-    deps.error("      https://github.com/NVIDIA/OpenShell/releases");
+    deps.error("      https://github.com/ai-openshell/openshell/releases");
     deps.error("");
     deps.exit(1);
   }
 
-  const maxOpenshellVersion = deps.getBlueprintMaxOpenshellVersion() ?? "0.0.116";
+  const maxOpenshellVersion = deps.getBlueprintMaxOpenshellVersion() ?? "0.1.10";
   if (
     installedOpenshellVersion &&
     maxOpenshellVersion &&
@@ -331,7 +331,7 @@ export function ensureOpenshellForOnboard(
       `    Upgrade ${deps.cliDisplayName()} to a version that supports your OpenShell release,`,
     );
     deps.error("    or install a supported OpenShell version:");
-    deps.error("      https://github.com/NVIDIA/OpenShell/releases");
+    deps.error("      https://github.com/ai-openshell/openshell/releases");
     deps.error("");
     deps.exit(1);
   }

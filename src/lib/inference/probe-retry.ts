@@ -19,7 +19,7 @@ const CURL_TIMEOUT_STATUS = 28;
 const NODE_SPAWN_TIMEOUT_STATUS = -110;
 
 // Which statuses are transient is shared policy, not a wizard-local decision:
-// the sandbox status probe classifies the same four (#10709). The definition
+// the sandbox status probe classifies the same statuses (#10709). The definition
 // and its rationale live in ./probe/transient-http-policy; this module keeps
 // re-exporting the set so existing consumers are unaffected.
 const { RETRIABLE_HTTP_PROBE_STATUSES } = require("./probe/transient-http-policy");

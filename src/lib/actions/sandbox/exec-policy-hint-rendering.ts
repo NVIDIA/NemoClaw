@@ -21,7 +21,7 @@ export function buildPolicyDenialExecHint(
   const target = endpoint ? ` for ${endpoint}` : "";
   return [
     `${cliName}: recent network policy denial detected${target} inside sandbox '${sandboxName}'.`,
-    "  The sandbox's egress policy blocked this request; the tool above only saw the proxy's 403.",
+    "  Match the denial's destination and time to the failed request before changing policy.",
     `  See the denied flow:    ${cliName} ${sandboxName} logs --tail 50`,
     `  Review applied presets: ${cliName} ${sandboxName} policy list`,
     `  Allow the host:         ${cliName} ${sandboxName} policy add <preset>`,

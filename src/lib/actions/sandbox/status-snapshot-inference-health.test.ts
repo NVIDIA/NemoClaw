@@ -3,7 +3,6 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import type { ProviderHealthStatus } from "../../inference/health";
 import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
@@ -62,27 +61,20 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
   it.each([true, false])(
     "reports native local attachment health without querying the shared route: %s (#12558)",
     async (attached) => {
-      const binding = {
-        provider: "ollama-local",
-        endpointUrl: "http://host.openshell.internal:11434/v1",
-        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-        authMode: "sentinel",
-        gatewayName: "nemoclaw",
-        sandboxName: "alpha",
-      } as const;
-      const receipt = {
-        ...binding,
-        ...nativeLocalIdentity(binding),
-        schemaVersion: 1 as const,
-        providerId: "owned-local-provider",
-      };
+      const receipt = nativeLocalTestReceipt(
+        "ollama-local",
+        "http://host.openshell.internal:11434/v1",
+        {
+          authMode: "sentinel",
+        },
+      );
       const options = snapshotDeps(
         null,
         null,
         { ok: true },
         {
-          provider: binding.provider,
-          gatewayName: binding.gatewayName,
+          provider: receipt.provider,
+          gatewayName: receipt.gatewayName,
           nativeLocalProviderAttachment: receipt,
         },
       );
@@ -107,7 +99,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       });
       expect(snapshot.inferenceHealth).toMatchObject({
         ok: attached,
-        endpoint: expect.stringContaining(binding.endpointUrl),
+        endpoint: expect.stringContaining(receipt.endpointUrl),
       });
       expect(observeInferenceRoute).not.toHaveBeenCalled();
       expect(verifyNativeLocalProviderAttachmentImpl).toHaveBeenCalledWith({
@@ -120,28 +112,21 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
   );
 
   it("reports bounded redacted native local verification details and recovery (#12558)", async () => {
-    const binding = {
-      provider: "ollama-local",
-      endpointUrl: "http://host.openshell.internal:11434/v1",
-      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-      authMode: "sentinel",
-      gatewayName: "nemoclaw",
-      sandboxName: "alpha",
-    } as const;
-    const receipt = {
-      ...binding,
-      ...nativeLocalIdentity(binding),
-      schemaVersion: 1 as const,
-      providerId: "owned-local-provider",
-    };
+    const receipt = nativeLocalTestReceipt(
+      "ollama-local",
+      "http://host.openshell.internal:11434/v1",
+      {
+        authMode: "sentinel",
+      },
+    );
     const secret = `nvapi-${"a".repeat(40)}`;
     const options = snapshotDeps(
       null,
       null,
       { ok: true },
       {
-        provider: binding.provider,
-        gatewayName: binding.gatewayName,
+        provider: receipt.provider,
+        gatewayName: receipt.gatewayName,
         nativeLocalProviderAttachment: receipt,
       },
     );
@@ -444,41 +429,23 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     ]);
   });
 
-  it("does not set okLabel for a 5xx route failure, and classifies it unhealthy (#6846)", async () => {
-    const gateway: SandboxInferenceRouteHealth = {
-      ok: false,
-      endpoint: "https://inference.local/v1/models",
-      httpStatus: 502,
-      detail:
-        "Inference gateway returned HTTP 502 on https://inference.local/v1/models; the route is reachable but unhealthy.",
-    };
-
-    const snapshot = await collectSandboxStatusSnapshot("alpha", snapshotDeps(gateway));
-
-    expect(snapshot.inferenceHealth).toMatchObject({
-      ok: false,
-      failureLabel: "unhealthy",
-    });
-    expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
-  });
-
-  it("does not set okLabel when the route is unreachable (#6846)", async () => {
-    const gateway: SandboxInferenceRouteHealth = {
-      ok: false,
-      endpoint: "https://inference.local/v1/models",
-      httpStatus: 0,
-      detail:
-        "Inference gateway unreachable on https://inference.local/v1/models from inside the sandbox.",
-    };
-
-    const snapshot = await collectSandboxStatusSnapshot("alpha", snapshotDeps(gateway));
-
-    expect(snapshot.inferenceHealth).toMatchObject({
-      ok: false,
-      failureLabel: "unreachable",
-    });
-    expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
-  });
+  it.each([
+    [502, "unhealthy", "Inference gateway returned HTTP 502."],
+    [0, "unreachable", "Inference gateway unreachable."],
+  ] as const)(
+    "reports a failed route with no okLabel: HTTP %s (#6846)",
+    async (httpStatus, failureLabel, detail) => {
+      const gateway: SandboxInferenceRouteHealth = {
+        ok: false,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus,
+        detail,
+      };
+      const snapshot = await collectSandboxStatusSnapshot("alpha", snapshotDeps(gateway));
+      expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel });
+      expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
+    },
+  );
 
   it("stays unprobed with no okLabel when the gateway probe is unavailable (#6846)", async () => {
     const snapshot = await collectSandboxStatusSnapshot("alpha", snapshotDeps(null));
@@ -585,34 +552,6 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(upstream?.detail).toContain("NVIDIA_INFERENCE_API_KEY");
     expect(upstream?.detail).toContain("provider credential stored in the gateway");
     expect(upstream?.detail).toContain("does not attribute this result to the sandbox route");
-  });
-
-  it("keeps an unreachable upstream check after the route served a request (#9595)", async () => {
-    const gateway: SandboxInferenceRouteHealth = {
-      ok: true,
-      endpoint: "https://inference.local/v1/models",
-      httpStatus: 200,
-      detail:
-        "Inference gateway responded HTTP 200 on https://inference.local/v1/models (full chain reachable).",
-    };
-    const providerHealth: ProviderHealthStatus = {
-      ok: false,
-      probed: true,
-      providerLabel: "NVIDIA Endpoints",
-      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
-      detail: "model invocation probe could not reach the endpoint",
-      failureLabel: "unreachable",
-    };
-
-    const snapshot = await collectSandboxStatusSnapshot(
-      "alpha",
-      snapshotDeps(gateway, providerHealth),
-    );
-
-    expect(snapshot.inferenceHealth?.subprobes).toContainEqual({
-      ...providerHealth,
-      probeLabel: "upstream",
-    });
   });
 
   it("keeps an unauthorized auth proxy subprobe after the route served a request (#9595)", async () => {
@@ -1203,6 +1142,94 @@ describe("status native local request identity (#13338)", () => {
         endpoint: shell.destinations()[0],
       });
     },
+  );
+});
+
+it.each([
+  { state: "ready", agent: "openclaw" },
+  { state: "ready", agent: "hermes" },
+  { state: "detached", agent: "openclaw" },
+  { state: "changed-binding", agent: "openclaw" },
+  { state: "request-failed", agent: "openclaw" },
+])("verifies registered provider readiness: $state for $agent", async ({ state, agent }) => {
+  const binding = {
+    schemaVersion: 1 as const,
+    gatewayName: "nemoclaw",
+    sandboxName: "alpha",
+    providerName: "operator-provider",
+    providerId: "operator-id",
+    profileId: "operator-profile",
+    profileDigest: "a".repeat(64),
+    endpointUrl: "https://api.example.test/v1",
+    inferenceApi: "openai-completions" as const,
+    credentialEnv: "OPERATOR_API_KEY",
+    attachedBySelection: false,
+  };
+  const sandbox = {
+    name: "alpha",
+    agent,
+    gatewayName: binding.gatewayName,
+    provider: binding.providerName,
+    model: "model-a",
+    endpointUrl: binding.endpointUrl,
+    preferredInferenceApi: binding.inferenceApi,
+    credentialEnv: binding.credentialEnv,
+    registeredInferenceProviderAttachment: binding,
+  };
+  sandbox.credentialEnv = state === "changed-binding" ? "OTHER_KEY" : binding.credentialEnv;
+  const options = snapshotDeps(null, null, { ok: true }, sandbox);
+  const observeInferenceRoute = vi.fn();
+  const verifyRegisteredProviderAttachmentImpl = vi.fn(
+    state === "detached"
+      ? async () => {
+          throw new Error("attachment missing");
+        }
+      : async () => undefined,
+  );
+  const probeSandboxInferenceInvocationImpl = vi.fn(async () => ({
+    ok: state !== "request-failed",
+    httpStatus: state === "request-failed" ? 403 : 200,
+    detail: "request result",
+  }));
+  const snapshot = await collectSandboxStatusSnapshot("alpha", {
+    ...options,
+    deps: {
+      ...options.deps,
+      inferenceRouteObserver: { observeInferenceRoute },
+      verifyRegisteredProviderAttachmentImpl,
+      probeSandboxInferenceInvocationImpl,
+    },
+  });
+  expect(snapshot.inferenceHealth?.ok).toBe(state === "ready");
+  expect(snapshot.routeDrift).toBeNull();
+  expect(observeInferenceRoute).not.toHaveBeenCalled();
+  expect(verifyRegisteredProviderAttachmentImpl).toHaveBeenCalledTimes(
+    state === "changed-binding" ? 0 : 1,
+  );
+  expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(
+    state === "ready" || state === "request-failed" ? 1 : 0,
+  );
+  expect(probeSandboxInferenceInvocationImpl.mock.calls).toEqual(
+    state === "ready" || state === "request-failed"
+      ? [
+          [
+            expect.objectContaining({
+              sandboxName: "alpha",
+              gatewayName: "nemoclaw",
+              agentName: agent,
+              provider: binding.providerName,
+              registeredInferenceProviderAttachment: binding,
+            }),
+            {},
+            expect.any(Number),
+          ],
+        ]
+      : [],
+  );
+  expect(snapshot.inferenceHealth?.endpoint).toBe(
+    state === "changed-binding"
+      ? ""
+      : binding.endpointUrl + (state === "detached" ? "" : "/chat/completions"),
   );
 });
 

@@ -428,6 +428,7 @@ async function resolveInferenceRoute(
     !recordedNativeNvidia &&
     !recordedNativeLocal &&
     sb?.nativeHostedProviderAttachment === undefined &&
+    sb?.registeredInferenceProviderAttachment === undefined &&
     openshellBin &&
     openshellConnected &&
     gatewayName
@@ -450,6 +451,10 @@ async function resolveInferenceRoute(
       ? { nativeLocalProviderAttachment: sb?.nativeLocalProviderAttachment }
       : {}),
     preferredInferenceApi: sb?.preferredInferenceApi,
+    credentialEnv: sb?.credentialEnv,
+    ...(sb?.registeredInferenceProviderAttachment !== undefined
+      ? { registeredInferenceProviderAttachment: sb.registeredInferenceProviderAttachment }
+      : {}),
     ...(sb?.nativeHostedProviderAttachment !== undefined
       ? { nativeHostedProviderAttachment: sb.nativeHostedProviderAttachment }
       : {}),

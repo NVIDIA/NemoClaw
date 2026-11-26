@@ -31,6 +31,7 @@ import {
   type OnboardTraceWindow,
   readColdOnboardPerformanceBudget,
   readOnboardTraceWindow,
+  retainFailedOnboardTrace,
 } from "../fixtures/onboard-performance.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { pollUntil } from "../fixtures/polling.ts";
@@ -605,6 +606,13 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
         [SANDBOX_NAME, "gateway", "restart"],
         "phase-4-restart-after-native-model-restore",
       );
+      await captureNativePluginFailureReadiness(
+        input.sandbox,
+        restartAfterNativeModelRestore,
+        SANDBOX_NAME,
+        "phase-4-restart-after-native-model-restore",
+        env(),
+      );
     },
   );
   const nativeReply = parseOpenClawGatewayModelRun(nativeTurn.stdout);
@@ -735,9 +743,13 @@ async function preCleanup(host: HostCliClient, sandbox: SandboxClient): Promise<
   );
 }
 
-function readAndDeleteTraceWindow(traceFile: string, traceDirectory: string): OnboardTraceWindow {
+function readAndDeleteTraceEvidence(
+  traceFile: string,
+  traceDirectory: string,
+): { trace: unknown; traceWindow: OnboardTraceWindow } {
   try {
-    return readOnboardTraceWindow(JSON.parse(fs.readFileSync(traceFile, "utf8")) as unknown);
+    const trace = JSON.parse(fs.readFileSync(traceFile, "utf8")) as unknown;
+    return { trace, traceWindow: readOnboardTraceWindow(trace) };
   } catch (error) {
     throw new Error(
       `Cold onboard evidence requires a valid trace file with one successful nemoclaw.onboard root span: ${error instanceof Error ? error.message : String(error)}`,
@@ -782,7 +794,7 @@ async function assertColdOnboardPerformance(input: {
   traceDirectory: string;
   traceFile: string;
 }): Promise<void> {
-  const traceWindow = readAndDeleteTraceWindow(input.traceFile, input.traceDirectory);
+  const { trace, traceWindow } = readAndDeleteTraceEvidence(input.traceFile, input.traceDirectory);
   expect(
     input.installCompletedAtMs,
     "install completion must not precede the onboard root end",
@@ -883,6 +895,15 @@ async function assertColdOnboardPerformance(input: {
     classicBuildSteps,
     responseChars,
   });
+
+  // Retain redacted spans for failed timing assertions after all measured
+  // timestamps and the existing budget summary have been recorded.
+  await retainFailedOnboardTrace(
+    performanceEvaluation.passed,
+    input.artifacts,
+    input.apiKey,
+    trace,
+  );
 
   expect(
     plain.includes("[1/8]") && !buildKitFallback && classicBuildSteps === 0,
@@ -1173,11 +1194,14 @@ test(
       },
     );
 
-    const nativeEndpointUrl = getSandbox(SANDBOX_NAME)?.nativeHostedProviderAttachment?.endpointUrl;
+    const selectedEntry = getSandbox(SANDBOX_NAME);
+    const nativeEndpointUrl =
+      selectedEntry?.nativeLocalProviderAttachment?.endpointUrl ??
+      selectedEntry?.nativeHostedProviderAttachment?.endpointUrl;
     const inferenceRoute = await readFullE2eInferenceRoute({
       sandbox,
       sandboxName: SANDBOX_NAME,
-      entry: getSandbox(SANDBOX_NAME),
+      entry: selectedEntry,
       logicalProvider: hosted.providerName,
       model: hosted.model,
       env: env(),

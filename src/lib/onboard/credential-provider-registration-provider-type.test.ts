@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import { REPOSITORY_ROOT } from "../core/repository-root";
+import { buildCredentialFamilyProfile } from "../messaging/applier/credential-family-profile";
 
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import type { Session } from "../state/onboard-session";
@@ -14,6 +17,55 @@ import { createCredentialProviderRegistration } from "./credential-provider-regi
 import type { MessagingTokenDef } from "./messaging-prep";
 
 describe("credential provider type contract", () => {
+  it.each([false, true])(
+    "inspects the stored extended Discord profile without requiring a separate base import (drift=%s)",
+    async (drift) => {
+      const providerName = "alpha-discord-bridge";
+      const baseType = "discord-hermes-static-v1";
+      const key = "DISCORD_BOT_TOKEN";
+      const keys = [key, `${key}_TEAM`];
+      const generated = buildCredentialFamilyProfile(
+        fs.readFileSync(
+          `${REPOSITORY_ROOT}/src/lib/messaging/channels/discord/provider-profile/hermes.yaml`,
+          "utf8",
+        ),
+        key,
+        keys,
+      );
+      const exported = JSON.parse(generated.source);
+      exported.endpoints.push(...(drift ? [{ host: "unowned.example", port: 443 }] : []));
+      const runOpenshell = vi
+        .fn()
+        .mockReturnValueOnce(providerMetadata(providerName, generated.profileType, keys.join(", ")))
+        .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(exported), stderr: "" })
+        .mockReturnValue({ status: 1, stdout: "", stderr: "profile not found" });
+      const deps = registrationDeps(runOpenshell, {
+        stagedCredentialProviders: [],
+      } as unknown as Session);
+      deps.root = REPOSITORY_ROOT;
+      const registration = createCredentialProviderRegistration(deps);
+
+      await expect(
+        registration.inspectGatewayCredential(providerName, baseType, key),
+      ).resolves.toEqual({
+        kind: drift ? "indeterminate" : "exact",
+      });
+      expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+        ["provider", "get", "-g", "test-gateway", providerName],
+        [
+          "provider",
+          "profile",
+          "-g",
+          "test-gateway",
+          "export",
+          generated.profileType,
+          "--output",
+          "json",
+        ],
+      ]);
+    },
+  );
+
   it("rejects an omitted provider type before inspecting or changing the gateway (#13344)", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const runOpenshell = vi.fn();

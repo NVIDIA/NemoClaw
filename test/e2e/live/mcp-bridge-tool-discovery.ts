@@ -12,29 +12,6 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { FakeMcpHttpsServer, FakeMcpRequest } from "./mcp-bridge-servers.ts";
-import { buildMcpCredentialHandleAuthorizationPattern } from "./mcp-provider-rewrite-probe.ts";
-
-export function buildDeepAgentsConfigProbe(
-  mcpUrl: string,
-  serverName: string,
-  hostSecret: string,
-): string {
-  const authorizationPattern = buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET");
-  return [
-    "set -eu",
-    "python3 - <<'PY'",
-    "import json, pathlib, re",
-    "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
-    "text = path.read_text(encoding='utf-8')",
-    "data = json.loads(text)",
-    `entry = data['mcpServers'][${JSON.stringify(serverName)}]`,
-    "assert entry['type'] == 'http'",
-    `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
-    `assert re.fullmatch(${JSON.stringify(authorizationPattern)}, entry['headers']['Authorization'])`,
-    `assert ${JSON.stringify(hostSecret)} not in text`,
-    "PY",
-  ].join("\n");
-}
 
 export interface AuthenticatedMcpDiscoveryTarget {
   server: FakeMcpHttpsServer;
@@ -691,6 +668,90 @@ export async function captureHermesMcpVerificationVersions(
   });
 }
 
+/** An earlier client can finish cancellation after the next command starts. */
+function classifyPriorMcpRequestCancellation(
+  request: FakeMcpRequest,
+  priorRequests: readonly FakeMcpRequest[],
+  expectedSecret: string,
+):
+  | "owned"
+  | "invalid-transport"
+  | "invalid-json"
+  | "invalid-notification"
+  | "missing-request-id"
+  | "missing-prior-initialize"
+  | "missing-prior-initialized"
+  | "missing-prior-rpc" {
+  if (
+    request.method !== "POST" ||
+    request.path !== "/mcp" ||
+    request.rpcMethod !== "notifications/cancelled" ||
+    request.responseStatus !== 202 ||
+    request.auth !== `Bearer ${expectedSecret}` ||
+    request.legacySessionId ||
+    request.rpcId !== undefined ||
+    !request.sessionId ||
+    !request.protocolVersion
+  )
+    return "invalid-transport";
+  let payload: unknown;
+  try {
+    payload = JSON.parse(request.body);
+  } catch {
+    return "invalid-json";
+  }
+  if (
+    !isJsonRecord(payload) ||
+    payload.jsonrpc !== "2.0" ||
+    payload.method !== "notifications/cancelled" ||
+    Object.hasOwn(payload, "id") ||
+    !isJsonRecord(payload.params)
+  )
+    return "invalid-notification";
+  const requestId = payload.params.requestId;
+  if (requestId === undefined || requestId === null) return "missing-request-id";
+  const authenticatedMetadataMatches = (prior: FakeMcpRequest) =>
+    prior.method === "POST" &&
+    prior.path === "/mcp" &&
+    prior.auth === `Bearer ${expectedSecret}` &&
+    !prior.legacySessionId &&
+    prior.sessionId === request.sessionId &&
+    prior.protocolVersion === request.protocolVersion;
+  const initializeIndex = priorRequests.findIndex(
+    (prior) =>
+      prior.method === "POST" &&
+      prior.path === "/mcp" &&
+      prior.rpcMethod === "initialize" &&
+      prior.auth === `Bearer ${expectedSecret}` &&
+      !prior.legacySessionId &&
+      prior.sessionId === "" &&
+      prior.protocolVersion === "" &&
+      prior.responseStatus === 200 &&
+      prior.responseHasResult === true &&
+      prior.negotiatedSessionId === request.sessionId &&
+      prior.negotiatedProtocolVersion === request.protocolVersion,
+  );
+  if (initializeIndex < 0) return "missing-prior-initialize";
+  const initializedIndex = priorRequests.findIndex(
+    (prior, index) =>
+      index > initializeIndex &&
+      authenticatedMetadataMatches(prior) &&
+      prior.rpcMethod === "notifications/initialized" &&
+      prior.responseStatus === 202,
+  );
+  if (initializedIndex < 0) return "missing-prior-initialized";
+  return priorRequests
+    .slice(initializedIndex + 1)
+    .some(
+      (prior) =>
+        authenticatedMetadataMatches(prior) &&
+        prior.rpcId === requestId &&
+        (prior.rpcMethod === "tools/list" || prior.rpcMethod === "tools/call"),
+    )
+    ? "owned"
+    : "missing-prior-rpc";
+}
+
 export async function assertAuthenticatedMcpToolDiscovery(
   host: HostCliClient,
   fakeMcp: FakeMcpHttpsServer,
@@ -717,6 +778,7 @@ export async function assertAuthenticatedMcpToolDiscovery(
   const credentialKey = options.credentialKey ?? "FAKE_MCP_SECRET";
   const serverName = options.serverName ?? "fake";
   const requestOffset = fakeMcp.requests.length;
+  const priorRequests = fakeMcp.requests.slice(0, requestOffset);
   let status: Awaited<ReturnType<HostCliClient["nemoclaw"]>> | undefined;
   let statusJson: McpToolDiscoveryStatusJson | undefined;
   for (let attempt = 1; attempt <= MCP_TOOL_DISCOVERY_ATTEMPTS; attempt += 1) {
@@ -753,9 +815,24 @@ export async function assertAuthenticatedMcpToolDiscovery(
   assertExitZero(completedStatus, statusLabel);
   statusJson = requireMcpToolDiscoveryStatusJson(statusJson, statusLabel);
   const discoveryRequests = fakeMcp.requests.slice(requestOffset);
+  const cancellationChecks = discoveryRequests
+    .filter((request) => request.rpcMethod === "notifications/cancelled")
+    .map((request) => ({
+      request,
+      ownership: classifyPriorMcpRequestCancellation(request, priorRequests, options.hostSecret),
+    }));
+  const priorCancellations = new Set(
+    cancellationChecks
+      .filter(({ ownership }) => ownership === "owned")
+      .map(({ request }) => request),
+  );
   await options.artifacts.writeJson(
     `${options.artifactPrefix}-mcp-tool-discovery-diagnostics.json`,
-    buildMcpToolDiscoveryDiagnostics(statusJson, discoveryRequests, options.hostSecret),
+    {
+      ...buildMcpToolDiscoveryDiagnostics(statusJson, discoveryRequests, options.hostSecret),
+      priorSessionCancellationCount: priorCancellations.size,
+      priorSessionCancellations: cancellationChecks.map(({ ownership }) => ({ ownership })),
+    },
   );
   assert.deepStrictEqual(
     {
@@ -781,7 +858,8 @@ export async function assertAuthenticatedMcpToolDiscovery(
     discoveryProtocolRequests.every((request) => request.auth === `Bearer ${options.hostSecret}`),
   ).toBe(true);
   const discoveryRpcRequests = discoveryProtocolRequests.filter(
-    (request) => request.method === "POST" && request.path === "/mcp",
+    (request) =>
+      request.method === "POST" && request.path === "/mcp" && !priorCancellations.has(request),
   );
   const authenticatedRpcMethods = discoveryRpcRequests.map((request) => request.rpcMethod);
   const initializeIndex = authenticatedRpcMethods.indexOf("initialize");

@@ -13,7 +13,6 @@ const LAUNCHER_PATH = path.join(
   "langchain-deepagents-code",
   "dcode-launcher.sh",
 );
-const TEST_OWNER_UID = process.getuid?.() ?? 0;
 
 type RlimitHelperInstaller = (helperPath: string, markerPath: string) => void;
 
@@ -60,8 +59,6 @@ function makeLauncherFixture(
     "dcode-managed-exec",
   );
   const markerPath = path.join(tempDir, "observability-enabled");
-  const hostPath = path.join(tempDir, "trusted-proxy-host");
-  const portPath = path.join(tempDir, "trusted-proxy-port");
   const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
   const wrapperMarkerPath = path.join(tempDir, "wrapper-ran");
   const rlimitPath = path.join(tempDir, "sandbox-rlimits.sh");
@@ -80,22 +77,8 @@ function makeLauncherFixture(
     .replace(
       'readonly MANAGED_OBSERVABILITY_MARKER="/sandbox/.deepagents/.nemoclaw-observability-enabled"',
       `readonly MANAGED_OBSERVABILITY_MARKER="${markerPath}"`,
-    )
-    .replace(
-      'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
-      `readonly MANAGED_PROXY_HOST_FILE="${hostPath}"`,
-    )
-    .replace(
-      'readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"',
-      `readonly MANAGED_PROXY_PORT_FILE="${portPath}"`,
-    )
-    .replace(
-      "readonly MANAGED_PROXY_OWNER_UID=0",
-      `readonly MANAGED_PROXY_OWNER_UID=${TEST_OWNER_UID}`,
     );
 
-  fs.writeFileSync(hostPath, "managed-proxy.internal\n", { mode: 0o444 });
-  fs.writeFileSync(portPath, "3128\n", { mode: 0o444 });
   installRlimitHelper(rlimitPath, rlimitMarkerPath);
   fs.writeFileSync(
     wrapperPath,
@@ -124,7 +107,7 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
         [
           "/bin/sh",
           "-c",
-          'printf "OBS=%s PROXY=%s" "${NEMOCLAW_OBSERVABILITY-__unset__}" "$HTTPS_PROXY"',
+          'printf "OBS=%s PROXY=%s" "${NEMOCLAW_OBSERVABILITY-__unset__}" "${HTTPS_PROXY-__unset__}"',
         ],
         {
           env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
@@ -133,7 +116,7 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
       );
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("OBS=1 PROXY=http://managed-proxy.internal:3128");
+      expect(result.stdout).toBe("OBS=1 PROXY=__unset__");
       expect(fs.existsSync(wrapperMarkerPath)).toBe(false);
       expect(fs.readFileSync(rlimitMarkerPath, "utf8")).toBe("hardened\nverified\n");
       expect(fs.readFileSync(markerPath, "utf8")).toBe("1\n");
@@ -153,7 +136,7 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
         [
           "/bin/sh",
           "-c",
-          'printf "OBS=%s PROXY=%s" "${NEMOCLAW_OBSERVABILITY-__unset__}" "$HTTPS_PROXY"',
+          'printf "OBS=%s PROXY=%s" "${NEMOCLAW_OBSERVABILITY-__unset__}" "${HTTPS_PROXY-__unset__}"',
         ],
         {
           env: {
@@ -165,7 +148,7 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
       );
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("OBS=__unset__ PROXY=http://managed-proxy.internal:3128");
+      expect(result.stdout).toBe("OBS=__unset__ PROXY=__unset__");
       expect(fs.existsSync(wrapperMarkerPath)).toBe(false);
       expect(fs.readFileSync(rlimitMarkerPath, "utf8")).toBe("hardened\nverified\n");
       expect(fs.existsSync(markerPath)).toBe(false);

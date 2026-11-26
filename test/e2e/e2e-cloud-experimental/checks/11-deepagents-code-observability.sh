@@ -130,21 +130,47 @@ fi
 command -v ip >/dev/null 2>&1 || fail "host ip command is required"
 command -v curl >/dev/null 2>&1 || fail "host curl command is required"
 
-bind_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
-  sh -c "getent ahostsv4 ${COLLECTOR_HOST} | awk 'NR == 1 { print \"NEMOCLAW_OTLP_BIND_IP=\" \$1 }'" \
-  2>&1)" \
-  || fail "could not resolve $COLLECTOR_HOST from the sandbox: $bind_output"
-OTLP_BIND_IP="$(
-  printf '%s\n' "$bind_output" | tr -d '\r' | sed -n 's/^NEMOCLAW_OTLP_BIND_IP=//p' | tail -n 1
-)"
-case "$OTLP_BIND_IP" in
-  10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].* | 169.254.2.2) ;;
-  *) fail "sandbox resolved $COLLECTOR_HOST to an unsupported host address '$OTLP_BIND_IP'" ;;
-esac
-if ! ip -o -4 address show \
-  | awk '{ sub(/\/.*/, "", $4); print $4 }' \
-  | grep -Fxq "$OTLP_BIND_IP"; then
-  fail "sandbox bridge address $OTLP_BIND_IP is not assigned to a host interface"
+# Native DNS returns synthetic workload addresses. The selected runtime owns
+# the supervisor's host route; it is the collector's bind address.
+runtime_bind="$(
+  SANDBOX_NAME="$SANDBOX_NAME" node <<'NODE'
+const { getSandbox } = require("./dist/lib/state/registry.js");
+const { currentRuntimeProviderBundles, requireRuntimeProviderBundleForSandbox } = require("./dist/lib/onboard/runtime-provider/selection.js");
+const { resolvePrivilegedSandboxTarget } = require("./dist/lib/sandbox/privileged-exec.js");
+const entry = getSandbox(process.env.SANDBOX_NAME);
+if (!entry || entry.gatewayName !== process.env.OPENSHELL_GATEWAY) process.exit(1);
+const provider = requireRuntimeProviderBundleForSandbox(entry, currentRuntimeProviderBundles());
+const target = resolvePrivilegedSandboxTarget(process.env.SANDBOX_NAME);
+if (target.providerId !== provider.identity.id || !target.resourceHandle) process.exit(1);
+const runtime = provider.gateway.observeHostRuntime({ environment: process.env, platform: process.platform });
+if (provider.identity.id === "docker" && process.platform === "linux" &&
+    runtime.network.supervisorNetwork?.name === "host" &&
+    runtime.network.supervisorNetwork.hostAddress === "127.0.0.1") {
+  process.stdout.write("127.0.0.1");
+} else if (provider.identity.id === "podman") {
+  process.stdout.write("podman");
+} else process.exit(1);
+NODE
+)" || fail "could not establish the selected runtime's collector route"
+if [ "$runtime_bind" = 127.0.0.1 ]; then
+  OTLP_BIND_IP="$runtime_bind"
+else
+  bind_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    sh -c "getent ahostsv4 ${COLLECTOR_HOST} | awk 'NR == 1 { print \"NEMOCLAW_OTLP_BIND_IP=\" \$1 }'" \
+    2>&1)" \
+    || fail "could not resolve $COLLECTOR_HOST from the sandbox: $bind_output"
+  OTLP_BIND_IP="$(
+    printf '%s\n' "$bind_output" | tr -d '\r' | sed -n 's/^NEMOCLAW_OTLP_BIND_IP=//p' | tail -n 1
+  )"
+  case "$OTLP_BIND_IP" in
+    10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].* | 169.254.2.2) ;;
+    *) fail "sandbox resolved $COLLECTOR_HOST to an unsupported host address '$OTLP_BIND_IP'" ;;
+  esac
+  if ! ip -o -4 address show \
+    | awk '{ sub(/\/.*/, "", $4); print $4 }' \
+    | grep -Fxq "$OTLP_BIND_IP"; then
+    fail "sandbox bridge address $OTLP_BIND_IP is not assigned to a host interface"
+  fi
 fi
 
 "$TSX" "$CAPTURE_SERVER" "$CAPTURE_DIR" "$OTLP_BIND_IP" "$COLLECTOR_PORT" "$DECOY_PORT" \
@@ -175,12 +201,14 @@ request_count() {
 python_probe_source() {
   cat <<'PY'
 import sys
+import json
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
 
-# NemoClaw's exec wrapper sources the managed, credential-free OpenShell proxy
-# route. Keep it intact so this probe exercises the same enforcement path
-# as managed DCode and Relay instead of attempting an unsupported direct socket.
+# Preserve the managed exec environment so this probe uses the same OpenShell
+# enforcement path as managed DCode and Relay.
 method, url, body = sys.argv[1:]
 data = body.encode("utf-8") if method != "GET" else None
 request = urllib.request.Request(
@@ -190,6 +218,13 @@ request = urllib.request.Request(
     headers={"content-type": "application/x-protobuf"},
 )
 try:
+    target = urllib.parse.urlsplit(url)
+    port = target.port or (443 if target.scheme == "https" else 80)
+    try:
+        addresses = sorted({item[4][0] for item in socket.getaddrinfo(target.hostname, port, type=socket.SOCK_STREAM)})
+    except socket.gaierror as error:
+        raise urllib.error.URLError(error) from error
+    print("NEMOCLAW_OTLP_PROBE_DNS=" + json.dumps({"hostname": target.hostname, "port": port, "addresses": addresses}))
     with urllib.request.urlopen(request, timeout=10) as response:
         print(f"REACHED:{response.status}")
 except urllib.error.HTTPError as error:
@@ -220,15 +255,18 @@ expect_blocked_without_capture() {
   local url="$3"
   local before output status after denial_state
   before="$(request_count)"
+  openshell logs "$SANDBOX_NAME" -n 500 --source sandbox --since 2m >"${CAPTURE_DIR}/dns-before.log"
   set +e
   output="$(sandbox_python_probe "$method" "$url" "NEMOCLAW_OTLP_DENIED_PROBE" 2>&1)"
   status=$?
   set -e
   sleep 1
+  openshell logs "$SANDBOX_NAME" -n 500 --source sandbox --since 2m >"${CAPTURE_DIR}/dns-after.log"
   after="$(request_count)"
   [ "$status" -ne 0 ] || fail "$label unexpectedly returned success: $output"
   [ "$after" = "$before" ] || fail "$label reached the host capture server"
-  denial_state="$(printf '%s\n' "$output" | "$TSX" "$CONTRACT_HELPER" denial-state)" \
+  denial_state="$(printf '%s\n' "$output" | "$TSX" "$CONTRACT_HELPER" denial-state "$status" \
+    "${CAPTURE_DIR}/dns-before.log" "${CAPTURE_DIR}/dns-after.log" "$url")" \
     || fail "$label denial classifier failed: $output"
   [ "$denial_state" = "policy-denied" ] \
     || fail "$label failed without confirmed OpenShell policy-denial evidence: $output"
@@ -276,18 +314,27 @@ openshell sandbox exec --name "$SANDBOX_NAME" -- test -x /usr/bin/curl >/dev/nul
   || fail "/usr/bin/curl is absent or not executable in the sandbox"
 before_binary="$(request_count)"
 set +e
+# Native connect denials need curl's errno diagnostic; omit outgoing headers.
+# shellcheck disable=SC2016 # Probe variables expand inside the sandbox shell.
 binary_output="$("$CLI" "$SANDBOX_NAME" exec -- \
-  /usr/bin/curl --fail-with-body -sS --max-time 10 -X POST \
-  -H 'content-type: application/x-protobuf' \
-  --data-binary 'NEMOCLAW_OTLP_DENIED_BINARY_PROBE' \
-  "http://${COLLECTOR_HOST}:${COLLECTOR_PORT}/v1/traces" 2>&1)"
+  sh -c '
+    probe_stderr=$(mktemp) || exit 2
+    trap '\''rm -f "$probe_stderr"'\'' EXIT
+    LC_ALL=C /usr/bin/curl --verbose --fail-with-body -sS --max-time 10 -X POST \
+      --write-out "\nNEMOCLAW_OTLP_CURL_HTTP_CODE=%{http_code}\n" \
+      -H "content-type: application/x-protobuf" \
+      --data-binary "NEMOCLAW_OTLP_DENIED_BINARY_PROBE" "$1" 2>"$probe_stderr"
+    probe_status=$?
+    sed -n "/^\\* Immediate connect fail for /p; /^\\* connect to .* failed: /p; /^curl: /p" "$probe_stderr" >&2
+    exit "$probe_status"
+  ' sh "$OTLP_TRACE_URL" 2>&1)"
 binary_status=$?
 set -e
 sleep 1
 after_binary="$(request_count)"
 [ "$binary_status" -ne 0 ] || fail "unmanaged curl binary unexpectedly reached OTLP: $binary_output"
 [ "$after_binary" = "$before_binary" ] || fail "unmanaged curl binary reached the host collector"
-binary_denial_state="$(printf '%s\n' "$binary_output" | "$TSX" "$CONTRACT_HELPER" denial-state)" \
+binary_denial_state="$(printf '%s\n' "$binary_output" | "$TSX" "$CONTRACT_HELPER" denial-state "$binary_status")" \
   || fail "unmanaged curl denial classifier failed: $binary_output"
 [ "$binary_denial_state" = "policy-denied" ] \
   || fail "unmanaged curl failed without confirmed OpenShell policy-denial evidence: $binary_output"

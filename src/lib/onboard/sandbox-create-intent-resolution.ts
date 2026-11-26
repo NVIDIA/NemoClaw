@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { RegisteredInferenceProviderAttachment } from "../inference/native-provider/registered";
+
 import type { NativeLocalProviderAttachment } from "../inference/native-local/contract";
 import type { NativeProviderAttachment } from "../inference/native-provider/contract";
 
@@ -12,6 +14,7 @@ import {
   resolvePrimaryMessagingCredentialEnvKeys,
   resolveSandboxCreateIntent,
   resolveSandboxCreateMessagingProviderRequests,
+  validateSandboxCreateIntentBindings,
 } from "./sandbox-create-intent";
 import type { SandboxCreateIntent } from "./sandbox-create-intent-types";
 import { getActiveChannelsFromPlan } from "./messaging-plan-session";
@@ -19,7 +22,6 @@ import { resolveSandboxCreatePolicyTier } from "./sandbox-create-plan";
 import {
   selectHermesPortableExtraProviderPlan,
   selectHermesPortableMessagingCapabilities,
-  validateSandboxCreateIntentBindings,
 } from "./sandbox-create-plan-materialization";
 import { buildSandboxGpuCreateArgs, type SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 import {
@@ -30,6 +32,7 @@ import {
 export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   sandboxName: string;
   inferenceProvider?: string | null;
+  registeredInferenceProviderAttachment?: RegisteredInferenceProviderAttachment;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   nativeHostedProviderAttachment?: NativeProviderAttachment;
@@ -152,6 +155,7 @@ export function createSandboxCreateIntentResolver<
       basePolicyPath: deps.getAgentPolicyPath(input.agent) || deps.defaultPolicyPath,
       sandboxName: input.sandboxName,
       inferenceProvider: input.inferenceProvider,
+      registeredInferenceProviderAttachment: input.registeredInferenceProviderAttachment,
       nativeLocalProviderAttachment: input.nativeLocalProviderAttachment,
       nativeNvidiaProviderAttachment: input.nativeNvidiaProviderAttachment,
       nativeHostedProviderAttachment: input.nativeHostedProviderAttachment,

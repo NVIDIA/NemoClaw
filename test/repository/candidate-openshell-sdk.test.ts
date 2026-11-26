@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +20,7 @@ import {
   candidateSdkCheckout,
   candidateSdkFixture,
   sdkCandidateIdentity,
+  sparseSdkWorkflowCheckout,
 } from "../support/candidate-openshell-sdk.ts";
 import type { ReviewedNpmArchiveRequest } from "../../scripts/lib/reviewed-npm-archive.mts";
 
@@ -72,6 +74,45 @@ describe("admitted candidate SDK packages", () => {
       `/repos/NVIDIA/NemoClaw/contents/package-lock.json?ref=${sdkCandidateIdentity.candidateSha}`,
       `/repos/NVIDIA/NemoClaw/contents/nemoclaw/package-lock.json?ref=${sdkCandidateIdentity.candidateSha}`,
     ]);
+  });
+
+  it.each([
+    { inherited: true, status: 0, error: "" },
+    { inherited: false, status: 1, error: "Candidate SDK admission requires a GitHub API token\n" },
+  ])("inspects a stacked child with inherited SDK=$inherited", ({ inherited, status, error }) => {
+    const f = candidateSdkFixture();
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-stack-sdk-inspection-"));
+    roots.push(root);
+    candidateSdkCheckout(root, f);
+    const trustedRoot = join(root, "parent");
+    sparseSdkWorkflowCheckout(trustedRoot, ".github/workflows/pr.yaml", "openshell-sdk-package");
+    writeFileSync(
+      join(trustedRoot, "ci/reviewed-npm-audit.json"),
+      inherited ? f.sources["ci/reviewed-npm-audit.json"]! : f.trustedSource,
+    );
+    const result = spawnSync(
+      process.execPath,
+      [join(trustedRoot, "scripts/checks/prepare-ci-npm-install.mts")],
+      {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 5_000,
+        env: {
+          PATH: process.env.PATH,
+          NEMOCLAW_CI_NPM_PACKAGE_MODE: "inspect",
+          NEMOCLAW_CI_TARGET_ROOT: root,
+          GITHUB_EVENT_NAME: "pull_request",
+          UPGRADE_PR_NUMBER: "456",
+          CANDIDATE_SHA: "d".repeat(40),
+          UPGRADE_BASE_SHA: sdkCandidateIdentity.candidateSha,
+        },
+      },
+    );
+    expect(result.status, result.stderr).toBe(status);
+    expect(result.stderr).toBe(error);
+    expect(result.stdout).toBe(
+      inherited ? `${JSON.stringify({ artifactName: f.sdk.artifactName, required: true })}\n` : "",
+    );
   });
 
   it("binds a new SDK artifact to the candidate, base and current approval", async () => {

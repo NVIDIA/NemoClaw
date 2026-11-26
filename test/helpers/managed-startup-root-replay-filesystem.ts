@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { managedStartupE2eProfile } from "../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply";
+import {
+  encodeManagedStartupProfile,
+  decodeManagedStartupProfile,
+  type ManagedStartupAgent,
+} from "../../src/lib/onboard/managed-startup/profile";
+
 import fs from "node:fs";
 import { vi } from "vitest";
 
@@ -55,7 +63,12 @@ export function mockRootReplayFilesystem(
   runtimeWrites: string[],
   seededFiles: ReadonlyMap<
     string,
-    { readonly contents: string | Buffer; readonly mode: number }
+    {
+      readonly contents: string | Buffer;
+      readonly mode: number;
+      readonly uid?: number;
+      readonly gid?: number;
+    }
   > = new Map(),
 ): {
   readonly beforeRename: (callback: ((source: string, target: string) => void) | null) => void;
@@ -87,7 +100,10 @@ export function mockRootReplayFilesystem(
     "/var/lib",
     "/var/lib/nemoclaw",
   ]);
-  const fixtureFiles = new Map([
+  const fixtureFiles = new Map<
+    string,
+    { contents: string | Buffer; mode: number; uid?: number; gid?: number }
+  >([
     [
       "/usr/sbin/update-ca-certificates",
       { contents: "managed startup test executable", mode: 0o555 },
@@ -112,9 +128,12 @@ export function mockRootReplayFilesystem(
   const fileModes = new Map([...fixtureFiles].map(([target, file]) => [target, file.mode]));
   let nextFileInode = 2n;
   const fileInodes = new Map<string, bigint>();
+  const fileOwners = new Map<bigint, { uid: number; gid: number }>();
   const fileCtimes = new Map<string, bigint>();
   for (const target of files.keys()) {
     fileInodes.set(target, nextFileInode);
+    const seed = fixtureFiles.get(target);
+    fileOwners.set(nextFileInode, { uid: seed?.uid ?? 0, gid: seed?.gid ?? 0 });
     fileCtimes.set(target, 1n);
     nextFileInode += 1n;
   }
@@ -185,7 +204,7 @@ export function mockRootReplayFilesystem(
     ({
       ctimeNs,
       dev: 1n,
-      gid: 0n,
+      gid: BigInt(fileOwners.get(ino)?.gid ?? 0),
       ino,
       isDirectory: () => false,
       isFile: () => true,
@@ -194,7 +213,7 @@ export function mockRootReplayFilesystem(
       mtimeNs: 1n,
       nlink,
       size: BigInt(bytes.length),
-      uid: 0n,
+      uid: BigInt(fileOwners.get(ino)?.uid ?? 0),
     }) as fs.BigIntStats;
   const missing = (): never => {
     throw Object.assign(new Error("missing"), { code: "ENOENT" });
@@ -243,7 +262,12 @@ export function mockRootReplayFilesystem(
               fileCtimes.get(resolved) ?? missing(),
               fileLinkCount(fileInodes.get(resolved) ?? missing()),
             )
-          : stat("file", mode);
+          : stat(
+              "file",
+              mode,
+              fileOwners.get(fileInodes.get(resolved)!)?.uid ?? 0,
+              fileOwners.get(fileInodes.get(resolved)!)?.gid ?? 0,
+            );
   }) as typeof fs.lstatSync);
   vi.spyOn(fs, "mkdirSync").mockImplementation(((
     target: fs.PathLike,
@@ -469,4 +493,55 @@ export function mockRootReplayFilesystem(
       fileModes.set(target, mode);
     },
   };
+}
+
+export function delegatedRequest(agent: ManagedStartupAgent = "openclaw") {
+  return createManagedStartupRootApplyRequest({
+    agent,
+    encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agent, false)),
+  });
+}
+
+export function preparedApplication(
+  request = delegatedRequest(),
+  status: "prepared" | "already-committed" = "prepared",
+) {
+  return {
+    status,
+    stateDirectory: "/var/lib/nemoclaw/startup-profile",
+    generationDirectory: "/var/lib/nemoclaw/startup-profile/generation-test",
+    profilePath: "/var/lib/nemoclaw/startup-profile/generation-test/profile.json",
+    corporateCaPath: null,
+    expectedAgent: request.agent,
+    profile: decodeManagedStartupProfile(request.encodedProfile),
+    fingerprint: request.profileFingerprint,
+  } as const;
+}
+
+export function mockRootOwnedPolicyInstallPaths(
+  source: string,
+  shareDirectory: string,
+  target: string,
+  beforeSourceCleanup?: () => void,
+): void {
+  const realLstatSync = fs.lstatSync.bind(fs);
+  const rootOwned = (stat: fs.Stats): fs.Stats =>
+    new Proxy(stat, {
+      get(inner, property) {
+        const value = property === "uid" || property === "gid" ? 0 : Reflect.get(inner, property);
+        return typeof value === "function" ? value.bind(inner) : value;
+      },
+    });
+  vi.spyOn(fs, "lstatSync").mockImplementation(((
+    file: fs.PathLike,
+    options?: { bigint?: boolean },
+  ) => {
+    const sourceCleanupHook =
+      file.toString() === source && options?.bigint === true ? beforeSourceCleanup : undefined;
+    sourceCleanupHook?.();
+    const stat = options?.bigint ? realLstatSync(file, { bigint: true }) : realLstatSync(file);
+    const rootPath = file.toString() === shareDirectory || file.toString() === target;
+    return rootPath && options?.bigint !== true ? rootOwned(stat as fs.Stats) : stat;
+  }) as typeof fs.lstatSync);
+  vi.spyOn(fs, "fchownSync").mockImplementation(() => undefined);
 }

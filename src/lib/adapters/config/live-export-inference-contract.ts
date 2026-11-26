@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { recordedRegisteredInferenceProviderAttachment } from "../../inference/native-provider/registered";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { exportNativeInferenceReceipt } from "../../domain/config/export-evidence";
 import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
@@ -107,6 +108,13 @@ export function resolveExportInferenceSelection(entry: Readonly<SandboxEntry>) {
     throw new Error("The native local export binding is invalid or unsupported.");
   return {
     normalized: normalizeInferenceSelection(entry),
+    registeredReceipt: recordedRegisteredInferenceProviderAttachment(entry),
     nativeReceipt: local ?? recordedNativeProviderAttachment(entry),
   };
 }
+
+export {
+  verifyRegisteredInferenceProviderAttachment,
+  type RegisteredInferenceProviderAttachment,
+} from "../../inference/native-provider/registered";
+export { createManagedProviderAdapter } from "../openshell/managed-provider-adapter";

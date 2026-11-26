@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { SYNTHETIC_DNS_HELPER } from "./patch-openclaw-native-network.mts";
 import { WORKER_ARCHIVE_DELETE_PATCHES } from "./patch-openclaw-secondary-main-session-delete.mts";
 import { OPENCLAW_EXPLICIT_PROXY_GUARD } from "./patch-openclaw-explicit-proxy.mts";
 import { WORKER_ARCHIVE_MCP_PATCHES } from "./patch-openclaw-worker-mcp-reliability.mts";
@@ -113,16 +114,60 @@ const ARCHIVE_PATCHES: Record<string, readonly (readonly [string, string])[]> = 
   ],
 };
 
+// Native mediation preserves strict fetch modes and hostname policy. Only resolved
+// synthetic DNS answers and the sandbox host-gateway name receive exceptions.
+function nativeArchivePatches(moduleName: string): readonly (readonly [string, string])[] {
+  const dns = (address: string, policy: string): readonly [string, string] => [
+    `if(isBlockedHostnameOrIp(${address},${policy}))`,
+    `if(!nemoclawIsSyntheticDnsAnswer(${address})&&isBlockedHostnameOrIp(${address},${policy}))`,
+  ];
+  const web = (expression: string, resolved: string): readonly [string, string] => [
+    expression,
+    `if(process.env.OPENSHELL_SANDBOX==="1"&&new URL(${resolved}.url).hostname==="host.openshell.internal")${resolved}.policy={...${resolved}.policy,allowedHostnames:[...${resolved}.policy?.allowedHostnames??[],"host.openshell.internal"]};${expression}`,
+  ];
+  const networks: Record<string, readonly (readonly [string, string])[]> = {
+    "sqlite-store.worker.mjs": [
+      [
+        "function assertAllowedResolvedAddressesOrThrow(Ot,Kt){",
+        SYNTHETIC_DNS_HELPER + "function assertAllowedResolvedAddressesOrThrow(Ot,Kt){",
+      ],
+      dns("Zt.address", "Kt"),
+      web(
+        "return fetchWithSsrFGuard(Zt?withTrustedEnvProxyGuardedFetchMode(Dn):withStrictGuardedFetchMode(Dn))",
+        "Dn",
+      ),
+    ],
+    "worker-chunk-CimbqAym.mjs": [
+      [
+        "function assertAllowedResolvedAddressesOrThrow(e,t){",
+        SYNTHETIC_DNS_HELPER + "function assertAllowedResolvedAddressesOrThrow(e,t){",
+      ],
+      dns("n.address", "t"),
+    ],
+    "worker-chunk-A05CVh6v.mjs": [web("return l(n?c(i):u(i))", "i")],
+  };
+  // The first four sqlite patches and the two omitted modules implement the
+  // retired proxy route. Keep upstream handshake, catalog, and deletion repairs.
+  const retained =
+    moduleName === "sqlite-store.worker.mjs"
+      ? ARCHIVE_PATCHES[moduleName]!.slice(4)
+      : ["worker-chunk-CMCl78Z0.mjs", "worker-chunk-BS-ufNRt.mjs"].includes(moduleName)
+        ? []
+        : (ARCHIVE_PATCHES[moduleName] ?? []);
+  return [...retained, ...(networks[moduleName] ?? [])];
+}
+
 export function patchOpenClawWorkerArchiveModule(
   source: string,
   moduleName: string,
+  native = false,
 ): {
   text: string;
   originalSize: number;
   originalSha256: string;
 } {
   const patches = [
-    ...(ARCHIVE_PATCHES[moduleName] ?? []),
+    ...(native ? nativeArchivePatches(moduleName) : (ARCHIVE_PATCHES[moduleName] ?? [])),
     ...(WORKER_ARCHIVE_DEVICE_PATCHES[moduleName] ?? []),
     ...(WORKER_ARCHIVE_MCP_PATCHES[moduleName] ?? []),
   ];
@@ -160,7 +205,7 @@ export function patchOpenClawWorkerProxyText(source: string): string {
   return result;
 }
 
-export function patchOpenClawWorkerProxy(dist: string): boolean {
+export function patchOpenClawWorkerProxy(dist: string, native = false): boolean {
   const metadata = JSON.parse(fs.readFileSync(path.join(dist, "..", "package.json"), "utf8")) as {
     version?: string;
   };
@@ -172,6 +217,7 @@ export function patchOpenClawWorkerProxy(dist: string): boolean {
         dist,
         process.execPath,
         fileURLToPath(import.meta.url),
+        ...(native ? ["--native"] : []),
       ],
       { encoding: "utf8", timeout: 120000, maxBuffer: 1024 * 1024 },
     );
@@ -216,19 +262,29 @@ export function patchOpenClawWorkerProxy(dist: string): boolean {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  if (process.argv[2] === "--archive-module" && process.argv.length === 5) {
+  if (
+    ["--archive-module", "--archive-module-native"].includes(process.argv[2] ?? "") &&
+    process.argv.length === 5
+  ) {
     const moduleName = process.argv[3]!;
     const file = process.argv[4]!;
     const source = fs.readFileSync(file, "utf8");
-    const result = patchOpenClawWorkerArchiveModule(source, moduleName);
+    const result = patchOpenClawWorkerArchiveModule(
+      source,
+      moduleName,
+      process.argv[2] === "--archive-module-native",
+    );
     if (source !== result.text) fs.writeFileSync(file, result.text);
     process.stdout.write(
       JSON.stringify({ originalSize: result.originalSize, originalSha256: result.originalSha256 }),
     );
   } else {
     const dist = process.argv[2];
-    if (!dist || process.argv.length !== 3)
+    if (
+      !dist ||
+      (process.argv.length !== 3 && !(process.argv.length === 4 && process.argv[3] === "--native"))
+    )
       throw new Error("Usage: patch-openclaw-worker-proxy.mts <dist>");
-    patchOpenClawWorkerProxy(dist);
+    patchOpenClawWorkerProxy(dist, process.argv[3] === "--native");
   }
 }

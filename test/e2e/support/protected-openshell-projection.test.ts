@@ -117,8 +117,18 @@ describe("protected OpenShell source projection", () => {
 const sdkName = "@nvidia/openshell-sdk";
 const sdkLocation = `node_modules/${sdkName}`;
 function sdkFixture() {
-  const auditSource = read("ci/reviewed-npm-audit.json");
-  const config = JSON.parse(auditSource);
+  const config = JSON.parse(read("ci/reviewed-npm-audit.json"));
+  // Keep legacy graph tests on their reviewed 0.1.9 input as the current SDK advances.
+  config.sourceRegistryPackageReplacement = {
+    artifactName: "nvidia-openshell-sdk-0.1.9.tgz",
+    label: "OpenShell TypeScript SDK 0.1.9",
+    packageSpec: "@nvidia/openshell-sdk@0.1.9",
+    integrity:
+      "sha512-UYv+9YuA+s/JCjg3nzK1EIgxMj/iw1/Unw8J5pGhGYLjO+jXxUqiJdtfiIxS4LOyr1Xhn+3DRUhrf61jXE06yQ==",
+    tarballUrl:
+      "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.9/99882402cf986d8fe061b852b8262ac55622e5a7",
+  };
+  const auditSource = JSON.stringify(config);
   const baseline = config.sourceRegistryPackage;
   const replacement = config.sourceRegistryPackageReplacement;
   const baseVersion = baseline.packageSpec.split("@").at(-1);

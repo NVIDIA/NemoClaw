@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import { OPENSHELL_V0110_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const TLS_SERVER_NAME_REMOVE = "remove(openshell_core::sandbox_env::GATEWAY_TLS_SERVER_NAME);";
@@ -96,6 +96,186 @@ export const OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServe
     },
   ]);
 
+// Preserve the historical checks above. The split supervisor uses a protected
+// child-environment filter; Podman mediates user variables and VM guests receive
+// only driver-owned boot metadata. Bind each reviewed implementation and test.
+export const OPENSHELL_V012_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServerNameSource[] =
+  Object.freeze([
+    {
+      ...OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[0]!,
+      blobSha: "1f4c91f5e4eae31603f49df11955b37abe9710df",
+      checks: [
+        {
+          category: "driver",
+          driver: "docker",
+          orderedTokens: [
+            "fn docker_child_environment(sandbox: &DriverSandbox)",
+            "environment.extend(spec.environment.clone());",
+            "openshell_core::sandbox_env::GATEWAY_TLS_SERVER_NAME,",
+            "environment.remove(protected);",
+          ],
+        },
+      ],
+    },
+    {
+      ...OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[1]!,
+      blobSha: "c5036f45473c3b1af179c60fa41e3c48d1c7c4c2",
+      checks: [
+        {
+          category: "regression",
+          driver: "docker",
+          orderedTokens: [
+            "fn docker_child_environment_strips_supervisor_control_keys()",
+            "openshell_core::sandbox_env::GATEWAY_TLS_SERVER_NAME,",
+            '.insert(key.to_string(), "spoofed".to_string());',
+            "let env = docker_child_environment(&sandbox);",
+            'assert!(!env.values().any(|value| value == "spoofed"));',
+          ],
+        },
+      ],
+    },
+    {
+      ...OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[2]!,
+      blobSha: "bb4ee88c9f7010835a56e75a570785b6dfed09b7",
+      checks: [
+        {
+          category: "driver",
+          driver: "podman",
+          orderedTokens: [
+            "user_env.insert(k.clone(), v.clone());",
+            "env.insert(openshell_core::sandbox_env::USER_ENVIRONMENT.into(), json);",
+            `env.${TLS_SERVER_NAME_REMOVE}`,
+          ],
+        },
+        OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[2]!.checks[1]!,
+      ],
+    },
+    {
+      ...OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[3]!,
+      blobSha: "8cdabb22c5bd087178dd43345980452047248598",
+      checks: [
+        {
+          category: "driver",
+          driver: "vm",
+          orderedTokens: [
+            "fn build_guest_environment(sandbox: &Sandbox, config: &VmDriverConfig)",
+            "let mut environment: HashMap<String, String> = HashMap::new();",
+            "let mut pairs = environment.into_iter().collect::<Vec<_>>();",
+            "fn build_guest_environment_keeps_user_values_in_child_channel()",
+            'assert!(!env.iter().any(|entry| entry.starts_with("LD_PRELOAD=")));',
+          ],
+        },
+        OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES[3]!.checks[1]!,
+      ],
+    },
+  ]);
+
+// OpenShell 0.1.3 retains these environment boundaries and regression predicates.
+// Bind them to the new release blobs without replacing historical source evidence.
+export const OPENSHELL_V013_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServerNameSource[] =
+  Object.freeze([
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[0]!,
+      blobSha: "7a8935ff2908580e2fbadacb01fd78bbef05e93d",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[1]!,
+      blobSha: "3d8968f2dbcb35922a6f90a8f3282fdce0c77528",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[2]!,
+      blobSha: "3091ac978c8c2d9ea481b4f7bf2d405458f04c01",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[3]!,
+      blobSha: "ab1aca902bc1a705366685750ecb32332077452a",
+    },
+  ]);
+
+// OpenShell 0.1.5 preserves the reviewed environment filtering and regression tests.
+export const OPENSHELL_V015_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServerNameSource[] =
+  Object.freeze([
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[0]!,
+      blobSha: "059ba1535cb438215d23693926f0ef57129716ff",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[1]!,
+      blobSha: "0159ecd99f5e2a0aead65feaa7cde65b8af6d886",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[2]!,
+      blobSha: "9c3841d000a73646539aa48a31bf12d2b1bd3ef1",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[3]!,
+      blobSha: "65c0c82a5bb24316d8620a80c78137d5ce754f75",
+    },
+  ]);
+
+// OpenShell 0.1.7 preserves the reviewed environment filtering and regression tests.
+export const OPENSHELL_V017_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServerNameSource[] =
+  Object.freeze([
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[0]!,
+      blobSha: "6b761f2f599e49fd8fae5e47239465f92cdb3a92",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[1]!,
+      blobSha: "92d20739f35ce7f27326df3c54c8e90de6596707",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[2]!,
+      blobSha: "2f606dfa6e26f1667d6412db86de3b05cc763f77",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[3]!,
+      blobSha: "f7946c34c29ee75f49fb5a131ab873f3e91683c5",
+    },
+  ]);
+
+// OpenShell 0.1.9 preserves the reviewed environment filtering and regression tests.
+export const OPENSHELL_V019_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServerNameSource[] =
+  Object.freeze([
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[0]!,
+      blobSha: "d65aeeed364c9fd0899171a060b7b47de3a21a84",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[1]!,
+      blobSha: "c022adc923c40a129889edead2babfbcf6f0c39e",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[2]!,
+      blobSha: "9943d7a0b6be231add1940ab36675ead1b54b85e",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[3]!,
+      blobSha: "528c786b6013172273739bdfa4a1f73f4b4c5c63",
+    },
+  ]);
+
+// OpenShell 0.1.10 retains the reviewed filtering functions and regression predicates.
+export const OPENSHELL_V0110_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServerNameSource[] =
+  Object.freeze([
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[0]!,
+      blobSha: "a012b69aaff137437b730f970334ceaafcdf0982",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[1]!,
+      blobSha: "c86e2d068bf8db7c8f01f88dc77b3544e30337b9",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[2]!,
+      blobSha: "06f31c740dc9ed609a7351e969c4ee535fb803d7",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[3]!,
+      blobSha: "37fb7bfa597be972a71edd5474a931db4097156c",
+    },
+  ]);
+
 function gitBlobSha(source: string): string {
   const content = Buffer.from(source, "utf8");
   const header = Buffer.from(`blob ${String(content.byteLength)}\0`, "utf8");
@@ -153,7 +333,11 @@ type VerificationResult = {
 
 export async function verifyOpenShellTlsServerNameSourceBoundary(
   fetchSource: typeof fetch = fetch,
-  reviewedSources: readonly OpenShellTlsServerNameSource[] = OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES,
+  reviewedSources: readonly OpenShellTlsServerNameSource[] = OPENSHELL_V0110_TLS_SERVER_NAME_SOURCES,
+  qualification: Readonly<{
+    sourceRevision: string;
+    version: string;
+  }> = OPENSHELL_V0110_QUALIFICATION,
 ): Promise<{
   drivers: VerificationResult[];
   regressions: VerificationResult[];
@@ -163,9 +347,11 @@ export async function verifyOpenShellTlsServerNameSourceBoundary(
   const drivers: VerificationResult[] = [];
   const regressions: VerificationResult[] = [];
   for (const reviewedSource of reviewedSources) {
+    const repository =
+      qualification.version === "0.1.10" ? "ai-openshell/openshell" : "NVIDIA/OpenShell";
     const url =
-      `https://raw.githubusercontent.com/NVIDIA/OpenShell/` +
-      `${OPENSHELL_V0116_QUALIFICATION.sourceRevision}/${reviewedSource.path}`;
+      `https://raw.githubusercontent.com/${repository}/` +
+      `${qualification.sourceRevision}/${reviewedSource.path}`;
     const response = await fetchSource(url, {
       redirect: "error",
       signal: AbortSignal.timeout(30_000),
@@ -190,7 +376,7 @@ export async function verifyOpenShellTlsServerNameSourceBoundary(
   return {
     drivers,
     regressions,
-    sourceRevision: OPENSHELL_V0116_QUALIFICATION.sourceRevision,
-    version: OPENSHELL_V0116_QUALIFICATION.version,
+    sourceRevision: qualification.sourceRevision,
+    version: qualification.version,
   };
 }

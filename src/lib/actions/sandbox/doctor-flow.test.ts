@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 
 type RunSandboxDoctor = (typeof import("./doctor"))["runSandboxDoctor"];
 type PortableAgentReceiptDisposition = ReturnType<
@@ -747,6 +748,51 @@ describe("runSandboxDoctor flow", () => {
       );
     },
   );
+
+  it("keeps a registered provider on its recorded native route during doctor", async () => {
+    const { binding } = registeredInferenceFixture(true);
+    const expected = { ...binding, gatewayName: "nemoclaw-19080" };
+    const harness = createDoctorHarness("native-extra", {
+      registryOverrides: {
+        registeredInferenceProviderAttachment: expected,
+        endpointUrl: expected.endpointUrl,
+        preferredInferenceApi: expected.inferenceApi,
+        credentialEnv: expected.credentialEnv,
+      },
+    });
+    const verify = vi
+      .spyOn(requireDist("./inference-route-health.js"), "verifyRegisteredStatusAttachment")
+      .mockResolvedValue(undefined);
+    const probe = vi
+      .spyOn(requireDist("./inference-invocation-probe.js"), "probeSandboxInferenceInvocation")
+      .mockResolvedValue({ ok: true });
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "get"]),
+      expect.anything(),
+    );
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).not.toHaveBeenCalled();
+    expect(verify).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      gatewayName: expected.gatewayName,
+      expected,
+    });
+    expect(probe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nativeProvider: true,
+        provider: "native-extra",
+        registeredInferenceProviderAttachment: expected,
+      }),
+      {},
+      95_000,
+    );
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({
+        label: "Inference route (registered native)",
+        status: "ok",
+      }),
+    );
+  });
 
   it("uses hosted attachment authority and never reads the shared gateway route", async () => {
     const receipt = {

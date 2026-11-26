@@ -13,6 +13,7 @@ const REPOSITORY_ROOT = path.join(import.meta.dirname, "../..");
 const INSTALLER = path.join(REPOSITORY_ROOT, "install.sh");
 const SDK_NAME = "@nvidia/openshell-sdk";
 const PUBLIC_DEPENDENCIES = [
+  "@ai-openshell/sdk",
   "@bufbuild/protobuf",
   "@connectrpc/connect",
   "@connectrpc/connect-node",
@@ -90,7 +91,7 @@ it(
       name: "nemoclaw",
       version: "1.0.0",
       bin: { nemoclaw: "bin/nemoclaw.js", nemohermes: "bin/nemoclaw.js" },
-      bundleDependencies: [SDK_NAME],
+      bundleDependencies: [SDK_NAME, ...PUBLIC_DEPENDENCIES],
       optionalDependencies: Object.fromEntries(
         [SDK_NAME, ...PUBLIC_DEPENDENCIES].map((name) => [
           name,
@@ -106,9 +107,9 @@ it(
     Object.assign(
       packages,
       Object.fromEntries([
-        packPublicDependency(PUBLIC_DEPENDENCIES[0], root, npmEnvironment, sourceLock),
-        packPublicDependency(PUBLIC_DEPENDENCIES[1], root, npmEnvironment, sourceLock),
-        packPublicDependency(PUBLIC_DEPENDENCIES[2], root, npmEnvironment, sourceLock),
+        ...PUBLIC_DEPENDENCIES.map((name) =>
+          packPublicDependency(name, root, npmEnvironment, sourceLock),
+        ),
       ]),
     );
 
@@ -192,7 +193,7 @@ exit 0
       path.join(binDir, "openshell"),
       `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ] || [ "\${1:-}" = "version" ]; then
-  echo "openshell 0.0.116"
+  echo "openshell 0.1.10"
 fi
 exit 0
 `,
@@ -222,8 +223,8 @@ exit 0
 
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
-    expect(output).toContain("OpenShell SDK 0.0.116: verified archive prepared");
-    expect(output).toContain("OpenShell SDK 0.0.116: import OK");
+    expect(output).toContain("OpenShell SDK 0.1.10: verified archive prepared");
+    expect(output).toContain("OpenShell SDK 0.1.10: import OK");
     expect(fs.readFileSync(path.join(root, "build-saw-sdk"), "utf8")).toBe("yes");
   },
 );

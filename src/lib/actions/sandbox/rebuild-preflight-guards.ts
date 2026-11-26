@@ -15,7 +15,10 @@ import {
   preflightGatewayRouteDiscovery,
 } from "../../inference/gateway-route-compatibility";
 import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/contract";
-import { normalizeInferenceSelection } from "../../inference/selection";
+import {
+  normalizeInferenceSelection,
+  recordedRegisteredInferenceProviderAttachment,
+} from "../../inference/selection";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { requireRuntimeProviderBundleForSandbox } from "../../onboard/runtime-provider/access";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
@@ -29,6 +32,10 @@ import * as registry from "../../state/registry";
 import { withLock } from "../../state/registry/lock";
 import { load, save } from "../../state/registry/persistence";
 import type { SandboxEntry, SandboxRegistry } from "../../state/registry/types";
+import {
+  validateRebuildHostInferenceCredential,
+  type HostCredentialTarget,
+} from "./rebuild/host-credential-preflight";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildVersionCheck } from "./rebuild-preflight-confirmation";
@@ -98,6 +105,28 @@ function hardRouteConflict(
     return "Prepared rebuild inference route is missing its provider or model.";
   }
   const target = sandboxes.find((entry) => entry.name === sandboxName);
+  if (target?.registeredInferenceProviderAttachment !== undefined) {
+    try {
+      const binding = recordedRegisteredInferenceProviderAttachment(target);
+      if (
+        !binding ||
+        binding.gatewayName !== gatewayName ||
+        binding.sandboxName !== sandboxName ||
+        binding.providerName !== route.provider
+      )
+        return "Registered provider binding does not match the rebuild target.";
+      const discovery = preflightGatewayRouteDiscovery({
+        gatewayName,
+        sandboxName,
+        route: { ...route, model: route.model },
+        sandboxes,
+        nativeLocalSelection: true,
+      });
+      return discovery.ok ? null : formatGatewayRouteConflict(discovery.result);
+    } catch {
+      return "Registered provider binding does not match the rebuild target.";
+    }
+  }
   if (target?.nativeLocalProviderAttachment !== undefined) {
     const local = normalizeNativeLocalProviderAttachment(target.nativeLocalProviderAttachment);
     if (
@@ -107,8 +136,7 @@ function hardRouteConflict(
         : target.agent === "hermes"
           ? local.agent === "hermes"
           : (target.agent === "openclaw" || target.agent === "pi") &&
-            local.agent === target.agent &&
-            !target.nimContainer) ||
+            local.agent === target.agent) ||
       local.sandboxName !== sandboxName ||
       local.gatewayName !== gatewayName ||
       local.provider !== route.provider
@@ -177,6 +205,8 @@ export function commitRebuildRoutePreflight(
     const migratedSandboxNames: string[] = [];
     for (const peer of Object.values(sandboxRegistry.sandboxes)) {
       if (
+        target.registeredInferenceProviderAttachment !== undefined ||
+        peer.registeredInferenceProviderAttachment !== undefined ||
         target.nativeLocalProviderAttachment !== undefined ||
         peer.nativeLocalProviderAttachment !== undefined ||
         peer.name === input.sandboxName ||
@@ -483,4 +513,23 @@ export function assertRebuildEntryUnchanged(
     "Sandbox configuration changed before rebuild lock acquisition",
     bail,
   );
+}
+
+export async function revalidateRebuildHostCredentialBeforeDelete(
+  target: HostCredentialTarget,
+  hostCredential: string | null,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  let indeterminate = false;
+  const valid =
+    !hostCredential ||
+    (await validateRebuildHostInferenceCredential(target, hostCredential, undefined, () => {
+      indeterminate = true;
+    }));
+  if (valid) return { ok: true };
+  return {
+    ok: false,
+    message: indeterminate
+      ? "NVIDIA upstream inference was temporarily unavailable before sandbox deletion. The sandbox is untouched; retry rebuild when inference recovers."
+      : "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
+  };
 }

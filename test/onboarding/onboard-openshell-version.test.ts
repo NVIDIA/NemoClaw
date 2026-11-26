@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -444,7 +445,7 @@ describe("computeOpenshellInstallEnv", () => {
       },
     );
     expect(result.env).toBe(null);
-    expect(errors.join("\n")).toContain("requires exact stable OpenShell 0.0.116");
+    expect(errors.join("\n")).toContain("requires exact stable OpenShell 0.1.10");
   });
 
   it("overlays MIN/MAX/PIN env vars from blueprint when latest exceeds max", () => {
@@ -501,5 +502,73 @@ describe("computeOpenshellInstallEnv", () => {
       },
     );
     expect(result.env).toBe(null);
+  });
+});
+
+describe("OpenShell release discovery", () => {
+  const ghCall = {
+    command: "gh",
+    args: [
+      "release",
+      "list",
+      "--repo",
+      "ai-openshell/openshell",
+      "--limit",
+      "1000",
+      "--json",
+      "tagName",
+    ],
+  };
+  const curlCall = {
+    command: "curl",
+    args: [
+      "-fsSL",
+      "-H",
+      "Accept: application/vnd.github+json",
+      "https://api.github.com/repos/ai-openshell/openshell/releases?per_page=100&page=1",
+    ],
+  };
+  it.each([
+    { transport: "gh", expectedCalls: [ghCall] },
+    { transport: "curl", expectedCalls: [ghCall, curlCall] },
+  ])("discovers and pins 0.1.10 through $transport", ({ transport, expectedCalls }) => {
+    const script = `
+      const childProcess = require("node:child_process");
+      const calls = [];
+      childProcess.spawnSync = (command, args) => {
+        if (command === "docker") return {status: 1, stdout: "", stderr: ""};
+        calls.push({command, args});
+        if (command === "gh") return {
+          status: ${transport === "gh" ? 0 : 1},
+          stdout: JSON.stringify([{tagName: "v0.1.11"}, {tagName: "v0.1.10"}]),
+        };
+        if (command === "curl") return {
+          status: 0,
+          stdout: JSON.stringify([{tag_name: "v0.1.11"}, {tag_name: "v0.1.10"}]),
+        };
+        throw new Error("Unexpected command: " + command);
+      };
+      const { computeOpenshellInstallEnv } = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/openshell-pin.ts"))});
+      const result = computeOpenshellInstallEnv({}, {
+        getBlueprintMinOpenshellVersion: () => "0.1.10",
+        getBlueprintMaxOpenshellVersion: () => "0.1.10",
+        versionGte: (a, b) => a.localeCompare(b, undefined, {numeric: true}) >= 0,
+        log: () => {},
+      });
+      process.stdout.write(JSON.stringify({result, calls}));
+    `;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const observed = JSON.parse(result.stdout);
+    expect(observed.result.env).toMatchObject({
+      NEMOCLAW_OPENSHELL_MIN_VERSION: "0.1.10",
+      NEMOCLAW_OPENSHELL_MAX_VERSION: "0.1.10",
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.1.10",
+    });
+    expect(observed.calls).toEqual(expectedCalls);
   });
 });
