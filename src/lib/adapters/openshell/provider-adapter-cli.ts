@@ -453,6 +453,14 @@ function parseProfileCredentialKeys(output: string, expectedProfileId: string): 
   return [...keys].sort();
 }
 
+const DECLARED_CREDENTIAL_DISPLAY_LIMIT = 5;
+
+function declaredCredentialNames(keys: readonly string[]): string {
+  const shown = keys.slice(0, DECLARED_CREDENTIAL_DISPLAY_LIMIT).join(", ") || "none";
+  const omitted = keys.length - DECLARED_CREDENTIAL_DISPLAY_LIMIT;
+  return omitted > 0 ? `${shown} and ${omitted} more` : shown;
+}
+
 function parseRefreshStatus(output: string, credentialKey: string): string | null {
   const row = output
     .split("\n")
@@ -890,8 +898,7 @@ export function createCliOpenShellProviderAdapter(
       return failure({
         kind: "command",
         reason: "profile_incompatible",
-        message:
-          "The supplied credential names are not declared by the OpenShell provider profile.",
+        message: `The supplied credential names are not declared by the OpenShell provider profile. Declared credential names: ${declaredCredentialNames(credentialKeys)}.`,
       });
     }
     const expectedProfile = request.expectedProfile;
