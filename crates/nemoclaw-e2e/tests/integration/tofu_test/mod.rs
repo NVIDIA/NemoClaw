@@ -10,8 +10,14 @@
 //! `harness/main.tf`, and copies each authored HCL input there with the
 //! bundle's NVIDIA provider versions pinned. It then runs each test file with
 //! fixtures reset and checks what teardown leaves, which no run block sees.
+//!
+//! A scenario whose documents `nemoclaw compile` writes also runs against the
+//! HCL projects rendered from its graphs, in a second work copy; each run is
+//! dealt to a shard on its own. `rendered` checks that each project
+//! configures what its graph configures.
 
 mod fixtures;
+mod rendered;
 
 use fixtures::Fixtures;
 use nemoclaw_sdk::{compile, config::Document};
@@ -58,12 +64,15 @@ struct Prepared {
     credentials: Vec<String>,
     image_metadata: Vec<String>,
     engine_socket: bool,
+    /// A document `nemoclaw compile` writes, with the graph the scenario
+    /// applies and the providers it required before test adaptation.
+    rendered: Option<(Document, Value, Value)>,
 }
 
 /// Scenarios are dealt across shards by estimated time, so each test stays
 /// within the integration per-test budget; nextest runs the shards one at a
 /// time on a runner, because they share the fixed engine socket.
-const SHARDS: usize = 4;
+const SHARDS: usize = 8;
 
 /// A scenario's estimated time in milliseconds: the gateway delays its test
 /// file declares, which a faster runner doesn't shorten, plus its OpenTofu
@@ -124,6 +133,30 @@ async fn scenarios_in_shard_4() {
     run_shard(3).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn scenarios_in_shard_5() {
+    run_shard(4).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn scenarios_in_shard_6() {
+    run_shard(5).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn scenarios_in_shard_7() {
+    run_shard(6).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn scenarios_in_shard_8() {
+    run_shard(7).await;
+}
+
 /// Every live E2E test file names a document in `cases`, and every
 /// integration test file applies at least one document or authored example
 /// that exists, so a renamed or removed input fails with the unit tests,
@@ -181,6 +214,30 @@ fn a_scenario_with_a_long_gateway_delay_runs_in_a_shard_of_its_own() {
         "the slow scenario shares shard {} with others: {shards:?}",
         shards[16]
     );
+}
+
+/// Whether every module a test file applies is a document that
+/// `nemoclaw compile` writes, so the scenario also runs against its HCL.
+fn renders(text: &str) -> bool {
+    let modules = references(text);
+    !modules.is_empty()
+        && modules.iter().all(|module| match input(module) {
+            Some(Input::Document(path)) => Document::parse(fs::read(path).unwrap().as_slice())
+                .is_ok_and(|document| nemoclaw_sdk::project::check(&document).is_ok()),
+            _ => false,
+        })
+}
+
+/// Each run of the test files: its index, and whether it applies the HCL
+/// projects rendered from its documents instead of their graphs.
+fn runs(tests: &[(String, String)]) -> Vec<(usize, bool)> {
+    tests
+        .iter()
+        .enumerate()
+        .flat_map(|(index, (_, text))| {
+            std::iter::once((index, false)).chain(renders(text).then_some((index, true)))
+        })
+        .collect()
 }
 
 /// Each integration test file's name and text, sorted by name.
@@ -301,6 +358,7 @@ fn prepare(
                 credentials: Vec::new(),
                 image_metadata,
                 engine_socket: false,
+                rendered: None,
             };
         }
         Input::Document(path) => fs::read(&path).unwrap(),
@@ -329,8 +387,12 @@ fn prepare(
     let generations: compile::Generations =
         GENERATIONS.map(|kind| (kind.into(), "a".repeat(32))).into();
     let mut graph = compile::compile(&document, &generations, version).unwrap();
+    let requirements = graph["terraform"]["required_providers"].clone();
     fixtures.redirect_publication_probes(&mut graph);
     for_tofu_test(&mut graph);
+    let rendered = nemoclaw_sdk::project::check(&document)
+        .is_ok()
+        .then(|| (document.clone(), graph.clone(), requirements));
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("nemoclaw.tf.json"), graph.to_string()).unwrap();
     fs::write(target.join("nemoclaw.yaml"), &source).unwrap();
@@ -347,6 +409,7 @@ fn prepare(
         credentials,
         image_metadata,
         engine_socket,
+        rendered,
     }
 }
 
@@ -370,11 +433,12 @@ async fn run_shard(shard: usize) {
     let bundle = Bundle::from_env();
     let root = Path::new(ROOT).to_path_buf();
     let tests = test_files();
-    assert!(tests.len() >= SHARDS, "every shard needs a scenario");
+    let runs = runs(&tests);
+    assert!(runs.len() >= SHARDS, "every shard needs a scenario");
     let shards = deal(
-        &tests
+        &runs
             .iter()
-            .map(|(_, text)| estimate(text))
+            .map(|(index, _)| estimate(&tests[*index].1))
             .collect::<Vec<_>>(),
     );
 
@@ -463,33 +527,21 @@ async fn run_shard(shard: usize) {
     ]
     .map(|(name, value)| (name.to_owned(), value))
     .into();
-    // Windows programs need these to find system libraries, temporary
-    // directories, and executables.
-    if cfg!(windows) {
-        for name in [
-            "SystemRoot",
-            "SystemDrive",
-            "windir",
-            "ComSpec",
-            "PATHEXT",
-            "TEMP",
-            "TMP",
-            "USERPROFILE",
-            "APPDATA",
-            "LOCALAPPDATA",
-        ] {
-            if let Ok(value) = std::env::var(name) {
-                base.insert(name.into(), value);
-            }
-        }
-    }
+    add_platform_environment(&mut base);
     // Coverage-instrumented providers write their profiles where the caller asks.
     if let Ok(profile) = std::env::var("LLVM_PROFILE_FILE") {
         base.insert("LLVM_PROFILE_FILE".into(), profile);
     }
-    let (initialized, output) =
-        tofu(&bundle, &work, &base, ["init", "-input=false", "-no-color"]).await;
-    assert!(initialized, "tofu init failed:\n{output}");
+    // The second work copy holds each rendered document's HCL instead of its
+    // graph, beside the same harness, fixtures, and other modules.
+    let hcl_work = directory.path().join("integration-hcl");
+    copy(&work, &hcl_work);
+    render_projects(&bundle, &prepared, &hcl_work).await;
+    for root in [&work, &hcl_work] {
+        let (initialized, output) =
+            tofu(&bundle, root, &base, ["init", "-input=false", "-no-color"]).await;
+        assert!(initialized, "tofu init failed:\n{output}");
+    }
 
     // CI names a directory to summarize and upload; otherwise evidence stays in
     // the work directory.
@@ -498,18 +550,24 @@ async fn run_shard(shard: usize) {
         .unwrap_or_else(|| directory.path().join("evidence"));
     let mut failed = Vec::new();
     // OpenTofu loads every test file, so every scenario is compiled; this shard runs its own.
-    for (scenario, _) in scenarios
+    for (index, hcl) in runs
         .iter()
         .zip(&shards)
         .filter(|(_, dealt)| **dealt == shard)
+        .map(|((index, hcl), _)| (*index, *hcl))
     {
+        let scenario = &scenarios[index];
+        let (root, name) = if hcl {
+            (&hcl_work, format!("{} (HCL)", scenario.name))
+        } else {
+            (&work, scenario.name.clone())
+        };
         // The skip shows in the output and the CI summary, not only as an absence.
         if cfg!(not(unix)) && scenario.engine_socket {
             println!(
-                "scenario {}: skipped; its Docker alias follows from the Unix fixture engine socket",
-                scenario.name
+                "scenario {name}: skipped; its Docker alias follows from the Unix fixture engine socket"
             );
-            record(&scenario.name, "skipped on this platform");
+            record(&name, "skipped on this platform");
             continue;
         }
         fixtures.reset(scenario.credentials.clone());
@@ -524,7 +582,7 @@ async fn run_shard(shard: usize) {
                 .display()
         );
         let started = std::time::Instant::now();
-        let (_, output) = tofu(&bundle, &work, &environment, ["test", "-no-color", &filter]).await;
+        let (_, output) = tofu(&bundle, root, &environment, ["test", "-no-color", &filter]).await;
         let problem = check(&output, &scenario.credentials, &diagnostics)
             .or_else(|| fixtures.teardown_problem());
         let result = format!(
@@ -536,21 +594,24 @@ async fn run_shard(shard: usize) {
             },
             started.elapsed().as_secs_f64()
         );
-        println!("scenario {}: {result}", scenario.name);
-        record(&scenario.name, &result);
+        println!("scenario {name}: {result}");
+        record(&name, &result);
         if let Some(problem) = problem {
-            let evidence = evidence_root.join(&scenario.name);
+            let evidence = evidence_root.join(if hcl {
+                format!("{}-hcl", scenario.name)
+            } else {
+                scenario.name.clone()
+            });
             fs::create_dir_all(&evidence).unwrap();
             let observations = fixtures.shared.observations().to_string();
             for (file, text) in [("tofu.txt", output), ("observations.json", observations)] {
                 fs::write(evidence.join(file), fixtures.shared.redact(text)).unwrap();
             }
             eprintln!(
-                "{}: {problem}\n{}",
-                scenario.name,
+                "{name}: {problem}\n{}",
                 fs::read_to_string(evidence.join("tofu.txt")).unwrap()
             );
-            failed.push(scenario.name.clone());
+            failed.push(name);
         }
     }
     if !failed.is_empty() {
@@ -560,6 +621,40 @@ async fn run_shard(shard: usize) {
             evidence_root.display(),
             kept.display()
         );
+    }
+}
+
+/// Replace each rendered document's graph in `root` with its HCL project, as
+/// `nemoclaw compile` renders it from the graph the scenario applies.
+async fn render_projects(bundle: &Bundle, prepared: &BTreeMap<String, Prepared>, root: &Path) {
+    let rendered: Vec<(&String, &(Document, Value, Value))> = prepared
+        .iter()
+        .filter_map(|(module, prepared)| Some((module, prepared.rendered.as_ref()?)))
+        .collect();
+    if rendered.is_empty() {
+        return;
+    }
+    let sdk_bundle = nemoclaw_sdk::bundle::Bundle::open(bundle.root()).unwrap();
+    let cancel = nemoclaw_sdk::CancellationToken::new();
+    let mut requirements = serde_json::Map::new();
+    for (_, (_, _, required)) in &rendered {
+        requirements.extend(required.as_object().unwrap().clone());
+    }
+    let requirements = json!({"terraform": {"required_providers": requirements}});
+    let schemas = nemoclaw_sdk::project::schemas(&sdk_bundle, &requirements, &cancel)
+        .await
+        .unwrap();
+    for (module, (document, graph, _)) in rendered {
+        let mut project = nemoclaw_sdk::project::render(document, graph, &schemas)
+            .unwrap_or_else(|error| panic!("{module}: {error}"));
+        nemoclaw_sdk::project::format(&sdk_bundle, &mut project, &cancel)
+            .await
+            .unwrap_or_else(|error| panic!("{module}: {error}"));
+        let target = root.join(module);
+        fs::remove_file(target.join("nemoclaw.tf.json")).unwrap();
+        for (name, text) in project.files {
+            fs::write(target.join(name), text).unwrap();
+        }
     }
 }
 
@@ -575,6 +670,29 @@ fn record(scenario: &str, result: &str) {
             .open(Path::new(&root).join("results.tsv"))
             .and_then(|mut file| writeln!(file, "{scenario}\t{result}"))
             .unwrap();
+    }
+}
+
+/// Windows programs, OpenTofu's provider plugins among them, need these to
+/// find system libraries, temporary directories, and executables.
+fn add_platform_environment(environment: &mut BTreeMap<String, String>) {
+    if cfg!(windows) {
+        for name in [
+            "SystemRoot",
+            "SystemDrive",
+            "windir",
+            "ComSpec",
+            "PATHEXT",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+        ] {
+            if let Ok(value) = std::env::var(name) {
+                environment.insert(name.into(), value);
+            }
+        }
     }
 }
 

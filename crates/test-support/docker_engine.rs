@@ -22,6 +22,9 @@ pub struct Engine {
     pub files: BTreeMap<String, Vec<u8>>,
     /// Every request other than a read, as `METHOD path`.
     pub mutations: Vec<String>,
+    /// Whether the engine is Podman, whose container and network IDs are 64
+    /// hexadecimal digits, as a managed Podman gateway's provider requires.
+    pub podman: bool,
 }
 
 impl Engine {
@@ -75,12 +78,18 @@ pub fn handle(engine: &mut Engine, method: &str, target: &str, body: &[u8]) -> (
         ("GET", ["networks"]) => json(200, json!(engine.networks.values().collect::<Vec<_>>())),
         ("POST", ["networks", "create"]) => {
             let mut network: Value = serde_json::from_slice(body).unwrap();
-            network["Id"] = json!("network");
+            // A Podman gateway's storage binds to its network's ID.
+            let id = if engine.podman {
+                format!("{:064x}", engine.networks.len() + 1)
+            } else {
+                "network".to_owned()
+            };
+            network["Id"] = json!(id);
             network["Internal"] = json!(false);
             network["EnableIPv6"] = json!(false);
             let name = network["Name"].as_str().unwrap().to_owned();
             engine.networks.insert(name, network);
-            json(201, json!({"Id":"network","Warning":""}))
+            json(201, json!({"Id":id,"Warning":""}))
         }
         ("GET", ["networks", name]) => engine
             .networks
@@ -94,7 +103,11 @@ pub fn handle(engine: &mut Engine, method: &str, target: &str, body: &[u8]) -> (
                 .iter()
                 .map(|mount| json!({"Type":mount["Type"],"Name":mount["Source"],"Destination":mount["Target"],"RW":true}))
                 .collect();
-            let id = format!("container-{}", engine.containers.len());
+            let id = if engine.podman {
+                format!("{:064x}", engine.containers.len())
+            } else {
+                format!("container-{}", engine.containers.len())
+            };
             engine.containers.push(json!({
                 "Id":id,"Name":format!("/{}", query("name").unwrap()),
                 "Config":config,"HostConfig":config["HostConfig"],"Mounts":mounts,

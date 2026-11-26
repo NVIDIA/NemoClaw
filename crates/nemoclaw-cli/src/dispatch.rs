@@ -13,6 +13,11 @@ use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 pub(crate) enum CommandResult {
     Export(Box<Document>),
+    /// The directory `compile` wrote, and the files it wrote there.
+    Compiled {
+        output: std::path::PathBuf,
+        files: Vec<String>,
+    },
     Authored {
         path: Option<std::path::PathBuf>,
         missing_credentials: Vec<(String, &'static str)>,
@@ -89,6 +94,22 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             })
         };
     }
+    if let Command::Compile { file, output } = &command {
+        let document = document(file, &mut stdin, cancel).await?;
+        let bundle = crate::deployment::bundle_directory(bundle_dir.as_deref())?;
+        let source = if file == Path::new("-") {
+            "standard input".to_owned()
+        } else {
+            file.display().to_string()
+        };
+        let project =
+            nemoclaw_sdk::project::write(&bundle, &document, &source, output, cancel).await?;
+        *read = Some(document);
+        return Ok(CommandResult::Compiled {
+            output: output.clone(),
+            files: project.files.into_keys().collect(),
+        });
+    }
     let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), force_stop, progress)?;
     let result = match command {
         Command::Plan { destroy: true, .. } => deployment.plan_destroy(cancel).await?,
@@ -146,6 +167,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
             deployment.destroy(cancel).await?
         }
         Command::Onboard { .. } => unreachable!("onboarding returns before deployment setup"),
+        Command::Compile { .. } => unreachable!("compile returns before deployment setup"),
         Command::OpenShell { .. } => unreachable!("OpenShell runs before deployment dispatch"),
     };
     Ok(CommandResult::Operation(Box::new(result)))

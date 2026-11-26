@@ -21,6 +21,7 @@ Each command takes the following input and has the following result:
 | `nemoclaw plan --destroy` | Retained state, without YAML | Text preview of workload deletion and retention. |
 | `nemoclaw apply FILE` | YAML path or `-` for stdin | Text result. Computes a checked plan and applies it. |
 | `nemoclaw export` | Retained state, without YAML | Observed YAML after configuration and ownership checks. |
+| `nemoclaw compile FILE --output DIR` | YAML path or `-` for stdin | A new OpenTofu project in HCL, written once to `DIR`, which must be new or empty. Reads no state and no target. |
 | `nemoclaw destroy` | Retained state, without YAML | Text result. Removes owned workloads under the retention rules. |
 | `nemoclaw openshell [--] ARGS` (alias `osh`) | Retained state and any referenced TLS files | Runs the bundle's pinned OpenShell CLI against the saved gateway and workspace. Supports gateways with no authentication, mTLS, or OIDC. |
 
@@ -102,6 +103,26 @@ The saved file holds only the template's values and your answers.
 `plan` fills the omitted fields with the defaults of the release in use.
 Known engine incompatibility or conflicting image platform, manifest digest, or NVIDIA NeMo Fabric adapter requirements blocks onboarding review and saving.
 The [onboarding guide](../get-started/onboard.md) describes how to run it, what it reads from the target, and what to do with the saved file.
+
+### Writing a Configuration Out as HCL
+
+`nemoclaw compile FILE --output DIR` writes the configuration out once as an OpenTofu project that your team owns.
+The project is the graph that `apply` would compile, with new ownership generations, rendered in HCL with the providers' schemas and formatted by `tofu fmt`:
+
+| File | Holds |
+|---|---|
+| `versions.tf` | The providers, pinned to the bundle that wrote the project, and their configuration |
+| `variables.tf` | The deployment UID, images, an external gateway's endpoint, and `destroy` |
+| `gateway.tf`, `inference.tf`, `sandboxes.tf` | The gateway and workspace, inference and model servers, and sandboxes with their agents |
+| `outputs.tf`, `main.tf` | Outputs, and any block that no other file holds |
+| `README.md` | How to install the providers from the bundle, the credential variables to set, and the teardown command that keeps retained storage |
+
+Credentials stay environment variable names, as in the YAML; the project holds no credential values.
+The CLI never reads, regenerates, or merges the project, and a later release does not update it.
+What the project gives up compared with the CLI is listed in [Choosing a Path](../build-deploy/opentofu-project.md#choosing-a-path).
+
+The command writes projects for Docker, Podman, and external gateways.
+It refuses a managed Kubernetes or OpenShift gateway, whose configuration depends on the state directory, ownership receipt, and kubeconfig that the CLI supplies.
 
 ## Credential Resolution
 
