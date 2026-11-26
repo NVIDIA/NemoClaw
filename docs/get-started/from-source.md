@@ -78,7 +78,7 @@ An empty digest list means the image store doesn't retain repository digests; a 
 
 ## Using the Bundled OpenShell CLI
 
-The native bundle includes the pinned OpenShell CLI. Use `nemoclaw osh` with the same state directory as apply; no separate client installation or gateway selection is needed for this managed Docker route.
+The native bundle includes the pinned OpenShell CLI. Use `nemoclaw osh` with the same state directory as apply; no separate client installation or gateway selection is needed for this local Docker deployment.
 
 ## Authoring and Applying a Deployment
 

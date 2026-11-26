@@ -343,8 +343,6 @@ The default state directory is `.nemoclaw` in the working directory.
 
 ### Next Steps
 
-After you verify the CLI version, [keep the bundle intact](#keeping-the-bundle-intact).
-
 The CLI sends NVIDIA a usage record when `apply` or `destroy` finishes or when `onboard` saves a configuration.
 To disable the records, set `NEMOCLAW_DISABLE_TELEMETRY=1` before running those commands.
 Refer to [Usage Telemetry](../security/security.md#usage-telemetry).

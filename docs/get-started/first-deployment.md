@@ -16,10 +16,10 @@ Use a shell on Linux or Apple silicon macOS with `curl`, `jq`, and `uuidgen`.
 On Windows AMD64 or ARM64, [prepare Ubuntu under WSL2](prerequisites.md#preparing-windows-with-wsl2) and run every command in that Linux shell.
 
 1. [Install the v0.1.0 CLI bundle](install.md) and verify the version with `nemoclaw --version`.
-2. Use the bundled OpenShell CLI through [`nemoclaw osh`](../references/cli.md#running-openshell-against-a-deployment). No separate client installation is needed for the managed Docker route.
-3. Create a new private working directory, such as `mkdir -m 700 ~/nemoclaw-first`, and change to it.
+   The bundle includes OpenShell; no separate client installation is needed for a local Docker deployment.
+2. Create a new private working directory, such as `mkdir -m 700 ~/nemoclaw-first`, and change to it.
    Keep `deployment.yaml` and `.nemoclaw-first` in this directory.
-4. In the **Images** table of the [v0.1.0 release notes](https://github.com/NVIDIA/NemoClaw/releases/tag/v0.1.0), find the OpenClaw `NAME@sha256:DIGEST` reference to use in the following steps.
+3. In the **Images** table of the [v0.1.0 release notes](https://github.com/NVIDIA/NemoClaw/releases/tag/v0.1.0), find the OpenClaw `NAME@sha256:DIGEST` reference to use in the following steps.
    Use the digest from the same release as the CLI bundle.
 
 ## Configuring One Deployment
@@ -143,13 +143,7 @@ Keep credential values out of YAML and shell history.
 This request can incur inference charges and add to the agent's conversation history.
 
 1. For a plaintext, mTLS, or external OIDC gateway, use `nemoclaw osh --state-dir .nemoclaw-first --` to select the saved deployment automatically. For a bearer-token gateway without OIDC login settings, [select the reported gateway and workspace](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways) in a separately configured CLI and replace that prefix with `openshell` below.
-2. If using the standalone CLI, select the reported workspace in the same shell. The bundled CLI selects it automatically.
-
-   ```sh
-   export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
-   ```
-
-3. Read the agent name and runtime ID for `assistant` from the successful apply result.
+2. Read the agent name and runtime ID for `assistant` from the successful apply result.
    If either lookup fails, stop and inspect [runtime diagnostics](../observability/troubleshooting.md#inference-and-agent-readiness).
 
    ```sh
@@ -157,7 +151,7 @@ This request can incur inference charges and add to the agent's conversation his
      RUNTIME_ID=$(jq -er '.agents.assistant.runtimeId | strings | select(length > 0)' apply.json)
    ```
 
-4. Invoke the agent through Fabric inside the sandbox.
+3. Invoke the agent through Fabric inside the sandbox.
 
    ```sh
    nemoclaw osh --state-dir .nemoclaw-first -- sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent "$AGENT" --runtime-id "$RUNTIME_ID" --input - <<'JSON'
@@ -165,13 +159,13 @@ This request can incur inference charges and add to the agent's conversation his
    JSON
    ```
 
-5. Check the command's exit status. Stop on failure and consult [native diagnostics](../observability/troubleshooting.md#reading-native-service-logs).
-6. Verify that the outer `status` is `succeeded`.
+4. Check the command's exit status. Stop on failure and consult [native diagnostics](../observability/troubleshooting.md#reading-native-service-logs).
+5. Verify that the outer `status` is `succeeded`.
    This alone does not establish that the agent completed the request.
-7. Verify that `result.status` is `succeeded`.
+6. Verify that `result.status` is `succeeded`.
    If either status is missing or not `succeeded`, stop and consult [native diagnostics](../observability/troubleshooting.md#reading-native-service-logs).
    Do not replay an invocation with unknown effects.
-8. Verify that `result.output.response` contains a short greeting.
+7. Verify that `result.output.response` contains a short greeting.
    If the reply is missing or unexpected, stop and consult [inference and agent readiness](../observability/troubleshooting.md#inference-and-agent-readiness).
    A reply verifies this request against the selected endpoint and model, not a platform or harness matrix.
 
