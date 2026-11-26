@@ -3,36 +3,84 @@
 
 # Deploying Your First OpenClaw Agent
 
-For Windows ARM64, use [onboarding from source](from-source.md), which builds the current checkout in WSL2 and creates a managed gateway.
-This tutorial instead uses the v0.1.0 release and an existing gateway, with a shell on Linux or macOS.
+Deploy one OpenClaw agent with the v0.1.0 CLI, a local Docker engine, and a model served by NVIDIA Endpoints.
+NemoClaw creates an OpenShell gateway, workspace, and sandbox from the release's example YAML.
+The procedure starts containers and sends a request that can incur inference charges.
 
-Use NemoClaw Agent Configs v0.1.0 to deploy one OpenClaw agent and verify a reply. This exercise uses an existing OpenShell gateway and inference service. NemoClaw manages the deployment's workspace and sandbox, not the gateway or model server.
+If you already run a gateway and model endpoint, [use those services](#using-an-existing-gateway-and-inference-endpoint).
+To build the CLI and agent image yourself, [deploy Hermes from a checkout](from-source.md) on Apple silicon or WSL2.
 
 ## Preparing the Tools and Services
 
-Use a shell on Linux or macOS with `curl`, `jq`, and `uuidgen`. Complete the [first-deployment prerequisites](prerequisites.md#before-the-first-deployment) before changing the gateway. Run the commands from a new directory on the client host. Keep the CLI, example, schema, and image on the same release.
+Use a shell on Linux or Apple silicon macOS with `curl`, `jq`, and `uuidgen`.
+On Windows AMD64 or ARM64, [prepare Ubuntu under WSL2](prerequisites.md#preparing-windows-with-wsl2) and run every command in that Linux shell.
 
-1. [Install the v0.1.0 CLI bundle](install.md).
-2. Download the [tagged OpenClaw example](https://github.com/NVIDIA/NemoClaw/blob/v0.1.0/examples/agents/openclaw.yaml) as `deployment.yaml`.
-
-   ```sh
-   curl -fL https://raw.githubusercontent.com/NVIDIA/NemoClaw/v0.1.0/examples/agents/openclaw.yaml -o deployment.yaml
-   ```
-
-3. Record the OpenClaw image's `NAME@sha256:DIGEST` reference from the image table in the [v0.1.0 release notes on GitHub](https://github.com/NVIDIA/NemoClaw/releases/tag/v0.1.0). Do not use the example's placeholder or a mutable image tag.
-4. Confirm that the gateway's sandbox engine can acquire that digest. If the registry requires credentials, follow [private registry setup](../build-deploy/usage.md#pulling-from-private-registries) before applying.
+1. [Install the v0.1.0 CLI bundle](install.md) and verify the version with `nemoclaw --version`.
+   The bundle includes OpenShell; no separate client installation is needed for a local Docker deployment.
+2. Create a new private working directory, such as `mkdir -m 700 ~/nemoclaw-first`, and change to it.
+   Keep `deployment.yaml` and `.nemoclaw-first` in this directory.
+3. In the **Images** table of the [v0.1.0 release notes](https://github.com/NVIDIA/NemoClaw/releases/tag/v0.1.0), find the OpenClaw `NAME@sha256:DIGEST` reference to use in the following steps.
+   Use the digest from the same release as the CLI bundle.
 
 ## Configuring One Deployment
 
-Keep the example's `external` gateway management mode, `local` provider key, `assistant` sandbox key, and `main` agent name. Use the schema from the verified bundle, not a schema from a different checkout.
+### Using Local Docker and NVIDIA Endpoints
 
-1. Generate a fresh deployment UUID.
+1. Start a local Docker Engine on Linux or WSL2, or [Docker Desktop](https://docs.docker.com/desktop/) on Apple silicon.
+   On Linux or WSL2, use `unix:///var/run/docker.sock`.
+   On macOS, use the local Docker Desktop socket shown by `docker context inspect desktop-linux --format '{{.Endpoints.docker.Host}}'`.
+2. Check that your user can reach the selected engine, then pull the OpenClaw image by its release digest on that engine.
+   Replace the example socket and image with your values.
 
    ```sh
-   uuidgen
+   DOCKER_ENGINE=unix:///var/run/docker.sock
+   OPENCLAW_IMAGE='REPLACE_WITH_RELEASE_IMAGE_AND_DIGEST'
+   docker --host "$DOCKER_ENGINE" version &&
+     docker --host "$DOCKER_ENGINE" pull "$OPENCLAW_IMAGE"
+   ```
+
+   If the registry requires authentication, [sign in with Docker](https://docs.docker.com/reference/cli/docker/login/) and retry the pull.
+   Proceed after the pull succeeds.
+3. Get an [NVIDIA Endpoints API key](https://build.nvidia.com/settings/api-keys) and select a model available to your account through the OpenAI Completions API.
+4. Download the [tagged managed Docker example](https://github.com/NVIDIA/NemoClaw/blob/v0.1.0/examples/onboarding/openclaw.yaml).
+
+   ```sh
+   curl -fL https://raw.githubusercontent.com/NVIDIA/NemoClaw/v0.1.0/examples/onboarding/openclaw.yaml -o deployment.yaml
+   ```
+
+5. Run `uuidgen` and edit `deployment.yaml`.
+   Keep the example's `managed` gateway mode, NVIDIA Endpoints provider, and `assistant` sandbox key.
+
+   | YAML Path | Value |
+   |---|---|
+   | `metadata.uid` | The new UUID. Keep it for the lifetime of the deployment. |
+   | `spec.gateway.target.docker` | Replace `{}` with a mapping that has an `engine` key set to the same socket you used to pull the image. |
+   | `spec.sandboxes.assistant.image.ref` | The OpenClaw digest reference from the release. |
+   | `spec.sandboxes.assistant.agent.inference.routes[0].overrides.model` | The exact model ID available to your NVIDIA Endpoints account. |
+
+6. Keep the `NVIDIA_API_KEY` credential reference in the YAML.
+   Supply the key through a protected environment facility or enter it at the hidden prompt during interactive apply.
+
+Continue to [Planning and Applying](#planning-and-applying).
+
+### Using an Existing Gateway and Inference Endpoint
+
+Complete [Preparing the Tools and Services](#preparing-the-tools-and-services) before continuing.
+Use an OpenShell gateway with Docker or Podman and permission to create a workspace and sandbox.
+Get its reachable endpoint and any credentials from its operator.
+The gateway's reported OpenShell version must match `components.gateway.version` in the release's [`version-pins.json`](../references/compatibility.md#using-one-release-together).
+Its reported compute driver must match your YAML target.
+Confirm that the inference endpoint is reachable from OpenShell and supports the chosen [request API](../agents-inference/inference.md#choosing-the-request-api).
+
+1. Download the [tagged external gateway example](https://github.com/NVIDIA/NemoClaw/blob/v0.1.0/examples/agents/openclaw.yaml) and generate a fresh deployment UUID.
+
+   ```sh
+   curl -fL https://raw.githubusercontent.com/NVIDIA/NemoClaw/v0.1.0/examples/agents/openclaw.yaml -o deployment.yaml &&
+     uuidgen
    ```
 
 2. Set the deployment-specific values in `deployment.yaml`.
+   Keep the `external` gateway mode, `local` provider key, and `assistant` sandbox key.
 
    | YAML Path | Value |
    |---|---|
@@ -46,20 +94,26 @@ Keep the example's `external` gateway management mode, `local` provider key, `as
    | `spec.sandboxes.assistant.agent.inference.routes[0].overrides.model` | The exact model ID the endpoint serves. |
    | `spec.sandboxes.assistant.agent.inference.routes[0].overrides.maxTokens` | A limit the model supports. You can omit this override. |
 
-3. Point the editor's `# yaml-language-server: $schema=...` comment at `schemas/nemoclaw-v1alpha1.schema.json` inside the extracted `dist/PLATFORM` directory.
+3. Confirm that the gateway's sandbox engine can acquire the image digest.
+   If it requires registry credentials, follow [private registry setup](../build-deploy/usage.md#pulling-from-private-registries).
 4. If the gateway requires authentication, configure its credential or TLS references using [the external gateway credential procedure](../build-deploy/usage.md#supplying-credential-references).
-5. If the inference endpoint requires a key, add this reference under `spec.inferenceProviders.local`. Use HTTPS for a credentialed inference endpoint.
+   For agent access, follow [Selecting the Gateway and Workspace](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace), including OIDC sign-in or standalone-client setup when required.
+5. For a credentialed HTTPS inference endpoint, add this reference under `spec.inferenceProviders.local`.
 
    ```yaml
    credential:
      env: INFERENCE_API_KEY
    ```
 
-6. Supply any referenced values to the NemoClaw process through a protected environment facility. Keep secret values out of YAML and shell history. OpenShell retains the installed inference credential for routing. Only its upstream issuer can revoke it.
+6. Supply the referenced values through a protected environment facility.
 
 ## Planning and Applying
 
-Plan previews resource changes without invoking inference or pulling images. Apply computes its own checked plan and starts the runtime. Neither operation verifies a reply.
+Point the `# yaml-language-server: $schema=...` comment in `deployment.yaml` at `schemas/nemoclaw-v1alpha1.schema.json` in your installed bundle.
+The bundle root is `/usr/local/nemoclaw` for the macOS package or `dist/PLATFORM` inside the directory where you extracted the archive.
+Plan previews resource changes without invoking inference or pulling images.
+Apply computes its own checked plan, starts the runtime, and installs any inference credential in OpenShell for routing.
+Keep credential values out of YAML and shell history.
 
 1. Generate a preview with a new state directory.
 
@@ -68,11 +122,17 @@ Plan previews resource changes without invoking inference or pulling images. App
    ```
 
 2. Review the exit status, resource changes, and `complete` field. Stop on an error. A zero exit status means the preview succeeded, not that it is complete.
-3. Review `deferred` prerequisites and `unverified` advisories separately. A missing image on the selected engine can defer adapter compatibility. If that is the only deferred check and you expect the release digest to be available, apply can resolve it: NemoClaw pulls and checks the image before configuring the deployment. Resolve unexpected changes or other unresolved prerequisites before proceeding. Advisories alone do not make a plan incomplete.
-4. Apply the reviewed YAML with the same state directory.
+3. Review `deferred` prerequisites and `unverified` advisories separately.
+   A new managed gateway defers checks until apply makes it reachable.
+   An unset inference key can also be deferred until the apply prompt.
+   Apply can also pull and check a release image that is absent from the selected engine.
+   If the first plan fails because the gateway port or subnet is occupied, [choose unused values](../build-deploy/usage.md#recovering-an-interrupted-operation) and plan again.
+   Resolve unexpected changes or missing prerequisites before proceeding.
+   Advisories alone do not make a plan incomplete.
+4. Apply the reviewed YAML with the same state directory and save the result.
 
    ```sh
-   nemoclaw apply -o json --progress off --state-dir .nemoclaw-first deployment.yaml
+   nemoclaw apply -o json --progress off --state-dir .nemoclaw-first deployment.yaml > apply.json
    ```
 
 5. Check the exit status and confirm the JSON reports `outcome: succeeded`. On failure, stop. Keep the YAML, bundle, and entire state directory for [recovery](../build-deploy/usage.md#recovering-an-interrupted-operation).
@@ -82,46 +142,40 @@ Plan previews resource changes without invoking inference or pulling images. App
 
 This request can incur inference charges and add to the agent's conversation history.
 
-1. For a plaintext or mTLS gateway, use `nemoclaw osh --state-dir .nemoclaw-first --` to select the saved deployment automatically. For a bearer-token gateway, [select the reported gateway and workspace](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways) in a separately configured CLI and replace that prefix with `openshell` below.
-2. If using the standalone CLI, select the reported workspace in the same shell. The bundled CLI selects it automatically.
+1. For a plaintext, mTLS, or external OIDC gateway, use `nemoclaw osh --state-dir .nemoclaw-first --` to select the saved deployment automatically. For a bearer-token gateway without OIDC login settings, [select the reported gateway and workspace](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways) in a separately configured CLI and replace that prefix with `openshell` below.
+2. Read the agent name and runtime ID for `assistant` from the successful apply result.
+   If either lookup fails, stop and inspect [runtime diagnostics](../observability/troubleshooting.md#inference-and-agent-readiness).
 
    ```sh
-   export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
+   AGENT=$(jq -er '.agents.assistant.agent | strings | select(length > 0)' apply.json) &&
+     RUNTIME_ID=$(jq -er '.agents.assistant.runtimeId | strings | select(length > 0)' apply.json)
    ```
 
-3. Save a fresh plan using the same credential environment as apply. If the command fails, stop before looking up a runtime ID.
+3. Invoke the agent through Fabric inside the sandbox.
 
    ```sh
-   nemoclaw plan -o json --progress off --non-interactive --state-dir .nemoclaw-first deployment.yaml > applied-plan.json
-   ```
-
-4. Read the runtime ID for `assistant`. If this lookup fails, stop and inspect the apply result and [runtime diagnostics](../observability/troubleshooting.md#inference-and-agent-readiness). Do not invoke with an empty ID.
-
-   ```sh
-   RUNTIME_ID=$(jq -er '.agents.assistant.runtimeId | strings | select(length > 0)' applied-plan.json)
-   ```
-
-5. Invoke `main` through Fabric inside the sandbox.
-
-   ```sh
-   nemoclaw osh --state-dir .nemoclaw-first -- sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id "$RUNTIME_ID" --input - <<'JSON'
+   nemoclaw osh --state-dir .nemoclaw-first -- sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent "$AGENT" --runtime-id "$RUNTIME_ID" --input - <<'JSON'
    "Reply with a short greeting."
    JSON
    ```
 
-6. Check the command's exit status. Stop on failure and consult [native diagnostics](../observability/troubleshooting.md#reading-native-service-logs).
-7. Verify that the outer `status` is `succeeded`.
+4. Check the command's exit status. Stop on failure and consult [native diagnostics](../observability/troubleshooting.md#reading-native-service-logs).
+5. Verify that the outer `status` is `succeeded`.
    This alone does not establish that the agent completed the request.
-8. Verify that `result.status` is `succeeded`.
+6. Verify that `result.status` is `succeeded`.
    If either status is missing or not `succeeded`, stop and consult [native diagnostics](../observability/troubleshooting.md#reading-native-service-logs).
    Do not replay an invocation with unknown effects.
-9. Verify that `result.output.response` contains a short greeting.
+7. Verify that `result.output.response` contains a short greeting.
    If the reply is missing or unexpected, stop and consult [inference and agent readiness](../observability/troubleshooting.md#inference-and-agent-readiness).
    A reply verifies this request against the selected endpoint and model, not a platform or harness matrix.
 
 ## Previewing and Removing the Deployment
 
-Destroy does not prompt. It removes the deployment's sandbox, workspace, and owned provider registrations and profiles. The sandbox's writable files and conversation history are lost. The external gateway and inference service remain. Images and local deployment state remain too.
+Destroy does not prompt.
+It removes the deployment's sandbox, workspace, and owned provider registrations and profiles.
+It also removes a gateway created by the deployment.
+The sandbox's writable files and conversation history are lost.
+Externally managed services, images, and local deployment state remain.
 
 1. Preserve any agent files or conversations you need.
 2. Preview removal with the original bundle and state directory.

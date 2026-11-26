@@ -42,7 +42,7 @@ Build the artifacts in the following order:
 
 Run every command in this guide from the repository root.
 
-On an Apple silicon Mac or Windows ARM64, [onboarding from source](../get-started/from-source.md) connects these builds to a Hermes deployment on Docker Desktop.
+On an Apple silicon Mac or in WSL2 on Windows, [onboarding from source](../get-started/from-source.md) connects these builds to a Hermes deployment with a local Docker engine.
 Windows ARM64 has no native bundle; use the Linux ARM64 toolchain inside WSL2.
 
 | Artifact | Requirements |

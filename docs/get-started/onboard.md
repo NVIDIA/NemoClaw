@@ -9,9 +9,13 @@ It does not plan, apply, pull images, or create deployment state.
 
 ## Starting Onboarding
 
-Use the [installed CLI](install.md) in an interactive terminal.
+After you [install the CLI and verify its version](install.md), run onboarding in an interactive terminal.
 Onboarding requires a terminal on standard input and standard error.
 It does not load OpenTofu or need a deployment state directory.
+
+If you plan to use a managed Docker or Podman gateway, start the engine so onboarding can check it.
+To deploy a release bundle with local Docker and NVIDIA Endpoints, follow [Deploying Your First OpenClaw Agent](first-deployment.md).
+To build from a checkout, follow [Onboarding From Source](from-source.md) on Apple silicon or WSL2.
 
 1. Choose an unused output path in an existing directory.
    The default is `deployment.yaml` in the current directory.

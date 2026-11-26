@@ -51,8 +51,8 @@ These checks aren't a conversion mechanism.
 NemoClaw v0's `nemoclaw config export` writes NemoClaw Agent Configs YAML for one sandbox.
 The report-capable exporter assigns a new UUID but keeps the earlier gateway port and writes an image placeholder.
 If your version of NemoClaw v0 does not include the report-capable exporter, skip export and [author separate deployment YAML](onboard.md) using the settings you can carry over.
-Follow [Preparing a Separate Deployment From a NemoClaw v0 Export](../../.agents/skills/nemoclaw-v0-migration/SKILL.md) yourself or with an assistant that has access to this checkout.
-It leaves the earlier deployment untouched and moves no native data.
+Prepare a copy of the export for the new deployment.
+You can edit the copy yourself or ask an assistant with access to this checkout to follow [Preparing a Separate Deployment From a NemoClaw v0 Export](../../.agents/skills/nemoclaw-v0-migration/SKILL.md).
 
 1. On the NemoClaw v0 host, export the sandbox using a CLI that includes the [report-capable exporter](https://github.com/NVIDIA/NemoClaw/pull/14602) from revision `7892283831683e8b8b7a167b5cf1006d7bc262a5`:
 
@@ -66,12 +66,13 @@ It leaves the earlier deployment untouched and moves no native data.
 2. Read the comment block at the top of the export.
    Each line names a setting the export left out, replaced with a placeholder, or rewrote.
    If the first line is not `# nemoclaw-export-report: 1`, stop and [author a separate YAML file](onboard.md) instead.
-3. Ask the assistant to read `.agents/skills/nemoclaw-v0-migration/SKILL.md` and prepare the separate deployment YAML.
-   The assistant assigns a fresh UUID, state directory, and free gateway port. It selects an agent image and updates the policy for that image.
-   It writes supported settings and lists those it couldn't carry over.
-4. Review the completed YAML for a free gateway port and an immutable agent image reference.
-5. Review the list of settings the conversion could not carry over.
-6. [Evaluate the new deployment](#evaluating-v1-beside-the-existing-deployment).
+3. Copy the export to a new `deployment.yaml` and edit only the copy.
+   Set `metadata.uid` to a fresh UUID from `uuidgen` and choose a dedicated state directory for the new deployment.
+4. Use the [separate deployment instructions](../../.agents/skills/nemoclaw-v0-migration/SKILL.md#3-give-the-deployment-its-own-identity) to select a free gateway port and network, replace the image placeholder with a matching digest, and adapt the policy to that image.
+5. Go through the export report one entry at a time.
+   Use the [field mappings](../../.agents/skills/nemoclaw-v0-migration/SKILL.md#5-handle-each-report-entry) to update supported settings and record any settings you cannot carry over.
+   Review the list before proceeding.
+6. [Evaluate the new deployment](#evaluating-v1-beside-the-existing-deployment) with the new YAML and state directory.
 
 The skill lists the harnesses and revisions it has been run with.
 Deep Agents exports and exports with managed inference services are untested.

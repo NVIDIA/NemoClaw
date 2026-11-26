@@ -3,32 +3,42 @@
 
 # Installing the CLI
 
-Install NemoClaw Agent Configs v0.1.0 from a CLI archive or use the macOS or Windows installer if the release includes it. Both methods keep the CLI, OpenTofu, providers, and schemas together.
+Find downloads and `SHA256SUMS` in the [v0.1.0 release assets](https://github.com/NVIDIA/NemoClaw/releases/tag/v0.1.0).
+Install and sign in to the [GitHub CLI](https://cli.github.com/) to verify downloads.
+Check `release-evidence.json` for signing, macOS notarization, and unsigned exceptions.
 
-The CLI sends NVIDIA a usage record when `apply` or `destroy` finishes or `onboard` saves the configuration; to turn it off, set `NEMOCLAW_DISABLE_TELEMETRY=1`, as [usage telemetry](../security/security.md#usage-telemetry) describes.
+<!-- Keep existing install links reachable when their tabs are closed. -->
+<a name="choosing-the-archive"></a>
+<a name="choosing-an-installation-method"></a>
+<a name="installing-the-bundle"></a>
+<a name="installing-with-the-macos-installer"></a>
+<a name="installing-with-the-windows-installer"></a>
+<a name="installing-on-windows"></a>
+<a name="installing-on-linux-or-macos"></a>
 
-## Choosing the Archive
+## Choosing Your Operating System
 
-Choose the archive for the machine running `nemoclaw`, not for the sandbox or GPU host. The [v0.1.0 release](https://github.com/NVIDIA/NemoClaw/releases/tag/v0.1.0) is the source for the archives, `SHA256SUMS`, and `release-evidence.json`. Consult the release evidence for platform signing results and any unsigned exception. Code signing and macOS notarization are separate checks. Linux uses archive provenance, not OS code signing.
+Select the tab for your machine.
 
-| Client | `PLATFORM` | Requirement |
-|---|---|---|
-| Linux ARM64 | `linux_arm64` | glibc 2.35 or newer, as on Ubuntu 22.04 |
-| Linux AMD64 | `linux_amd64` | glibc 2.35 or newer, as on Ubuntu 22.04 |
-| macOS ARM64 | `darwin_arm64` | Apple silicon; CI tests on macOS 15 |
-| Windows AMD64 | `windows_amd64` | Windows 10 version 1803 or later, or Windows Server 2019 or later, for `tar` |
+<Tabs>
+<Tab title="macOS" id="macos" language="macos">
 
-Windows ARM64 has no native bundle. Use [Linux ARM64 through WSL2](from-source.md); run its Linux commands inside WSL, not in PowerShell.
+<Anchor id="installing-with-the-macos-installer">
 
-Check [Current Limits](../resources/limits.md#platforms-models-and-placement) for tested deployment combinations. Use the [agent and runtime image digests from the same release](../references/compatibility.md#using-one-release-together). For a source build, follow the [source build guide](../build-deploy/build.md#building-a-native-bundle).
+On a Mac with Apple silicon and macOS 15 or later, `nemoclaw-v0.1.0-darwin_arm64.pkg` installs the bundle in `/usr/local/nemoclaw`.
+The installer requires administrator privileges and adds `/usr/local/nemoclaw/bin` to `PATH` for new Terminal windows.
+A final release includes the package only after signing and notarization.
 
-## Installing with the macOS Installer
+</Anchor>
 
-On a Mac with Apple silicon and macOS 15 or later, `nemoclaw-v0.1.0-darwin_arm64.pkg` installs the `darwin_arm64` bundle in `/usr/local/nemoclaw`, unchanged.
-It adds `/etc/paths.d/nemoclaw`, which puts `/usr/local/nemoclaw/bin` on `PATH` in new Terminal windows, and records the files under the package ID `com.nvidia.nemoclaw.cli`.
-It refuses an Intel Mac and older versions of macOS.
+If the release omits the package or you need to keep multiple versions side by side, <a href="?language=linux#installing-on-linux-or-macos">open the shared archive instructions in the Linux tab</a> and set `PLATFORM=darwin_arm64`.
+The archive is tested on macOS 15.
+On a Mac with an Intel processor, [build the `darwin_amd64` bundle](../build-deploy/build.md#building-a-native-bundle).
 
-A final release attaches the installer only when it's signed and notarized. If the installer is absent or you need to keep multiple versions side by side, [use the macOS archive](#installing-on-linux-or-macos). Run these commands in an empty download directory. Stop on any download or verification failure.
+If you already installed a package, follow <a href="?language=macos#upgrading-with-the-macos-installer">the upgrade steps</a> before replacing the bundle.
+
+Run these commands in an empty download directory with `curl` available.
+Stop on any download or verification failure.
 
 1. Download the installer.
 
@@ -39,124 +49,84 @@ A final release attaches the installer only when it's signed and notarized. If t
    curl -fLO "$RELEASE/$PKG"
    ```
 
-2. Download the checksums.
+2. Download the checksums, verify the package, and install it.
+   The checksum check prints the package name followed by `OK`.
+   The installer runs after the checksum and both build provenance checks pass.
+   To use the graphical installer, replace the `sudo installer` line with `open "$PKG"` before running the commands.
 
    ```sh
-   curl -fLO "$RELEASE/SHA256SUMS"
+   curl -fLO "$RELEASE/SHA256SUMS" &&
+     CHECKSUM=$(awk -v package="$PKG" '$2 == package { print; count++ } END { if (count != 1) exit 1 }' SHA256SUMS) &&
+     printf '%s\n' "$CHECKSUM" | shasum -a 256 --check &&
+     gh attestation verify SHA256SUMS --repo NVIDIA/NemoClaw &&
+     gh attestation verify "$PKG" --repo NVIDIA/NemoClaw &&
+     sudo installer -pkg "$PKG" -target /
    ```
 
-3. Verify the installer checksum. Expect the filename followed by `OK`.
+   If you use the graphical installer, follow its prompts to finish the installation before continuing.
 
-   ```sh
-   CHECKSUM=$(awk -v package="$PKG" '$2 == package { print; count++ } END { if (count != 1) exit 1 }' SHA256SUMS) &&
-     printf '%s\n' "$CHECKSUM" | shasum -a 256 --check
-   ```
-
-4. Verify the checksum file's provenance with the [GitHub CLI](https://cli.github.com/).
-
-   ```sh
-   gh attestation verify SHA256SUMS --repo NVIDIA/NemoClaw
-   ```
-
-5. Verify the installer's provenance.
-
-   ```sh
-   gh attestation verify "$PKG" --repo NVIDIA/NemoClaw
-   ```
-
-6. Install the package.
-
-   ```sh
-   sudo installer -pkg "$PKG" -target /
-   ```
-
-   You can also open the verified package in Finder and follow the installer's pages.
-
-7. If you previously installed an archive, remove its `PATH` export from your shell's startup file, such as `~/.zshrc` or `~/.bashrc`.
-   That export can put the archive's CLI before the installer's CLI, even in a new Terminal window.
-   Keep the archive's directory if existing deployments still need that version; run it by its full path.
-
-8. Open a new Terminal window to load the updated `PATH`, then check which CLI it selects:
+3. Open a new Terminal window to load the updated `PATH` and check which CLI it selects.
 
    ```sh
    command -v nemoclaw
    nemoclaw --version
    ```
 
-   Expect `/usr/local/nemoclaw/bin/nemoclaw` and `nemoclaw 0.1.0`.
-   If another path appears, remove that installation's `PATH` entry from your shell configuration and open another Terminal window.
-   Windows that were already open do not have the new `PATH`.
+   Expect `/usr/local/nemoclaw/bin/nemoclaw` and the version you installed.
+   If another installation takes precedence, put this bundle's `bin` directory first for the current shell and repeat the checks.
 
-Keep `/usr/local/nemoclaw` intact and run the CLI from your deployment directory. Continue to the [first-deployment guide](first-deployment.md).
+   ```sh
+   export PATH="/usr/local/nemoclaw/bin:$PATH"
+   ```
 
-### Upgrading with the macOS Installer
+Continue to [Next Steps](#next-steps).
 
-The installer replaces `/usr/local/nemoclaw`. Deployments still need the release that created them.
+</Tab>
+<Tab title="Windows" id="windows" language="windows">
 
-It moves `/usr/local/nemoclaw` to `/usr/local/nemoclaw.previous` before installing the new bundle, so no old files remain in the installed directory.
-After the replacement payload installs successfully, it removes the previous bundle.
-If installation fails before that cleanup, it retains the previous bundle for [recovery](#recovering-from-a-failed-macos-installer-upgrade).
+<Anchor id="installing-with-the-windows-installer">
 
-1. If existing deployments need the current release, [extract that release's archive](#installing-on-linux-or-macos) into a separate directory so you can run its CLI by absolute path.
-2. Install the new release's package.
+On x64 Windows, `nemoclaw-v0.1.0-windows_amd64.msi` installs the bundle in `%LOCALAPPDATA%\Programs\NemoClaw` and adds its `bin` directory to your user `Path`.
+The installer requires no administrator rights.
+Find the installed version under **NVIDIA NemoClaw Agent Configs** in **Settings** > **Apps** > **Installed apps**.
 
-### Recovering from a Failed macOS Installer Upgrade
+</Anchor>
 
-If `/usr/local/nemoclaw.previous` remains after an unsuccessful upgrade, restore it before retrying.
-The installer refuses to replace this recovery copy.
-Close any running CLI operations, then run:
+A release includes the signed installer only if it signs the Windows executables.
+If the release omits the installer or you need to keep multiple versions side by side, <a href="?language=windows#installing-on-windows">install the Windows archive</a>.
+The MSI and Windows archive install the native x64 NemoClaw CLI.
+The matching OpenShell 0.1.10 release has no native Windows CLI archive.
+For a first deployment and agent reply on Windows AMD64 or ARM64, [use the Linux tools inside WSL2](prerequisites.md#preparing-windows-with-wsl2).
 
-```sh
-sudo sh -c 'set -eu
-test -d /usr/local/nemoclaw.previous
-rm -rf /usr/local/nemoclaw
-mv /usr/local/nemoclaw.previous /usr/local/nemoclaw'
-/usr/local/nemoclaw/bin/nemoclaw --version
-```
+If you already use the installer, follow <a href="?language=windows#upgrading-with-the-windows-installer">the upgrade steps</a> before replacing the bundle.
+Use PowerShell in an empty download directory.
+Stop on any download or verification failure.
 
-The directory check stops the command before removal if there is no recovery copy.
-This restores the previous bundle and removes the incomplete replacement, without changing deployment directories or shell settings.
-Recovery is manual; the installer does not roll back automatically.
-If no previous bundle exists, retry the installer to replace an incomplete first installation.
-
-### Uninstalling with the macOS Installer
-
-If an upgrade failed, [restore the previous bundle](#recovering-from-a-failed-macos-installer-upgrade) first.
-Keep the matching archive if a deployment or retained resources still need this release. To retire a deployment first, follow the [general uninstall guidance](#uninstalling).
-Remove the CLI, the `PATH` entry, and the package's record:
-
-```sh
-sudo rm -rf /usr/local/nemoclaw /etc/paths.d/nemoclaw
-sudo pkgutil --forget com.nvidia.nemoclaw.cli
-```
-
-In a new Terminal window, run `command -v nemoclaw` to check which installation, if any, remains on `PATH`.
-Deployment YAML and state directories stay where you created them.
-
-## Installing with the Windows Installer
-
-On Windows 10 version 1803 or later, or Windows Server 2019 or later, a release's `nemoclaw-TAG-windows_amd64.msi` installs the `windows_amd64` bundle in `%LOCALAPPDATA%\Programs\NemoClaw`, unchanged.
-It adds `%LOCALAPPDATA%\Programs\NemoClaw\bin` to your user `Path`, which new terminals read, and lists **NVIDIA NemoClaw Agent Configs** in **Settings** > **Apps** > **Installed apps**.
-It installs for your Windows account only, so it needs no administrator rights.
-
-A release attaches the installer only when its Windows executables are signed, and staging signs the installer with them.
-
-1. In PowerShell, in an empty directory, download the installer and the checksums, and check the installer's checksum:
+1. Download the installer and the checksums, then verify the installer's checksum.
 
    ```powershell
    $ProgressPreference = "SilentlyContinue"
    $Tag = "v0.1.0"
    $Installer = "nemoclaw-$Tag-windows_amd64.msi"
-   Invoke-WebRequest "https://github.com/NVIDIA/NemoClaw/releases/download/$Tag/$Installer" -OutFile $Installer
-   Invoke-WebRequest "https://github.com/NVIDIA/NemoClaw/releases/download/$Tag/SHA256SUMS" -OutFile SHA256SUMS
-   $Expected = ((Get-Content SHA256SUMS) | Where-Object { $_.EndsWith(" $Installer") }).Split(" ")[0]
-   if ((Get-FileHash $Installer -Algorithm SHA256).Hash -ne $Expected) { throw "checksum mismatch" }
+   $Release = "https://github.com/NVIDIA/NemoClaw/releases/download/$Tag"
+   Invoke-WebRequest "$Release/$Installer" -OutFile $Installer -ErrorAction Stop
+   Invoke-WebRequest "$Release/SHA256SUMS" -OutFile SHA256SUMS -ErrorAction Stop
+   $Entry = @(Get-Content SHA256SUMS | Where-Object { $_.EndsWith(" $Installer") })
+   if ($Entry.Count -ne 1 -or (Get-FileHash $Installer -Algorithm SHA256).Hash -ne ($Entry[0] -split '\s+')[0]) {
+     throw 'Missing or mismatched installer checksum'
+   }
    ```
 
-   On `checksum mismatch` or any other error, delete the download.
-   For a final release, also check its build provenance with `gh attestation verify $Installer --owner NVIDIA`, as for the [archives](#installing-on-linux-or-macos).
+2. Verify the build provenance of the checksum file and the installer.
 
-2. Install it, and follow the installer's pages:
+   ```powershell
+   gh attestation verify SHA256SUMS --repo NVIDIA/NemoClaw
+   if ($LASTEXITCODE -ne 0) { throw 'Cannot verify the checksum file provenance' }
+   gh attestation verify $Installer --repo NVIDIA/NemoClaw
+   if ($LASTEXITCODE -ne 0) { throw 'Cannot verify the installer provenance' }
+   ```
+
+3. Start the installer and follow its prompts.
 
    ```powershell
    Start-Process msiexec -ArgumentList "/i", $Installer -Wait
@@ -165,145 +135,36 @@ A release attaches the installer only when its Windows executables are signed, a
    You can open the file in File Explorer instead.
    To install without the pages, such as from a script, add `"/qn"` to the arguments and `-PassThru` to `Start-Process`; the returned process's `ExitCode` is `0` on success.
 
-3. Open PowerShell and select this installation for the current session.
-   This also takes precedence over an existing NemoClaw Classic or system-wide installation without changing it.
+4. Open a new PowerShell window to load the updated `Path` and check which CLI it selects.
 
    ```powershell
-   $env:Path = "$env:LOCALAPPDATA\Programs\NemoClaw\bin;$env:Path"
    Get-Command nemoclaw
    nemoclaw --version
    ```
 
-   Expect the executable under `%LOCALAPPDATA%\Programs\NemoClaw\bin` and the release's version.
-   Repeat the `Path` assignment in each PowerShell session that needs this release.
+   Expect the executable under `%LOCALAPPDATA%\Programs\NemoClaw\bin` and the version you installed.
+   If another installation takes precedence, put this bundle's `bin` directory first for the current session and repeat the checks.
 
-If the version differs from the release you installed, check which executable Windows finds first:
+   ```powershell
+   $env:Path = "$env:LOCALAPPDATA\Programs\NemoClaw\bin;$env:Path"
+   ```
 
-```powershell
-where.exe nemoclaw
-```
-
-An existing archive or system-wide installation can appear before the installer's directory on `Path`.
-Preserve installations that existing deployments need.
-The session's `Path` assignment selects this release ahead of machine and user entries.
-An alias or function can still override it; inspect `Get-Command nemoclaw -All` and invoke the CLI by its full path if necessary:
+If `Get-Command nemoclaw` selects a PowerShell alias or function, run the executable by its full path.
+Use that path for subsequent `nemoclaw` commands in the same session.
 
 ```powershell
 & "$env:LOCALAPPDATA\Programs\NemoClaw\bin\nemoclaw.exe" --version
 ```
 
-The installer changes only your user `Path`; it doesn't remove other installations or edit the machine `Path`.
+Continue to [Next Steps](#next-steps).
 
-Before your first deployment, install and start Docker Desktop or Podman, then run `nemoclaw onboard` in a directory for your deployment and follow [guided authoring](onboard.md).
-As with the archive, keep `%LOCALAPPDATA%\Programs\NemoClaw` unchanged, don't copy `nemoclaw.exe` elsewhere, and run it from your deployment's directory.
+<Anchor id="installing-on-windows">
 
-### Upgrading with the Windows Installer
+The archive requires `tar.exe`, which ships with Windows 10 version 1803 or later and Windows Server 2019 or later.
+Use PowerShell in an empty download directory.
+Stop on any download or verification failure.
 
-Install the new release's installer as above.
-It removes the installed release before it installs, so only the new release's files remain, and the `Path` entry stays.
-If the upgrade fails, Windows Installer restores the previous release and its `Path` entry.
-An older release's installer doesn't replace a newer one: it reports that a newer version is already installed, so uninstall first to go back.
-
-A deployment keeps using the release that created it, as [upgrading](#upgrading) describes, and the installer doesn't keep the old release.
-Before you upgrade, destroy the deployments that the installed release created, or unpack that release's `windows_amd64` archive into its own directory, as in [installing on Windows](#installing-on-windows), to run its CLI by path later.
-
-### Uninstalling with the Windows Installer
-
-First destroy the deployments that the release created and remove what they retain, as [uninstalling](#uninstalling) describes.
-Then, in **Settings** > **Apps** > **Installed apps**, select **Uninstall** for **NVIDIA NemoClaw Agent Configs**, or uninstall from PowerShell with the installer you installed:
-
-```powershell
-Start-Process msiexec -ArgumentList "/x", $Installer, "/qn" -Wait
-```
-
-This removes `%LOCALAPPDATA%\Programs\NemoClaw` and its `Path` entry.
-In a new terminal, `Get-Command nemoclaw` reports any remaining installation, or reports that it cannot find `nemoclaw`.
-Deployment YAML and state directories stay where you created them.
-
-## Installing on Linux or macOS
-
-On macOS, open **Applications > Utilities > Terminal** to run these commands.
-For Apple silicon, set `PLATFORM=darwin_arm64` in step 1.
-If you download the archive in a browser, also download `SHA256SUMS` from the same release, then verify both files in Terminal before extracting.
-If the browser automatically extracts archives, keep the original `.tar.gz` for verification and extract that verified archive into the new installation directory in step 8.
-Finder can browse the bundle, but double-clicking `bin/nemoclaw` does not start onboarding.
-Keep the whole bundle together and run commands in Terminal.
-If macOS blocks execution, stop and record the exact warning, archive name, release, and signing evidence; do not remove quarantine or bypass Gatekeeper to qualify a release.
-For an unreleased revision, use [onboarding from source](from-source.md) instead.
-
-Run these commands from an empty download directory with `curl`, `tar`, and the [GitHub CLI](https://cli.github.com/) available. Stop on any download or verification failure. Do not unpack a failed download or substitute an archive from another tag.
-
-1. Select your platform and archive name.
-
-   ```sh
-   TAG=v0.1.0
-   PLATFORM=linux_arm64
-   ARCHIVE="nemoclaw-$TAG-$PLATFORM.tar.gz"
-   RELEASE="https://github.com/NVIDIA/NemoClaw/releases/download/$TAG"
-   ```
-
-2. Download the archive.
-
-   ```sh
-   curl -fLO "$RELEASE/$ARCHIVE"
-   ```
-
-3. Download the checksums.
-
-   ```sh
-   curl -fLO "$RELEASE/SHA256SUMS"
-   ```
-
-4. Verify the archive checksum. On macOS, replace `sha256sum --check` with `shasum -a 256 --check`. Expect the archive name followed by `OK`.
-
-   ```sh
-   CHECKSUM=$(awk -v archive="$ARCHIVE" '$2 == archive { print; count++ } END { if (count != 1) exit 1 }' SHA256SUMS) &&
-     printf '%s\n' "$CHECKSUM" | sha256sum --check
-   ```
-
-5. Verify the checksum file's provenance.
-
-   ```sh
-   gh attestation verify SHA256SUMS --repo NVIDIA/NemoClaw
-   ```
-
-6. Verify the archive's provenance.
-
-   ```sh
-   gh attestation verify "$ARCHIVE" --repo NVIDIA/NemoClaw
-   ```
-
-7. Create a new installation directory for this version. If it exists, use another unused path.
-
-   ```sh
-   INSTALL="$HOME/.local/opt/nemoclaw/$TAG"
-   mkdir -p "$(dirname "$INSTALL")" && mkdir "$INSTALL"
-   ```
-
-8. Extract the archive.
-
-   ```sh
-   tar -xzf "$ARCHIVE" -C "$INSTALL"
-   ```
-
-9. Add the extracted `bin` directory to the front of `PATH`.
-
-   ```sh
-   export PATH="$INSTALL/dist/$PLATFORM/bin:$PATH"
-   ```
-
-10. Check that the selected CLI reports `nemoclaw 0.1.0`.
-
-    ```sh
-    nemoclaw --version
-    ```
-
-11. To use the CLI in new shells, add the same `PATH` entry with the full bundle path to your shell startup file, such as `~/.bashrc` or `~/.zshrc`.
-
-## Installing on Windows
-
-To install with the Windows installer instead, see [installing with the Windows installer](#installing-with-the-windows-installer).
-Use PowerShell in an empty download directory with `tar.exe` and the GitHub CLI available. Stop on any download or verification failure.
+</Anchor>
 
 1. Select the archive name.
 
@@ -366,7 +227,7 @@ Use PowerShell in an empty download directory with `tar.exe` and the GitHub CLI 
    $env:Path = "$Bin;$env:Path"
    ```
 
-10. Check that the selected CLI reports `nemoclaw 0.1.0`.
+10. Check that the selected CLI reports the version you installed.
 
     ```powershell
     nemoclaw --version
@@ -374,39 +235,316 @@ Use PowerShell in an empty download directory with `tar.exe` and the GitHub CLI 
 
 11. To use the CLI in new shells, add the directory in `$Bin` to your user `Path` in **Edit environment variables for your account**.
 
-## Keeping the Bundle Intact
+Continue to [Next Steps](#next-steps).
 
-The CLI locates OpenTofu, providers, and schemas relative to its executable. Deployment operations verify the bundle against `manifest.json`. Keep the entire `dist/PLATFORM` directory unchanged. Do not copy or link only the executable. Run it from your deployment directory: the default state path is `.nemoclaw` in the working directory, not in the bundle.
+</Tab>
+<Tab title="Linux" id="linux" language="linux">
+
+<Anchor id="installing-on-linux-or-macos">
+
+On Linux, use the `linux_amd64` or `linux_arm64` archive on a client with glibc 2.35 or later.
+On macOS, open **Applications > Utilities > Terminal** to run these commands.
+If you download the archive in a browser, also download `SHA256SUMS` from the same release, then verify both files in Terminal before extracting.
+If the browser automatically extracts archives, keep the original `.tar.gz` for verification and extract that verified archive into the new installation directory in step 8.
+Finder can browse the bundle, but double-clicking `bin/nemoclaw` does not start onboarding.
+Keep the whole bundle together and run commands in Terminal.
+If macOS blocks execution, stop and record the exact warning, archive name, release, and signing evidence; do not remove quarantine or bypass Gatekeeper to qualify a release.
+
+</Anchor>
+
+Run these commands from an empty download directory with `curl` and `tar` available.
+Stop on any download or verification failure.
+
+1. Set `PLATFORM` for your client.
+   The example uses `linux_amd64` for Linux AMD64.
+   Use `linux_arm64` for Linux ARM64 or `darwin_arm64` for a Mac with Apple silicon.
+
+   ```sh
+   TAG=v0.1.0
+   PLATFORM=linux_amd64
+   ARCHIVE="nemoclaw-$TAG-$PLATFORM.tar.gz"
+   RELEASE="https://github.com/NVIDIA/NemoClaw/releases/download/$TAG"
+   ```
+
+2. Download the archive.
+
+   ```sh
+   curl -fLO "$RELEASE/$ARCHIVE"
+   ```
+
+3. Download the checksums.
+
+   ```sh
+   curl -fLO "$RELEASE/SHA256SUMS"
+   ```
+
+4. Verify the archive checksum. On macOS, replace `sha256sum --check` with `shasum -a 256 --check`. Expect the archive name followed by `OK`.
+
+   ```sh
+   CHECKSUM=$(awk -v archive="$ARCHIVE" '$2 == archive { print; count++ } END { if (count != 1) exit 1 }' SHA256SUMS) &&
+     printf '%s\n' "$CHECKSUM" | sha256sum --check
+   ```
+
+5. Verify the checksum file's provenance.
+
+   ```sh
+   gh attestation verify SHA256SUMS --repo NVIDIA/NemoClaw
+   ```
+
+6. Verify the archive's provenance.
+
+   ```sh
+   gh attestation verify "$ARCHIVE" --repo NVIDIA/NemoClaw
+   ```
+
+7. Create a new installation directory for this version. If it exists, use another unused path.
+
+   ```sh
+   INSTALL="$HOME/.local/opt/nemoclaw/$TAG"
+   mkdir -p "$(dirname "$INSTALL")" && mkdir "$INSTALL"
+   ```
+
+8. Extract the archive.
+
+   ```sh
+   tar -xzf "$ARCHIVE" -C "$INSTALL"
+   ```
+
+9. Add the extracted `bin` directory to the front of `PATH`.
+
+   ```sh
+   export PATH="$INSTALL/dist/$PLATFORM/bin:$PATH"
+   ```
+
+10. Check that the selected CLI reports the version you installed.
+
+    ```sh
+    nemoclaw --version
+    ```
+
+11. To use the CLI in new shells, add the same `PATH` entry with the full bundle path to your shell startup file, such as `~/.bashrc` or `~/.zshrc`.
+
+Continue to [Next Steps](#next-steps).
+
+</Tab>
+</Tabs>
+
+To install from a checkout, follow the [source build guide](../build-deploy/build.md).
+
+### Keeping the Bundle Intact
+
+The bundle includes the CLI, OpenTofu, providers, and schemas.
+The CLI locates OpenTofu, providers, and schemas relative to its executable.
+Deployment operations verify the bundle against `manifest.json`.
+Keep the entire bundle together in `/usr/local/nemoclaw` for the macOS package or `%LOCALAPPDATA%\Programs\NemoClaw` for the Windows installer.
+For an archive, keep the `dist/PLATFORM` directory inside your installation directory intact.
+Run the CLI from your deployment directory.
+The default state directory is `.nemoclaw` in the working directory.
+
+### Next Steps
+
+The CLI sends NVIDIA a usage record when `apply` or `destroy` finishes or when `onboard` saves a configuration.
+To disable the records, set `NEMOCLAW_DISABLE_TELEMETRY=1` before running those commands.
+Refer to [Usage Telemetry](../security/security.md#usage-telemetry).
+
+- [Deploy your first OpenClaw agent](first-deployment.md) with the release bundle, local Docker, and NVIDIA Endpoints.
+  On Windows, start with the [WSL2 setup](prerequisites.md#preparing-windows-with-wsl2).
+- If you already have an OpenShell gateway and inference endpoint, [use those services](first-deployment.md#using-an-existing-gateway-and-inference-endpoint).
+- To configure your own deployment, [write deployment YAML with `nemoclaw onboard`](onboard.md).
+- On Apple silicon or WSL2, you can [build and deploy Hermes from source](from-source.md).
+
+Use the [bundle and image digests from the same release](../references/compatibility.md#using-one-release-together) and check [Current Limits](../resources/limits.md#platforms-models-and-placement) for your deployment configuration.
+
+<a name="upgrading-and-uninstalling"></a>
 
 ## Upgrading
 
-Changing the CLI on `PATH` does not upgrade a deployment. Existing deployments keep their original bundle, image pins, and state. Refer to [deployment state compatibility](../references/compatibility.md#deployment-state).
+Existing deployments keep their original bundle, image pins, and state.
+Keep the previous bundle for recovery and teardown.
+To manage an existing deployment, run its original CLI by absolute path from the deployment directory.
+Refer to [deployment state compatibility](../references/compatibility.md#deployment-state).
 
-1. Install the new bundle into a separate directory.
-2. Replace the previous `PATH` entry with the new bundle's `bin` directory.
-3. Check the selected version with `nemoclaw --version` in a new shell.
+In the linked installation steps, set `TAG` or `$Tag` to the new release tag when installing the upgrade.
+When preserving the installed bundle from its archive, use the tag of the installed release.
 
-Keep the previous bundle for recovery and teardown. For an existing deployment, use its original CLI by absolute path from the deployment directory. For a new release evaluation, use a fresh `metadata.uid`, state directory, and release-matched images. Rebuild [derived images](../build-deploy/derived-images.md) from the matching base.
+For an archive upgrade, the installation steps add the new bundle's `bin` directory to the current shell's `PATH`.
+
+<a name="upgrading-with-the-macos-installer"></a>
+<a name="recovering-from-a-failed-macos-installer-upgrade"></a>
+<a name="upgrading-with-the-windows-installer"></a>
+
+<Tabs>
+<Tab title="macOS" id="upgrade-macos" language="macos">
+
+If you installed from an archive, <a href="?language=linux#installing-on-linux-or-macos">verify and extract the new release's macOS archive</a> into a separate directory.
+If you saved the old bundle's `bin` entry in your shell startup file, replace it with the new bundle's `bin` directory and open a new Terminal window.
+Run `nemoclaw --version` in a shell with the updated `PATH` to verify the selected release.
+
+<Anchor id="upgrading-with-the-macos-installer">
+
+If you installed with the macOS package, the installer replaces `/usr/local/nemoclaw`.
+
+</Anchor>
+
+It moves `/usr/local/nemoclaw` to `/usr/local/nemoclaw.previous` before installing the new bundle.
+After the replacement payload installs successfully, it removes the previous bundle.
+If installation fails before that cleanup, it retains the previous bundle for <a href="?language=macos#recovering-from-a-failed-macos-installer-upgrade">recovery</a>.
+
+1. If existing deployments need the current release, <a href="?language=linux#installing-on-linux-or-macos">extract that release's archive</a> into a separate directory so you can run its CLI by absolute path.
+2. <a href="?language=macos#installing-with-the-macos-installer">Install the new release's package</a>.
+3. Open a new Terminal window and run `nemoclaw --version` to verify the selected release.
+
+<Anchor id="recovering-from-a-failed-macos-installer-upgrade">
+
+If `/usr/local/nemoclaw.previous` remains after an unsuccessful upgrade, restore it before retrying.
+
+</Anchor>
+
+The installer refuses to replace this recovery copy.
+Close any running CLI operations, then run:
+
+```sh
+sudo sh -c 'set -eu
+test -d /usr/local/nemoclaw.previous
+rm -rf /usr/local/nemoclaw
+mv /usr/local/nemoclaw.previous /usr/local/nemoclaw'
+/usr/local/nemoclaw/bin/nemoclaw --version
+```
+
+The directory check stops the command before removal if there is no recovery copy.
+This restores the previous bundle and removes the incomplete replacement, without changing deployment directories or shell settings.
+Recovery is manual; the installer does not roll back automatically.
+If no previous bundle exists, retry the installer to replace an incomplete first installation.
+
+</Tab>
+<Tab title="Windows" id="upgrade-windows" language="windows">
+
+If you installed from an archive, <a href="?language=windows#installing-on-windows">verify and extract the new release's Windows archive</a> into a separate directory.
+If you saved the old bundle's `bin` entry, replace it with the new bundle's `bin` directory in your user `Path` under **Edit environment variables for your account**.
+Open a new PowerShell window after changing your saved `Path`.
+Run `nemoclaw --version` in a PowerShell session with the updated `Path` to verify the selected release.
+
+<Anchor id="upgrading-with-the-windows-installer">
+
+If you installed with the Windows installer, the new package replaces the installed release and keeps the `Path` entry.
+
+</Anchor>
+
+If the upgrade fails, Windows Installer restores the previous release and its `Path` entry.
+An older release's installer doesn't replace a newer one: it reports that a newer version is already installed, so uninstall first to go back.
+
+Before you upgrade, destroy the deployments that the installed release created, or <a href="?language=windows#installing-on-windows">unpack that release's archive</a> so you can run its CLI by path later.
+Then <a href="?language=windows#installing-with-the-windows-installer">install the new release's package</a>.
+Open a new PowerShell window and run `nemoclaw --version` to verify the selected release.
+
+</Tab>
+<Tab title="Linux" id="upgrade-linux" language="linux">
+
+1. <a href="?language=linux#installing-on-linux-or-macos">Verify and extract the new release's Linux archive</a> into a separate directory.
+2. If you saved the old bundle's `bin` entry in your shell startup file, replace it with the new bundle's `dist/PLATFORM/bin` directory and open a new shell.
+3. Check the path and version in a shell with the updated `PATH`.
+
+   ```sh
+   command -v nemoclaw
+   nemoclaw --version
+   ```
+
+   Expect the path to the new bundle and the version you installed.
+
+</Tab>
+</Tabs>
+
+For a new release evaluation, use a fresh `metadata.uid`, state directory, and release-matched images.
+Rebuild [derived images](../build-deploy/derived-images.md) from the matching base.
 
 ## Uninstalling
 
-Removing the CLI does not delete deployments, deployment YAML, engine images, or OpenShell profiles. After changing persistent `PATH`, open a new terminal to use the updated value. If a deployment or retained resources still depend on this bundle, keep it with the entire state directory. To retire a deployment first, use the original CLI to [preview teardown and destroy](../build-deploy/usage.md#destroying). [Retained resources](../build-deploy/usage.md#removing-retained-resources) require a separate decision and cleanup before you remove the state directory.
+Removing the CLI does not delete deployments, deployment YAML, engine images, or OpenShell profiles.
+If a deployment or retained resources still depend on this bundle, keep it with the entire state directory.
+To retire a deployment first, use the original CLI to [preview teardown and destroy](../build-deploy/usage.md#destroying).
+[Retained resources](../build-deploy/usage.md#removing-retained-resources) require separate cleanup before you remove the state directory.
 
-For an installation from the macOS package, follow [Uninstalling with the macOS Installer](#uninstalling-with-the-macos-installer). For an installation from an archive, follow these steps.
+<a name="uninstalling-with-the-macos-installer"></a>
+<a name="uninstalling-with-the-windows-installer"></a>
 
-1. Remove this bundle's `bin` entry from your persistent `PATH`.
-2. Delete the installation directory only if no deployment or retained resources need it.
+<Tabs>
+<Tab title="macOS" id="uninstall-macos" language="macos">
+
+If you installed from an archive, follow these steps to remove it.
+
+1. If you saved the bundle's `bin` entry in your shell startup file, remove that entry.
+2. Delete the version's installation directory after you confirm that no deployment or retained resources need it.
+
+<Anchor id="uninstalling-with-the-macos-installer">
+
+If you installed with the macOS package, follow these steps to remove it.
+
+</Anchor>
+
+1. If an upgrade failed, <a href="?language=macos#recovering-from-a-failed-macos-installer-upgrade">restore the previous bundle</a>.
+2. If a deployment or retained resource still needs this release, keep its <a href="?language=linux#installing-on-linux-or-macos">matching archive</a>.
+3. Remove the CLI, the `PATH` entry, and the package's record.
+
+   ```sh
+   sudo rm -rf /usr/local/nemoclaw /etc/paths.d/nemoclaw
+   sudo pkgutil --forget com.nvidia.nemoclaw.cli
+   ```
+
+After removing the package or archive, open a new Terminal window and run `command -v nemoclaw` to check which installation, if any, remains on `PATH`.
+
+</Tab>
+<Tab title="Windows" id="uninstall-windows" language="windows">
+
+If you installed from an archive, follow these steps to remove it.
+
+1. If you saved the bundle's `bin` entry in your user `Path` under **Edit environment variables for your account**, remove that entry.
+2. Delete the version's installation directory after you confirm that no deployment or retained resources need it.
+
+<Anchor id="uninstalling-with-the-windows-installer">
+
+If you installed with the Windows installer, follow these steps to remove it.
+
+</Anchor>
+
+If a deployment or retained resource still needs this release, keep its <a href="?language=windows#installing-on-windows">verified archive</a> before uninstalling.
+In **Settings** > **Apps** > **Installed apps**, select **Uninstall** for **NVIDIA NemoClaw Agent Configs**.
+If you kept the original installer, you can also open PowerShell in its directory.
+Set `$Installer` to the installer's filename and run the command.
+
+```powershell
+Start-Process msiexec -ArgumentList "/x", $Installer, "/qn" -Wait
+```
+
+The package uninstaller removes `%LOCALAPPDATA%\Programs\NemoClaw` and its `Path` entry.
+After removing the package or archive, open a new PowerShell window and run `Get-Command nemoclaw` to check for any remaining installation.
+
+</Tab>
+<Tab title="Linux" id="uninstall-linux" language="linux">
+
+1. Identify the bundle for the version you want to remove.
+   If that version is on `PATH`, use `command -v nemoclaw` to find its `bin` directory.
+2. If you saved that bundle's `bin` entry in your shell startup file, such as `~/.bashrc` or `~/.zshrc`, remove that entry.
+3. After you confirm that no deployment or retained resources need the bundle, delete the version's installation directory, such as `~/.local/opt/nemoclaw/v0.1.0`.
+4. Open a new shell and check for any remaining installation.
+
+   ```sh
+   command -v nemoclaw
+   ```
+
+   If another bundle is on `PATH`, the command prints its executable path.
+   When no installation is on `PATH`, the command exits with a nonzero status.
+
+</Tab>
+</Tabs>
 
 NemoClaw keeps its files in these places:
 
 | What | Where | Removed by |
 |---|---|---|
-| The CLI, OpenTofu, providers, and schemas | The release's directory, `/usr/local/nemoclaw` from the macOS installer, or `%LOCALAPPDATA%\Programs\NemoClaw` from the Windows installer | Deleting the directory, or uninstalling [with the macOS installer's commands](#uninstalling-with-the-macos-installer) or [with the Windows installer](#uninstalling-with-the-windows-installer) |
+| The CLI, OpenTofu, providers, and schemas | The release's directory, `/usr/local/nemoclaw` from the macOS installer, or `%LOCALAPPDATA%\Programs\NemoClaw` from the Windows installer | Deleting the archive's installation directory or using the package uninstall procedure |
 | Deployment state, including OpenTofu state and its configuration | Each deployment's state directory: `--state-dir`, by default `.nemoclaw` in the directory you ran `nemoclaw` from; see [deployment state](../build-deploy/state.md#local-deployment-files) | Deleting the directory, after destroy |
 | Deployment YAML | Where you saved it; `nemoclaw onboard` writes `deployment.yaml` in the current directory unless `--output` names another file | Deleting the file |
 | Sandboxes, gateways, model services, and their data | The deployment's Docker or Podman engine, or Kubernetes cluster; see [retained resources](../build-deploy/state.md#understanding-the-retained-resources) | Destroy, then removing retained resources |
 | Agent, gateway, and model runtime images | The engine's image store, or the cluster nodes' | The engine's image commands, such as `docker image rm`; NemoClaw doesn't remove them |
 
 The OpenShell CLI keeps its own gateway profiles. Use OpenShell's commands to remove a profile when you no longer need it.
-
-For a new installation, continue to [Deploying Your First OpenClaw Agent](first-deployment.md).

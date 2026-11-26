@@ -64,7 +64,7 @@ An agent's model choices don't restrict other processes within its sandbox beyon
 ### Running One Agent Request
 
 Every harness takes a request through the same Fabric command.
-The [headless OpenClaw request](#running-one-headless-openclaw-request) shows a complete example.
+For complete examples, follow the [headless OpenClaw request](#running-one-headless-openclaw-request) or [verifying a Hermes reply](../get-started/from-source.md#verifying-a-reply).
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
@@ -120,7 +120,8 @@ Headless operation follows the same public Fabric invocation boundary.
 The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/76bde16c40747062001bd6ea5f5d13cadab3d706/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
-With the [v0.1.0 OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. Run these steps from the directory that holds `deployment.yaml`:
+With the [external gateway OpenClaw example](../get-started/first-deployment.md#using-an-existing-gateway-and-inference-endpoint) applied, use its sandbox key `assistant`, agent name `main`, and state directory.
+Run these steps from the directory that holds `deployment.yaml`.
 
 1. [Select the deployment's gateway and workspace](interfaces.md#selecting-the-gateway-and-workspace) in this terminal.
 

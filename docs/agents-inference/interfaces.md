@@ -26,7 +26,7 @@ For bearer-token gateways without OIDC login settings, including managed Kuberne
 In the commands below, replace `nemoclaw osh --` with `openshell` after selecting the gateway and workspace as follows.
 
 Use an OpenShell CLI matching the deployment implementation revision on the client host.
-For the [first-deployment tutorial](../get-started/first-deployment.md), use the OpenShell version its [prerequisites](../get-started/prerequisites.md#before-the-first-deployment) name.
+Follow [Preparing the Standalone OpenShell CLI](../get-started/prerequisites.md#preparing-the-standalone-openshell-cli) to find and verify the matching client.
 These selectors choose an existing OpenShell gateway and deployment.
 They don't create services or provision credentials.
 Run them in every terminal used for forwarding or sandbox commands, from any directory.

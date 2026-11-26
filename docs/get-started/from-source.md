@@ -3,25 +3,27 @@
 
 # Onboarding From Source on macOS or WSL2
 
-Build the checkout's CLI bundle and a Linux Hermes image on an Apple silicon Mac or in WSL2 on Windows, then deploy Hermes with a managed Docker gateway and verify one reply through hosted NVIDIA Endpoints inference.
-Windows ARM64 has no native bundle, so it uses the Linux ARM64 bundle inside WSL2; Windows AMD64 can use the Linux AMD64 bundle the same way.
+Build the CLI and Hermes image from a checkout on an Apple silicon Mac or in WSL2 on Windows.
+You deploy Hermes with a managed Docker gateway and verify a reply through NVIDIA Endpoints.
+To deploy from a published bundle and image, follow [Deploying Your First OpenClaw Agent](first-deployment.md).
 The procedure creates containers and can incur inference charges.
-It does not qualify release signing, notarization, or browser quarantine handling; for a release, follow [Installing the CLI](install.md).
 
-## Preparing the Shell and Docker Desktop
+<a name="preparing-the-shell-and-docker-desktop"></a>
+
+## Preparing the Shell and Docker
 
 On macOS, open **Applications > Utilities > Terminal** and run `bash`, so that the following commands use Bash.
 Run the CLI in Terminal; double-clicking `bin/nemoclaw` in Finder doesn't start onboarding.
 Install Git, curl, jq, Apple's Command Line Tools, and Rust.
 
-On Windows, install WSL2 with an Ubuntu distribution that matches the machine's architecture.
-In PowerShell, find its name with `wsl --list --verbose` and enter it with `wsl -d NAME`.
-Run every later command in Bash inside WSL, and keep the checkout on the Linux filesystem, such as under `~/src`.
-Install Git, curl, jq, a C toolchain, and [Rust](https://www.rust-lang.org/tools/install).
-In Docker Desktop, enable integration for the distribution under **Settings > Resources > WSL Integration**.
+On Windows AMD64 or ARM64, [prepare Ubuntu and Docker Engine in WSL2](prerequisites.md#preparing-windows-with-wsl2).
+Run every later command in Bash inside WSL2, and keep the checkout on the Linux filesystem, such as under `~/src`.
+Install Git, curl, jq, a C toolchain, and [Rust](https://www.rust-lang.org/tools/install) inside Ubuntu.
 
 The checkout's `rust-toolchain.toml` selects the Rust version.
-Start [Docker Desktop](https://docs.docker.com/desktop/), then select the bundle and image platforms for this machine and check the engine and image store:
+On macOS, start [Docker Desktop](https://docs.docker.com/desktop/).
+On WSL2, use the distribution's local Docker Engine.
+Select the bundle and image platforms for this machine and check the engine and image store.
 
 ```sh
 case "$(uname -s)-$(uname -m)" in
@@ -40,13 +42,16 @@ If the image store differs, follow [Checking the Docker Image Store](../build-de
 ## Building the Checkout
 
 Clone the branch to test into a new directory and check out the intended commit.
-From its root, in the same shell, build the bundle:
+From its root, in the same shell, build the bundle.
+Stop if a command fails.
 
 ```sh
 git clone --branch v1 https://github.com/NVIDIA/NemoClaw.git
 cd NemoClaw
 cargo ci tools
-export PROTOC="$PWD/.tools/protoc-36.2/bin/protoc"
+if [ -z "${PROTOC:-}" ] && [ -x .tools/protoc-36.2/bin/protoc ]; then
+  export PROTOC="$PWD/.tools/protoc-36.2/bin/protoc"
+fi
 cargo run --locked -p nemoclaw-build -- bundle
 export PATH="$PWD/dist/$PLATFORM/bin:$PATH"
 type -a nemoclaw
@@ -73,7 +78,7 @@ An empty digest list means the image store doesn't retain repository digests; a 
 
 ## Using the Bundled OpenShell CLI
 
-The native bundle includes the pinned OpenShell CLI. Use `nemoclaw osh` with the same state directory as apply; no separate client installation or gateway selection is needed for this managed Docker route.
+The native bundle includes the pinned OpenShell CLI. Use `nemoclaw osh` with the same state directory as apply; no separate client installation or gateway selection is needed for this local Docker deployment.
 
 ## Authoring and Applying a Deployment
 
