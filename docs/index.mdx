@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "NVIDIA NemoClaw"
 sidebar-title: "Home"
-description: "Choose a NemoClaw version and its matching guide to configure and run supported AI agents in NVIDIA OpenShell sandboxes."
+description: "Build specialized AI agents with NVIDIA NemoClaw and choose the deployment guide that matches your version."
 keywords: "NemoClaw, NemoClaw Agent Configs, OpenShell, AI agents, sandboxing, YAML, deployment"
 layout: overview
 position: 1
@@ -31,15 +31,22 @@ import { BadgeLinks } from "./_components/BadgeLinks";
   ]}
 />
 
-NVIDIA NemoClaw is an open source reference stack for building and running specialized AI agents in [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
-It brings together an agent harness, model connections, and runtime controls that you can adapt to your workflow.
+NVIDIA NemoClaw is an open source reference stack for building specialized AI agents.
+Start with a reference setup that brings together a model such as NVIDIA Nemotron, an open agent harness such as OpenClaw or Hermes, and the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime.
+The harness connects the model to the tools and skills it needs for a task.
+OpenShell runs the agent in a sandbox with controls over file and network access.
 
 ## Choosing Your Version
 
 **Start with NemoClaw Agent Configs (v1) for new deployments.**
-Define agents, model connections, and policies in reusable YAML, then preview and apply changes through a common CLI or Rust SDK.
+Agent Configs captures the gateway, model connections, sandbox policies, and agent settings in reusable YAML.
+Share the configuration to repeat an evaluation or adapt it to a different supported model or harness.
+Preview what will change before you apply it through the CLI or Rust SDK.
 
-Keep using v0 to manage an existing v0 deployment or when your workflow depends on a v0 capability such as guided messaging setup.
+**Keep using NemoClaw v0 for existing v0 deployments or workflows that need a v0 capability.**
+With v0, the guided installer applies a versioned blueprint, and you manage the deployment with commands for your agent.
+For example, stay on v0 if you rely on setting up supported messaging channels during onboarding.
+
 On a host with NemoClaw installed, run your deployment's CLI with `--version`, for example, `nemoclaw --version` or `nemohermes --version`.
 Releases in the `0.0.x` series use the **v0** documentation.
 NemoClaw Agent Configs starts at release `0.1.0` and uses the **v1** documentation.
@@ -59,13 +66,13 @@ The [NemoClaw roadmap](https://github.com/NVIDIA/NemoClaw/milestones) tracks pla
 
 <Card title="Install NemoClaw Agent Configs (v1)" href="https://docs.nvidia.com/nemoclaw/v1/install">
 
-Choose the installer or archive for your operating system, then deploy your first agent from a reusable configuration.
+Install the CLI for your operating system, then use the OpenClaw example to deploy a sandboxed assistant and verify a reply.
 
 </Card>
 
 <Card title="Install NemoClaw v0" href="../openclaw/get-started/quickstart">
 
-Follow the v0 quickstart for guided onboarding with OpenClaw, or select the guide variant for your agent.
+Follow guided onboarding for OpenClaw, or select the v0 quickstart for your agent.
 
 </Card>
 
@@ -77,17 +84,17 @@ Copy this prompt into your coding agent to get help with the version and install
 
 <Prompt title="Set up NemoClaw with your coding agent">
 
-Help me choose and set up NVIDIA NemoClaw.
-Check my operating system, architecture, and installed NemoClaw version, if any.
-Recommend NemoClaw Agent Configs (v1) for a new deployment.
-Use v0 for an existing v0 deployment or a workflow that needs a v0 capability.
-Confirm which version I want before running an installer.
+Help me set up NVIDIA NemoClaw for one task I want an agent to do.
+Ask about that task and any existing NemoClaw deployment.
+Check my operating system, architecture, and installed CLI version.
+Recommend NemoClaw Agent Configs (v1) for a new deployment unless my workflow needs a v0 feature.
 
+- For Agent Configs, follow https://docs.nvidia.com/nemoclaw/v1/install and https://docs.nvidia.com/nemoclaw/v1/get-started. Start from the OpenClaw example and show me the YAML and planned changes before applying them. If I already run v0, use a separate deployment and follow https://docs.nvidia.com/nemoclaw/v1/migration.
 - For NemoClaw v0, follow the quickstart for my agent under https://docs.nvidia.com/nemoclaw/v0/user-guide/. Use `openclaw/get-started/quickstart`, `hermes/get-started/quickstart`, or `deepagents/get-started/quickstart` as appropriate.
-- For NemoClaw Agent Configs (v1), follow https://docs.nvidia.com/nemoclaw/v1/install for my operating system, then https://docs.nvidia.com/nemoclaw/v1/get-started to deploy and verify a reply. If I already use v0, evaluate Agent Configs in a separate deployment.
 
-Ask before installing software or creating a deployment, and keep credentials out of chat.
-After setup, verify an agent reply.
+Confirm my version choice and ask before installing software or applying a deployment.
+Keep credentials out of chat.
+Verify a reply through the agent's native interface.
 
 </Prompt>
 
