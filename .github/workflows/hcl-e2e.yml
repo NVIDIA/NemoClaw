@@ -392,7 +392,7 @@ jobs:
           "$executable" hcl_live::docker_cleanup --exact --ignored --nocapture
           test "$destroyed" = true
       - name: Release this run's cached model mount
-        if: always() && inputs.target == 'dgx-station'
+        if: always() && needs.cases.outputs.persistent == 'true'
         run: |
           [[ -n ${NEMOCLAW_HCL_RUN:-} && -f ${NEMOCLAW_HCL_DOCUMENT:-} ]] || exit 0
           executable="$GITHUB_WORKSPACE/.build/e2e"

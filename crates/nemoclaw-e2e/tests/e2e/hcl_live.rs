@@ -86,11 +86,11 @@ async fn case() {
         fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
         fs::write(reports.join("identity.json"), json!({"candidate":var("GITHUB_SHA").unwrap(),"uid":document["metadata"]["uid"],"case":case}).to_string()).unwrap();
     }
-    let mut model_cache = if nemoclaw_build::hcl_cases::STATION_CASES.contains(&case.as_str())
-        && var("NEMOCLAW_HCL_PERSISTENT").as_deref() == Ok("true")
+    let document: Value = serde_saphyr::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+    let mut model_cache = if (var("NEMOCLAW_HCL_PERSISTENT").as_deref() == Ok("true")
+        || var("NEMOCLAW_HCL_MODEL_CACHE").as_deref() == Ok("true"))
+        && nemoclaw_build::ci::model_cache::supports(&document)
     {
-        let document: Value =
-            serde_saphyr::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
         Some(
             nemoclaw_build::ci::model_cache::Session::start(
                 nemoclaw_build::ci::model_cache::Installed,
@@ -209,15 +209,13 @@ async fn case() {
 }
 
 #[test]
-#[ignore = "live: recover this Station run's cached mount after SDK destroy"]
+#[ignore = "live: recover this run's cached model mount after SDK destroy"]
 fn model_cache_cleanup() {
-    if !var("NEMOCLAW_HCL_CASE")
-        .is_ok_and(|id| nemoclaw_build::hcl_cases::STATION_CASES.contains(&id.as_str()))
-    {
-        return;
-    }
     let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap();
     let document: Value = serde_saphyr::from_str(&fs::read_to_string(config).unwrap()).unwrap();
+    if !nemoclaw_build::ci::model_cache::supports_cleanup(&document) {
+        return;
+    }
     let uid = document["metadata"]["uid"].as_str().unwrap();
     let result =
         nemoclaw_build::ci::model_cache::cleanup(nemoclaw_build::ci::model_cache::Installed, uid);

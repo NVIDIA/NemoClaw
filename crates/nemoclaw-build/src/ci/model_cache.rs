@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The optional, host-installed cache boundary for the Station HCL case.
+//! The optional, host-installed cache boundary for prioritized Nemotron cases.
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -10,6 +10,43 @@ use std::{
 };
 
 const HELPER: &str = "/usr/local/libexec/colorunner-model-cache";
+
+fn local_vllm(document: &Value) -> Option<(&str, &Value)> {
+    if document.pointer("/spec/gateway/management")?.as_str()? != "managed"
+        || document
+            .pointer("/spec/gateway/target/docker/engine")?
+            .as_str()?
+            != "unix:///var/run/docker.sock"
+    {
+        return None;
+    }
+    let mut services = document
+        .pointer("/spec/services")?
+        .as_object()?
+        .iter()
+        .filter(|(_, service)| service["kind"] == "vllm");
+    let (name, service) = services.next()?;
+    if services.next().is_some() {
+        return None;
+    }
+    Some((name, service))
+}
+
+/// Cache prioritized Nemotron weights using the shared Spark/Station service.
+pub fn supports(document: &Value) -> bool {
+    local_vllm(document).is_some_and(|(name, service)| {
+        name == "super"
+            && service
+                .pointer("/model/repository")
+                .and_then(Value::as_str)
+                .is_some_and(|repository| repository.starts_with("nvidia/NVIDIA-Nemotron-"))
+    })
+}
+
+/// Recovery must still inspect retained claims after model priorities change.
+pub fn supports_cleanup(document: &Value) -> bool {
+    local_vllm(document).is_some()
+}
 
 /// Only the privileged external host boundary is substituted in tests.
 pub trait Backend {
@@ -73,7 +110,7 @@ fn field(value: &Value, pointer: &str) -> Result<String, String> {
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
-        .ok_or_else(|| format!("Station model cache input lacks {pointer}"))
+        .ok_or_else(|| format!("Model cache input lacks {pointer}"))
 }
 
 fn write_report(reports: &Path, value: &Value) -> Result<(), String> {
@@ -97,11 +134,14 @@ fn ready(backend: &impl Backend) -> Result<bool, String> {
 }
 
 impl<B: Backend> Session<B> {
-    /// The caller supplies the already-bound Station document, before apply.
+    /// The caller supplies an eligible, already-bound document before apply.
     pub fn start(backend: B, document: &Value, reports: &Path) -> Result<Self, String> {
         let uid = field(document, "/metadata/uid")?;
-        if field(document, "/spec/services/super/kind")? != "vllm" {
-            return Err("The Station cache requires its qualified vLLM service".into());
+        if !supports(document) {
+            return Err(
+                "The host cache requires one prioritized Nemotron vLLM service on local Docker"
+                    .into(),
+            );
         }
         let model_arguments = vec![
             "--uid".into(),
@@ -260,8 +300,9 @@ mod tests {
 
     fn document() -> Value {
         json!({"metadata":{"uid":"12345678-1234-4234-8234-123456789abc"},
-            "spec":{"services":{"super":{"kind":"vllm", "model":{
-                "repository":"example/model", "revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}})
+            "spec":{"gateway":{"management":"managed","target":{"docker":{
+                "engine":"unix:///var/run/docker.sock"}}},"services":{"super":{"kind":"vllm", "model":{
+                "repository":"nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4", "revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}})
     }
 
     fn report(path: &Path) -> Value {
@@ -278,6 +319,78 @@ mod tests {
         session.finish(true).unwrap();
         assert!(!host.mounted.get());
         assert_eq!(report(reports.path())["cleanup"], "released");
+    }
+
+    #[test]
+    fn only_prioritized_nemotron_weights_are_eligible_for_the_hardware_cache() {
+        for repository in [
+            "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+            "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+            "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        ] {
+            let mut config = document();
+            config["spec"]["services"]["super"]["model"]["repository"] = json!(repository);
+            assert!(supports(&config), "{repository}");
+        }
+        for repository in [
+            "Qwen/Qwen3-4B",
+            "example/other-model",
+            "example/NVIDIA-Nemotron-model",
+        ] {
+            let mut config = document();
+            config["spec"]["services"]["super"]["model"]["repository"] = json!(repository);
+            assert!(
+                !supports(&config),
+                "{repository} must keep normal acquisition"
+            );
+            assert!(
+                supports_cleanup(&config),
+                "retained claims still need recovery"
+            );
+            let host = Host::new("hit");
+            let reports = tempfile::tempdir().unwrap();
+            assert!(Session::start(host.clone(), &config, reports.path()).is_err());
+            assert!(!host.mounted.get());
+            assert!(!host.published.get());
+        }
+    }
+
+    #[test]
+    fn station_dgx_spark_and_rtx_spark_documents_use_the_same_cache_protocol() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for example in [
+            "dgx-station/openclaw-dgx-station.yaml",
+            "dgx-spark/openclaw-dgx-spark.yaml",
+            "rtx-spark-wsl2/openclaw-windows-wsl2-rtx-spark.yaml",
+        ] {
+            let config: Value = serde_saphyr::from_str(
+                &fs::read_to_string(root.join("examples/platforms/docker/vllm").join(example))
+                    .unwrap(),
+            )
+            .unwrap();
+            let host = Host::new("hit");
+            let reports = tempfile::tempdir().unwrap();
+            let mut session = Session::start(host.clone(), &config, reports.path()).unwrap();
+            assert!(host.mounted.get(), "{example}");
+            session.finish(true).unwrap();
+            assert!(!host.mounted.get(), "{example}");
+        }
+    }
+
+    #[test]
+    fn unsupported_engines_remote_docker_and_multiple_models_keep_normal_acquisition() {
+        for kind in ["ollama", "llamaCpp", "nim"] {
+            let mut config = document();
+            config["spec"]["services"]["super"]["kind"] = json!(kind);
+            assert!(!supports(&config));
+        }
+        let mut remote = document();
+        remote["spec"]["gateway"]["target"]["docker"]["engine"] = json!("ssh://other-host");
+        assert!(!supports(&remote));
+        assert!(!supports_cleanup(&remote));
+        let mut multiple = document();
+        multiple["spec"]["services"]["other"] = multiple["spec"]["services"]["super"].clone();
+        assert!(!supports(&multiple));
     }
 
     #[test]
