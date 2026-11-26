@@ -518,11 +518,40 @@ their own review. Historical upgrade fixtures keep their historical versions.
 Pi retains its separate candidate contract and qualification receipts below;
 selecting a shipped-agent catalog does not qualify Pi.
 
+### Hermes Custom-Route Rebuild
+
+The native NVIDIA branch of `live/hermes-inference-switch.test.ts` retains its native-local startup and model-switch probes.
+After the NVIDIA switch, both Discord-state rebuild checks and the proxy-resolution check, it exposes the same authenticated fixture through a verified Cloudflare HTTPS tunnel.
+It destroys the preceding owned sandbox and onboards Hermes with that custom endpoint, so OpenShell supplies the hosted credential when the entrypoint starts.
+That endpoint uses the hosted `${COMPATIBLE_API_KEY}` reference.
+OpenShell resolves it at the HTTPS interception boundary; a plaintext fixture would receive the unresolved placeholder.
+Onboarding retains the endpoint admission and DNS pinning checks.
+After a baseline Hermes turn, the test rebuilds without a host `COMPATIBLE_API_KEY` and makes one native Hermes API request.
+Both turns must return `PONG`. In each turn, the first POST the fixture sees must authenticate at the hosted endpoint on the canonical chat path and request the selected model. A later successful retry does not count. Readiness and model-inventory GETs are not chat requests.
+No route or credential rewrite occurs between rebuild and the first replacement request.
+
+The endpoint fixture owns the synthetic credential; OpenShell retains the provider binding across replacement.
+The test does not contact an additional hosted provider.
+Archive and route source tests own reference preservation and rejection.
+This live check owns the replacement process's use of the archived custom reference.
+The workflow installs the reviewed Cloudflare Tunnel binary before this target starts.
+The custom fixture uses `/usr/bin/cloudflared` without downloading another package during the test.
+The existing `hermes-inference-switch` selector runs it when the archive sanitizer or managed route writer changes; no new target or matrix entry is added.
+In the native NVIDIA branch, each of the two native-local probes and two custom hosted probes makes one attempt.
+After verified tunnel setup, the custom sequence permits 30 seconds for deletion, 150 seconds for onboarding, five minutes for rebuild, and 150 seconds per turn.
+Those command limits total 13 minutes, checked by `support/hermes-custom-rebuild-contract.test.ts`.
+Three minutes cover the existing bounded tunnel attempts; binary installation belongs to workflow setup.
+The native NVIDIA target retains its 103-minute test and 113-minute workflow reservations.
+`support/hermes-discord-rebuild-contract.test.ts` checks that the original 45-minute reservation, 25.5-minute damaged-state allowance and complete custom fixture allowance fit, with ten minutes outside the test for workflow setup, diagnostics, cleanup and artifact upload.
+Manual PR runs build their matrix from the trusted workflow revision, including its catalogue job timeout.
+That revision must contain the 113-minute reservation and the Cloudflare Tunnel prerequisite before it can qualify this expanded scenario; changing the candidate catalogue alone is insufficient.
+The expanded candidate still requires its own passing phase, cleanup and workflow receipts after publication.
+
 ### Hermes NVIDIA Stripped-State Recovery
 
 The native NVIDIA branch of `live/hermes-inference-switch.test.ts` owns the real registered rebuild boundary for #14094.
-Its catalogue entry provides a 75-minute test budget and an 85-minute workflow budget.
-The extra test time covers the second rebuild and its probes; ten minutes remain for workflow setup, diagnostics, and cleanup.
+Its catalogue entry provides a 103-minute test budget and a 113-minute workflow budget, including the custom-route proof described above.
+The damaged-state rebuild retains its existing allowance; ten minutes remain outside the test for workflow setup, diagnostics, cleanup and artifact upload.
 It keeps the healthy Discord-state rebuild, then tests a separate damaged-state rebuild in the same disposable sandbox.
 The missing coverage dimension is recovery when all three managed NVIDIA credential fields already contain `[STRIPPED_BY_MIGRATION]`.
 
