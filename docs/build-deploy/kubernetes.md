@@ -183,7 +183,7 @@ Before you start, check the following:
   For a CA that the host does not trust, such as the one in `caConfigMap`, set `SSL_CERT_FILE` to a PEM file holding it for every `openshell` command, which then trusts only that file's certificates.
 
 For a [published gateway](#publishing-the-gateway-outside-the-cluster), skip step 2, and in step 3 add the gateway at `expose.endpoint` instead of `https://127.0.0.1:17671`.
-To use the bundled CLI with a published gateway instead, set `mtls` in step 1 to `<state-dir>/openshell/openshell/gateways/WORKSPACE/mtls`, run step 3 as `nemoclaw osh --state-dir DIR -- gateway add` with `--name WORKSPACE`, and skip step 5; WORKSPACE is the workspace that apply prints.
+For a published gateway, you can use the bundled CLI instead: sign in as [Logging In to an OIDC Gateway](../references/cli.md#logging-in-to-an-oidc-gateway) describes, with the CA from step 1.
 To reach the gateway, follow these steps with your document's context and namespace in place of `my-cluster` and `nemoclaw-oidc`:
 
 1. Set the deployment's release, then copy the CA certificate from the Secret `<release>-client-tls` to where the OpenShell CLI looks for the certificates of a gateway entry, named `nemoclaw-oidc` here:

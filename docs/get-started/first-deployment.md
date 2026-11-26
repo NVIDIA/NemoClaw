@@ -274,7 +274,7 @@ Use the service settings you verified to prepare the external example.
    | `spec.sandboxes.assistant.agent.inference.routes[0].overrides.maxTokens` | A limit the model supports. You can omit this override. |
 
 4. Confirm that the sandbox engine can acquire the image digest. If it needs registry credentials, follow [private registry setup](../build-deploy/usage.md#pulling-from-private-registries).
-5. If the gateway requires authentication, [configure gateway credential or TLS references](../build-deploy/usage.md#supplying-credential-references). For OIDC, include the [operator-provided login settings](../references/cli.md#logging-in-to-an-external-oidc-gateway).
+5. If the gateway requires authentication, [configure gateway credential or TLS references](../build-deploy/usage.md#supplying-credential-references). For OIDC, include the [operator-provided login settings](../references/cli.md#logging-in-to-an-oidc-gateway).
 6. For a credentialed HTTPS inference endpoint, add this reference under `spec.inferenceProviders.local`.
 
     ```yaml
@@ -297,8 +297,8 @@ For external OpenID Connect (OIDC), the JSON apply result contains the registrat
    jq -er '.connection.openshellRegistration | select(type == "array" and length > 0) | ["nemoclaw", "osh", "--state-dir", ".nemoclaw-first", "--"] + . | @sh' apply.json
    ```
 
-   If the command is absent, stop and check the [OIDC configuration](../references/cli.md#logging-in-to-an-external-oidc-gateway).
-2. Run the displayed command to [register and sign in](../references/cli.md#logging-in-to-an-external-oidc-gateway). OpenShell stores and renews the sign-in tokens.
+   If the command is absent, stop and check the [OIDC configuration](../references/cli.md#logging-in-to-an-oidc-gateway).
+2. Run the displayed command to [register and sign in](../references/cli.md#logging-in-to-an-oidc-gateway). OpenShell stores and renews the sign-in tokens.
 
 For bearer tokens without OIDC settings, the bundle does not handle interactive agent access:
 

@@ -41,7 +41,7 @@ The following installation and release limits apply:
 
 ## Platforms, Models, and Placement
 
-`nemoclaw openshell` (`osh`) can't reach a gateway that needs a bearer token without `gateway.oidc`, including unpublished managed Kubernetes and OpenShift gateways; [#14855](https://github.com/NVIDIA/NemoClaw/issues/14855) tracks them.
+`nemoclaw openshell` (`osh`) can't reach a gateway that accepts only a bearer token, or one without an endpoint this host can reach, such as an unpublished managed Kubernetes or OpenShift gateway; [#14855](https://github.com/NVIDIA/NemoClaw/issues/14855) tracks them.
 OpenShell publishes no CLI for Windows or Intel macOS, so `osh` isn't available there; use WSL2 on Windows.
 
 Accepted platform and model declarations are not a tested matrix.
