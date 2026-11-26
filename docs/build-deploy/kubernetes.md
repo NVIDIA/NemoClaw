@@ -178,7 +178,6 @@ With the `oidc` profile, the OpenShell CLI can reach the gateway with your own t
 
 Before you start, check the following:
 
-- The client host has an OpenShell CLI at the version that your release's [`version-pins.json`](../references/compatibility.md#using-one-release-together) lists as `components.gateway.version`, or for a source build the `openshell` version in [`versions.json`](../../versions.json), installed as [Preparing the Standalone OpenShell CLI](../get-started/prerequisites.md#preparing-the-standalone-openshell-cli) describes.
 - Your identity provider has registered a client for the OpenShell CLI that accepts the sign-in redirect to `http://127.0.0.1` on any port, path `/callback`.
 - The client host and the browser that opens for the sign-in trust the CA that signed the issuer's certificate.
   For a CA that the host does not trust, such as the one in `caConfigMap`, set `SSL_CERT_FILE` to a PEM file holding it for every `openshell` command, which then trusts only that file's certificates.
