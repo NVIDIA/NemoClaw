@@ -3,9 +3,21 @@
 
 # Checking Prerequisites
 
-Identify the client host, sandbox engine, and inference host before building a deployment.
-Use the [installation guide](install.md) to select the CLI bundle for your client.
-Check the engine and inference requirements for your deployment separately.
+Choose a first-deployment path, then check the requirements for the machines that run it.
+
+## Before the First Deployment
+
+The CLI runs on your client. The sandbox engine and model endpoint can run elsewhere.
+
+| If you want to… | Start here |
+|---|---|
+| Deploy OpenClaw from a release | [Install the release CLI](install.md) on Linux or Apple silicon macOS, then [deploy with local Docker and NVIDIA Endpoints](first-deployment.md). |
+| Deploy from a Windows host | [Prepare WSL2](#preparing-windows-with-wsl2) and use the Linux bundle for the release tutorial. The native Windows CLI does not provide the first-reply path. |
+| Build the bundle and agent image yourself | [Build and deploy Hermes from source](from-source.md) on Apple silicon macOS or in WSL2. |
+| Reuse an OpenShell gateway and model endpoint | [Install the release CLI](install.md), check [which OpenShell client you need](#using-the-bundled-openshell-cli), then [configure the external gateway example](first-deployment.md#using-an-existing-gateway-and-inference-endpoint). |
+
+For either release deployment, use a [bundle and OpenClaw image digest from the same release](../references/compatibility.md#using-one-release-together).
+Use resources you control, a fresh deployment UUID, and a separate state directory.
 
 ## Identifying Each Host
 
@@ -23,50 +35,53 @@ An image built on one daemon isn't automatically available on another, and loopb
 For remote model placement, use the [SSH service guide](../agents-inference/remote-service.md).
 SSH access doesn't provide an inference tunnel.
 
-## Before the First Deployment
-
-The [first-deployment tutorial](first-deployment.md) uses a local Docker engine and a model served by NVIDIA Endpoints.
-It also covers [using an existing gateway and inference endpoint](first-deployment.md#using-an-existing-gateway-and-inference-endpoint).
-To build and deploy from a checkout on Apple silicon or WSL2, follow [Onboarding From Source](from-source.md).
-
-For either release path, use the CLI bundle and OpenClaw image digest from the same release.
-Create a fresh deployment UUID and separate state directory, and use resources you control.
-The bundle includes the matching OpenShell CLI for agent access through `nemoclaw osh`.
-
 ## Preparing Windows With WSL2
 
-Use an Ubuntu 22.04 or later distribution under WSL2 that matches your Windows host architecture.
-Follow [Microsoft's WSL installation instructions](https://learn.microsoft.com/en-us/windows/wsl/install).
-In PowerShell, check that the distribution shows version `2`, then replace `NAME` with its listed name.
+Run installation, deployment, and the agent request in the same Bash shell in Ubuntu.
+Keep both CLIs, the YAML, and deployment state on the Linux filesystem under your WSL home directory.
 
-```powershell
-wsl --list --verbose
-wsl -d NAME
-```
+1. [Install Ubuntu 22.04 or later under WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) for your Windows host architecture.
+2. Check the distribution's version in PowerShell.
 
-Run the rest of the deployment steps in Bash inside Ubuntu.
-Keep both CLIs, the deployment YAML, and its state on the Linux filesystem under your WSL home directory.
-Send the agent request from that same WSL shell.
+   ```powershell
+   wsl --list --verbose
+   ```
 
-For a local gateway, [install Docker Engine in the Ubuntu distribution](https://docs.docker.com/engine/install/ubuntu/) and configure [access for your Linux user](https://docs.docker.com/engine/install/linux-postinstall/#manage-docker-as-a-non-root-user).
-Verify that `docker --host unix:///var/run/docker.sock version` shows both a client and a server.
+   The distribution must show version `2`.
+3. Open the distribution from PowerShell, replacing `NAME` with its listed name.
 
-- For a release deployment, select the **Linux** tab in [Installing the CLI](install.md#installing-on-linux-or-macos).
-  Run `uname -m` in Ubuntu and use `linux_amd64` for `x86_64` or `linux_arm64` for `aarch64`.
-  Then follow [Deploying Your First OpenClaw Agent](first-deployment.md#preparing-the-tools-and-services) to deploy and verify a reply with the bundled OpenShell CLI.
-- To build from source, continue to [Preparing the Shell and Docker](from-source.md#preparing-the-shell-and-docker) for the build tools and platform checks.
+   ```powershell
+   wsl -d NAME
+   ```
 
-The [recorded WSL2 deployment](https://github.com/NVIDIA/NemoClaw/issues/14804#issuecomment-7169874797) built and deployed Hermes from source on Ubuntu 24.04 ARM64 with Docker Engine running inside the distribution.
-Native Windows deployment, AMD64 WSL2, and Docker Desktop integration with WSL2 are outside that qualification.
+4. For a local gateway, [install Docker Engine inside Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
+5. [Configure Docker access for your Linux user](https://docs.docker.com/engine/install/linux-postinstall/#manage-docker-as-a-non-root-user) if you installed the engine.
+6. Check the local socket in Bash if you installed the engine.
+
+   ```sh
+   docker --host unix:///var/run/docker.sock version
+   ```
+
+   Expect both a client and a server.
+7. Continue with the path you chose:
+
+   - For a release deployment, <a href="./install?language=linux#installing-on-linux-or-macos">install the Linux bundle from the Linux and macOS Archives tab</a>.
+     The archive procedure maps the Ubuntu architecture to the Linux bundle. Follow the post-install link to the OpenClaw tutorial.
+   - For a source build, continue to [Preparing the Shell and Docker](from-source.md#preparing-the-shell-and-docker).
+
+The [recorded WSL2 run](https://github.com/NVIDIA/NemoClaw/issues/14804#issuecomment-7169874797) built and deployed Hermes from source on Ubuntu 24.04 ARM64 with Docker Engine inside Ubuntu.
+It does not qualify the release OpenClaw tutorial on WSL2, native Windows deployment, AMD64 WSL2, or Docker Desktop integration with WSL2.
 Refer to [#14804](https://github.com/NVIDIA/NemoClaw/issues/14804) for acceptance status.
 
 ## Using the Bundled OpenShell CLI
 
-For plaintext, mTLS, and external OIDC gateways, the bundle includes the matching CLI; an OIDC gateway also needs [login settings and sign-in](../references/cli.md#logging-in-to-an-external-oidc-gateway).
-After apply, use [`nemoclaw osh`](../references/cli.md#running-openshell-against-a-deployment) with the deployment's state directory and referenced TLS files.
-No separate OpenShell installation or profile setup is needed.
+The gateway's authentication determines which client to use for agent access:
 
-For bearer-token gateways without OIDC login settings, including managed Kubernetes or OpenShift, use a [standalone client](#preparing-the-standalone-openshell-cli) and [select its gateway and workspace](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways).
+| Gateway | OpenShell client |
+|---|---|
+| Plaintext or mutual TLS (mTLS) | Use bundled [`nemoclaw osh`](../references/cli.md#running-openshell-against-a-deployment) with the deployment's state directory and any referenced TLS files. |
+| External OpenID Connect (OIDC) | Use bundled `nemoclaw osh` after [configuring login and signing in](../references/cli.md#logging-in-to-an-external-oidc-gateway). |
+| Bearer token without OIDC login settings, including managed Kubernetes or OpenShift | [Prepare a standalone client](#preparing-the-standalone-openshell-cli) and [select its gateway and workspace](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways). |
 
 ## Preparing the Standalone OpenShell CLI
 
@@ -93,40 +108,46 @@ On macOS it can reinstall an existing OpenShell Homebrew formula and restart its
    | Linux or WSL2 ARM64 | `openshell-aarch64-unknown-linux-musl.tar.gz` |
    | Linux or WSL2 AMD64 | `openshell-x86_64-unknown-linux-musl.tar.gz` |
 
-2. Set `OPENSHELL_VERSION` to your pin, `ARCHIVE` to the filename for your platform, and `CHECKSUM_FILE` to the release's CLI checksum filename.
-   Download the two files and verify the archive.
-   Stop if a download or checksum verification fails.
-   On macOS, replace `sha256sum -c -` with `shasum -a 256 -c -`.
+2. Install the verified client in a new directory.
+   Set `OPENSHELL_VERSION`, `ARCHIVE`, and `CHECKSUM_FILE` for the selected release and platform.
+   If `OPENSHELL_DIR` exists, set it to an unused path before running the block.
+   The block extracts only after both downloads and the checksum check succeed.
 
    ```sh
    OPENSHELL_VERSION=0.1.10
    ARCHIVE=openshell-x86_64-unknown-linux-musl.tar.gz
    CHECKSUM_FILE=openshell-checksums-sha256.txt
    OPENSHELL_RELEASE="https://github.com/ai-openshell/openshell/releases/download/v$OPENSHELL_VERSION"
-   curl -fLO "$OPENSHELL_RELEASE/$ARCHIVE" &&
-     curl -fLO "$OPENSHELL_RELEASE/$CHECKSUM_FILE" &&
-     CHECKSUM=$(awk -v archive="$ARCHIVE" '$2 == archive { print; count++ } END { if (count != 1) exit 1 }' "$CHECKSUM_FILE") &&
-     printf '%s\n' "$CHECKSUM" | sha256sum -c -
-   ```
-
-   Expect the archive name followed by `OK`.
-
-3. Extract the verified client to a new directory.
-   If the directory exists, set `OPENSHELL_DIR` to an unused path.
-
-   ```sh
    OPENSHELL_DIR="$HOME/.local/opt/openshell/$OPENSHELL_VERSION"
-   mkdir -p "$(dirname "$OPENSHELL_DIR")" &&
-     mkdir "$OPENSHELL_DIR" &&
+   (
+     set -e
+     curl -fLO "$OPENSHELL_RELEASE/$ARCHIVE"
+     curl -fLO "$OPENSHELL_RELEASE/$CHECKSUM_FILE"
+     CHECKSUM=$(awk -v archive="$ARCHIVE" '$2 == archive { print; count++ } END { if (count != 1) exit 1 }' "$CHECKSUM_FILE")
+     if [ "$(uname -s)" = Darwin ]; then
+       printf '%s\n' "$CHECKSUM" | shasum -a 256 -c -
+     else
+       printf '%s\n' "$CHECKSUM" | sha256sum -c -
+     fi
+     mkdir -p "$(dirname "$OPENSHELL_DIR")"
+     mkdir "$OPENSHELL_DIR"
      tar -xzf "$ARCHIVE" -C "$OPENSHELL_DIR"
+   )
    ```
 
-4. Put the extracted client first on `PATH` for this shell and verify it.
+   The checksum check prints the archive name followed by `OK`.
+   Stop if the block exits with a nonzero status.
+
+3. Put the extracted client first on `PATH` for this shell.
 
    ```sh
    export PATH="$OPENSHELL_DIR:$PATH"
-   command -v openshell
-   openshell --version
+   ```
+
+4. Check the selected client path and version.
+
+   ```sh
+   command -v openshell && openshell --version
    ```
 
    Expect `$OPENSHELL_DIR/openshell` and the pinned version.
@@ -141,14 +162,11 @@ For a source build, use the [build guide](../build-deploy/build.md) from the rev
 Keep the bundle intact for the lifetime of its deployments.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
-For the Windows first-deployment path, use the [Linux AMD64 or ARM64 bundle through WSL2](#preparing-windows-with-wsl2).
-`CI / Bundle` builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64.
-These builds and tests don't qualify GPU deployment on every platform.
+Build targets do not establish deployment or GPU qualification.
+Refer to the [CI platform coverage](../../internal-docs/contributing/testing.md#how-ci-runs-the-tests) for build and test runners.
 
-On Linux, the oldest supported release is Ubuntu 22.04, whose glibc is 2.35.
-`CI / Bundle` builds the Linux bundles there and fails if any bundle executable needs a newer glibc.
-It runs the contract, integration, and live tests on Ubuntu 24.04.
-A bundle runs only where the glibc is at least as new as on the host that built it, so build it on the oldest Linux release that will run it.
+Linux release bundles require glibc 2.35 or later. Ubuntu 22.04 is the oldest supported Linux release.
+For source bundles, build on the oldest Linux release where you intend to run the bundle so you do not pick up newer glibc requirements.
 
 ## Runtime and Inference Requirements
 
@@ -169,7 +187,12 @@ Choose the gateway and model placement that matches the available engine and end
 Build images from a revision that implements the selected configuration features.
 Replace the example deployment UUIDs, endpoints, and local image digests with values for your resources.
 
-## Platforms Not Yet Tested
+<a name="platforms-not-yet-tested"></a>
 
-NVIDIA DGX Station, Linux AMD64 deployment, Windows/WSL and macOS GPU hosts, separate SSH model hosts, and distributed inference haven't been tested end to end.
-See [current limits](../resources/limits.md#platforms-models-and-placement) for each and its issue.
+## Platform Qualification Limits
+
+[Linux AMD64 live CI](../../internal-docs/contributing/testing.md#live-suites) exercises Docker and kind scenarios. That coverage does not qualify a specific release recipe.
+The [DGX Station validation records](../../examples/platforms/docker/vllm/dgx-station/README.md#qualification-boundary) cover full lifecycles and agent replies from source on Linux ARM64 with one GB300 and managed Qwen3-4B: OpenClaw alone, and OpenClaw and Pi in separate sandboxes sharing the model service.
+Those runs qualify only the recorded source and configurations, not this release or other DGX Station setups.
+Windows/WSL and macOS GPU hosts, separate SSH model hosts, and distributed inference haven't been tested end to end.
+See [current limits](../resources/limits.md#platforms-models-and-placement) for details.
