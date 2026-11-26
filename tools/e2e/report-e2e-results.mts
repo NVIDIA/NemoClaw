@@ -29,6 +29,7 @@ export type ReportEnv = {
   JOBS?: string;
   JOB_PR_NUMBER?: string;
   JOB_TARGETS?: string;
+  JOB_NATIVE_HERMES_GPU_DIAGNOSTIC?: string;
   TEST_MATRIX?: string;
 };
 
@@ -485,6 +486,14 @@ export function renderE2eReport(input: {
     "|-----|--------|-----------------------|",
     ...rows,
   ];
+  if (env.JOB_NATIVE_HERMES_GPU_DIAGNOSTIC === "true") {
+    lines.splice(
+      2,
+      0,
+      "**Scope:** Native Hermes GPU diagnostic only. Fallback and compatibility-only remain unqualified.",
+      "",
+    );
+  }
   if (env.JOB_CHECKOUT_SHA) {
     lines.splice(
       5,

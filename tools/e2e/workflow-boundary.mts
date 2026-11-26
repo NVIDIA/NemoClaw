@@ -2128,10 +2128,10 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && (inputs.checkout_sha == inputs.base_sha && format('pr-{0}-base-{1}-jobs-{2}-targets-{3}', inputs.pr_number, inputs.base_sha, toJSON(inputs.jobs), toJSON(inputs.targets)) || format('pr-{0}-candidate', inputs.pr_number)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && (inputs.checkout_sha == inputs.base_sha && format('pr-{0}-base-{1}-jobs-{2}-targets-{3}', inputs.pr_number, inputs.base_sha, toJSON(inputs.jobs), toJSON(inputs.targets)) || format('pr-{0}-candidate', inputs.pr_number)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}${{ inputs.native_hermes_gpu_diagnostic && '-native-hermes-gpu-diagnostic' || '' }}";
   if (concurrency.group !== expectedGroup) {
     errors.push(
-      "workflow concurrency must isolate baseline comparisons and each Launchable dispatch",
+      "workflow concurrency must isolate baseline comparisons, Launchable dispatches, and native Hermes GPU diagnostics",
     );
   }
   if (concurrency["cancel-in-progress"] !== MANUAL_PR_CANCEL_IN_PROGRESS) {
@@ -2619,6 +2619,8 @@ function validateTrustedE2eDispatchReceipt(
     "allowJetsonDispatch: $allowJetsonDispatch",
     "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
+    "--argjson nativeHermesGpuDiagnostic",
+    "if $nativeHermesGpuDiagnostic then {nativeHermesGpuDiagnostic: true} else {} end",
     "triggeringActor: $triggeringActor",
     'emptySelectors: ($jobs == "" and $targets == "")',
     '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
@@ -2676,10 +2678,10 @@ const PRE_CANDIDATE_RUN_SHA256: Readonly<Record<string, string>> = {
   "Authenticate manual PR dispatch":
     "25c1a828bd0034722e9f01a1da7c76b26f069120929a7d820fd0873ed1d98d5f",
   "Record trusted E2E dispatch receipt":
-    "a18d190cda0c9dd348b42811a532eb83792218f2927a1a98e32c8fa9424b2931",
+    "2e7b6855f48b461af88745639cb23b08dc33b0b6d279bf4e55d8c89b972ef93e",
   "Authorize Launchable E2E maintainer dispatch":
     "bbf442a006b47016eda56133eb400a48c6931c55364c1220b84327b5ffd6f171",
-  "Generate E2E target matrix": "5081ec27df9f26cc0a8767881bffdaaa5d4142932714805df4acf0bb53b45eb7",
+  "Generate E2E target matrix": "79b86ef51dbb0c98b1d0682037f79310336a9e15bd38aeb72d7aefdf1755274b",
 };
 
 function requirePreCandidateEnvironment(
@@ -3141,6 +3143,14 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireInput(errors, dispatchInputs, "targets");
   validateFullE2eConcurrency(errors, workflow);
   validateStagingBrevLaunchableInput(errors, dispatchInputs);
+  const nativeDiagnosticInput = requireInput(
+    errors,
+    dispatchInputs,
+    "native_hermes_gpu_diagnostic",
+  );
+  if (nativeDiagnosticInput.type !== "boolean" || nativeDiagnosticInput.default !== false) {
+    errors.push("native_hermes_gpu_diagnostic must be boolean and default to false");
+  }
   validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
@@ -3162,6 +3172,12 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  if (
+    asRecord(asRecord(jobs["generate-matrix"]).outputs).hermes_gpu_native_diagnostic_matrix !==
+    "${{ steps.matrix.outputs.hermes_gpu_native_diagnostic_matrix }}"
+  ) {
+    errors.push("native Hermes GPU diagnostics must use the trusted planner matrix output");
+  }
   if (Object.hasOwn(jobs, "staging-brev-launchable-readiness")) {
     errors.push("workflow must not define superseded staging-brev-launchable-readiness job");
   }

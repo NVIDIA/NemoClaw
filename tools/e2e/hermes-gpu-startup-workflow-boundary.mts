@@ -143,6 +143,8 @@ export function validateHermesGpuStartupWorkflow(
     strategy["max-parallel"] !== 2 ||
     JSON.stringify(matrix.scenario) !==
       JSON.stringify(["native", "fallback", "compatibility-only"]) ||
+    matrix.native_diagnostic !==
+      "${{ fromJSON(needs.generate-matrix.outputs.hermes_gpu_native_diagnostic_matrix) }}" ||
     matrix.runtime_provider !==
       "${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['hermes-gpu-startup'] }}" ||
     matrix.include !== undefined ||
@@ -150,6 +152,8 @@ export function validateHermesGpuStartupWorkflow(
       JSON.stringify([
         { scenario: "fallback", runtime_provider: "podman" },
         { scenario: "compatibility-only", runtime_provider: "podman" },
+        { scenario: "fallback", native_diagnostic: true },
+        { scenario: "compatibility-only", native_diagnostic: true },
       ])
   ) {
     errors.push(`${JOB_NAME} must expand reviewed GPU scenarios by supported runtime`);

@@ -168,7 +168,7 @@ describe("staging Brev Launchable identity workflow boundary", () => {
   it("rejects outer concurrency that lets focused Launchable dispatches replace each other", () => {
     const value = readWorkflow();
     const validationError =
-      "workflow concurrency must isolate baseline comparisons and each Launchable dispatch";
+      "workflow concurrency must isolate baseline comparisons, Launchable dispatches, and native Hermes GPU diagnostics";
     expect(validateE2eWorkflow(value)).not.toContain(validationError);
     (value.concurrency as Record<string, unknown>).group =
       "e2e-${{ github.ref }}-${{ inputs.jobs }}";

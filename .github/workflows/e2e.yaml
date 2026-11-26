@@ -25,6 +25,11 @@ on:
         required: false
         default: false
         type: boolean
+      native_hermes_gpu_diagnostic:
+        description: "Run only the existing native Hermes GPU scenario for diagnosis. Requires jobs=hermes-gpu-startup and no targets; full qualification still requires every scenario."
+        required: false
+        default: false
+        type: boolean
       inference_mode:
         description: "Inference adapter mode for compatible Vitest E2E jobs: mock, internal-nvidia, or public-nvidia."
         required: false
@@ -104,7 +109,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && (inputs.checkout_sha == inputs.base_sha && format('pr-{0}-base-{1}-jobs-{2}-targets-{3}', inputs.pr_number, inputs.base_sha, toJSON(inputs.jobs), toJSON(inputs.targets)) || format('pr-{0}-candidate', inputs.pr_number)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
+  group: e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && (inputs.checkout_sha == inputs.base_sha && format('pr-{0}-base-{1}-jobs-{2}-targets-{3}', inputs.pr_number, inputs.base_sha, toJSON(inputs.jobs), toJSON(inputs.targets)) || format('pr-{0}-candidate', inputs.pr_number)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}${{ inputs.native_hermes_gpu_diagnostic && '-native-hermes-gpu-diagnostic' || '' }}
   cancel-in-progress: ${{ inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:
@@ -410,6 +415,7 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
+      hermes_gpu_native_diagnostic_matrix: ${{ steps.matrix.outputs.hermes_gpu_native_diagnostic_matrix }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
       release_required_jobs: ${{ steps.matrix.outputs.release_required_jobs }}
       selected_jobs: ${{ steps.matrix.outputs.selected_jobs }}
@@ -534,6 +540,7 @@ jobs:
           DISPATCH_TARGETS: ${{ inputs.targets }}
           EVENT_NAME: ${{ github.event_name }}
           INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
+          NATIVE_HERMES_GPU_DIAGNOSTIC: ${{ inputs.native_hermes_gpu_diagnostic && 'true' || 'false' }}
           PR_NUMBER: ${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}
           REPOSITORY: ${{ github.repository }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -561,6 +568,7 @@ jobs:
             --argjson allowDgxSparkRunnerQueue "$ALLOW_DGX_SPARK_RUNNER_QUEUE" \
             --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
             --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
+            --argjson nativeHermesGpuDiagnostic "$NATIVE_HERMES_GPU_DIAGNOSTIC" \
             --argjson workflowRunAttempt "$RUN_ATTEMPT" \
             '{
               kind: "nemoclaw-e2e-dispatch-v2",
@@ -582,7 +590,7 @@ jobs:
               includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
               triggeringActor: $triggeringActor,
               emptySelectors: ($jobs == "" and $targets == "")
-            }' >"$DISPATCH_RECEIPT_DIR/dispatch.json"
+            } + (if $nativeHermesGpuDiagnostic then {nativeHermesGpuDiagnostic: true} else {} end)' >"$DISPATCH_RECEIPT_DIR/dispatch.json"
 
       - name: Upload trusted E2E dispatch receipt
         if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -706,6 +714,7 @@ jobs:
       - id: matrix
         name: Generate E2E target matrix
         env:
+          NEMOCLAW_E2E_NATIVE_HERMES_GPU_DIAGNOSTIC: ${{ github.event_name == 'workflow_dispatch' && inputs.native_hermes_gpu_diagnostic && 'true' || 'false' }}
           NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.include_staging_brev_launchable && 'true' || 'false' }}
           INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           NEMOCLAW_GATEWAY_RUNTIMES: ${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}
@@ -717,6 +726,11 @@ jobs:
           NEMOCLAW_E2E_CREDENTIALS_ALLOWED: ${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}
         run: |
           set -euo pipefail
+          if [[ "${NEMOCLAW_E2E_NATIVE_HERMES_GPU_DIAGNOSTIC:-false}" == true &&
+                ( "${JOBS:-}" != hermes-gpu-startup || -n "${TARGETS:-}" ) ]]; then
+            echo "::error::Native Hermes GPU diagnostics require only jobs=hermes-gpu-startup and no targets"
+            exit 1
+          fi
           if [[ "${JOBS:-}" == "llama-cpp-dgx-spark-qualification" && -z "${TARGETS:-}" ]]; then
             {
               echo 'matrix=[]'
@@ -731,6 +745,7 @@ jobs:
               echo 'selected_jobs=["llama-cpp-dgx-spark-qualification"]'
               echo 'selected_workflow_jobs=["llama-cpp-dgx-spark-qualification"]'
               echo 'hermes_selected=false'
+              echo 'hermes_gpu_native_diagnostic_matrix=[false]'
               echo 'explicit_only_jobs=llama-cpp-dgx-spark-qualification'
               echo 'release_required_jobs=[]'
               echo 'managed_image_required=false'
@@ -751,6 +766,7 @@ jobs:
               echo 'selected_jobs=["native-runtime-qualification-producer"]'
               echo 'selected_workflow_jobs=["native-runtime-qualification-producer"]'
               echo 'hermes_selected=false'
+              echo 'hermes_gpu_native_diagnostic_matrix=[false]'
               echo 'explicit_only_jobs=native-runtime-qualification-producer'
               echo 'release_required_jobs=[]'
               echo 'managed_image_required=false'
@@ -6381,12 +6397,17 @@ jobs:
       max-parallel: 2
       matrix:
         scenario: [native, fallback, compatibility-only]
+        native_diagnostic: ${{ fromJSON(needs.generate-matrix.outputs.hermes_gpu_native_diagnostic_matrix) }}
         runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['hermes-gpu-startup'] }}
         exclude:
           - scenario: fallback
             runtime_provider: podman
           - scenario: compatibility-only
             runtime_provider: podman
+          - scenario: fallback
+            native_diagnostic: true
+          - scenario: compatibility-only
+            native_diagnostic: true
     env:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
@@ -7132,6 +7153,7 @@ jobs:
           SELECTED_WORKFLOW_JOBS: ${{ needs.generate-matrix.outputs.selected_workflow_jobs }}
           JOB_PR_NUMBER: ${{ inputs.pr_number }}
           JOB_TARGETS: ${{ inputs.targets }}
+          JOB_NATIVE_HERMES_GPU_DIAGNOSTIC: ${{ inputs.native_hermes_gpu_diagnostic && 'true' || 'false' }}
           JOBS: ${{ inputs.jobs }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         with:

@@ -16,6 +16,7 @@ function scheduling(overrides: Record<string, string | boolean | number> = {}) {
     targets: "",
     allow_jetson_dispatch: false,
     include_staging_brev_launchable: false,
+    native_hermes_gpu_diagnostic: false,
     ...overrides,
   };
   // Evaluate the checked-in expressions with concrete inputs in a credential-free child.
@@ -71,7 +72,7 @@ describe("manual PR comparison scheduling", () => {
       "format('pr-{0}-base-{1}', inputs.pr_number, inputs.base_sha)",
     );
     expect(validateE2eWorkflow(workflow)).toContain(
-      "workflow concurrency must isolate baseline comparisons and each Launchable dispatch",
+      "workflow concurrency must isolate baseline comparisons, Launchable dispatches, and native Hermes GPU diagnostics",
     );
   });
 
@@ -109,7 +110,38 @@ describe("manual PR comparison scheduling", () => {
     (workflow.concurrency as Record<string, unknown>).group =
       "e2e-${{ github.ref }}-pr-${{ inputs.pr_number }}-manual-pr";
     expect(validateE2eWorkflow(workflow)).toContain(
-      "workflow concurrency must isolate baseline comparisons and each Launchable dispatch",
+      "workflow concurrency must isolate baseline comparisons, Launchable dispatches, and native Hermes GPU diagnostics",
+    );
+  });
+
+  it.each([
+    { checkout_sha: "a".repeat(40), expectedCancel: true },
+    { checkout_sha: "b".repeat(40), expectedCancel: false },
+  ])(
+    "isolates native diagnostics from qualification for %j",
+    ({ checkout_sha, expectedCancel }) => {
+      const selected = { checkout_sha, jobs: "hermes-gpu-startup" };
+      const qualification = scheduling(selected);
+      const diagnostic = scheduling({ ...selected, native_hermes_gpu_diagnostic: true });
+      expect(diagnostic.group).not.toBe(qualification.group);
+      expect(diagnostic.group).not.toBe(scheduling({ checkout_sha, jobs: "full-e2e" }).group);
+      expect(diagnostic.cancel).toBe(expectedCancel);
+      expect(qualification.cancel).toBe(expectedCancel);
+      expect(qualification).toEqual(
+        scheduling({ ...selected, native_hermes_gpu_diagnostic: false }),
+      );
+    },
+  );
+
+  it("rejects a diagnostic that shares a qualification concurrency group", () => {
+    const workflow = readWorkflow();
+    const concurrency = workflow.concurrency as Record<string, unknown>;
+    concurrency.group = String(concurrency.group).replace(
+      "${{ inputs.native_hermes_gpu_diagnostic && '-native-hermes-gpu-diagnostic' || '' }}",
+      "",
+    );
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "workflow concurrency must isolate baseline comparisons, Launchable dispatches, and native Hermes GPU diagnostics",
     );
   });
 

@@ -1139,3 +1139,19 @@ it.each(["failure", "skipped"])(
     expect(report.body).not.toContain("All requested tests passed");
   },
 );
+
+it("labels a native Hermes GPU diagnostic as partial scenario evidence", () => {
+  const report = renderE2eReport({
+    needs: {
+      "generate-matrix": { result: "success" },
+      "hermes-gpu-startup": { result: "success" },
+    },
+    env: { JOBS: "hermes-gpu-startup", JOB_NATIVE_HERMES_GPU_DIAGNOSTIC: "true" },
+    apiJobs: [],
+    apiJobsLoaded: true,
+    context: REPORT_CONTEXT,
+  });
+  expect(report.body).toContain(
+    "Native Hermes GPU diagnostic only. Fallback and compatibility-only remain unqualified.",
+  );
+});

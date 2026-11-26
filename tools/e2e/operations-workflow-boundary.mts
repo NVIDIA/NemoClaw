@@ -1388,6 +1388,8 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       requireNode24GithubScript(errors, report, "report-to-pr");
       const candidateReportEnv = {
+        JOB_NATIVE_HERMES_GPU_DIAGNOSTIC:
+          "${{ inputs.native_hermes_gpu_diagnostic && 'true' || 'false' }}",
         JOB_CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
         JOB_CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
         JOB_BASE_SHA: "${{ inputs.base_sha }}",
