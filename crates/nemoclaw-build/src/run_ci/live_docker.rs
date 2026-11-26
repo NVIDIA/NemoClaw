@@ -715,6 +715,34 @@ esac
     }
 
     #[test]
+    fn hardware_cleanup_is_scoped_repeatable_and_refuses_running_or_unobservable_containers() {
+        for (running, unlistable) in [(false, ""), (true, ""), (false, "container\n")] {
+            let directory = tempfile::tempdir().unwrap();
+            let kept = format!("network other {UID_LABEL}=b\nvolume host-cache owner=host\n");
+            let resources = format!(
+                "container init {UID_LABEL}=a{}\nvolume data {UID_LABEL}=a\nnetwork gateway {UID_LABEL}=a\n{kept}",
+                if running { " running" } else { "" }
+            );
+            let docker = fake_docker(directory.path(), &resources, "", unlistable);
+            let result = live::remove_retained(&docker, "a");
+            if running || !unlistable.is_empty() {
+                assert!(result.is_err());
+                assert_eq!(
+                    fs::read_to_string(directory.path().join("resources")).unwrap(),
+                    resources
+                );
+            } else {
+                result.unwrap();
+                live::remove_retained(&docker, "a").unwrap();
+                assert_eq!(
+                    fs::read_to_string(directory.path().join("resources")).unwrap(),
+                    kept
+                );
+            }
+        }
+    }
+
+    #[test]
     fn sandbox_leftovers_fail_the_run_and_are_removed() {
         let directory = tempfile::tempdir().unwrap();
         let sandbox = sandbox_filter("a").replacen("label=", "", 1);
