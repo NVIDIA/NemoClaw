@@ -10,7 +10,9 @@ import { performance } from "node:perf_hooks";
 import {
   decideMcpLifecycleAcquisition,
   decideMcpLifecycleLock,
+  mcpLifecycleLockGeneration,
   type CorruptGenerationState,
+  type McpLifecycleLockDecision,
 } from "./mcp-lifecycle-lock/decisions";
 import {
   classifyMcpLifecycleLock,
@@ -35,6 +37,8 @@ import {
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_CORRUPT_LOCK_GRACE_MS = 30_000;
+const DEFAULT_WAIT_NOTICE_MS = 10_000;
+const STDERR_FD = 2;
 
 interface AcquiredMcpLifecycleLock {
   lockPath: string;
@@ -47,6 +51,10 @@ export interface McpLifecycleLockOptions {
   pollIntervalMs?: number;
   timeoutMs?: number;
   corruptLockGraceMs?: number;
+  /** How long to wait on a live or foreign owner before printing one notice. */
+  waitNoticeMs?: number;
+  /** Receives the wait notice. Defaults to stderr. */
+  writeNotice?: (message: string) => void;
   /** Monotonic clock override used by deterministic acquisition tests. */
   monotonicNow?: () => number;
 }
@@ -106,6 +114,73 @@ function timeoutError(sandboxName: string, ownerPid: number | null): Error {
   return new Error(
     `Timed out waiting for the sandbox mutation lock for '${sandboxName}'${ownerSuffix}. Another lifecycle, policy, channel, inference, session, or snapshot operation is still running.`,
   );
+}
+
+function createStderrNoticeWriter(): (message: string) => void {
+  let pending = false;
+  // A terminal stderr write blocks the main thread. fs.write runs on the libuv pool instead,
+  // with one write in flight so a stalled reader holds at most one pool worker.
+  return (message) => {
+    if (pending) return;
+    pending = true;
+    fs.write(STDERR_FD, message, () => {
+      pending = false;
+    });
+  };
+}
+
+function createWaitNotifier(
+  sandboxName: string,
+  lockPath: string,
+  options: McpLifecycleLockOptions,
+  monotonicNow: () => number,
+  stderrNotice: (message: string) => void,
+): (observation: LockObservation, decision: McpLifecycleLockDecision) => void {
+  const noticeAfterMs = positiveInteger(options.waitNoticeMs, DEFAULT_WAIT_NOTICE_MS);
+  const writeNotice = options.writeNotice ?? stderrNotice;
+  let waitingOn: string | null = null;
+  let waitStartedAt = 0;
+  let announced = false;
+  return (observation, decision) => {
+    const generation = mcpLifecycleLockGeneration(observation);
+    if (generation !== waitingOn) {
+      waitingOn = generation;
+      waitStartedAt = monotonicNow();
+      announced = false;
+    }
+    if (announced || monotonicNow() - waitStartedAt < noticeAfterMs) return;
+    announced = true;
+    const detail =
+      decision.kind === "wait" && decision.disposition === "active"
+        ? `PID ${String(decision.ownerPid)} holds it. If no nemoclaw command for this sandbox is running here, the owner may be in another PID namespace or on another host. Check it there. Do not delete the lock file while ownership is ambiguous. NemoClaw does not remove it automatically.`
+        : observation.reclaimable
+          ? "The lock record is unreadable. NemoClaw retries reclaiming it after a grace period."
+          : "The lock path is not a file. NemoClaw cannot reclaim it. Remove it if no nemoclaw command is running.";
+    try {
+      void Promise.resolve(
+        writeNotice(
+          `Still waiting for the sandbox mutation lock for '${sandboxName}'. Lock file: ${lockPath}. ${detail}\n`,
+        ),
+      ).catch(() => {});
+    } catch {
+      // A failed notice must not end the wait.
+    }
+  };
+}
+
+function createWaitNotifiers(
+  sandboxName: string,
+  lockPath: string,
+  options: McpLifecycleLockOptions,
+  monotonicNow: () => number,
+) {
+  const stderrNotice = createStderrNoticeWriter();
+  const notifierFor = (ownerPath: string) =>
+    createWaitNotifier(sandboxName, ownerPath, options, monotonicNow, stderrNotice);
+  return {
+    notifyWaiting: notifierFor(lockPath),
+    notifyReaperWaiting: notifierFor(`${lockPath}.reaper`),
+  };
 }
 
 async function tryReapStaleMainLock(
@@ -189,13 +264,19 @@ async function acquireMcpLifecycleLock(
   const corruptMainTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   const corruptReaperTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
+  const reaperPath = `${lockPath}.reaper`;
+  const { notifyWaiting, notifyReaperWaiting } = createWaitNotifiers(
+    sandboxName,
+    lockPath,
+    options,
+    monotonicNow,
+  );
   const assertBeforeTimeout = () => {
     if (monotonicNow() >= deadline) throw timeoutError(sandboxName, lastOwnerPid);
   };
 
   for (;;) {
     assertBeforeTimeout();
-    const reaperPath = `${lockPath}.reaper`;
     const reaperObservation = await readMcpLifecycleLockObservation(reaperPath);
     if (reaperObservation) {
       const reaperDecision = decideObservedMcpLifecycleLock(
@@ -218,6 +299,7 @@ async function acquireMcpLifecycleLock(
         );
         continue;
       }
+      notifyReaperWaiting(reaperObservation, reaperDecision);
       await sleep(pollIntervalMs);
       continue;
     }
@@ -271,6 +353,7 @@ async function acquireMcpLifecycleLock(
         );
         continue;
       }
+      notifyWaiting(observation, mainDecision);
     } else {
       lastOwnerPid = null;
       resetCorruptGenerationTracker(corruptMainTracker);
@@ -296,13 +379,19 @@ function acquireMcpLifecycleLockSync(
   const corruptMainTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   const corruptReaperTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
+  const reaperPath = `${lockPath}.reaper`;
+  const { notifyWaiting, notifyReaperWaiting } = createWaitNotifiers(
+    sandboxName,
+    lockPath,
+    options,
+    monotonicNow,
+  );
   const assertBeforeTimeout = () => {
     if (monotonicNow() >= deadline) throw timeoutError(sandboxName, lastOwnerPid);
   };
 
   for (;;) {
     assertBeforeTimeout();
-    const reaperPath = `${lockPath}.reaper`;
     const reaperObservation = readMcpLifecycleLockObservationSync(reaperPath);
     if (reaperObservation) {
       const reaperDecision = decideObservedMcpLifecycleLock(
@@ -325,6 +414,7 @@ function acquireMcpLifecycleLockSync(
         );
         continue;
       }
+      notifyReaperWaiting(reaperObservation, reaperDecision);
       sleepSync(pollIntervalMs);
       continue;
     }
@@ -378,6 +468,7 @@ function acquireMcpLifecycleLockSync(
         );
         continue;
       }
+      notifyWaiting(observation, mainDecision);
     } else {
       lastOwnerPid = null;
       resetCorruptGenerationTracker(corruptMainTracker);

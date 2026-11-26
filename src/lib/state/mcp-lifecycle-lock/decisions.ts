@@ -35,6 +35,10 @@ function resetCorruptGeneration(): CorruptGenerationState {
   return { generation: null, firstSeenAt: 0 };
 }
 
+export function mcpLifecycleLockGeneration(observation: LockObservation): string {
+  return `${String(observation.dev)}:${String(observation.ino)}:${String(observation.mtimeMs)}`;
+}
+
 export function decideMcpLifecycleLock(
   input: DecideMcpLifecycleLockInput,
 ): McpLifecycleLockDecision {
@@ -45,7 +49,7 @@ export function decideMcpLifecycleLock(
   let disposition = input.ownerDisposition ?? "wait";
   let corruptGeneration = resetCorruptGeneration();
   if (!validOwner && observation.reclaimable) {
-    const generation = `${String(observation.dev)}:${String(observation.ino)}:${String(observation.mtimeMs)}`;
+    const generation = mcpLifecycleLockGeneration(observation);
     corruptGeneration =
       input.corruptGeneration.generation === generation
         ? input.corruptGeneration
