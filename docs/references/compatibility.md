@@ -77,7 +77,8 @@ To take up a later release, update the project by hand, or compile the configura
 
 A written project is hand-written HCL from then on.
 It gives up what the CLI and SDK do around OpenTofu, as [Choosing a Path](../build-deploy/opentofu-project.md#choosing-a-path) lists, such as the pending-creation guard, the plan checks, recovery, and `export`.
-It keeps `prevent_destroy` on the workspace and retained storage, and its README gives the `tofu destroy` command that excludes them.
+It keeps `prevent_destroy` on the workspace and retained storage.
+Its README tears the deployment down as `nemoclaw destroy` does: remove the workspace's `prevent_destroy`, then run the `tofu destroy` command that excludes the retained storage.
 
 The command refuses a managed Kubernetes or OpenShift gateway, whose configuration depends on the state directory, ownership receipt, and kubeconfig that the CLI supplies.
 

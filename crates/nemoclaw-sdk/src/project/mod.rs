@@ -250,6 +250,7 @@ pub async fn write(
     let bundle = Bundle::open(bundle_directory)?;
     let generations = crate::state::Record::new(document.clone())?.generations;
     let graph = crate::compile::compile(document, &generations, &bundle.manifest.version)?;
+    let retained = retained(document, &generations, &bundle.manifest.version, &graph)?;
     let schemas = schemas(&bundle, &graph, cancel).await?;
     let (mut project, lifted, lifted_graph) = rendered(document, &graph, &schemas)?;
     format(&bundle, &mut project, cancel).await?;
@@ -258,6 +259,7 @@ pub async fn write(
         version: &bundle.manifest.version,
         opentofu: &bundle.manifest.opentofu,
         bundle: &bundle.directory,
+        retained: &retained,
     };
     let readme = readme::readme(
         document,
@@ -275,6 +277,28 @@ pub async fn write(
         write_file(&output.join(name), text)?;
     }
     Ok(project)
+}
+
+/// What `nemoclaw destroy` keeps of `graph`: the deployment's data.
+fn retained(
+    document: &Document,
+    generations: &crate::compile::Generations,
+    version: &str,
+    graph: &Value,
+) -> Result<std::collections::BTreeSet<String>, Error> {
+    let established = graph["resource"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .flat_map(|(kind, instances)| {
+            instances
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(move |(name, _)| format!("{kind}.{name}"))
+        })
+        .collect();
+    Ok(crate::compile::compile_teardown(document, generations, version, &established)?.retained)
 }
 
 fn scratch() -> Result<tempfile::TempDir, ProjectError> {
