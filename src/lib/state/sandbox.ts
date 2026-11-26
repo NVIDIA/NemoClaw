@@ -116,7 +116,10 @@ const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
 // sanitization path instead of exporting these generation-local snapshots.
 // Hermes' PID and lock files identify processes in one sandbox generation;
 // restoring them over the replacement gateway makes a healthy process appear
-// stale to authenticated lifecycle commands.
+// stale to authenticated lifecycle commands. The Deep Agents Code observability
+// marker is rewritten by the replacement entrypoint from NEMOCLAW_OBSERVABILITY
+// before this restore. Keeping the pre-rebuild file undoes
+// `rebuild --observability` and `--no-observability`.
 const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.nemoclaw/config.json'",
   "--exclude='./.nemoclaw/blueprints'",
@@ -135,6 +138,7 @@ const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.hermes/gateway.pid'",
   "--exclude='./.hermes/runtime/gateway.pid'",
   "--exclude='./.hermes/runtime/gateway.lock'",
+  "--exclude='./.deepagents/.nemoclaw-observability-enabled'",
 ].join(" ");
 const OPENCLAW_SQLITE_COPY_SCRIPT = String.raw`
 const fs = require("node:fs");
@@ -2794,6 +2798,7 @@ function capturePreparedNativeState(
           '  rm -f -- "$stage/.hermes/gateway.pid"',
           '  rm -f -- "$stage/.hermes/runtime/gateway.pid"',
           '  rm -f -- "$stage/.hermes/runtime/gateway.lock"',
+          '  rm -f -- "$stage/.deepagents/.nemoclaw-observability-enabled"',
           '  tar -C "$stage" -cf - -- .',
           "fi",
         ].join("\n") + ' | head -c "$NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE"',
@@ -3535,7 +3540,7 @@ async function restoreNativeSandboxState(
         'uid="$(id -u)"',
         "preserve_replacement_path() {",
         '  case "$1" in',
-        "    .nemoclaw/config.json|.nemoclaw/blueprints|.openclaw/.nemoclaw-post-upgrade-doctor|.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*|.hermes/gateway.pid|.hermes/runtime/gateway.pid|.hermes/runtime/gateway.lock) return 0 ;;",
+        "    .nemoclaw/config.json|.nemoclaw/blueprints|.openclaw/.nemoclaw-post-upgrade-doctor|.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*|.hermes/gateway.pid|.hermes/runtime/gateway.pid|.hermes/runtime/gateway.lock|.deepagents/.nemoclaw-observability-enabled) return 0 ;;",
         "  esac",
         '  [ "$keep_dcode_config" = 1 ] && [ "$1" = .deepagents/config.toml ] && return 0',
         "  return 1",
