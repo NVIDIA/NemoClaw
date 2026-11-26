@@ -54,6 +54,7 @@ type RunnerOptions = {
 
 type AsyncRunnerOptions = Omit<RunnerOptions, "maxBuffer"> & {
   outputLimitBytes?: number;
+  forceKillOnInterrupt?: boolean;
 };
 
 let openshellBin: string | null = null;
@@ -160,6 +161,7 @@ export function captureResolvedOpenshellAsync(args: CommandArgs, opts: AsyncRunn
     includeStreams: opts.includeStreams,
     timeout: opts.timeout,
     outputLimitBytes: opts.outputLimitBytes,
+    forceKillOnInterrupt: opts.forceKillOnInterrupt,
     signalSource: {
       add: (signal, listener) => {
         process.on(signal, listener);
