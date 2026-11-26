@@ -103,7 +103,7 @@ The archive requires `tar.exe`, which ships with Windows 10 version 1803 or late
 
 1. Install the verified bundle from PowerShell.
    The block uses the MSI by default. Set `$UseArchive = $true` for the archive.
-   For the archive, set `$Install` to an unused directory if the default version directory already exists.
+   If the default archive directory already exists or you want a different location, edit the `$Install = ...` line inside `if ($UseArchive)` in the block below before running it. Use a path that does not exist yet.
 
    ```powershell
    & {
