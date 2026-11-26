@@ -150,7 +150,12 @@ pub(crate) fn readme(
         text.push_str(&format!(
             "tofu destroy -var destroy=true{excludes}\n```\n\n\
              These resources hold the deployment's retained data and set `prevent_destroy`, so `tofu destroy` refuses to run unless it excludes them.\n\
-             Removing `prevent_destroy` from one lets `tofu destroy` delete it and its data.\n"
+             To delete one and its data afterwards, remove its `prevent_destroy` and destroy it alone:\n\n\
+             ```sh\n\
+             tofu destroy -var destroy=true -target={}\n\
+             ```\n\n\
+             Without `-target`, `tofu destroy` first plans the resources it already deleted as new ones, and with `destroy` set the providers refuse to create them.\n",
+            retained[0],
         ));
     }
     text
