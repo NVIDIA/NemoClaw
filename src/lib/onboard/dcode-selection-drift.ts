@@ -86,6 +86,15 @@ export function parseDcodeInferenceIdentity(
   };
 }
 
+/**
+ * `dcode identity` prints the base URL without its terminal slash, while
+ * catalog endpoints such as Gemini's end with one (#14604). Ignore that single
+ * slash and nothing else: every other difference stays drift.
+ */
+function withoutTerminalSlash(endpoint: string): string {
+  return endpoint.endsWith("/") ? endpoint.slice(0, -1) : endpoint;
+}
+
 export function getExpectedDcodeInferenceIdentity(
   requestedProvider: string | null,
   requestedModel: string | null,
@@ -155,7 +164,7 @@ export async function getDcodeSelectionDrift(
   const providerChanged =
     existing.provider !== expected.provider ||
     existing.route !== expected.route ||
-    existing.endpoint !== expected.endpoint;
+    withoutTerminalSlash(existing.endpoint) !== withoutTerminalSlash(expected.endpoint);
   const modelChanged = existing.model !== expected.model;
   return {
     changed: providerChanged || modelChanged,
