@@ -197,6 +197,15 @@ async fn case() {
         }
     }
     assert!(tested.unwrap().success(), "tofu test failed");
+    // tofu test exits successfully even when it cannot destroy the state its
+    // run blocks created; it then writes that state here
+    // (https://github.com/opentofu/opentofu/issues/4879). Remove this check
+    // once the bundled OpenTofu fails such a run.
+    assert!(
+        !root.join("errored_test.tfstate").exists(),
+        "tofu test could not clean up its run blocks' state; see errored_test.tfstate in {}",
+        root.display()
+    );
 }
 
 #[test]
@@ -220,6 +229,16 @@ fn model_cache_cleanup() {
     )
     .unwrap();
     result.expect("host model cache recovery failed; preserve this run");
+}
+
+#[test]
+#[ignore = "live: remove this completed hardware run's retained Docker objects"]
+fn retained_cleanup() {
+    assert_eq!(var("NEMOCLAW_HCL_PERSISTENT").as_deref(), Ok("true"));
+    let document =
+        Document::parse(fs::File::open(var("NEMOCLAW_HCL_DOCUMENT").unwrap()).unwrap()).unwrap();
+    nemoclaw_build::ci::live::remove_retained(|| Command::new("docker"), &document.metadata.uid)
+        .expect("retained Docker cleanup failed");
 }
 
 fn docker(args: &[&str]) -> String {

@@ -68,6 +68,10 @@ NemoClaw keeps these by decision, as its own promises:
 - The vLLM supervisor's route allowlist, which is the reverse proxy that vLLM's [security guide](https://github.com/vllm-project/vllm/blob/v0.34.0/docs/usage/security.md) asks deployers to provide ([#13471](https://github.com/NVIDIA/NemoClaw/issues/13471)).
 - The OpenClaw image pin: OpenClaw's npm package has no lockfile, so the agent image copies OpenClaw's published image by digest, and Fabric's adapter refuses versions it doesn't support ([#13476](https://github.com/NVIDIA/NemoClaw/issues/13476)). See [updating the pin](../contributing/agent-image-maintenance.md#updating-the-openclaw-pin).
 - No model-specific recipe images: preparation tools and runtime patches belong to the recipe's authors and to vLLM, and NemoClaw keeps only the generic [recipe contract](../../docs/agents-inference/recipes.md) ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
+- Writing a configuration out once as an OpenTofu project in HCL, rendered from the graph the SDK compiles for `apply`, so that a team can take the configuration over ([#14720](https://github.com/NVIDIA/NemoClaw/issues/14720)).
+  OpenTofu reads both of its syntaxes but converts neither, so `nemoclaw compile` renders the HCL with the providers' schemas from `tofu providers schema -json` and formats it with `tofu fmt`.
+  The CLI never reads a written project back.
+  A managed Kubernetes or OpenShift gateway is refused, because its graph depends on the state directory, ownership receipt, and kubeconfig that the SDK supplies.
 - Agent image assembly, for now: NemoClaw builds and publishes the images that hold Fabric and each harness's native agent, so it installs and pins those agents in the [agent Dockerfile](../../image/fabric/Dockerfile). Image building moves to the Fabric repository later; Fabric owns each adapter's behavior and its tests.
 
 NemoClaw works around these upstream gaps until the components it pins close them:

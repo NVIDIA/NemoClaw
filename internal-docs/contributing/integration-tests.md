@@ -204,6 +204,10 @@ The runner prepares each module a test file names, in the same path of a work co
 | `./examples/<path>` | A NemoClaw document, `examples/<path>.yaml` | The same, so an example is tested unchanged |
 | `./examples/<path>` | An authored HCL directory, `examples/<path>`, or one authored file, `examples/<path>.tf` | A copy, with the bundle's version pinned on each NVIDIA provider, which a development bundle's pre-release providers need; a single file becomes the module's `main.tf`, beside a copy of `versions.json` |
 
+A scenario whose documents [`nemoclaw compile`](../../docs/references/cli.md#writing-a-configuration-out-as-hcl) writes, every one but a managed Kubernetes or OpenShift gateway's, also runs against their HCL projects.
+The runner renders each such document's compiled graph with `nemoclaw_sdk::project`, as the command does, into the same module path of a second work copy, in place of `nemoclaw.tf.json`, and runs the scenario's test file there too, with the same assertions.
+`rendered::written_projects_configure_what_their_graphs_configure` checks that each project configures what its graph configures, with the project's variables and locals in the JSON syntax: OpenTofu reads both through a plan whose target names nothing, so it reads no data source and configures no provider, and their configurations must match.
+
 Before compiling a document, the runner points its gateway, any engine it names, and its inference endpoints at the fixtures; a managed Kubernetes gateway keeps its endpoint, because its plan-only scenarios mock Helm and reach no cluster or gateway.
 An external gateway loses its credential and TLS, because the fixture gateway serves plaintext gRPC.
 A sandbox described by image metadata runs the fixture image, which the runner's metadata bundle describes.
@@ -213,7 +217,7 @@ The harness declares the fixtures through the `fixture` provider's one data sour
 
 | Module | Purpose |
 |---|---|
-| `tests/integration/hcl/modules/fixtures` | From the document, the gateway's compute driver and, with a managed Docker gateway, what a mocked Docker provider would leave on the engine: images, each service image with the architecture its document requires, the gateway container, and each service's ready container with its generated key. Outputs the owner, the engine object prefix, and each service's container. |
+| `tests/integration/hcl/modules/fixtures` | From the document, the gateway's compute driver; with a managed Podman gateway, that the engine reports itself as Podman; and, with a managed Docker or Podman gateway, what a mocked Docker provider would leave on the engine: images, each service image with the architecture its document requires, the gateway container, and each service's ready container with its generated key. Outputs the owner, the engine object prefix, and each service's container. |
 | `tests/integration/hcl/modules/observed` | Outputs the registrations and `agents` the gateway holds, by name, each agent with its latest Fabric `start` command and decoded configuration, plus OpenShell, engine, and upstream records: current sandbox IDs, gateway effects, Fabric starts, and the most sandboxes created at once. Credential values appear only by source: `env:NAME` or `file:CONTAINER:PATH`. A test file for an authored example applies it with `declare` to declare the fixtures and read their endpoints. |
 
 Harness variables change what the fixtures do:
@@ -246,13 +250,14 @@ OpenTofu 1.13's test framework sets these limits:
 - A run that is expected to fail lists the checkable object in `expect_failures`; a provider error fails the run. A targeted plan does not evaluate locals or module outputs.
 
 Docker scenarios mock the Docker provider by its generated alias and give mocked resources the IDs the `fixtures` module declares.
+The `openshell` provider installs a managed Podman gateway's container itself, so a Podman scenario overrides `openshell_podman_gateway.runtime` the same way.
 On Unix, one fixed engine socket, `/tmp/nemoclaw-integration/engine.sock`, gives every scenario the same alias and image addresses.
 On Windows, the engine is `ssh://127.0.0.1:PORT`, which the `nemoclaw-fixture-ssh` relay that the integration step puts on `PATH` forwards. Managed Docker gateway storage takes only a local engine socket, so Windows skips scenarios with a managed Docker gateway and runs the others.
 
-The runner deals the scenarios across four tests, `scenarios_in_shard_1` to `scenarios_in_shard_4`, so each stays within the integration per-test budget. It estimates each scenario as 4 seconds of OpenTofu work plus the gateway delays its test file declares in `*_delay_ms` variables, then gives the longest first to the shard with the least estimated time; `kubernetes-slow-sandbox-delete`, which waits out a 31-second deletion, runs in a shard of its own. The shards share the fixed engine socket, so nextest's `hcl-integration` test group runs one at a time on a runner, and `cargo test` needs `--test-threads=1`.
+The runner deals the scenarios' runs, against their graphs and against their HCL, across eight tests, `scenarios_in_shard_1` to `scenarios_in_shard_8`, so each stays within the integration per-test budget. It estimates each run as 4 seconds of OpenTofu work plus the gateway delays its test file declares in `*_delay_ms` variables, then gives the longest first to the shard with the least estimated time; each run of `kubernetes-slow-sandbox-delete`, which waits out a 31-second deletion, has a shard of its own. The shards share the fixed engine socket, so nextest's `hcl-integration` test group runs one at a time on a runner, and `cargo test` needs `--test-threads=1`.
 Each shard runs `tofu init` once and then `tofu test -filter=tests/<scenario>.tftest.hcl` for each scenario, resetting the fixtures between scenarios.
 After each scenario it checks that at least one run passed and that teardown failed only on storage NemoClaw retains. It also checks that the gateway holds no objects or Fabric runtimes, naming any it finds, that the engine deleted no storage and received no unrecognized request, and that no fixture credential appears in output or diagnostics.
-When a scenario fails, the runner keeps its work directory and writes redacted OpenTofu output and observations to `evidence/<scenario>`, or under `NEMOCLAW_INTEGRATION_EVIDENCE` when it is set.
+When a scenario fails, the runner keeps its work directory and writes redacted OpenTofu output and observations to `evidence/<scenario>`, or `evidence/<scenario>-hcl` for its HCL run, or under `NEMOCLAW_INTEGRATION_EVIDENCE` when it is set.
 In CI / Bundle, each `Integration` job sets `NEMOCLAW_INTEGRATION_EVIDENCE`. The runner records each scenario's result and time there, and the job summary lists them. A failed job uploads that directory as `hcl-integration-evidence-PLATFORM-SHARD-ATTEMPT`, kept for 7 days.
 An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/integration/tofu_test/fixtures.rs`.
 
@@ -261,6 +266,7 @@ Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM
 | Scenario | Checks |
 |---|---|
 | `docker-openclaw-nvidia` | The live hosted document: two OpenClaw agents on NVIDIA hosted inference. Covers gateway storage on the fake engine, the mocked gateway container and sandbox image read by ID, and the shared registration with the fixture credential. Also checks each sandbox's binding and policy, and each agent started through `ExecSandbox` with its compiled configuration. |
+| `podman-openclaw-nvidia` | An OpenClaw agent on NVIDIA hosted inference behind a managed Podman gateway, whose container the test overrides. Covers gateway storage on the fake engine, which reports itself as Podman, the gateway's Podman driver, the sandbox image read by ID, and the agent started in its sandbox with its compiled configuration. |
 | `docker-openclaw-vllm` | The live local document: an unauthenticated vLLM service with an isolated OpenClaw sandbox. There is only a data volume and no credential storage, and readiness reads the status file and no key. The registration has no credential, and the agent has its model and address. |
 | `docker-openclaw-vllm-bearer` | A vLLM service with bearer authentication. The credential storage is created on the engine and mounted by the container, and readiness reads the status file and the generated key. The registration holds that key under the sandbox's name for it, and the agent gets its model, address, and key name. |
 | `docker-openclaw-ollama` | A managed Ollama service. The container's Docker inputs come from the Ollama runtime launch, the runtime image is found on the engine, and readiness comes from the container's status file. The registration is at the service address without a credential, the sandbox's policy allows that address, and the agent gets its model and address. |

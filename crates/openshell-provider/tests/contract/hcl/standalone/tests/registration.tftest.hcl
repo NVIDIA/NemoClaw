@@ -30,6 +30,16 @@ run "rotate_secret_reference" {
   }
 }
 
+# OpenShell keeps a registration's labels when it updates it, so its label
+# still names the first variable; the state names the rotated one.
+run "reapply_rotated_reference" {
+  variables { credential_env = "NEMOCLAW_TEST_ROTATED_KEY" }
+  assert {
+    condition     = length([for rpc in local.openshell.rpcs : rpc if rpc == "UpdateProvider"]) == 1
+    error_message = "Applying the rotated reference again must not update the registration again."
+  }
+}
+
 run "stop_authenticating" {
   assert {
     condition     = length(local.openshell.created_providers) == 3

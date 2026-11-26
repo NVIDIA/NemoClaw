@@ -69,6 +69,19 @@ Each release's [provider guide](provider.md) and schema snapshots describe that 
 The examples under [`examples/features`](../../examples/features) are supported with the release they ship in: [`travel`](../../examples/features/travel/hcl/main.tf), which an integration scenario applies unchanged, and [`travel-team`](../../examples/features/travel-team/hcl/README.md).
 Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and `tofu destroy` deletes everything the HCL manages, but refuses to run while the HCL or the provider protects one of its resources, as [Tearing the Configuration Down](../build-deploy/opentofu-project.md#tearing-the-configuration-down) describes.
 
+## Written OpenTofu Projects
+
+`nemoclaw compile` writes a configuration out once as an OpenTofu project in HCL, rendered from the graph that the release's SDK compiles for `apply`.
+The project pins the providers of the bundle that wrote it, and later releases do not change it.
+To take up a later release, update the project by hand, or compile the configuration into a new directory and compare.
+
+A written project is hand-written HCL from then on.
+It gives up what the CLI and SDK do around OpenTofu, as [Choosing a Path](../build-deploy/opentofu-project.md#choosing-a-path) lists, such as the pending-creation guard, the plan checks, recovery, and `export`.
+It keeps `prevent_destroy` on the workspace and retained storage.
+Its README tears the deployment down as `nemoclaw destroy` does: remove the workspace's `prevent_destroy`, then run the `tofu destroy` command that excludes the retained storage.
+
+The command refuses a managed Kubernetes or OpenShift gateway, whose configuration depends on the state directory, ownership receipt, and kubeconfig that the CLI supplies.
+
 ## Import, Adoption, and State Backends
 
 `tofu import` is not supported: every NemoClaw provider type reports "Import is not supported".

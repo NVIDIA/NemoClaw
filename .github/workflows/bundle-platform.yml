@@ -39,10 +39,13 @@ on:
       partitions:
         description: JSON list of the contract and integration partitions, each {layer, shard, shards}.
         type: string
+        # Three integration partitions: each tofu test scenario that the CLI's
+        # compile command can write runs twice, against its graph and its HCL.
         default: >-
           [{"layer": "contract", "shard": 1, "shards": 1},
-          {"layer": "integration", "shard": 1, "shards": 2},
-          {"layer": "integration", "shard": 2, "shards": 2}]
+          {"layer": "integration", "shard": 1, "shards": 3},
+          {"layer": "integration", "shard": 2, "shards": 3},
+          {"layer": "integration", "shard": 3, "shards": 3}]
       e2e:
         description: >-
           Archive the live test executables and run the selected live suites and HCL

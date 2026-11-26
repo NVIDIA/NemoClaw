@@ -18,6 +18,33 @@ pub fn docker_lines(command: &mut std::process::Command) -> Option<Vec<String>> 
     })
 }
 
+/// Remove one completed test deployment's retained objects without forcing containers.
+pub fn remove_retained(
+    docker: impl Fn() -> std::process::Command,
+    uid: &str,
+) -> Result<(), String> {
+    let filter = format!("label=nemoclaw.nvidia.com/uid={uid}");
+    for kind in ["container", "volume", "network"] {
+        let mut list = docker();
+        list.args([kind, "ls", "--quiet"]);
+        if kind == "container" {
+            list.arg("--all");
+        }
+        list.args(["--filter", &filter]);
+        let ids = docker_lines(&mut list).ok_or_else(|| format!("cannot list {kind}s"))?;
+        for id in ids {
+            let removed = docker()
+                .args([kind, "rm", &id])
+                .status()
+                .map_err(|error| error.to_string())?;
+            if !removed.success() {
+                return Err(format!("cannot remove {kind} {id}"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A random version 4 UUID, as deployment metadata requires.
 pub fn uuid() -> Result<String, String> {
     let mut bytes = [0u8; 16];
