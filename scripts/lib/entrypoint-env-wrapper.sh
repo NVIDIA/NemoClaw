@@ -3,24 +3,34 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Mirror the CLI bounds for numeric auto-pair inputs: finite positive seconds,
-# and a positive safe integer for the poll count.
+# and a positive safe integer for the poll count. The decimal text is parsed
+# exactly as 0.DIGITS * 10^point, without spawning a child.
 nemoclaw_valid_auto_pair_number() {
-  local name="$1" value="$2" mantissa exponent=0 digits
+  local name="$1" value="$2" digits lead exponent=0 point top zeros
+  [[ "$value" =~ ^\+?([0-9]*)(\.([0-9]*))?([eE]([+-]?[0-9]{1,4}))?$ ]] || return 1
+  digits="${BASH_REMATCH[1]}${BASH_REMATCH[3]}"
+  [ -n "$digits" ] || return 1
+  if [ -n "${BASH_REMATCH[5]}" ]; then
+    exponent=$((10#${BASH_REMATCH[5]#[+-]}))
+    [ "${BASH_REMATCH[5]:0:1}" != "-" ] || exponent=$((-exponent))
+  fi
+  point=$((${#BASH_REMATCH[1]} + exponent))
+  lead="${digits%%[!0]*}"
+  digits="${digits#"$lead"}"
+  digits="${digits%"${digits##*[!0]}"}"
+  [ -n "$digits" ] || return 1
+  point=$((point - ${#lead}))
   if [ "$name" = "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS" ]; then
-    [[ "$value" =~ ^[0-9]{1,16}$ ]] && ((10#$value > 0 && 10#$value <= 9007199254740991))
+    ((point >= ${#digits} && point <= 16)) || return 1
+    printf -v zeros '%*s' "$((point - ${#digits}))" ''
+    ((10#${digits}${zeros// /0} <= 9007199254740991))
     return
   fi
-  [[ "$value" =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)([eE]([+-]?[0-9]{1,3}))?$ ]] || return 1
-  mantissa="${BASH_REMATCH[1]}"
-  if [ -n "${BASH_REMATCH[3]}" ]; then
-    digits="${BASH_REMATCH[3]#[+-]}"
-    exponent=$((10#$digits))
-    [ "${BASH_REMATCH[3]:0:1}" != "-" ] || exponent=$((-exponent))
-  fi
-  [[ "$mantissa" =~ [1-9] ]] || return 1
-  digits="${mantissa%%.*}"
-  digits="${digits#"${digits%%[!0]*}"}"
-  ((${#digits} + exponent <= 308))
+  # Finite and nonzero as a double: about 4.9e-324 up to 1.7976931348623157e308.
+  printf -v top '%-17s' "${digits:0:17}"
+  top="${top// /0}"
+  ((point <= 308 || (point == 309 && 10#$top <= 17976931348623157))) \
+    && ((point >= -322 || (point == -323 && 10#$top >= 24703282292062328)))
 }
 
 # Normalize OpenShell's sandbox-create command when an OCI runtime invokes the
