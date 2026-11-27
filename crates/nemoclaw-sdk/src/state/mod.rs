@@ -485,8 +485,9 @@ impl Store {
             });
         }
         let mut record: Record = serde_json::from_value(record).map_err(|_| corrupt())?;
-        record.validate()?;
+        // Unfinished creations were compiled with the recorded engine facts.
         record.own_engine_facts();
+        record.validate()?;
         Ok(Some(record))
     }
     pub fn save(&self, record: &Record) -> Result<(), Error> {

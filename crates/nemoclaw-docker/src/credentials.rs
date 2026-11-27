@@ -6,6 +6,14 @@
 use crate::Storage;
 use nemoclaw_backend::ObservationError;
 use serde::{Deserialize, Serialize};
+
+/// OpenShell's name for the engine host, as seen from a sandbox supervisor.
+/// OpenShell has no API that reports it. Its Docker driver documents that, in
+/// the default host supervisor network mode, the name resolves to host
+/// loopback (`crates/openshell-driver-docker/README.md` at the pinned
+/// `openshellRevision` in `versions.json`). Managed services on Docker
+/// Desktop publish on loopback and are reached by this name.
+pub const OPENSHELL_HOST_ALIAS: &str = "host.openshell.internal";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Source {
@@ -133,13 +141,26 @@ impl Source {
             .strip_prefix("http://")
             .and_then(|s| s.strip_suffix("/v1"))
             .and_then(|s| s.parse::<std::net::SocketAddr>().ok());
-        let private = address.is_some_and(|address| {
-            address.port() != 0
-                && match address.ip() {
-                    std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_loopback(),
-                    std::net::IpAddr::V6(ip) => local && (ip.is_unique_local() || ip.is_loopback()),
-                }
-        });
+        // A managed service on Docker Desktop is reached at OpenShell's alias
+        // for the engine host, which resolves to its loopback.
+        let host_alias = !local
+            && published
+                .strip_prefix("http://")
+                .and_then(|s| s.strip_suffix("/v1"))
+                .and_then(|s| s.strip_prefix(OPENSHELL_HOST_ALIAS))
+                .and_then(|s| s.strip_prefix(':'))
+                .and_then(|port| port.parse::<u16>().ok())
+                .is_some_and(|port| port != 0);
+        let private = host_alias
+            || address.is_some_and(|address| {
+                address.port() != 0
+                    && match address.ip() {
+                        std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_loopback(),
+                        std::net::IpAddr::V6(ip) => {
+                            local && (ip.is_unique_local() || ip.is_loopback())
+                        }
+                    }
+            });
         if storage.validate().is_err()
             || storage.owner != owner
             || published != endpoint

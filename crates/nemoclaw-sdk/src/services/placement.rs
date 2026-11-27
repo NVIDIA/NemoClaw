@@ -54,12 +54,7 @@ impl<'a> PublishedPlacement<'a> {
     }
 }
 
-/// OpenShell's name for the engine host, as seen from a sandbox supervisor.
-/// OpenShell has no API that reports it. Its Docker driver documents that, in
-/// the default host supervisor network mode, the name resolves to host
-/// loopback (`crates/openshell-driver-docker/README.md` at the pinned
-/// `openshellRevision` in `versions.json`).
-const OPENSHELL_HOST_ALIAS: &str = "host.openshell.internal";
+use nemoclaw_docker::credentials::OPENSHELL_HOST_ALIAS;
 
 /// Where a managed service runs and how it is reached, resolved once.
 /// Explicit placement wins; otherwise the managed gateway's engine and bridge are inherited.

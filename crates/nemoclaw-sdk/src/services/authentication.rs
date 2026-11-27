@@ -100,6 +100,35 @@ mod durable_source_tests {
             .unwrap();
         }
     }
+    /// On Docker Desktop, sandboxes reach an authenticated managed service
+    /// through OpenShell's host alias, and its key source names that endpoint
+    /// (#14903).
+    #[test]
+    fn authenticated_source_on_docker_desktop_names_the_host_alias() {
+        let mut document = document(false);
+        let crate::config::Gateway::Managed(gateway) = &mut document.spec.gateway else {
+            panic!("managed gateway")
+        };
+        gateway.target.local_mut().unwrap().docker_desktop = true;
+        let row = provider(&document);
+        assert_eq!(row["endpoint"], "http://host.openshell.internal:18888/v1");
+        let source = Source::parse(
+            &row["credential_source"],
+            &document.metadata.uid,
+            &row["endpoint"],
+        )
+        .unwrap();
+        assert_eq!(source.fields().2, row["endpoint"]);
+        assert!(
+            Source::parse(
+                &row["credential_source"].replace("host.openshell.internal", "example.com"),
+                &document.metadata.uid,
+                &row["endpoint"].replace("host.openshell.internal", "example.com"),
+            )
+            .is_err(),
+            "only OpenShell's host alias stands in for a private address"
+        );
+    }
     #[test]
     fn durable_source_rejects_namespace_endpoint_and_unknown_fields() {
         for proxy in [false, true] {
