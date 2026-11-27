@@ -138,7 +138,7 @@ The following data and cleanup limits apply:
 | Native conversation continuity across runtime replacement. | [Per-harness limits](../build-deploy/state.md#choosing-what-to-retain-for-each-harness), which depend on Fabric and the selected harness | [`cb8ef25`][v1-cb8ef25]: docs |
 | Durable data for generic application containers: their writable volume is disposable, and replacement or destroy can lose it. This differs from caller-supplied volumes mounted in an agent sandbox. | By design: [application storage](../build-deploy/container-services.md#deciding-whether-the-image-fits) | [`e7e1857`][v1-e7e1857]: docs |
 | Transferring native data between NemoClaw v0 and NemoClaw Agent Configs. | No NemoClaw procedure. The harness owns native data, and the platform owns storage transfer. See [how to evaluate NemoClaw Agent Configs in a separate deployment](../get-started/migration.md). | [`cb8ef25`][v1-cb8ef25]: docs |
-| Keeping a sandbox across a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: after the gateway runs again, the sandbox refuses the supervisor that OpenShell starts for it and goes to `Error` with `StartFailed`, and the next apply replaces it, which deletes its files outside mounted volumes and its conversation history. A graceful restart, such as `docker restart`, keeps the sandbox. | [#13953](https://github.com/NVIDIA/NemoClaw/issues/13953), [NVIDIA/OpenShell#4910](https://github.com/ai-openshell/openshell/issues/4910) | [`291723b`][v1-291723b]: issue, plus a DGX Spark run where 9 of 9 SIGKILLed gateways lost their Hermes sandbox and 12 of 12 graceful restarts kept it |
+| Keeping a sandbox running across a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: after the gateway runs again, the sandbox refuses the supervisor that OpenShell starts for it and goes to `Error` with `StartFailed`. It stays down until the next apply, which stops and starts it in place, keeping its files, and starts its agent again with a new conversation. A graceful restart, such as `docker restart`, keeps the sandbox running. | [NVIDIA/OpenShell#4910](https://github.com/ai-openshell/openshell/issues/4910) | [`27eee1d`][v1-27eee1d]: OpenShell, issue, plus a Docker run in which the next apply restarted a SIGKILLed gateway's sandbox in place and kept its files |
 | The [manual removal when destroy refuses](../build-deploy/usage.md#recovering-when-destroy-refuses) has not been rehearsed as written. | No open issue | Not verified: needs the procedure run as written |
 | Keeping a sandbox's files and conversations across a change to its policy's filesystem, Landlock, or process settings: OpenShell applies them only when a sandbox starts, so the change replaces the sandbox. Network rules, middleware bindings, and grants change in place. | No open issue: OpenShell's [policy guide](https://github.com/ai-openshell/openshell/blob/152c59d3178039e3fbb4a5595f9fff7216a6be92/docs/how-it-works/policies/manage-policies.mdx#how-changes-take-effect) | [`ca452e0`][v1-ca452e0]: code, OpenShell |
 
@@ -192,7 +192,6 @@ Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#is
 [v1-6da649a]: https://github.com/NVIDIA/NemoClaw/tree/6da649ac6c21ada7229aecc326686fce6e35961a
 [v1-ca452e0]: https://github.com/NVIDIA/NemoClaw/tree/ca452e0ecb79c03914ecb775c4d9437f67db9449
 [v1-c30c3f1]: https://github.com/NVIDIA/NemoClaw/tree/c30c3f1b3fbf9d825d13fd4497c98b35ef33f1ee
-[v1-291723b]: https://github.com/NVIDIA/NemoClaw/tree/291723b41b77dbd502f5418b9b0a9b7c1a322dc9
 [v1-5223fdc]: https://github.com/NVIDIA/NemoClaw/tree/5223fdc0b6c9a7ec0b7d86b9c11699eb3de1a206
 [v1-ffe5406]: https://github.com/NVIDIA/NemoClaw/tree/ffe5406498c6a27c068ad52a56ddcfb1cb37b904
 [v1-e7e1857]: https://github.com/NVIDIA/NemoClaw/tree/e7e1857514f4bed9269eeaf6786bcdb2d6d0ade3
@@ -200,3 +199,4 @@ Refer to the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#is
 [v1-1636069]: https://github.com/NVIDIA/NemoClaw/tree/1636069b91f402242a35714fde1011042c3f1f70
 [v1-1b5574f]: https://github.com/NVIDIA/NemoClaw/tree/1b5574f18137bb4a94b695dfa86b4be5e1c8d8e6
 [v1-ca452e0]: https://github.com/NVIDIA/NemoClaw/tree/ca452e0ecb79c03914ecb775c4d9437f67db9449
+[v1-27eee1d]: https://github.com/NVIDIA/NemoClaw/tree/27eee1d41274deacc3a19125ea479b36e30b8c8b

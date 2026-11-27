@@ -547,6 +547,197 @@ async fn an_exited_sandbox_is_observed_with_its_exit() {
     );
 }
 
+/// Make the fake gateway report the bound sandbox in `phase`, with `reason` on
+/// its `Ready` condition and its main process's exit code, if any.
+fn report(
+    fixture: &Fixture,
+    sandbox: &Row,
+    phase: proto::SandboxPhase,
+    reason: &str,
+    exit_code: Option<i32>,
+) {
+    let mut state = fixture.state.lock().unwrap();
+    let status = state
+        .sandboxes
+        .get_mut(&key(sandbox))
+        .unwrap()
+        .status
+        .as_mut()
+        .unwrap();
+    status.phase = phase as i32;
+    status.exit_code = exit_code;
+    status.conditions = vec![proto::SandboxCondition {
+        r#type: "Ready".into(),
+        status: "False".into(),
+        reason: reason.into(),
+        ..Default::default()
+    }];
+}
+
+/// The stop and start requests the fake gateway received, in order.
+fn lifecycle_requests(fixture: &Fixture) -> Vec<String> {
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .rpcs
+        .iter()
+        .filter_map(|rpc| rpc.strip_prefix("/openshell.v1.OpenShell/"))
+        .filter(|rpc| ["StopSandbox", "StartSandbox"].contains(rpc))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A sandbox that ran and that OpenShell reports stopped without a
+/// main-process exit code, in `Error` after its Kubernetes Pod was deleted or
+/// in `Stopped`, is observed as stopped, so the plan restarts it in place. One
+/// whose main process exited, or one that never loaded its policy, is observed
+/// as exited, so the plan replaces it.
+#[tokio::test]
+async fn a_sandbox_that_ran_and_was_stopped_is_observed_for_a_restart_in_place() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let sandbox = create_sandbox(&client, "local").await;
+    assert!(!sandbox[crate::POLICY_HASH].is_empty(), "the sandbox ran");
+    let mut unstarted = sandbox.clone();
+    unstarted.insert(crate::POLICY_HASH.into(), String::new());
+    for (prior, phase, reason, exit_code, stopped, exited) in [
+        (
+            &sandbox,
+            proto::SandboxPhase::Error,
+            "PodSucceeded",
+            None,
+            "SANDBOX_PHASE_ERROR, reason PodSucceeded, exit code unknown",
+            "",
+        ),
+        (
+            &sandbox,
+            proto::SandboxPhase::Stopped,
+            "Stopped",
+            Some(143),
+            "SANDBOX_PHASE_STOPPED, reason Stopped, exit code 143",
+            "",
+        ),
+        (
+            &sandbox,
+            proto::SandboxPhase::Error,
+            "MainProcessFailed",
+            Some(1),
+            "",
+            "SANDBOX_PHASE_ERROR, reason MainProcessFailed, exit code 1",
+        ),
+        (
+            &unstarted,
+            proto::SandboxPhase::Error,
+            "ControlSupervisorStartFailed",
+            None,
+            "",
+            "SANDBOX_PHASE_ERROR, reason ControlSupervisorStartFailed, exit code unknown",
+        ),
+    ] {
+        report(&fixture, &sandbox, phase, reason, exit_code);
+        let observed = client.read("sandbox", prior, false).await.unwrap().unwrap();
+        assert_eq!(
+            (
+                observed[crate::STOPPED].as_str(),
+                observed[crate::EXITED].as_str()
+            ),
+            (stopped, exited),
+            "{phase:?} {reason}"
+        );
+    }
+}
+
+/// An update stops and starts a sandbox that its platform stopped, keeping its
+/// identity, and records the policy it loads again; once it runs, an update
+/// neither stops nor starts it.
+#[tokio::test]
+async fn an_update_restarts_a_stopped_sandbox_in_place() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let sandbox = create_sandbox(&client, "local").await;
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .declare(&serde_json::json!({"change": {"interrupt_sandbox": sandbox["name"]}}));
+    let bound = client
+        .read("sandbox", &sandbox, false)
+        .await
+        .unwrap()
+        .unwrap();
+    let result = client.update("sandbox", &sandbox, &bound).await;
+    assert!(result.error().is_none(), "{:?}", result.error());
+    assert_eq!(
+        lifecycle_requests(&fixture),
+        ["StopSandbox", "StartSandbox"]
+    );
+    let restarted = result.into_parts().0.unwrap();
+    assert_eq!(
+        restarted["id"], sandbox["id"],
+        "the restart kept the sandbox"
+    );
+    assert!(
+        !restarted[crate::POLICY_HASH].is_empty(),
+        "the restarted sandbox loaded its policy"
+    );
+    assert_eq!(fixture.state.lock().unwrap().created_sandboxes.len(), 1);
+    let result = client.update("sandbox", &sandbox, &restarted).await;
+    assert!(result.error().is_none(), "{:?}", result.error());
+    assert_eq!(
+        lifecycle_requests(&fixture).len(),
+        2,
+        "a running sandbox was restarted"
+    );
+}
+
+/// A sandbox that doesn't run again after its restart is recorded without a
+/// policy hash, as one that never ran, so the next observation finds it exited
+/// and the plan replaces it.
+#[tokio::test]
+async fn a_sandbox_that_does_not_run_again_after_its_restart_is_observed_as_exited() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let sandbox = create_sandbox(&client, "local").await;
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .declare(&serde_json::json!({"change": {"interrupt_sandbox": sandbox["name"]}}));
+    let bound = client
+        .read("sandbox", &sandbox, false)
+        .await
+        .unwrap()
+        .unwrap();
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.sandbox_phase = Some(proto::SandboxPhase::Error);
+        state.sandbox_conditions = vec![proto::SandboxCondition {
+            r#type: "Ready".into(),
+            status: "False".into(),
+            reason: "ControlSupervisorStartFailed".into(),
+            ..Default::default()
+        }];
+    }
+    let result = client.update("sandbox", &sandbox, &bound).await;
+    assert_eq!(
+        lifecycle_requests(&fixture),
+        ["StopSandbox", "StartSandbox"]
+    );
+    let recorded = result.into_parts().0.unwrap();
+    assert!(recorded[crate::POLICY_HASH].is_empty());
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        observed[crate::EXITED],
+        "SANDBOX_PHASE_ERROR, reason ControlSupervisorStartFailed, exit code unknown"
+    );
+    assert_eq!(observed[crate::STOPPED], "");
+}
+
 #[tokio::test]
 async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
     let fixture = Fixture::start().await;
@@ -1830,6 +2021,9 @@ impl crate::transport::OpenShellGateway for PhaseUnavailable {
     }
     async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
         self.inner.delete_bound_sandbox(want).await
+    }
+    async fn restart_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
+        self.inner.restart_bound_sandbox(want).await
     }
     async fn reissue_policy(&self, want: &Row) -> Result<(), ObservationError> {
         self.inner.reissue_policy(want).await

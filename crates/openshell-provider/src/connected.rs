@@ -17,6 +17,36 @@ fn labels(want: &Row) -> HashMap<String, String> {
     .into()
 }
 
+/// Require `sandbox` to be `want`'s bound sandbox: its ID, name, workspace,
+/// and the owner and generation labels NemoClaw set.
+fn bound_to(sandbox: &openshell_sdk::SandboxRef, want: &Row) -> Result<(), ObservationError> {
+    if sandbox.id != value(want, "id")
+        || sandbox.name != value(want, "name")
+        || sandbox.workspace != value(want, "workspace")
+        || [("owner", OWNER), ("generation", GENERATION)]
+            .iter()
+            .any(|(field, label)| {
+                value(want, field).is_empty()
+                    || sandbox.labels.get(*label).map(String::as_str) != Some(value(want, field))
+            })
+    {
+        return Err(ObservationError::BindingMismatch);
+    }
+    Ok(())
+}
+
+/// A failed SDK request whose definitive rejection reports the gateway's
+/// bounded message, as `remote_rejection` does for raw requests.
+fn sdk_rejection(
+    operation: RejectableOperation,
+    error: openshell_sdk::SdkError,
+) -> ObservationError {
+    match error.grpc_status() {
+        Some(status) => remote_rejection(operation, status),
+        None => sdk_error(error),
+    }
+}
+
 pub(super) fn create_sandbox_request(
     want: &Row,
     grants: &network::ClusterGrants,
@@ -475,19 +505,7 @@ impl ConnectedOpenShellGateway {
             Err(openshell_sdk::SdkError::NotFound { .. }) => return Ok(()),
             Err(error) => return Err(sdk_error(error)),
         };
-        if sandbox.id != want["id"]
-            || sandbox.name != name
-            || sandbox.workspace != workspace
-            || [("owner", OWNER), ("generation", GENERATION)]
-                .iter()
-                .any(|(field, label)| {
-                    value(want, field).is_empty()
-                        || sandbox.labels.get(*label).map(String::as_str)
-                            != Some(value(want, field))
-                })
-        {
-            return Err(ObservationError::BindingMismatch);
-        }
+        bound_to(&sandbox, want)?;
         // The channel allows 90 seconds for the gateway's graceful stop.
         // No refresher is configured, so SDK mutations are never retried.
         match client.delete_sandbox(name, Default::default()).await {
@@ -500,6 +518,27 @@ impl ConnectedOpenShellGateway {
             .wait_deleted(name, Duration::from_secs(300), None)
             .await
             .map_err(sdk_error)
+    }
+
+    /// Stop the bound sandbox, then start it again, as `openshell sandbox
+    /// stop` and `start` do. OpenShell keeps the sandbox's ID; a stop returns
+    /// once the sandbox is stopped and leaves a stopped one as it is. Both
+    /// requests are name-addressed, so the sandbox must be the bound one before
+    /// the stop, and each reply must still be. Neither is retried.
+    pub(crate) async fn restart_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
+        let name = value(want, "name");
+        let client = self.client.workspace(value(want, "workspace"));
+        bound_to(&client.get_sandbox(name).await.map_err(sdk_error)?, want)?;
+        let stopped = client
+            .stop_sandbox(name)
+            .await
+            .map_err(|error| sdk_rejection(RejectableOperation::StopSandbox, error))?;
+        bound_to(&stopped, want)?;
+        let started = client
+            .start_sandbox(name)
+            .await
+            .map_err(|error| sdk_rejection(RejectableOperation::StartSandbox, error))?;
+        bound_to(&started, want)
     }
 
     pub(crate) async fn delete(

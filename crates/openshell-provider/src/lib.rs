@@ -371,8 +371,9 @@ fn sandbox_row(
     row.insert(POLICY_PROVENANCE.into(), provenance);
     // Empty until the loaded policy is observed.
     row.insert(POLICY_HASH.into(), String::new());
-    // Empty unless OpenShell reports that the sandbox exited.
+    // Empty unless OpenShell reports that the sandbox exited or was stopped.
     row.insert(EXITED.into(), String::new());
+    row.insert(STOPPED.into(), String::new());
     // Phase is used by active checks, but is not a Terraform schema attribute.
     Ok((row, ready, grants))
 }
@@ -443,6 +444,10 @@ pub(crate) const POLICY_PROVENANCE: &str = "policy_provenance";
 /// its terminal phase, reason, and exit code. A sandbox that exited plans a
 /// replacement.
 pub(crate) const EXITED: &str = "exited";
+/// The state attribute recording why OpenShell reports that a sandbox that
+/// ran was stopped: its phase, reason, and exit code. A sandbox that was
+/// stopped plans an update that restarts it in place.
+pub(crate) const STOPPED: &str = "stopped";
 
 /// Why a sandbox's latest policy revision isn't in force: the sandbox
 /// refused it.
@@ -745,6 +750,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
             POLICY_HASH,
             POLICY_PROVENANCE,
             EXITED,
+            STOPPED,
         ])
         // Omission means NemoClaw authors the policy, not the previous value.
         .reset_when_omitted(&[POLICY_AUTHORITY])
@@ -764,7 +770,9 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         .computed(POLICY_PROVENANCE, reissue_when_unproven)
         // OpenShell doesn't restart an exited sandbox, so it is replaced.
         .computed(EXITED, nemoclaw_tofu::replace_when_observed)
-        .replace_on_change(&[EXITED]),
+        .replace_on_change(&[EXITED])
+        // A sandbox that was stopped restarts in place, keeping its identity.
+        .computed(STOPPED, nemoclaw_tofu::restart_when_observed),
     ]
     .map(lifecycle_rules)
     .map(|mut definition| {

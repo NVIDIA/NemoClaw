@@ -286,8 +286,8 @@ pub async fn test_against_gateways(
 impl State {
     /// Apply a fixture declaration's gateway part: the compute driver, a
     /// sandbox creation delay, and a one-time `change` that an outage between
-    /// runs would make: stop or fail one sandbox's Fabric runtime, or forget every
-    /// registration, profile, or sandbox.
+    /// runs would make: stop or fail one sandbox's Fabric runtime, end one
+    /// sandbox's workload, or forget every registration, profile, or sandbox.
     pub fn declare(&mut self, declared: &serde_json::Value) {
         self.driver = declared["compute_driver"].as_str().map(str::to_owned);
         self.sandbox_create_delay = std::time::Duration::from_millis(
@@ -329,6 +329,15 @@ impl State {
             configuration["models"]["default"]["model"] =
                 serde_json::json!("changed-inside-the-sandbox");
         }
+        // Its platform ends the sandbox's workload without a main-process
+        // result, as when its Kubernetes Pod is deleted.
+        if let Some(name) = change["interrupt_sandbox"].as_str() {
+            self.end_workload(name, None, "PodSucceeded");
+        }
+        // The sandbox's main process exits with status 1.
+        if let Some(name) = change["exit_sandbox"].as_str() {
+            self.end_workload(name, Some(1), "MainProcessFailed");
+        }
         if change["forget_registrations"] == true {
             self.providers.clear();
         }
@@ -338,6 +347,47 @@ impl State {
         if change["forget_sandboxes"] == true {
             self.sandboxes.clear();
         }
+    }
+
+    /// End the named sandbox's workload: OpenShell reports the sandbox in
+    /// `Error` for `reason`, with its main process's exit code when it had one.
+    fn end_workload(&mut self, name: &str, exit_code: Option<i32>, reason: &str) {
+        let Some(sandbox) = self
+            .sandboxes
+            .values_mut()
+            .find(|sandbox| sandbox.metadata.as_ref().is_some_and(|m| m.name == name))
+        else {
+            return;
+        };
+        let status = sandbox.status.get_or_insert_default();
+        status.phase = p::SandboxPhase::Error as i32;
+        status.exit_code = exit_code;
+        status.conditions = vec![p::SandboxCondition {
+            r#type: "Ready".into(),
+            status: "False".into(),
+            reason: reason.into(),
+            ..Default::default()
+        }];
+        let id = sandbox.metadata.as_ref().unwrap().id.clone();
+        self.end_processes(&id);
+    }
+
+    /// The processes of a sandbox's workload ended, Fabric runtimes and those
+    /// a failed runtime left included. A later start of the sandbox is a new
+    /// lifecycle, where Fabric starts runtimes again.
+    fn end_processes(&mut self, sandbox_id: &str) {
+        let ended: Vec<String> = self
+            .fabric_runtimes
+            .iter()
+            .filter(|(_, sandbox)| *sandbox == sandbox_id)
+            .map(|(runtime, _)| runtime.clone())
+            .collect();
+        for runtime in ended {
+            self.fabric_runtimes.remove(&runtime);
+            self.fabric_failed.remove(&runtime);
+        }
+        self.fabric_uncertain.remove(sandbox_id);
+        self.fabric_configurations.remove(sandbox_id);
     }
 
     /// What the gateway received and holds. `source` names where a credential
@@ -694,6 +744,10 @@ impl tower::Service<http::Request<Body>> for Service {
                         delete_sandbox(state, &request)
                     })
                     .await
+                }
+                "/openshell.v1.OpenShell/StopSandbox" => unary(request, state, stop_sandbox).await,
+                "/openshell.v1.OpenShell/StartSandbox" => {
+                    unary(request, state, start_sandbox).await
                 }
                 "/openshell.v1.OpenShell/GetSandboxPolicyStatus" => {
                     unary(request, state, |state, request| {
@@ -1157,6 +1211,83 @@ fn delete_sandbox(
     Ok(p::DeleteSandboxResponse {
         outcome: p::DeletionOutcome::Completed.into(),
         sandbox_id: sandbox.metadata.unwrap().id,
+    })
+}
+/// Stop a sandbox as OpenShell's StopSandbox does: one already stopped is
+/// settled; one that is ready, completed, in `Error`, or suspended stops, and
+/// its workload's processes end.
+fn stop_sandbox(state: &mut State, q: p::StopSandboxRequest) -> Result<p::SandboxResponse, Status> {
+    let key = format!("{}/{}", workspace(&q.workspace_scope)?, q.name);
+    let sandbox = state
+        .sandboxes
+        .get_mut(&key)
+        .ok_or_else(|| Status::not_found("sandbox not found"))?;
+    let status = sandbox.status.get_or_insert_default();
+    let phase = status.phase();
+    if phase != p::SandboxPhase::Stopped {
+        use p::SandboxPhase::*;
+        if !matches!(
+            phase,
+            Ready | Completed | Stopping | Error | Suspending | Suspended
+        ) {
+            return Err(Status::failed_precondition(format!(
+                "sandbox must be Ready, Completed, Suspended, Error, or in an automatic restart to stop (current phase: {phase:?})"
+            )));
+        }
+        status.phase = Stopped as i32;
+        let id = sandbox.metadata.as_ref().unwrap().id.clone();
+        state.end_processes(&id);
+        state.effects += 1;
+    }
+    Ok(p::SandboxResponse {
+        sandbox: state.sandboxes.get(&key).cloned(),
+        ..Default::default()
+    })
+}
+/// Start a sandbox as OpenShell's StartSandbox does: one that is stopped,
+/// completed, or suspended, or whose main process failed, starts; another in
+/// `Error` must be stopped first. As after creation, it then reports
+/// `sandbox_phase` and `sandbox_conditions` when set, and `Ready` otherwise.
+fn start_sandbox(
+    state: &mut State,
+    q: p::StartSandboxRequest,
+) -> Result<p::SandboxResponse, Status> {
+    let key = format!("{}/{}", workspace(&q.workspace_scope)?, q.name);
+    let (started, conditions) = (
+        state.sandbox_phase.unwrap_or(p::SandboxPhase::Ready),
+        state.sandbox_conditions.clone(),
+    );
+    let sandbox = state
+        .sandboxes
+        .get_mut(&key)
+        .ok_or_else(|| Status::not_found("sandbox not found"))?;
+    let status = sandbox.status.get_or_insert_default();
+    let phase = status.phase();
+    let failed_main_process = phase == p::SandboxPhase::Error
+        && status.exit_code.is_some()
+        && status.conditions.iter().any(|condition| {
+            condition.r#type == "Ready"
+                && condition.status == "False"
+                && condition.reason == "MainProcessFailed"
+        });
+    use p::SandboxPhase::*;
+    if !matches!(phase, Stopped | Completed | Starting | Suspended) && !failed_main_process {
+        let hint = if phase == Error {
+            "; stop the sandbox before retrying start"
+        } else {
+            ""
+        };
+        return Err(Status::failed_precondition(format!(
+            "sandbox must be Stopped, Suspended, Completed, or a failed main-process Error to start (current phase: {phase:?}){hint}"
+        )));
+    }
+    status.phase = started as i32;
+    status.conditions = conditions;
+    status.exit_code = None;
+    state.effects += 1;
+    Ok(p::SandboxResponse {
+        sandbox: state.sandboxes.get(&key).cloned(),
+        ..Default::default()
     })
 }
 fn service_response(endpoint: p::ServiceEndpoint) -> p::ServiceEndpointResponse {
