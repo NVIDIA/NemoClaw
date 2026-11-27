@@ -5,7 +5,8 @@
 
 Each row names an example, the deployments it creates, and the machine it needs.
 On a machine that has everything a row needs, the scenario runner deploys the example unchanged except for the values that bind it to that machine: a fresh deployment UID, free ports and subnet, the Docker engine, and images built from the checkout.
-It then runs the QA team's GTC DC test case 005-DEPLOY on the deployment, and reports it by run ID, such as `SPARK-HERMES-005`: plan without adding a container, volume, network, or image, apply, get `READY` and then `391` from every agent, and destroy.
+It then runs the QA team's GTC DC test case 005-DEPLOY on the deployment, as the automated test `005-DEPLOY-E2E`: plan without adding a container, volume, network, or image, apply, get `READY` and then `391` from every agent, and destroy.
+It reports each deployment's result by run ID, such as `SPARK-HERMES-005-E2E`, and writes it to `results.json` in the run's reports, with the test ID, the tested commit, the result (`pass`, `fail`, or `unrun`), and a link to the run.
 A deployment that serves no model is also planned again after apply, which must show no changes; one that serves a model skips that plan, as the hardware cases do, because the integration tests cover unchanged reconciliation without holding a GPU.
 Export, reapply, and recovery, which the QA plan's 009-LIFECYCLE covers by hand, belong to the integration tests, which run against fixtures.
 A row whose needs the machine lacks is reported as skipped, with the need it lacks, and a paused row is reported as skipped without running.

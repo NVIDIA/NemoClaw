@@ -8,7 +8,7 @@
 # tests rather than hold a GPU for it.
 #
 # Each run block's name starts with `case_005_`, which scenarios::page reads to
-# report it by run ID, such as SPARK-HERMES-005.
+# report it by run ID, such as SPARK-HERMES-005-E2E.
 #
 # - 005-DEPLOY: plan without adding a container, volume, network, or image,
 #   apply, get READY and then 391 from every agent, and destroy.

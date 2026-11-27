@@ -6,10 +6,11 @@
 # suites' unchanged plan. lifecycle-model.tftest.hcl is the same without the
 # unchanged plan, for a deployment that serves a model.
 #
-# Each run block's name starts with what it checks, which scenarios::page
-# reads to report it: `case_005_` belongs to 005-DEPLOY, reported by run ID
-# such as DOCKER-OPENCLAW-005, and `check_unchanged_plan` to the unchanged
-# plan. Any other run block is setup, and its failure fails every check.
+# Each run block's name starts with what it checks, which hcl_live::case and
+# scenarios::page read to report it: `case_005_` belongs to the QA test
+# 005-DEPLOY-E2E, reported by run ID such as DOCKER-OPENCLAW-005-E2E in
+# results.json, and `check_unchanged_plan` to the unchanged plan. Any other
+# run block is setup, and its failure fails every check.
 #
 # - 005-DEPLOY: plan without adding a container, volume, network, or image,
 #   apply, get READY and then 391 from every agent, and destroy.

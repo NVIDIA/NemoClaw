@@ -207,8 +207,27 @@ async fn case() {
         ])
         .env("TF_LOG_CORE", "debug")
         .env("TF_LOG_PATH", &log.0)
-        .status();
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            // Echo the report as it arrives, and keep it to read each run
+            // block's result.
+            let mut report = String::new();
+            for line in
+                std::io::BufRead::lines(std::io::BufReader::new(child.stdout.take().unwrap()))
+            {
+                let line = line?;
+                println!("{line}");
+                report.push_str(&line);
+                report.push('\n');
+            }
+            Ok((child.wait()?, report))
+        });
     report_timings(&case, &log.run_durations());
+    if let Ok((_, report)) = &tested {
+        write_results(&case, report, &reports);
+    }
+    let tested = tested.map(|(status, _)| status);
     let succeeded = tested.as_ref().is_ok_and(|status| status.success());
     if let Some(cache) = &mut model_cache {
         let finished = cache.finish(succeeded);
@@ -229,6 +248,48 @@ async fn case() {
         "tofu test could not clean up its run blocks' state; see errored_test.tfstate in {}",
         root.display()
     );
+}
+
+/// For a case that a row of `examples/scenarios.md` names, writes the QA
+/// team's run records to `results.json` in `reports`: each deployment's run ID
+/// for each QA test, the tested commit, the result, and the workflow run, or
+/// locally the reports directory, as the report.
+fn write_results(case: &str, report: &str, reports: &Path) {
+    let root = Path::new("../..");
+    let Some(row) = nemoclaw_build::scenarios::read(root)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.case_id() == case)
+    else {
+        return;
+    };
+    let commit = var("GITHUB_SHA").unwrap_or_else(|_| {
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            .unwrap_or_default()
+    });
+    let link = match (
+        var("GITHUB_SERVER_URL"),
+        var("GITHUB_REPOSITORY"),
+        var("GITHUB_RUN_ID"),
+    ) {
+        (Ok(server), Ok(repository), Ok(run)) => format!(
+            "{server}/{repository}/actions/runs/{run}/attempts/{}",
+            var("GITHUB_RUN_ATTEMPT").unwrap_or_else(|_| "1".into())
+        ),
+        _ => reports.display().to_string(),
+    };
+    let outcomes = nemoclaw_build::scenarios::outcomes(report);
+    let results = nemoclaw_build::scenarios::results(&row.ids, &outcomes, &commit, &link);
+    fs::write(
+        reports.join("results.json"),
+        serde_json::to_vec_pretty(&results).unwrap(),
+    )
+    .unwrap();
 }
 
 /// Whether `case` runs on the DGX Station runner, whose runs mount the host's

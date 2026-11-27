@@ -10,7 +10,9 @@
 //! row it ran failed. A row the page cannot express fails the parse, so no row
 //! is ever dropped without a message.
 
-use nemoclaw_build::scenarios::{Need, PAGE, Row, harness_id, parse};
+use nemoclaw_build::scenarios::{
+    CHECKS, Need, PAGE, Row, UNCHANGED_PLAN, harness_id, outcomes, parse,
+};
 use nemoclaw_sdk::config::Document;
 use nemoclaw_test_fixtures::Bundle;
 use serde_json::{Value, json};
@@ -22,15 +24,6 @@ use std::{
     process::Command,
 };
 
-/// What `lifecycle.tftest.hcl` checks, by the prefix of its run blocks'
-/// names: the QA plan's 005-DEPLOY, which the report names by run ID, such as
-/// `SPARK-HERMES-005`, and the live suites' unchanged plan, which the QA plan
-/// has no case for. Any other run block is setup.
-const CHECKS: [(&str, &str); 2] = [
-    ("005", "case_005_"),
-    (UNCHANGED_PLAN, "check_unchanged_plan"),
-];
-const UNCHANGED_PLAN: &str = "unchanged plan";
 /// The credential variable a stub row's providers read when the example names
 /// none.
 const STUB_KEY_ENV: &str = "NEMOCLAW_SCENARIO_MODEL_KEY";
@@ -417,42 +410,6 @@ impl Drop for Cleanup {
     }
 }
 
-/// Each check's outcome from `tofu test`'s report of the lifecycle's run
-/// blocks: passed when all of its runs passed, FAILED when one failed or a
-/// setup run failed, and not run when its runs were skipped.
-fn check_outcomes(output: &str) -> BTreeMap<&'static str, &'static str> {
-    let runs: Vec<(&str, &str)> = output
-        .lines()
-        .filter_map(|line| {
-            let rest = line.trim().strip_prefix("run \"")?;
-            let (name, result) = rest.split_once("\"... ")?;
-            Some((name, result.trim()))
-        })
-        .collect();
-    let setup_failed = runs.iter().any(|(name, result)| {
-        !CHECKS.iter().any(|(_, prefix)| name.starts_with(prefix)) && *result != "pass"
-    });
-    CHECKS
-        .iter()
-        .map(|(check, prefix)| {
-            let results: Vec<&str> = runs
-                .iter()
-                .filter(|(name, _)| name.starts_with(prefix))
-                .map(|(_, result)| *result)
-                .collect();
-            let outcome = if setup_failed || results.contains(&"fail") || results.contains(&"error")
-            {
-                "FAILED"
-            } else if results.is_empty() || results.iter().any(|result| *result != "pass") {
-                "not run"
-            } else {
-                "passed"
-            };
-            (*check, outcome)
-        })
-        .collect()
-}
-
 /// Runs one row and reports each check's outcome.
 fn run_row(
     row: &Row,
@@ -564,14 +521,14 @@ fn run_row(
         .map_err(|error| format!("cannot run hcl_live::case: {error}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     print!("{stdout}");
-    let mut outcomes = check_outcomes(&stdout);
+    let mut outcomes = outcomes(&stdout);
     // lifecycle-model has no unchanged plan to report.
     if !bound.replans {
-        outcomes.insert(UNCHANGED_PLAN, "not run: the example serves a model");
+        outcomes.insert(UNCHANGED_PLAN, "unrun: the example serves a model");
     }
     // A failed cleanup fails the row even when every check passed.
     cleanup.run()?;
-    if !output.status.success() && !outcomes.values().any(|outcome| *outcome == "FAILED") {
+    if !output.status.success() && !outcomes.values().any(|outcome| *outcome == "fail") {
         return Err(format!(
             "hcl_live::case failed although no check did; see its output and {}",
             run.display()
@@ -617,12 +574,13 @@ fn page() {
             match &outcome {
                 Ok(cases) => {
                     for (check, result) in cases {
-                        let run_id = if *check == UNCHANGED_PLAN {
-                            format!("{id} {check}")
-                        } else {
-                            format!("{id}-{check}")
+                        // A QA test is reported by run ID, such as
+                        // STATION-HERMES-005-E2E; another check by name.
+                        let run_id = match CHECKS.iter().find(|(name, ..)| name == check) {
+                            Some((_, _, Some(suffix))) => format!("{id}-{suffix}"),
+                            _ => format!("{id} {check}"),
                         };
-                        if *result == "FAILED" {
+                        if *result == "fail" {
                             failed.push(run_id.clone());
                         }
                         report.push((run_id, (*result).to_owned()));
@@ -723,36 +681,6 @@ mod tests {
             "{TABLE}| ✅ | K8S-OPENCLAW, K8S-HERMES | x | [a](a.yaml) | docker | stub |\n| ✅ | K8S-HERMES | y | [a](a.yaml) | docker | stub |\n"
         );
         assert!(parse(&page).unwrap_err().contains("K8S-HERMES"));
-    }
-
-    #[test]
-    fn each_check_passes_only_when_all_its_runs_pass() {
-        let output = "\
-scenarios/lifecycle.tftest.hcl... fail
-  run \"setup_model\"... pass
-  run \"case_005_plan\"... pass
-  run \"case_005_reply\"... pass
-  run \"check_unchanged_plan\"... fail
-  run \"case_005_destroy\"... pass
-";
-        assert_eq!(
-            check_outcomes(output),
-            BTreeMap::from([("005", "passed"), ("unchanged plan", "FAILED")])
-        );
-    }
-
-    #[test]
-    fn a_failed_setup_fails_every_check_and_skipped_runs_mean_not_run() {
-        let output = "  run \"setup_model\"... fail\n  run \"case_005_plan\"... skip\n  run \"check_unchanged_plan\"... skip\n";
-        assert_eq!(
-            check_outcomes(output),
-            BTreeMap::from([("005", "FAILED"), ("unchanged plan", "FAILED")])
-        );
-        let output = "  run \"setup_model\"... pass\n  run \"case_005_plan\"... pass\n  run \"check_unchanged_plan\"... skip\n";
-        assert_eq!(
-            check_outcomes(output),
-            BTreeMap::from([("005", "passed"), ("unchanged plan", "not run")])
-        );
     }
 
     #[test]

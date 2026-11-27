@@ -8,7 +8,12 @@
 //! rows that the machine at hand can run.
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
-use std::{collections::BTreeSet, fs, path::Path};
+use serde_json::{Value, json};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 /// The page, relative to the repository root.
 pub const PAGE: &str = "examples/scenarios.md";
@@ -245,9 +250,133 @@ impl Row {
     }
 }
 
+/// What the page's scenarios check, by the prefix of their run blocks' names:
+/// a test from the QA team's GTC DC plan, named as their plan names it with
+/// `-E2E` to set these automated runs apart from theirs, and the suffix of
+/// its run IDs, such as `STATION-HERMES-005-E2E`; or a check the QA plan has
+/// no test for, without a suffix. Any other run block is setup.
+pub const CHECKS: [(&str, &str, Option<&str>); 2] = [
+    ("005-DEPLOY-E2E", "case_005_", Some("005-E2E")),
+    (UNCHANGED_PLAN, "check_unchanged_plan", None),
+];
+/// The live suites' unchanged plan, which the QA plan has no test for.
+pub const UNCHANGED_PLAN: &str = "unchanged plan";
+
+/// Each check's result from `tofu test`'s report of a scenario's run blocks,
+/// in the QA plan's terms: `pass` when all of its runs passed, `fail` when one
+/// failed or a setup run failed, and `unrun` when its runs were skipped or
+/// absent.
+pub fn outcomes(output: &str) -> BTreeMap<&'static str, &'static str> {
+    let runs: Vec<(&str, &str)> = output
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("run \"")?;
+            let (name, result) = rest.split_once("\"... ")?;
+            Some((name, result.trim()))
+        })
+        .collect();
+    let setup_failed = runs.iter().any(|(name, result)| {
+        !CHECKS.iter().any(|(_, prefix, _)| name.starts_with(prefix)) && *result != "pass"
+    });
+    CHECKS
+        .iter()
+        .map(|(check, prefix, _)| {
+            let results: Vec<&str> = runs
+                .iter()
+                .filter(|(name, _)| name.starts_with(prefix))
+                .map(|(_, result)| *result)
+                .collect();
+            let outcome = if setup_failed || results.contains(&"fail") || results.contains(&"error")
+            {
+                "fail"
+            } else if results.is_empty() || results.iter().any(|result| *result != "pass") {
+                "unrun"
+            } else {
+                "pass"
+            };
+            (*check, outcome)
+        })
+        .collect()
+}
+
+/// The run records a scenario's `outcomes` give the QA team's tracker: for
+/// each of the row's deployment IDs and each QA test, its test ID, run ID,
+/// the tested commit, the result, and where the run's report is.
+pub fn results(
+    ids: &[String],
+    outcomes: &BTreeMap<&'static str, &'static str>,
+    commit: &str,
+    report: &str,
+) -> Value {
+    Value::Array(
+        ids.iter()
+            .flat_map(|id| {
+                CHECKS.iter().filter_map(move |(test, _, suffix)| {
+                    Some(json!({
+                        "test_id": test,
+                        "run_id": format!("{id}-{}", (*suffix)?),
+                        "commit": commit,
+                        "result": outcomes.get(test).copied().unwrap_or("unrun"),
+                        "report": report,
+                    }))
+                })
+            })
+            .collect(),
+    )
+}
+
 /// The page's rows under `root`.
 pub fn read(root: &Path) -> Result<Vec<Row>, String> {
     let page = fs::read_to_string(root.join(PAGE))
         .map_err(|error| format!("cannot read {PAGE}: {error}"))?;
     parse(&page).map_err(|error| format!("{PAGE}: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn each_check_passes_only_when_all_its_runs_pass() {
+        let output = "\
+scenarios/lifecycle.tftest.hcl... fail
+  run \"setup_model\"... pass
+  run \"case_005_plan\"... pass
+  run \"case_005_reply\"... pass
+  run \"check_unchanged_plan\"... fail
+  run \"case_005_destroy\"... pass
+";
+        assert_eq!(
+            outcomes(output),
+            BTreeMap::from([("005-DEPLOY-E2E", "pass"), ("unchanged plan", "fail")])
+        );
+    }
+
+    #[test]
+    fn a_failed_setup_fails_every_check_and_skipped_runs_are_unrun() {
+        let output = "  run \"setup_model\"... fail\n  run \"case_005_plan\"... skip\n  run \"check_unchanged_plan\"... skip\n";
+        assert_eq!(
+            outcomes(output),
+            BTreeMap::from([("005-DEPLOY-E2E", "fail"), ("unchanged plan", "fail")])
+        );
+        let output = "  run \"setup_model\"... pass\n  run \"case_005_plan\"... pass\n  run \"check_unchanged_plan\"... skip\n";
+        assert_eq!(
+            outcomes(output),
+            BTreeMap::from([("005-DEPLOY-E2E", "pass"), ("unchanged plan", "unrun")])
+        );
+    }
+
+    #[test]
+    fn each_deployment_of_a_row_gets_a_run_record_for_each_qa_test() {
+        let ids = ["K8S-OPENCLAW".to_owned(), "K8S-HERMES".to_owned()];
+        let outcomes = BTreeMap::from([("005-DEPLOY-E2E", "fail"), ("unchanged plan", "pass")]);
+        assert_eq!(
+            results(&ids, &outcomes, "abc123", "https://example.test/run"),
+            json!([
+                {"test_id": "005-DEPLOY-E2E", "run_id": "K8S-OPENCLAW-005-E2E", "commit": "abc123", "result": "fail", "report": "https://example.test/run"},
+                {"test_id": "005-DEPLOY-E2E", "run_id": "K8S-HERMES-005-E2E", "commit": "abc123", "result": "fail", "report": "https://example.test/run"},
+            ])
+        );
+    }
 }
