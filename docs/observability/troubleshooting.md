@@ -99,7 +99,7 @@ YAML syntax and duplicate-key errors also include source positions without copyi
 Semantic checks, such as unresolved references and API-key auth without a credential, name their field the same way.
 They run only on a document the schema accepts, so correcting schema errors can reveal semantic ones.
 A run reports every error it finds, in document order, and lists the first 20.
-A sandbox's semantic checks stop at its first error, while the other sandboxes are still checked.
+A sandbox's or a managed service's semantic checks stop at its first error, while the other sandboxes and services are still checked.
 
 For `kvCacheGiB`, use `0` or an integer from `4` through `12` when `gpuMemoryUtilization` is absent.
 With `gpuMemoryUtilization`, `kvCacheGiB` must be omitted or zero.

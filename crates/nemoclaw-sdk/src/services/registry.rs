@@ -652,11 +652,19 @@ pub(crate) fn has_runtime(document: &Document) -> bool {
 }
 
 pub(crate) fn validate(document: &Document) -> Result<(), ConfigError> {
-    use crate::config::validation::require;
-    for definition in document.spec.services.values() {
-        definition.validate_definition()?;
-        definition.validate_installation(document)?;
+    use crate::config::validation::{Errors, require};
+    // Each service's error names that service, and the others are still
+    // checked. The checks across services rely on every definition's.
+    let mut errors = Errors::default();
+    for (name, definition) in &document.spec.services {
+        errors.check(
+            &format!("/spec/services/{name}"),
+            definition
+                .validate_definition()
+                .and_then(|()| definition.validate_installation(document)),
+        );
     }
+    errors.finish()?;
     let gateway = &document.spec.gateway;
     let mut publications = BTreeSet::new();
     let mut networks = BTreeMap::new();
