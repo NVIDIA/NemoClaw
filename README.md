@@ -75,7 +75,7 @@ The [43-second lifecycle recording](docs/assets/terminal-lifecycle-verbose.mp4) 
 - [Build NemoClaw from source](docs/build-deploy/build.md) for a custom revision or build-only target.
 - [Build and onboard from source](docs/get-started/from-source.md) on an Apple silicon Mac or in WSL2.
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
-- [Use the SDK](docs/references/sdk.md).
+- [Use the SDK](docs/reference/sdk.md).
 - [Browse all documentation](docs/README.md).
 
 ### Community Recipes

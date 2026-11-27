@@ -14,7 +14,7 @@ Onboarding never overwrites an existing file: an output path that exists stops i
 ## How to get to it (user POV)
 
 - **Esc** on any onboarding screen, as the footer lists.
-- `nemoclaw onboard [TEMPLATE] --output FILE` where `FILE` exists, as the [CLI reference](../../../../docs/references/cli.md#commands) describes.
+- `nemoclaw onboard [TEMPLATE] --output FILE` where `FILE` exists, as the [CLI reference](../../../../docs/reference/cli.md#commands) describes.
 
 ## Driving it with hc or tmux
 

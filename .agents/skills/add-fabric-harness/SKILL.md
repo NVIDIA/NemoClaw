@@ -46,7 +46,7 @@ The stage:
 
 ## 4. Document It
 
-- A row in [the harness reference](../../../docs/references/fabric-harnesses.md).
+- A row in [the harness reference](../../../docs/reference/fabric-harnesses.md).
 - A row in [the agent state table](../../../docs/build-deploy/state.md) for what the adapter keeps in `/sandbox/artifacts`, from the adapter's source at the pinned revision.
 - The adapter's display name in [the onboarding text](../../../crates/nemoclaw-onboarding/src/tui/text.json), if it isn't there.
 - The image in [the release package list](../../../internal-docs/contributing/releases.md#provisioning-the-packages).

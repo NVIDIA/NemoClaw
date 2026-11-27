@@ -6,11 +6,11 @@
 Teams that keep OpenTofu configuration in their own repositories and apply it from their own pipelines can use NemoClaw's providers directly, without the CLI or SDK.
 Your repository holds the HCL, and OpenTofu keeps the state in any backend it supports.
 This guide covers installing the providers, keeping state, running from a pipeline, passing credentials, replacing a sandbox with its agent, and tearing the configuration down.
-To start from a YAML configuration with a Docker, Podman, or external gateway, [`nemoclaw compile`](../references/cli.md#writing-a-configuration-out-as-hcl) writes it out once as such a project.
+To start from a YAML configuration with a Docker, Podman, or external gateway, [`nemoclaw compile`](../reference/cli.md#writing-a-configuration-out-as-hcl) writes it out once as such a project.
 
 The examples come from [`examples/features/travel/hcl`](../../examples/features/travel/hcl/main.tf), a Pi agent in an OpenShell sandbox answering with a local Ollama model, and [`examples/features/travel-team/hcl`](../../examples/features/travel-team/hcl/README.md), six agents with their own sandboxes, models, and grants.
 An integration test applies each example unchanged with the bundle's providers, a mocked Docker provider, and a fixture gateway, image engine, and model server.
-As the [provider reference](../references/provider.md#resource-and-state-ownership) states, no test qualifies a complete deployment from hand-written HCL on live resources.
+As the [provider reference](../reference/provider.md#resource-and-state-ownership) states, no test qualifies a complete deployment from hand-written HCL on live resources.
 The steps use OpenTofu: the examples require the Docker provider at `registry.opentofu.org/kreuzwerker/docker`, and the providers are not tested under Terraform ([#14725](https://github.com/NVIDIA/NemoClaw/issues/14725)).
 
 ## Choosing a Path
@@ -24,27 +24,27 @@ They differ in who writes the configuration, where the state lives, and which ch
 | State | Any backend OpenTofu supports, locked by that backend | A local [state directory](state.md#local-deployment-files), locked by NemoClaw; remote backends are not supported |
 | OpenTofu | The bundle's `libexec/tofu` or your own installation, run by you or your pipeline | The bundle's, run by the SDK |
 | Lost creation replies | A create whose reply is lost can leave an object on the gateway that OpenTofu state does not record; nothing guards against it ([#14726](https://github.com/NVIDIA/NemoClaw/issues/14726)) | The SDK's pending-creation guard records the OpenShell and Fabric objects it might create before each apply, and keeps a lost reply's record until a later operation matches it with a saved binding; refer to [Recovering an Interrupted Operation](usage.md#recovering-an-interrupted-operation) |
-| Ownership generations | Each OpenShell, vLLM, and Ollama object the providers create carries an `owner` and a `generation` that identify it. When the HCL omits them, the provider generates them during apply; after a lost reply, the next apply generates new ones and stops at the object the lost reply created, as described for [credential storage](../references/provider.md#vllm-and-ollama-types) | The SDK chooses each object's `owner` and `generation` and records them before OpenTofu runs |
+| Ownership generations | Each OpenShell, vLLM, and Ollama object the providers create carries an `owner` and a `generation` that identify it. When the HCL omits them, the provider generates them during apply; after a lost reply, the next apply generates new ones and stops at the object the lost reply created, as described for [credential storage](../reference/provider.md#vllm-and-ollama-types) | The SDK chooses each object's `owner` and `generation` and records them before OpenTofu runs |
 | Plan checks | You review each plan; `prevent_destroy` protects a resource only while its declaration stays in the configuration | The SDK checks each plan against the deployment's scope, retained bindings, and recovery rules before applying it, and refuses to remove retained storage |
 | Destroy | `tofu destroy` deletes every object the configuration manages, including volumes such as model caches. With a managed Kubernetes or OpenShift gateway, a plain `tofu destroy` fails at plan because the provider never deletes `openshell_kubernetes_storage`, so [teardown](#tearing-the-configuration-down) uses a targeted destroy that keeps it | `nemoclaw destroy` keeps model caches, credential volumes, and gateway storage, as [retained resources](state.md#understanding-the-retained-resources) describes |
 | Recovery and export | OpenTofu state is the only record, apart from the Kubernetes state directory that [Keeping State in Your Backend](#keeping-state-in-your-backend) describes | The SDK keeps the deployment's intent and operation progress beside OpenTofu state for recovery, and `nemoclaw export` writes the observed configuration back as YAML |
 | Graph | You write each resource, as the examples do | One document becomes the whole graph, including managed gateways and model services, image checks, readiness reads, and sandbox replacement |
 
 Choose your own project when your team needs its own repository, its own pipelines, or a remote state backend.
-Choose the [CLI](../references/cli.md) or [SDK](../references/sdk.md) when one YAML document can describe the deployment and you want the SDK's checks.
+Choose the [CLI](../reference/cli.md) or [SDK](../reference/sdk.md) when one YAML document can describe the deployment and you want the SDK's checks.
 
 ## Installing the Providers From a Bundle
 
 The NemoClaw providers ship in the CLI bundle, not in a provider registry.
 Their addresses, such as `nvidia.github.io/nemoclaw/openshell`, name a registry that isn't published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)), so OpenTofu installs them from the bundle's `providers` directory using a filesystem mirror, and the CLI configuration in step 3 keeps OpenTofu from contacting `nvidia.github.io`.
-Use the providers, agent images, and runtime images of one release, as [compatibility](../references/compatibility.md#using-one-release-together) describes.
+Use the providers, agent images, and runtime images of one release, as [compatibility](../reference/compatibility.md#using-one-release-together) describes.
 
 Before you start, you need:
 
 - A bundle for the platform that runs OpenTofu: the unpacked `dist/PLATFORM` directory of a [release archive](../get-started/install.md), or a copy of a bundle [built from source](build.md#building-a-native-bundle), because the next build replaces `dist/PLATFORM`.
-- An OpenShell gateway at the version the release pins, with exactly one initialized compute driver matching `required_compute_drivers`, as [Gateway Capabilities](../references/provider.md#gateway-capabilities) describes.
+- An OpenShell gateway at the version the release pins, with exactly one initialized compute driver matching `required_compute_drivers`, as [Gateway Capabilities](../reference/provider.md#gateway-capabilities) describes.
 - Agent and runtime images from the same release, pinned by digest.
-- The OpenShell version and image pins: the release's [`version-pins.json`](../references/compatibility.md#using-one-release-together), or for a source-built bundle, the repository's `versions.json` at the commit the bundle came from.
+- The OpenShell version and image pins: the release's [`version-pins.json`](../reference/compatibility.md#using-one-release-together), or for a source-built bundle, the repository's `versions.json` at the commit the bundle came from.
 - OpenTofu 1.12 or a later 1.x release, which the examples require; the bundle's `libexec/tofu` is the version its tests use, and the manifest records it as `OpenTofu`.
 - `jq`, to read the bundle's manifest.
 
@@ -210,13 +210,13 @@ resource "openshell_api" "bookings" {
 In a pipeline, map it from your secret store into the job's environment.
 The gateway connection takes names the same way: `data.openshell_gateway` takes `credential_env` for the gateway's bearer credential, `tls_ca_env` for the variable naming its CA file, and `tls_certificate_env` and `tls_key_env` for mutual TLS.
 For a managed Kubernetes or OpenShift gateway, `openshell_kubernetes_storage`, `openshell_kubernetes_auth`, and `openshell_kubernetes_gateway` take `kubeconfig_env`, the variable whose value is the kubeconfig file's path, and `environment`, the variables the kubeconfig's exec credential plugin needs.
-Without `kubeconfig_env`, the provider uses the service account of the pod that runs OpenTofu, as [Managed Kubernetes Gateway](../references/provider.md#managed-kubernetes-gateway) describes.
+Without `kubeconfig_env`, the provider uses the service account of the pod that runs OpenTofu, as [Managed Kubernetes Gateway](../reference/provider.md#managed-kubernetes-gateway) describes.
 The Helm provider takes the same kubeconfig as `config_path` in its `kubernetes` attribute, and `data.openshell_gateway` names the variable in `settings.target.kubernetes.kubeconfig.env` of its `kubernetes` specification, as in [the Kubernetes HCL example](../../examples/platforms/kubernetes/hosted-inference/hosted-nvidia.tf).
 
 A model server's key reaches `openshell_inference` through its `server` object, and the provider reads the key during apply.
 For a server NemoClaw does not run, such as the travel team's hosted model in [`models.tf`](../../examples/features/travel-team/hcl/models.tf), the literal `inference_server` object names the key's variable in `credential_env`.
 A readiness read's `ref` for a server NemoClaw runs names no variable.
-When that server requires its generated key, as vLLM with `authentication` and every Ollama proxy do, the ref's `credential_source` names where the key lives, as [Runtime Capacity and Readiness](../references/provider.md#runtime-capacity-and-readiness) describes.
+When that server requires its generated key, as vLLM with `authentication` and every Ollama proxy do, the ref's `credential_source` names where the key lives, as [Runtime Capacity and Readiness](../reference/provider.md#runtime-capacity-and-readiness) describes.
 
 A plan whose environment holds a new value behind the same variable updates `openshell_inference` or `openshell_api` in place and plans its `credential_digest` unknown.
 To replace a sandbox, and its agent, when that happens, list the digest in the sandbox's `lifecycle`:
@@ -228,7 +228,7 @@ lifecycle {
 ```
 
 See [rotating credentials](../security/credential-rotation.md).
-The [provider reference](../references/provider.md#api-credentials) describes each type's credential inputs.
+The [provider reference](../reference/provider.md#api-credentials) describes each type's credential inputs.
 
 ## Replacing a Sandbox With Its Agent
 
@@ -290,7 +290,7 @@ tofu apply -replace=openshell_sandbox.travel
 ```
 
 The CLI and SDK plan that replacement themselves.
-The [Fabric agent reference](../references/provider.md#fabric-agents) describes the rest of the agent's lifecycle.
+The [Fabric agent reference](../reference/provider.md#fabric-agents) describes the rest of the agent's lifecycle.
 
 ## Tearing the Configuration Down
 

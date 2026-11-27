@@ -18,7 +18,7 @@ Choose the component responsible for the action you need rather than assuming Ne
 | Agent harness, such as OpenClaw, Hermes, or Pi | Handle user requests, call models and tools, and manage its native sessions and behavior. |
 | Inference service | Serve model requests through a hosted endpoint or a managed service such as Ollama or vLLM. |
 
-NemoClaw's CLI and Rust SDK use [OpenTofu](../references/provider.md) to order resource operations and record resource state.
+NemoClaw's CLI and Rust SDK use [OpenTofu](../reference/provider.md) to order resource operations and record resource state.
 OpenShell enforces the sandbox's access controls while Fabric runs the selected harness inside it.
 The [accepted scope](../../internal-docs/design/scope.md#upstream-boundaries) defines these ownership boundaries.
 
@@ -42,4 +42,4 @@ Follow [the image build guide](../build-deploy/build.md#building-agent-images) f
 
 Use the bundle, image, schema, and documentation from the same NemoClaw release. For a source build, match them to its revision.
 An adapter available in Fabric doesn't establish compatibility with your NemoClaw image, model, or platform.
-Check [Fabric harnesses](../references/fabric-harnesses.md), [compatibility across releases](../references/compatibility.md), and [current limits](../resources/limits.md) before choosing a configuration.
+Check [Fabric harnesses](../reference/fabric-harnesses.md), [compatibility across releases](../reference/compatibility.md), and [current limits](../resources/limits.md) before choosing a configuration.

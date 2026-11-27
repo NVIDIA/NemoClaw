@@ -18,7 +18,7 @@ See [engine connection limits](../../internal-docs/design/execution-targets.md#c
 A preview observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
 Plan requires only the credential references it reads for the gateway, cluster, and image metadata.
 If an inference, web search, or API integration credential is missing, plan reports it as deferred work.
-Apply requires every referenced credential. See [credential resolution](../references/cli.md#credential-resolution).
+Apply requires every referenced credential. See [credential resolution](../reference/cli.md#credential-resolution).
 
 1. Preview the changes from the directory containing your YAML.
 
@@ -50,7 +50,7 @@ Plan and apply require a YAML path or explicit `-` for stdin.
 Export and destroy accept no YAML.
 Plan, apply, and destroy print text by default.
 Scripts should select `-o json`.
-See [CLI options and output](../references/cli.md) for bundle selection, formats, and exit codes.
+See [CLI options and output](../reference/cli.md) for bundle selection, formats, and exit codes.
 
 ## Configuring Sandboxes and Inference
 
@@ -116,7 +116,7 @@ Image changes require the [separate-deployment path](#choosing-the-change-path).
 Keep existing deployments' original bundles and state.
 
 A failed start, transport failure, or malformed response fails apply and retains resources.
-The CLI exits with status 1 and reports the failure in the selected [output format](../references/cli.md#output-and-failure).
+The CLI exits with status 1 and reports the failure in the selected [output format](../reference/cli.md#output-and-failure).
 Keep state, diagnose the failure, and reapply after recovery.
 See [recovering an interrupted operation](#recovering-an-interrupted-operation).
 
@@ -424,7 +424,7 @@ Changing that image replaces the sandbox.
 How the adapter applies native configuration is Fabric's.
 See its OpenClaw adapter documentation.
 
-The [provider lifecycle contract](../references/provider.md#openshell-resource-lifecycles) distinguishes reconstructible objects, sandboxes included, from durable identity.
+The [provider lifecycle contract](../reference/provider.md#openshell-resource-lifecycles) distinguishes reconstructible objects, sandboxes included, from durable identity.
 OpenShell refuses deletion of a registration still attached to a sandbox or a profile still referenced by a registration.
 Apply can recreate a missing registration after confirmed absence.
 Disposable Docker compute uses provider reconciliation within the declared deployment graph.
@@ -487,7 +487,7 @@ With `-o json`, this is `complete: true`, an empty `changes` list, and no `defer
 Deferred work means the plan is incomplete, even if the current changes list is empty.
 Unavailable or unverified model catalogs and service readiness scheduled for apply appear separately under `unverified`.
 They don't make the resource plan incomplete.
-Review those advisories and the [typed observations](../references/sdk.md#reading-plan-discovery-and-resource-inventory).
+Review those advisories and the [typed observations](../reference/sdk.md#reading-plan-discovery-and-resource-inventory).
 A complete plan doesn't establish service health or working inference.
 Unchanged apply still performs configuration and readiness checks.
 It can fail if a required service is unavailable.
@@ -567,7 +567,7 @@ It doesn't inspect model inventories.
 ### Recovering After a Host Reboot
 
 After the host restarts, the engine starts a managed Docker gateway again, because its restart policy is `unless-stopped`, but not a managed vLLM or Ollama container, whose restart policy is `no`.
-See the [provider reference](../references/provider.md#docker-gateway-launch).
+See the [provider reference](../reference/provider.md#docker-gateway-launch).
 From the directory containing the original `deployment.yaml`, with the matching bundle on `PATH`, plan and then apply with the deployment's state directory:
 
 ```sh

@@ -14,7 +14,7 @@ The earlier `v0.1.0-rc1` through `v0.1.0-rc12` tags and their draft releases wer
 ## Product Changes
 
 The development branch provides desired-state YAML, a Rust SDK, the `onboard`/`plan`/`apply`/`export`/`destroy` CLI, and a bundled OpenTofu provider.
-Refer to [the overview](../../docs/about/overview.md) for implemented boundaries and [the CLI reference](../../docs/references/cli.md) for commands.
+Refer to [the overview](../../docs/about/overview.md) for implemented boundaries and [the CLI reference](../../docs/reference/cli.md) for commands.
 
 ### Changes Since v0.1.0-rc.7
 
@@ -30,7 +30,7 @@ OpenShell CLI:
 - `nemoclaw osh` runs against a managed `kubernetes` or `openshift` gateway with the `oidc` authentication profile, once `expose` publishes it, and refuses only the `development` profile, whose tokens only NemoClaw gets ([#14900](https://github.com/NVIDIA/NemoClaw/issues/14900)).
   It links the gateway's CA, which apply keeps in the state directory, where OpenShell reads it.
   Plan and apply print the `Register once:` command for such a gateway too, with the issuer and audience from `openshell.gateway.oidc` and OpenShell's default client ID, `openshell-cli`.
-  See [logging in to an OIDC gateway](../../docs/references/cli.md#logging-in-to-an-oidc-gateway).
+  See [logging in to an OIDC gateway](../../docs/reference/cli.md#logging-in-to-an-oidc-gateway).
   Before, `osh` refused every managed Kubernetes and OpenShift gateway, and signing in to one took a separately configured OpenShell CLI, a port forward, and a CA copied from the gateway's Secret.
 - For an OIDC gateway, plan and apply print `Sign in again:`, the `nemoclaw osh -- gateway login` command with the same `--state-dir` and `--bundle` options, under `Register once:` ([#14899](https://github.com/NVIDIA/NemoClaw/issues/14899)).
   The CLI reference describes signing in without a browser, with `OPENSHELL_NO_BROWSER=1`, and from automation, with `OPENSHELL_OIDC_CLIENT_SECRET`.
@@ -42,7 +42,7 @@ OpenTofu projects:
   The project holds the graph that apply would compile, with new ownership generations and the providers of the bundle that wrote it; variables for the deployment UID, images, an external gateway's endpoint, and `destroy`; and a README that installs the providers, lists the credential variables, and tears the deployment down while keeping retained storage.
   It holds no credential values, and the CLI never reads or updates it.
   The command reads no state or target, and refuses a managed Kubernetes or OpenShift gateway.
-  See [writing a configuration out as HCL](../../docs/references/cli.md#writing-a-configuration-out-as-hcl) and [written OpenTofu projects](../../docs/references/compatibility.md#written-opentofu-projects).
+  See [writing a configuration out as HCL](../../docs/reference/cli.md#writing-a-configuration-out-as-hcl) and [written OpenTofu projects](../../docs/reference/compatibility.md#written-opentofu-projects).
 
 Plan and apply:
 
@@ -67,7 +67,7 @@ OpenShell CLI:
   Give it the state directory that apply used, as in `nemoclaw osh --state-dir .nemoclaw -- sandbox list`; NemoClaw passes the arguments after its own options to OpenShell unchanged, and the command's input, output, signals, and exit status are OpenShell's.
   OpenShell keeps the deployment's configuration in `<state-dir>/openshell/`, apart from your own OpenShell profiles, so no separate OpenShell installation or profile setup is needed.
   The next steps that plan and apply print are `nemoclaw osh` commands.
-  See [running OpenShell against a deployment](../../docs/references/cli.md#running-openshell-against-a-deployment).
+  See [running OpenShell against a deployment](../../docs/reference/cli.md#running-openshell-against-a-deployment).
   On Windows, `osh` reports that OpenShell publishes no CLI there and points to WSL 2 ([ai-openshell/openshell#5980](https://github.com/ai-openshell/openshell/issues/5980)).
   It refuses managed Kubernetes and OpenShift gateways, and other gateways that need a bearer token without OIDC login settings, because the pinned CLI can't take one ([#14880](https://github.com/NVIDIA/NemoClaw/issues/14880)).
   Before, users installed a matching `openshell` and set up its profile by hand.
@@ -117,7 +117,7 @@ Bundles:
 Releases:
 
 - Each release attaches `version-pins.json`, which lists the version and digest or checksum of each component that a deployment of it uses, including the release's images ([#14722](https://github.com/NVIDIA/NemoClaw/issues/14722)).
-  See [compatibility](../../docs/references/compatibility.md#using-one-release-together).
+  See [compatibility](../../docs/reference/compatibility.md#using-one-release-together).
   A final release is published only when the file matches its tag's `versions.json` and the images it staged.
   Before, hand-written HCL copied `versions.json` from the release's tag.
 - Each release attaches `nemoclaw-<tag>-darwin_arm64.pkg`, a macOS installer for Macs with Apple silicon on macOS 15 or later ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
@@ -435,7 +435,7 @@ Inference and models:
 - On dedicated-memory GPUs, `memory.hostReserveGiB` can be as low as 6 GiB, and a vLLM recipe's GPU budget is checked against the GPU's memory.
   See [hardware profiles](../../docs/agents-inference/models.md#choosing-a-hardware-profile).
 - In hand-written HCL, the vLLM and Ollama capacity data sources take `gpu_devices`, and `vllm_runtime` and `ollama_runtime` take `gpu_count`, which must be 1 for now, and report it in `requirements`.
-  See [service capacity](../../docs/references/provider.md#service-capacity).
+  See [service capacity](../../docs/reference/provider.md#service-capacity).
 - When vLLM exits during startup, the apply error includes the last 4 KiB of its output, with the service key redacted.
   An Ollama runtime's stop detail, such as a memory protection stop, also appears in its apply error.
 - Plan refuses a sandbox that attaches more than 32 providers, OpenShell's limit: its inference providers, its web search, and each `api` integration count one each.
@@ -517,7 +517,7 @@ These changes between `6da649ac6c` and `ef68f94074`, the commits that `v0.1.0-rc
 
 - The intent record is now version 34, so this release refuses any deployment that `v0.1.0-rc.5` or an earlier build of this branch created, without changing its state ([#14864](https://github.com/NVIDIA/NemoClaw/issues/14864)).
   Destroy each one with the bundle that created it, then create it again with this release.
-  See [compatibility](../../docs/references/compatibility.md#deployment-state).
+  See [compatibility](../../docs/reference/compatibility.md#deployment-state).
 - The NemoClaw providers `openshell`, `fabric`, `vllm`, `ollama`, and `host` moved to the address `nvidia.github.io/nemoclaw/NAME` from `nvidia/NAME` on `registry.opentofu.org` ([#14873](https://github.com/NVIDIA/NemoClaw/issues/14873)).
   OpenTofu state records each resource's provider address, so this release can't plan a deployment whose state records the earlier address.
   Destroy each CLI deployment with the release that created it before upgrading, then create it again with this release.
@@ -530,7 +530,7 @@ These changes between `1636069b91`, the commit that `v0.1.0-rc12` tagged, and th
 
 - The intent record is now version 33, so this release refuses any deployment that `v0.1.0-rc12` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release.
-  See [compatibility](../../docs/references/compatibility.md#deployment-state).
+  See [compatibility](../../docs/reference/compatibility.md#deployment-state).
 - Agent images register the Fabric workflow targets they install, so plan checks a sandbox with a `workflow` against Fabric's compatibility check too ([#14600](https://github.com/NVIDIA/NemoClaw/issues/14600)).
   A document that sets a field the workflow's adapter doesn't accept, such as a route's `maxTokens` for NOOA, or a `workflow.target_id` the image doesn't register, now fails plan naming that field.
   Before, plan passed it and the agent failed to start after apply created resources.
@@ -552,7 +552,7 @@ These changes between the `v0.1.0-rc11` and `v0.1.0-rc12` tags affect existing d
 
 - The intent record is now version 31, so this release refuses any deployment that `v0.1.0-rc11` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release.
-  See [compatibility](../../docs/references/compatibility.md#deployment-state).
+  See [compatibility](../../docs/reference/compatibility.md#deployment-state).
 - OpenClaw's `harness.settings.plugins.entries` is now `plugins.bundled.entries`, for plugins that ship with OpenClaw, and `plugins.external.entries`, for plugins you provide; Fabric's OpenClaw adapter no longer accepts `plugins.entries`.
 - `spec.gateway.target` replaces `spec.gateway.runtime` and the gateway's flat settings.
   The parser rejects the old fields, and plan refuses a changed target on an existing deployment.
@@ -633,7 +633,7 @@ These changes between the `v0.1.0-rc10` and `v0.1.0-rc11` tags affect existing d
   An `openshell_api` with an `mcp` block takes exactly one URL.
 - The intent record is now version 25, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release.
-  See [compatibility](../../docs/references/compatibility.md#deployment-state).
+  See [compatibility](../../docs/reference/compatibility.md#deployment-state).
 - `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged.
   The parser rejects `config` as an unknown field.
   `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`.
@@ -697,7 +697,7 @@ These changes between the `v0.1.0-rc9` and `v0.1.0-rc10` tags affect existing de
   `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, and 21 as later changes altered it.
   This release refuses any deployment whose intent record is an earlier version, including every one that `v0.1.0-rc9` created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release.
-  See [compatibility](../../docs/references/compatibility.md#deployment-state).
+  See [compatibility](../../docs/reference/compatibility.md#deployment-state).
 - `spec.sandboxes`, `spec.inferenceProviders`, and a sandbox's `inferenceProviders` are maps keyed by name.
   The parser rejects the earlier lists.
   A provider declared inline on a route still takes `name`.
@@ -778,7 +778,7 @@ The agent and runtime images are built for `linux/arm64` and `linux/amd64`.
 
 ### Harnesses
 
-The image workflow builds and checks an image for each harness in the [Fabric harness table](../../docs/references/fabric-harnesses.md): OpenClaw, Hermes, Deep Agents, Claude, Codex, Mini SWE Agent, Nooa, Nooa Bench, Remote Agent, Pi, and OpenCode.
+The image workflow builds and checks an image for each harness in the [Fabric harness table](../../docs/reference/fabric-harnesses.md): OpenClaw, Hermes, Deep Agents, Claude, Codex, Mini SWE Agent, Nooa, Nooa Bench, Remote Agent, Pi, and OpenCode.
 The live tests deploy OpenClaw and Hermes.
 No live test deploys the others.
 Onboarding offers OpenClaw and Hermes.

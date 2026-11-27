@@ -31,7 +31,7 @@ OpenTofu executes the graph with its default parallelism.
 The provider implements resource operations against SDK desired-state and observation contracts.
 Pure policy compilation stays in SDK configuration; OpenShell transport and mutation code belong to the provider.
 
-The [provider reference](../../docs/references/provider.md) owns resource-specific contracts and protocol details.
+The [provider reference](../../docs/reference/provider.md) owns resource-specific contracts and protocol details.
 Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-backend/src/contract.rs).
 
 Ollama, vLLM, and explicit containers use one internal [container base](../../crates/nemoclaw-sdk/src/services/installers/container/base.rs) to assemble owned specifications, storage, process targets, and dependencies.
@@ -113,7 +113,7 @@ OpenTofu supplies resource operations and identities, while readiness and health
 The renderer tracks active work and elapsed time without treating animation as evidence of progress.
 It finishes before the CLI writes the final text or JSON result.
 Unsupported health, incomplete plans, and unconfirmed state after failure remain explicit in both formats.
-See [CLI output](../../docs/references/cli.md#output-and-failure) for the user contract.
+See [CLI output](../../docs/reference/cli.md#output-and-failure) for the user contract.
 
 ## Configuration
 
@@ -162,7 +162,7 @@ Onboarding does not use hardware advertisements yet.
 Gateway checks and existing-resource refresh retain their existing owners and failure rules.
 Credential availability and explicit host collectors remain direct operations; neither introduces a second provider-state owner.
 Observed model identifiers supplement suggestions without replacing accepted intent or proving inference behavior.
-See [provider discovery](../../docs/references/provider.md#engine-and-fabric-discovery) for observation status and planning policy.
+See [provider discovery](../../docs/reference/provider.md#engine-and-fabric-discovery) for observation status and planning policy.
 
 Native interface, tool-disclosure, and reasoning settings are authored through Fabric's configuration and adapter settings.
 Managed search credentials, endpoint protocols, and network grants remain SDK deployment behavior.

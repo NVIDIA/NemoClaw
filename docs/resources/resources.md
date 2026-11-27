@@ -10,7 +10,7 @@ Keep the documentation, configuration schema, and runtime bundle matched to the 
 
 Repository Markdown and the [generated field reference](../reference/configuration.md) are available in this checkout. The reference and its JSON Schema belong to this checkout's source revision.
 Use the ones from the bundle's revision for validation.
-Use the [CLI reference](../references/cli.md) for accepted commands. If you use NemoClaw v0, [evaluate NemoClaw Agent Configs in a separate deployment](../get-started/migration.md).
+Use the [CLI reference](../reference/cli.md) for accepted commands. If you use NemoClaw v0, [evaluate NemoClaw Agent Configs in a separate deployment](../get-started/migration.md).
 
 <a name="choosing-the-v1-sources"></a>
 

@@ -23,12 +23,12 @@ Choose the current owner of the task rather than translating earlier CLI command
 |---|---|
 | Install with npm | [Install the v0.1.0 native bundle](install.md) |
 | Interactive onboarding and agent-specific aliases | `nemoclaw onboard` writes deployment YAML for the one `nemoclaw` CLI; see the [onboarding guide](onboard.md) |
-| `launch`, `status`, `doctor`, `backup-all`, or `rebuild` | No equivalent commands; the [CLI reference](../references/cli.md) lists the current ones |
+| `launch`, `status`, `doctor`, `backup-all`, or `rebuild` | No equivalent commands; the [CLI reference](../reference/cli.md) lists the current ones |
 | Imperative inference or sandbox changes | [Desired-state lifecycle](../build-deploy/usage.md), with explicit update/replacement limits |
-| Export configuration (`config export`) | `nemoclaw export`; see [CLI reference](../references/cli.md) and [state](../build-deploy/state.md) |
+| Export configuration (`config export`) | `nemoclaw export`; see [CLI reference](../reference/cli.md) and [state](../build-deploy/state.md) |
 | Configure agents, dashboards, tools, or heartbeats | [Agent runtimes](../agents-inference/agents.md) and [interfaces](../agents-inference/interfaces.md) |
 | Run custom tools and applications used by the agent inside its sandbox | Package tools and dependencies in a [derived agent image](../build-deploy/derived-images.md); use [mounted volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes) for scripts and persistent data. Configure and verify background-service startup and restart separately. |
-| Integrate the TypeScript lifecycle package | [Rust SDK](../references/sdk.md); no compatible TypeScript package is provided |
+| Integrate the TypeScript lifecycle package | [Rust SDK](../reference/sdk.md); no compatible TypeScript package is provided |
 | Install policy presets, approve network requests interactively, or explain policy to an agent | Declare the [isolated preset or an explicit policy](../security/sandbox-network.md#choosing-a-policy); managed approval and explanation aren't planned ([#12651](https://github.com/NVIDIA/NemoClaw/issues/12651)); OpenShell's policy advisor owns both |
 | Use Okta/Entra runtime identity and OAuth refresh | [Register an OpenShell OAuth-refresh provider](../agents-inference/oauth-refresh.md); its manual attachments and refresh material are outside exported deployment YAML |
 | Snapshot, restore, upload/download, or transfer history | The platform owns backup and transfer of [mounted agent-data volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes); native conversation continuity has harness-specific limits |

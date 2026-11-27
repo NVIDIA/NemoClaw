@@ -26,7 +26,7 @@ The following table lists what this guide builds and which deployments need each
 
 | Artifact | Build Host | Result | Needed By |
 |---|---|---|---|
-| [Native bundle](#building-a-native-bundle) | The client's platform, or another target with its toolchain | `dist/PLATFORM`, with the CLI in `dist/PLATFORM/bin` | Every deployment, through the CLI or the [Rust SDK](../references/sdk.md) |
+| [Native bundle](#building-a-native-bundle) | The client's platform, or another target with its toolchain | `dist/PLATFORM`, with the CLI in `dist/PLATFORM/bin` | Every deployment, through the CLI or the [Rust SDK](../reference/sdk.md) |
 | [Agent image](#building-agent-images) | Linux ARM64 or AMD64 engine, matching the sandbox host; includes Docker Desktop ARM64 for the macOS Hermes path | A local image such as `nc-fabric:openclaw`, selected by digest in `sandboxes.<name>.image.ref` | Every sandbox |
 | [Runtime image](#building-a-runtime-image) | Native Linux ARM64 or AMD64, matching the model host | A local image such as `nc-prototype-vllm:rust-v1`, selected by digest in `spec.services.<name>.image` | Deployments with a managed vLLM, Ollama, or llama.cpp service |
 
@@ -217,7 +217,7 @@ Before you build an agent image, check the following:
 
 To build an agent image and select it, perform the following steps:
 
-1. Choose a harness name from the [harness matrix](../references/fabric-harnesses.md), such as `openclaw`, `hermes`, `pi`, or `deepagents`, or choose `agents` to build every harness.
+1. Choose a harness name from the [harness matrix](../reference/fabric-harnesses.md), such as `openclaw`, `hermes`, `pi`, or `deepagents`, or choose `agents` to build every harness.
 
    Both platforms build every harness in the Bake file's `HARNESSES` map.
    Releases do not include a `claude` image: it bundles Anthropic's proprietary Claude Code CLI, which NVIDIA cannot redistribute.

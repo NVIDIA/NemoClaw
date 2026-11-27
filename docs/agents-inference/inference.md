@@ -118,7 +118,7 @@ An external endpoint remains under its operator's control after destroy. A manag
 
 Service ownership doesn't depend on the harness.
 The service must support the [request API](#choosing-the-request-api) selected by that harness.
-The [harness matrix](../references/fabric-harnesses.md) distinguishes accepted configurations from live qualification.
+The [harness matrix](../reference/fabric-harnesses.md) distinguishes accepted configurations from live qualification.
 Examples use placeholder image digests, plus deployment identities and environment-specific endpoints.
 Build or select your own matching images and replace those values before use.
 An accepted example is a configuration contract, not evidence that the combination completes live inference.

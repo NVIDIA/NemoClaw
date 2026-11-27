@@ -161,7 +161,7 @@ From the directory holding `deployment.yaml`, follow these steps:
 
    Also set the document's other references, such as the example's `NVIDIA_INFERENCE_API_KEY`, and with the `oidc` profile, [a token](#authenticating-through-an-existing-oidc-issuer) in the variable that `token.env` names.
    For managed-oidc.yaml, set `NEMOCLAW_OPENCLAW_IMAGE_METADATA` and `NEMOCLAW_HERMES_IMAGE_METADATA` to the paths of `openclaw.metadata.json` and `hermes.metadata.json` instead of `NEMOCLAW_AGENT_IMAGE_METADATA`.
-   Plan and apply ask for an unset variable that they read, and with `--non-interactive` fail instead ([Credential Resolution](../references/cli.md#credential-resolution)).
+   Plan and apply ask for an unset variable that they read, and with `--non-interactive` fail instead ([Credential Resolution](../reference/cli.md#credential-resolution)).
 
 2. Preview the deployment with `nemoclaw plan --state-dir .local/kubernetes deployment.yaml`, and stop on an error.
 3. Apply it with `nemoclaw apply --state-dir .local/kubernetes deployment.yaml`.
@@ -183,7 +183,7 @@ Before you start, check the following:
 
 `nemoclaw osh` needs the gateway [published with `expose`](#publishing-the-gateway-outside-the-cluster). Then:
 
-1. Run the `Register once:` command that plan and apply print, which signs in, as [Logging In to an OIDC Gateway](../references/cli.md#logging-in-to-an-oidc-gateway) describes.
+1. Run the `Register once:` command that plan and apply print, which signs in, as [Logging In to an OIDC Gateway](../reference/cli.md#logging-in-to-an-oidc-gateway) describes.
    It uses the issuer and audience from `openshell.gateway.oidc`, and OpenShell's default client ID, `openshell-cli`; add `--oidc-client-id` for another client.
 2. Run `nemoclaw osh --state-dir .local/kubernetes -- status`, and confirm that it reports the gateway as connected and authenticated.
    With only the `user_role` role, it reports `authorization denied`, because that check needs admin access.
@@ -360,7 +360,7 @@ Before the first plan, get the following from the gateway operator:
 
 | Item | Requirement |
 |---|---|
-| OpenShell | Exactly the version that your release's [`version-pins.json`](../references/compatibility.md#using-one-release-together) lists as `components.gateway.version`, or for a source build the `openshell` version in [`versions.json`](../../versions.json), with exactly one compute driver, `kubernetes`. |
+| OpenShell | Exactly the version that your release's [`version-pins.json`](../reference/compatibility.md#using-one-release-together) lists as `components.gateway.version`, or for a source build the `openshell` version in [`versions.json`](../../versions.json), with exactly one compute driver, `kubernetes`. |
 | Endpoint | An `https://` address that the host running `nemoclaw` can reach. NemoClaw accepts an `http://` endpoint only on a literal loopback address. |
 | TLS material | The CA certificate that signed the gateway's server certificate, unless a publicly trusted CA signed it, and a client certificate and key only when the gateway receives client certificates itself, not behind an ingress that terminates TLS. |
 | Token | For a gateway that authenticates with OIDC, an access token for its audience, with the role and scopes that [Preparing for Either Gateway](#preparing-for-either-gateway) lists. |
@@ -395,7 +395,7 @@ From the directory holding `deployment.yaml`, follow these steps:
    export INFERENCE_API_KEY="$(REPLACE_WITH_KEY_COMMAND)"
    ```
 
-   Plan and apply ask for an unset variable that they read, and with `--non-interactive` fail instead ([Credential Resolution](../references/cli.md#credential-resolution)).
+   Plan and apply ask for an unset variable that they read, and with `--non-interactive` fail instead ([Credential Resolution](../reference/cli.md#credential-resolution)).
 
 2. Preview the deployment with `nemoclaw plan --state-dir .local/kubernetes deployment.yaml`, and stop on an error.
 3. Apply it with `nemoclaw apply --state-dir .local/kubernetes deployment.yaml`, which prints the gateway's endpoint, the workspace, and the commands that [select them](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace), with `REPLACE_WITH_PROFILE_NAME` in place of your OpenShell CLI profile.
@@ -488,7 +488,7 @@ Before the first agent request, check the following:
 | Port | NemoClaw checks only the endpoint's form, and OpenShell refuses the Kubernetes control-plane ports 2379, 2380, 6443, 10250, and 10255 when sandboxes connect, so serve the model on another port. |
 | Key | `credential` is optional and names the variable that holds the server's key where you run `nemoclaw`. OpenShell stores the key and adds it to sandbox requests, so give the server the same key from a Secret, as [Supplying the Key on Other Platforms](../agents-inference/inference.md#supplying-the-key-on-other-platforms) shows. The key crosses the cluster network over plain HTTP unless your network plugin or a service mesh encrypts Pod traffic. |
 | Model IDs | The host running `nemoclaw` usually cannot resolve cluster names, so onboarding cannot list the server's models: write the route's model ID yourself. |
-| Server | NemoClaw's vLLM and Ollama runtime images can run it, with the launch that `vllm_runtime` and `ollama_runtime` describe ([Direct OpenTofu Usage](../references/provider.md#direct-opentofu-usage)) and the readiness probes that [Supplying the Key on Other Platforms](../agents-inference/inference.md#supplying-the-key-on-other-platforms) gives. The vLLM image needs NVIDIA driver 580 or newer on the GPU nodes, which NemoClaw does not check. Ollama does not pull a model that a request names, so pull the route's model before the first request. |
+| Server | NemoClaw's vLLM and Ollama runtime images can run it, with the launch that `vllm_runtime` and `ollama_runtime` describe ([Direct OpenTofu Usage](../reference/provider.md#direct-opentofu-usage)) and the readiness probes that [Supplying the Key on Other Platforms](../agents-inference/inference.md#supplying-the-key-on-other-platforms) gives. The vLLM image needs NVIDIA driver 580 or newer on the GPU nodes, which NemoClaw does not check. Ollama does not pull a model that a request names, so pull the route's model before the first request. |
 
 [The GPU autoscaling example](../../examples/platforms/kubernetes/gpu-autoscaling/README.md) gives one sandbox per user a shared model Service that Kubernetes scales.
 
@@ -511,4 +511,4 @@ OpenShell deletes a sandbox whose pod has not started within five minutes, so ad
 ## Next Steps
 
 [Invoke an agent](../agents-inference/interfaces.md#invoking-an-agent) through the OpenShell CLI, which needs the `oidc` profile on a managed gateway.
-To declare a managed gateway in your own OpenTofu project instead, refer to [Managed Kubernetes Gateway](../references/provider.md#managed-kubernetes-gateway).
+To declare a managed gateway in your own OpenTofu project instead, refer to [Managed Kubernetes Gateway](../reference/provider.md#managed-kubernetes-gateway).
