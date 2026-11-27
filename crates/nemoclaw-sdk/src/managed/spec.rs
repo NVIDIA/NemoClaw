@@ -427,6 +427,10 @@ impl Spec {
             port,
             network_cidr: get("network_cidr")?,
             image_pull_policy: None,
+            // Docker Desktop changes only where managed model services
+            // publish; the gateway publishes on loopback on every engine, so
+            // its specification never depends on it.
+            docker_desktop: false,
         };
         let spec = Self {
             layout,

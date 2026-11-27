@@ -22,7 +22,7 @@ fn osh(root: &Path, gateway: serde_json::Value, script: &str) -> Command {
     let state = root.join("state");
     fs::create_dir_all(&state).unwrap();
     let record = serde_json::json!({
-        "version":34, "digest":document.digest(), "document":document,
+        "version":35, "digest":document.digest(), "document":document,
         "generations":{
             "workspace":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "sandbox":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

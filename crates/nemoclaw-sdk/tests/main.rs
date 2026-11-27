@@ -7,6 +7,7 @@ mod apf_policy_authority;
 mod api_integration;
 #[path = "support/bundle.rs"]
 mod bundle;
+mod docker_desktop_publication;
 #[path = "support/examples.rs"]
 mod examples;
 #[cfg(unix)]

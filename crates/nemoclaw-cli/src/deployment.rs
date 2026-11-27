@@ -13,7 +13,8 @@ pub(crate) fn create(
     let bundle = bundle_directory(bundle_dir)?;
     Ok(Deployment::new(state_dir, &bundle)
         .with_progress(progress)
-        .with_force_stop(force_stop.clone()))
+        .with_force_stop(force_stop.clone())
+        .with_engine_probe(Arc::new(nemoclaw_discovery::DirectEngineProbe)))
 }
 
 /// The bundle `--bundle` names, or the one this executable belongs to.

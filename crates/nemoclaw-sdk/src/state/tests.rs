@@ -579,6 +579,37 @@ fn adding_a_service_allocates_one_generation_and_preserves_checkpoint_identity()
     assert_eq!(store.load().unwrap().unwrap().generations, generations);
 }
 
+/// An unfinished creation compiled on Docker Desktop names the model by
+/// OpenShell's host alias, so reloading the record must compile with the
+/// recorded engine before checking the creation against it (#14903).
+#[test]
+fn an_unfinished_creation_on_docker_desktop_survives_reload() {
+    let mut document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/spark.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    record.docker_desktop = Some(true);
+    record.engine_facts(&mut document);
+    record.own_engine_facts();
+    let provider = crate::compile::targets(&document, &record.generations)
+        .unwrap()
+        .into_iter()
+        .find(|target| target.values.contains_key("endpoint"))
+        .unwrap();
+    assert_eq!(
+        provider.values["endpoint"],
+        "http://host.openshell.internal:18888/v1"
+    );
+    record.begin_apply(
+        &document,
+        [(provider.address.clone(), provider.values.clone())].into(),
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    store.save(&record).unwrap();
+    assert_eq!(store.load().unwrap().unwrap(), record);
+}
+
 #[test]
 fn recovery_checkpoints_survive_reload_and_reapply() {
     let document =

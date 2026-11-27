@@ -2984,6 +2984,7 @@ dependencies = [
  "crossterm_winapi",
  "getrandom 0.4.3",
  "jsonschema 0.61.2",
+ "nemoclaw-discovery",
  "nemoclaw-onboarding",
  "nemoclaw-sdk",
  "nix 0.29.0",

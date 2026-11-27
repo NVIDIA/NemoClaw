@@ -192,6 +192,28 @@ pub struct Deployment {
     /// Reads the caller's variables that locate the API server from a pod;
     /// the process environment outside unit tests.
     pod_environment: fn(&str) -> Option<String>,
+    /// Asks a managed gateway's Docker engine whether it is Docker Desktop.
+    engine_probe: Arc<dyn EngineProbe>,
+}
+/// Facts about a managed gateway's engine that change what a deployment
+/// compiles. The SDK has no engine client; the caller supplies one.
+pub trait EngineProbe: Send + Sync {
+    /// Whether the Docker engine at `engine` is Docker Desktop; `None` when it
+    /// can't be read.
+    fn docker_desktop<'a>(
+        &'a self,
+        engine: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Option<bool>>;
+}
+/// The probe of a caller that supplies none: every engine is unknown.
+struct UnknownEngines;
+impl EngineProbe for UnknownEngines {
+    fn docker_desktop<'a>(
+        &'a self,
+        _engine: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Option<bool>> {
+        Box::pin(async { None })
+    }
 }
 impl Deployment {
     pub fn new(state_directory: &Path, bundle_directory: &Path) -> Self {
@@ -203,6 +225,7 @@ impl Deployment {
             force_stop: CancellationToken::new(),
             bundle: Arc::default(),
             pod_environment: |name| std::env::var(name).ok(),
+            engine_probe: Arc::new(UnknownEngines),
         }
     }
     pub fn with_secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
@@ -221,6 +244,28 @@ impl Deployment {
     pub fn with_force_stop(mut self, token: CancellationToken) -> Self {
         self.force_stop = token;
         self
+    }
+    /// Answers whether a managed Docker gateway's engine is Docker Desktop.
+    /// Plan asks until the engine answers and records the answer for the
+    /// deployment; without a probe, every engine is treated as another
+    /// Docker engine.
+    pub fn with_engine_probe(mut self, probe: Arc<dyn EngineProbe>) -> Self {
+        self.engine_probe = probe;
+        self
+    }
+    /// Ask a managed Docker gateway's engine whether it is Docker Desktop,
+    /// until it answers, and compile `document` and the record from the answer.
+    /// A recorded answer stands for the deployment's lifetime, so a later
+    /// failed read can't move its services.
+    async fn observe_engine(&self, record: &mut Record, document: &mut Document) {
+        if record.docker_desktop.is_none()
+            && let crate::config::Gateway::Managed(gateway) = &document.spec.gateway
+            && let crate::config::ManagedTarget::Docker(local) = &gateway.target
+        {
+            record.docker_desktop = self.engine_probe.docker_desktop(&local.engine).await;
+        }
+        record.engine_facts(document);
+        record.own_engine_facts();
     }
     fn open(&self) -> Result<(Bundle, Store), Error> {
         let started = std::time::Instant::now();
@@ -318,6 +363,7 @@ impl Deployment {
                 "state is bound to a different gateway StorageClass: dataStorageClass stays as first planned, because the gateway volume keeps the class it was created with; create a separate deployment to change it",
             ));
         }
+        self.observe_engine(&mut record, &mut document).await;
         record.allocate_missing_generations(&document)?;
         let bindings = if record.pending() || record.digest != document.digest() {
             self.state_bindings(

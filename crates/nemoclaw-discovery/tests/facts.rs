@@ -3,8 +3,8 @@
 #![cfg(unix)]
 use crate::transport;
 use nemoclaw_discovery::{
-    Direct, observe_agent_images, observe_engine, observe_engine_facts, observe_fabric,
-    observe_gateway_prerequisites, observe_hardware,
+    Direct, docker_desktop, observe_agent_images, observe_engine, observe_engine_facts,
+    observe_fabric, observe_gateway_prerequisites, observe_hardware,
 };
 use nemoclaw_sdk::{
     config::ComputeDriver, discovery::DiscoveryRequest, discovery::ObservationStatus,
@@ -45,6 +45,33 @@ async fn engine_facts_read_only_engine_info() {
     assert_eq!(observed.status, ObservationStatus::Available);
     assert_eq!(observed.architecture.as_deref(), Some("arm64"));
     assert_eq!(observed.operating_system.as_deref(), Some("linux"));
+}
+
+/// Docker Desktop names itself in `/info`'s `OperatingSystem`; any other
+/// answer is another engine, and an engine that doesn't answer is unknown.
+#[tokio::test]
+async fn docker_desktop_is_recognized_from_engine_info() {
+    for (operating_system, expected) in [("Docker Desktop", true), ("Ubuntu 24.04.3 LTS", false)] {
+        let fixture = transport::Fixture::start(move |request| {
+            assert_eq!(request.method, "GET");
+            assert_eq!(request.path, "/info");
+            Some((
+                200,
+                serde_json::to_vec(
+                    &json!({"ID":"engine", "OSType":"linux", "OperatingSystem":operating_system}),
+                )
+                .unwrap(),
+            ))
+        })
+        .await;
+        assert_eq!(
+            docker_desktop(&Direct, &fixture.endpoint).await,
+            Some(expected),
+            "{operating_system}"
+        );
+    }
+    let fixture = transport::Fixture::start(|_| Some((500, b"{}".to_vec()))).await;
+    assert_eq!(docker_desktop(&Direct, &fixture.endpoint).await, None);
 }
 
 /// A Podman gateway needs a Podman engine, and rootless Podman needs pasta

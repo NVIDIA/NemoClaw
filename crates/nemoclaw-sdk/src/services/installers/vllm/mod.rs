@@ -133,13 +133,17 @@ impl Service {
             return Ok(None);
         }
         let spec = specification(document, name, self, generations)?;
-        inference::credential_source(&spec, {
-            let process = spec
-                .process
-                .as_ref()
-                .ok_or(Error::State("missing service process"))?;
-            format!("http://{}:{}/v1", process.bind_address, process.port)
-        })
+        // The key source names the endpoint sandboxes use, as the
+        // registration does.
+        inference::credential_source(
+            &spec,
+            crate::services::placement::ResolvedPlacement::resolve(
+                self.published_placement()?,
+                &document.spec.gateway,
+                self.serving.port,
+            )?
+            .endpoint,
+        )
     }
 }
 
