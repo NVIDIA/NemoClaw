@@ -371,7 +371,7 @@ The following table lists the build command and local image for each service:
 
 To build a runtime image and select it, perform the following steps:
 
-1. For the Ollama or llama.cpp image, or for all three, place the licenses that those images retain, as `versions.json` pins them:
+1. Place the source files and licenses that the images copy, as `versions.json` pins them:
 
    ```sh
    cargo images fetch
@@ -456,7 +456,7 @@ For invalid input, the runtime reports its expected specification version and th
 
 To replace an image that fails these checks, perform the following steps:
 
-1. Rebuild the selected image from the bundle's source revision with its command from [building a runtime image](#building-a-runtime-image), such as `docker buildx bake vllm`, or `cargo images fetch` and then `docker buildx bake ollama`.
+1. Rebuild the selected image from the bundle's source revision: run `cargo images fetch`, then its command from [building a runtime image](#building-a-runtime-image), such as `docker buildx bake vllm`.
 2. Load the rebuilt image on the execution daemon.
 3. Update `spec.services.<name>.image` to the rebuilt image's digest.
 4. Keep the deployment state, and reapply.

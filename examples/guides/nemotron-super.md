@@ -69,6 +69,7 @@ On the Station, DGX Spark, or inside the RTX Spark's ARM64 WSL2 distribution, ru
 
 ```sh
 cargo run --locked -p nemoclaw-build -- bundle --platform linux_arm64
+cargo images fetch
 docker buildx bake vllm
 cargo images build --platform linux/arm64 hermes openclaw deepagents
 docker image inspect nc-prototype-vllm:rust-v1 nc-fabric:hermes nc-fabric:openclaw nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
