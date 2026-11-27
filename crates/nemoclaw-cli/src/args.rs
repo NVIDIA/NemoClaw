@@ -90,6 +90,16 @@ pub(crate) enum Command {
         #[arg(long)]
         non_interactive: bool,
     },
+    /// Write a configuration out once as a new OpenTofu project in HCL.
+    #[command(after_help = "Examples:\n  nemoclaw compile spark.yaml --output spark-tofu")]
+    Compile {
+        /// Desired-state YAML path, or - to read standard input.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// New or empty directory for the project.
+        #[arg(short, long, value_name = "DIR")]
+        output: PathBuf,
+    },
     /// Export observed configuration without secret values.
     #[command(after_help = "Examples:\n  nemoclaw export --output spark.yaml\n  nemoclaw export")]
     Export {
@@ -111,9 +121,10 @@ impl Command {
             Self::Plan { output, .. } | Self::Apply { output, .. } | Self::Destroy { output } => {
                 *output
             }
-            Self::Export { .. } | Self::Onboard { .. } | Self::OpenShell { .. } => {
-                OutputFormat::Text
-            }
+            Self::Compile { .. }
+            | Self::Export { .. }
+            | Self::Onboard { .. }
+            | Self::OpenShell { .. } => OutputFormat::Text,
         }
     }
 }
@@ -236,6 +247,34 @@ mod tests {
         }
         assert!(Cli::try_parse_from(["nemoclaw", "plan", "--destroy"]).is_ok());
         assert!(Cli::try_parse_from(["nemoclaw", "plan", "--destroy", "spark.yaml"]).is_err());
+    }
+
+    #[test]
+    fn compile_requires_a_document_and_an_output_directory() {
+        let cli = Cli::try_parse_from([
+            "nemoclaw",
+            "compile",
+            "spark.yaml",
+            "--output",
+            "spark-tofu",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Command::Compile { file, output }
+                if file.as_path() == std::path::Path::new("spark.yaml")
+                    && output.as_path() == std::path::Path::new("spark-tofu")
+        ));
+        assert_eq!(cli.command.output_format(), OutputFormat::Text);
+        for incomplete in [
+            &["nemoclaw", "compile", "spark.yaml"][..],
+            &["nemoclaw", "compile", "--output", "spark-tofu"][..],
+        ] {
+            assert_eq!(
+                Cli::try_parse_from(incomplete).err().unwrap().kind(),
+                ErrorKind::MissingRequiredArgument
+            );
+        }
     }
 
     #[test]

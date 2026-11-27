@@ -329,6 +329,16 @@ fn model_cache_cleanup() {
     result.expect("host model cache recovery failed; preserve this run");
 }
 
+#[test]
+#[ignore = "live: remove this completed hardware run's retained Docker objects"]
+fn retained_cleanup() {
+    assert_eq!(var("NEMOCLAW_HCL_PERSISTENT").as_deref(), Ok("true"));
+    let document =
+        Document::parse(fs::File::open(var("NEMOCLAW_HCL_DOCUMENT").unwrap()).unwrap()).unwrap();
+    nemoclaw_build::ci::live::remove_retained(|| Command::new("docker"), &document.metadata.uid)
+        .expect("retained Docker cleanup failed");
+}
+
 fn docker(args: &[&str]) -> String {
     nemoclaw_build::ci::live::docker_lines(
         Command::new("docker")

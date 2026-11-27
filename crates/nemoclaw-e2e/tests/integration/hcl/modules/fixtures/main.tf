@@ -40,7 +40,9 @@ locals {
   prefix = "nc-${substr(sha256(local.owner), 0, 16)}"
   target = try(local.spec.gateway.target, { docker = {} })
   docker = try(values(local.target)[0].engine, "") != ""
-  driver = coalesce(var.compute_driver, keys(local.target)[0] == "docker" ? "docker" : "kubernetes")
+  driver = coalesce(var.compute_driver, contains(["docker", "podman"], keys(local.target)[0]) ? keys(local.target)[0] : "kubernetes")
+  # A managed Podman gateway's engine reports itself as Podman.
+  podman         = keys(local.target)[0] == "podman" && local.docker
   sandbox_images = distinct([for sandbox in values(local.spec.sandboxes) : sandbox.image.ref])
   services = {
     for name in sort(keys(try(local.spec.services, {}))) : name => {
@@ -95,6 +97,7 @@ output "declare" {
   description = "The declaration for the fixture_state data source."
   value = jsonencode(merge({
     compute_driver          = local.driver
+    podman                  = local.podman
     sandbox_create_delay_ms = var.sandbox_create_delay_ms
     sandbox_delete_delay_ms = var.sandbox_delete_delay_ms
     # The models an Ollama proxy's existing daemon lists.

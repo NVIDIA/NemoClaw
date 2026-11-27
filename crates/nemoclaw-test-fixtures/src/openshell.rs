@@ -874,34 +874,57 @@ fn create_provider(
         ..Default::default()
     })
 }
+/// Update a provider as the pinned OpenShell server does
+/// (`update_provider_record_validating`, 152c59d): the stored provider keeps
+/// its metadata, labels and annotations included, and refuses another type or
+/// profile workspace; the request's credentials and config merge into it, and
+/// an empty value removes its key.
 fn update_provider(
     state: &mut State,
     q: p::UpdateProviderRequest,
 ) -> Result<p::ProviderResponse, Status> {
-    let mut provider = q
+    let update = q
         .provider
         .ok_or_else(|| Status::invalid_argument("missing"))?;
-    let meta = provider
+    let meta = update
         .metadata
-        .as_mut()
+        .as_ref()
         .ok_or_else(|| Status::invalid_argument("missing"))?;
     validate_provider_metadata(meta)?;
     let key = format!("{}/{}", workspace(&q.workspace_scope)?, meta.name);
-    let prior = state
+    let mut provider = state
         .providers
         .get(&key)
         .ok_or_else(|| Status::not_found("absent"))?
-        .metadata
-        .as_ref()
-        .unwrap();
+        .clone();
+    let prior = provider.metadata.as_mut().unwrap();
     if meta.id != prior.id
         || meta.resource_version != prior.resource_version
         || meta.resource_version == 0
     {
         return Err(Status::aborted("version conflict"));
     }
-    meta.workspace = prior.workspace.clone();
-    meta.resource_version += 1;
+    prior.resource_version += 1;
+    if (!update.r#type.is_empty() && update.r#type != provider.r#type)
+        || (!update.profile_workspace.is_empty()
+            && update.profile_workspace != provider.profile_workspace)
+    {
+        return Err(Status::invalid_argument(
+            "provider type and profile workspace cannot be changed",
+        ));
+    }
+    for (stored, changes) in [
+        (&mut provider.credentials, update.credentials),
+        (&mut provider.config, update.config),
+    ] {
+        for (key, value) in changes {
+            if value.is_empty() {
+                stored.remove(&key);
+            } else {
+                stored.insert(key, value);
+            }
+        }
+    }
     state.conditional_updates += 1;
     state.effects += 1;
     state.providers.insert(key, provider.clone());

@@ -9,7 +9,7 @@ You reach them through OpenShell commands, not published host ports.
 
 ## Selecting the Gateway and Workspace
 
-For plaintext, mTLS, or external OIDC gateways on Linux and macOS Apple silicon, use the bundled CLI:
+For gateways with no authentication, mTLS, or OIDC, on Linux and macOS Apple silicon, use the bundled CLI:
 
 ```sh
 nemoclaw osh --state-dir .nemoclaw -- sandbox list
@@ -18,11 +18,11 @@ nemoclaw osh --state-dir .nemoclaw -- sandbox list
 It selects the gateway and workspace from the saved deployment and uses the referenced mTLS files without changing your OpenShell profiles.
 Use the same state directory and TLS environment as apply.
 The commands below use this form; [`nemoclaw openshell`](../references/cli.md#running-openshell-against-a-deployment) describes it.
-For an external OIDC gateway, first run the `Register once:` command that plan and apply print, as [Logging In to an External OIDC Gateway](../references/cli.md#logging-in-to-an-external-oidc-gateway) describes.
+For an OIDC gateway, first sign in once, as [Logging In to an OIDC Gateway](../references/cli.md#logging-in-to-an-oidc-gateway) describes.
 
 ### Selecting a Standalone CLI for Bearer-Token Gateways
 
-For bearer-token gateways without OIDC login settings, including managed Kubernetes or OpenShift, use a separately configured OpenShell CLI instead.
+For an external gateway with only a token (`credential`) and no sign-in settings (`gateway.oidc`), or a gateway that this host can't reach at an endpoint, use a separately configured OpenShell CLI instead.
 In the commands below, replace `nemoclaw osh --` with `openshell` after selecting the gateway and workspace as follows.
 
 Use an OpenShell CLI matching the deployment implementation revision on the client host.

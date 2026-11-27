@@ -207,7 +207,11 @@ The shared HCL workflow downloads CI / Bundle's Linux ARM64 bundle, test executa
 Each case runs the QA plan's 005-DEPLOY as `005-DEPLOY-E2E`: a plan that adds no Docker object, apply, `READY` and then `391` from the agent, and destroy; independent Docker observations verify owned runtime cleanup. The uploaded reports include `results.json`, the QA team's run record for each deployment: test ID, run ID such as `STATION-HERMES-005-E2E`, commit, result, and run link. Record the E2E commit, job URL, actual runner identity, and uploaded identity, inference and cleanup outcomes. A successful run establishes that case on that host; it does not establish renewal or replacement readiness. Leave #13934 open until its remaining capacity acceptance criteria have evidence.
 
 Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>-<case-id>/`. Published reports contain outcomes and candidate/UID/case identity only.
-Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
+After successful destroy and Docker verification, Station and Spark jobs remove
+that attempt's UID-labeled initializer containers, volumes, and networks.
+Station releases its model-cache mount first; shared host model files remain.
+Failed teardown leaves resources for recovery. Later attempts use fresh UIDs and
+volumes; do not reapply an old attempt's state after cleanup.
 
 For the Station cases, Colorunner can install the root-owned
 `/usr/local/libexec/colorunner-model-cache` helper. A successful cold run publishes

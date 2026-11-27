@@ -17,32 +17,48 @@ pub(super) fn unavailable(gateway: &crate::config::Gateway) -> Option<&'static s
         );
     }
     let bearer = match gateway {
-        crate::config::Gateway::Managed(managed) => !matches!(
-            managed.target,
-            crate::config::ManagedTarget::Docker(_) | crate::config::ManagedTarget::Podman(_)
-        ),
+        crate::config::Gateway::Managed(managed) => {
+            return managed
+                .cluster()
+                .is_some_and(|cluster| {
+                    cluster.authentication.profile
+                        == crate::config::KubernetesAuthenticationProfile::Development
+                })
+                .then_some("the development authentication profile is for isolated testing; only NemoClaw gets its tokens");
+        }
         crate::config::Gateway::External(external) => {
             external.credential.is_some() && external.oidc.is_none()
         }
     };
-    bearer.then_some("the bundled OpenShell CLI cannot use this gateway's bearer token yet (https://github.com/NVIDIA/NemoClaw/issues/14880); use a separately authenticated OpenShell CLI where supported")
+    bearer.then_some("this gateway has a token but no sign-in settings; add gateway.oidc to sign in with nemoclaw osh, or use a separately configured OpenShell CLI")
 }
 
-/// The `openshell` arguments that register an external OIDC gateway in the
-/// bundled CLI's configuration and sign in, once.
+/// The `openshell` arguments that register an OIDC gateway in the bundled
+/// CLI's configuration and sign in, once.
 pub(super) fn registration(document: &crate::config::Document) -> Option<Vec<String>> {
-    let crate::config::Gateway::External(external) = &document.spec.gateway else {
-        return None;
-    };
-    let oidc = external.oidc.as_ref()?;
     let mut add = vec![
         "gateway".into(),
         "add".into(),
         document.spec.gateway.endpoint()?,
         format!("--name={}", document.workspace()),
-        format!("--oidc-issuer={}", oidc.issuer),
-        format!("--oidc-client-id={}", oidc.client_id),
     ];
+    let oidc = match &document.spec.gateway {
+        crate::config::Gateway::External(external) => external.oidc.as_ref()?,
+        // The gateway's own OIDC settings; OpenShell defaults the client ID.
+        crate::config::Gateway::Managed(managed) => {
+            let table = managed
+                .config
+                .as_ref()?
+                .get(crate::managed::gateway_config::OIDC_TABLE)?;
+            add.push(format!("--oidc-issuer={}", table.get("issuer")?.as_str()?));
+            if let Some(audience) = table.get("audience").and_then(|it| it.as_str()) {
+                add.push(format!("--oidc-audience={audience}"));
+            }
+            return Some(add);
+        }
+    };
+    add.push(format!("--oidc-issuer={}", oidc.issuer));
+    add.push(format!("--oidc-client-id={}", oidc.client_id));
     if let Some(audience) = &oidc.audience {
         add.push(format!("--oidc-audience={audience}"));
     }
@@ -93,6 +109,16 @@ impl Deployment {
                         .map_err(|_| Error::State("cannot link TLS file for OpenShell"))?;
                 }
             }
+        } else if gateway.as_kubernetes().is_some() {
+            // Apply keeps the cluster gateway's CA in the state directory.
+            let mtls = profile.join("mtls");
+            private_directory(&mtls)?;
+            let link = mtls.join("ca.crt");
+            let _ = fs::remove_file(&link);
+            let target = std::path::absolute(self.state_directory.join("kubernetes/client/ca.crt"))
+                .map_err(|_| Error::State("cannot resolve TLS file path"))?;
+            std::os::unix::fs::symlink(target, &link)
+                .map_err(|_| Error::State("cannot link TLS file for OpenShell"))?;
         }
         let mut command = std::process::Command::new(bundle.directory.join("libexec/openshell"));
         command

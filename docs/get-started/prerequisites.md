@@ -79,9 +79,9 @@ The gateway's authentication determines which client to use for agent access:
 
 | Gateway | OpenShell client |
 |---|---|
-| Plaintext or mutual TLS (mTLS) | Use bundled [`nemoclaw osh`](../references/cli.md#running-openshell-against-a-deployment) with the deployment's state directory and any referenced TLS files. |
-| External OpenID Connect (OIDC) | Use bundled `nemoclaw osh` after [configuring login and signing in](../references/cli.md#logging-in-to-an-external-oidc-gateway). |
-| Bearer token without OIDC login settings, including managed Kubernetes or OpenShift | [Prepare a standalone client](#preparing-the-standalone-openshell-cli) and [select its gateway and workspace](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways). |
+| None or mutual TLS (mTLS) | Use bundled [`nemoclaw osh`](../references/cli.md#running-openshell-against-a-deployment) with the deployment's state directory and any referenced TLS files. |
+| OpenID Connect (OIDC) | Use bundled `nemoclaw osh` after [signing in](../references/cli.md#logging-in-to-an-oidc-gateway). |
+| Token only, no sign-in settings (`gateway.oidc`), or no endpoint this host can reach | [Prepare a standalone client](#preparing-the-standalone-openshell-cli) and [select its gateway and workspace](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways). |
 
 ## Preparing the Standalone OpenShell CLI
 

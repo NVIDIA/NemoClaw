@@ -36,20 +36,38 @@ fn pod_document() -> Document {
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
 }
 
-/// The bundled CLI can't take a cluster gateway's bearer token, so plan and
-/// apply say why and link the issue that tracks it; an external OIDC gateway
-/// instead gets the OpenShell arguments that register it once.
+/// Only NemoClaw gets a development cluster's tokens, so plan and apply say
+/// why; a cluster with the oidc profile takes the user's own sign-in, and an
+/// external OIDC gateway gets the OpenShell arguments that register it once.
 #[test]
 fn bundled_openshell_access_follows_the_gateway_authentication() {
     let (cluster, _) = kubernetes_context();
     if crate::bundle::openshell_available() {
         let reason = openshell_cli::unavailable(&cluster.spec.gateway).unwrap();
-        assert!(
-            reason.contains("https://github.com/NVIDIA/NemoClaw/issues/14880"),
-            "{reason}"
+        assert!(reason.contains("development"), "{reason}");
+        let mut oidc = serde_json::to_value(&cluster.spec.gateway).unwrap();
+        oidc["target"]["kubernetes"]["authentication"]["profile"] = json!("oidc");
+        assert_eq!(
+            openshell_cli::unavailable(&serde_json::from_value(oidc).unwrap()),
+            None
         );
     }
     assert_eq!(openshell_cli::registration(&cluster), None);
+    let mut managed = serde_json::to_value(&cluster).unwrap();
+    let kubernetes = &mut managed["spec"]["gateway"]["target"]["kubernetes"];
+    kubernetes["authentication"] = json!({"profile":"oidc", "token":{"env":"GATEWAY_TOKEN"}});
+    kubernetes["expose"] =
+        json!({"endpoint":"https://gateway.example.com:30080", "service":{"type":"NodePort"}});
+    managed["spec"]["gateway"]["config"]["openshell.gateway.oidc"] =
+        json!({"issuer":"https://idp.example.com", "audience":"openshell"});
+    let args = openshell_cli::registration(&serde_json::from_value(managed).unwrap()).unwrap();
+    assert_eq!(
+        args[4..],
+        [
+            "--oidc-issuer=https://idp.example.com",
+            "--oidc-audience=openshell"
+        ]
+    );
     let local =
         Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
             .unwrap();

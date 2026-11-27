@@ -102,8 +102,8 @@ fn an_oidc_gateway_runs_openshell_directly() {
     assert_eq!(output.stdout, b"ran status\n");
 }
 
-/// The bundled CLI can't carry a bearer token, so a gateway that needs one is
-/// refused, even when mTLS is also configured, instead of reached without it.
+/// The bundled CLI can't carry a token, so a gateway with a token and no
+/// sign-in settings is refused, even with mTLS, and told how to sign in.
 #[test]
 fn a_gateway_that_needs_a_bearer_token_is_refused() {
     let root = tempfile::tempdir().unwrap();
@@ -124,10 +124,6 @@ fn a_gateway_that_needs_a_bearer_token_is_refused() {
             .unwrap();
         assert!(!output.status.success());
         let error = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            error.contains("bearer token")
-                && error.contains("https://github.com/NVIDIA/NemoClaw/issues/14880"),
-            "{error}"
-        );
+        assert!(error.contains("add gateway.oidc"), "{error}");
     }
 }

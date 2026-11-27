@@ -10,15 +10,22 @@ pub(crate) fn create(
     force_stop: &CancellationToken,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
 ) -> Result<Deployment, Box<dyn std::error::Error>> {
-    let bundle = match bundle_dir {
+    let bundle = bundle_directory(bundle_dir)?;
+    Ok(Deployment::new(state_dir, &bundle)
+        .with_progress(progress)
+        .with_force_stop(force_stop.clone()))
+}
+
+/// The bundle `--bundle` names, or the one this executable belongs to.
+pub(crate) fn bundle_directory(
+    bundle_dir: Option<&Path>,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    Ok(match bundle_dir {
         Some(path) => path.to_owned(),
         None => std::env::current_exe()?
             .parent()
             .and_then(|p| p.parent())
             .ok_or(Error::Bundle("cannot locate runtime bundle"))?
             .into(),
-    };
-    Ok(Deployment::new(state_dir, &bundle)
-        .with_progress(progress)
-        .with_force_stop(force_stop.clone()))
+    })
 }
