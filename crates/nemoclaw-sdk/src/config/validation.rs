@@ -307,6 +307,11 @@ impl super::ManagedGateway {
                 .map_err(ConfigError::from)
                 .at("/spec/gateway/config")?;
         }
+        // The key of a cluster target, where its checks report.
+        let target = match self.target {
+            super::ManagedTarget::OpenShift(_) => "openshift",
+            _ => "kubernetes",
+        };
         // Kubernetes refuses a request above its limit only when Helm
         // creates the gateway's StatefulSet, after apply has created the
         // namespace and issuer; plan refuses it before anything changes.
@@ -315,10 +320,6 @@ impl super::ManagedGateway {
             limits: Some(limits),
         }) = self.cluster().and_then(|target| target.resources.as_ref())
         {
-            let target = match self.target {
-                super::ManagedTarget::OpenShift(_) => "openshift",
-                _ => "kubernetes",
-            };
             for (name, request, limit) in [
                 ("cpu", requests.millicores(), limits.millicores()),
                 ("memory", requests.mebibytes(), limits.mebibytes()),
@@ -335,7 +336,8 @@ impl super::ManagedGateway {
         }
         let Some(local) = self.local() else {
             return match self.endpoint() {
-                Some(endpoint) => validate_endpoint(&endpoint, true).at("/spec/gateway/endpoint"),
+                Some(endpoint) => validate_endpoint(&endpoint, true)
+                    .at(&format!("/spec/gateway/target/{target}/expose/endpoint")),
                 None => Ok(()),
             };
         };
