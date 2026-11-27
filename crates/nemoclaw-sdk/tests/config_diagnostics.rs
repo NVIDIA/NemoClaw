@@ -502,3 +502,64 @@ fn every_error_inside_the_selected_union_variant_is_reported() {
         )
     );
 }
+
+const FREE_GATE: &str = "memory free gate must be at least the available-memory threshold";
+
+/// A free-memory gate below the available-memory threshold, which only the
+/// checks after the schema compare.
+const LOW_FREE_GATE: &str = "        freeGateGiB: 8\n        minAvailableGiB: 10\n";
+
+/// `examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml` with a
+/// second service, `spare`, after `ollama-server`; `first` and `second` are
+/// added to each one's memory settings.
+fn two_services(first: &str, second: &str) -> String {
+    let example = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/platforms/docker/ollama/dgx-spark/managed-ollama.yaml"),
+    )
+    .unwrap();
+    let text = example.replace(
+        "        gpuMemoryGiB: 16\n  inferenceProviders:\n",
+        &format!(
+            "        gpuMemoryGiB: 16\n{first}    spare:
+      kind: ollama
+      image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      hardware: {{profile: dgx-spark}}
+      model:
+        name: qwen3:0.6b
+        digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
+      serving:
+        port: 11500
+      memory:
+        gpuMemoryGiB: 16\n{second}  inferenceProviders:\n"
+        ),
+    );
+    assert_ne!(text, example, "the edit must change the example");
+    text
+}
+
+#[test]
+fn a_service_semantic_error_names_the_service_and_its_position() {
+    Document::parse(two_services("", "").as_bytes()).unwrap();
+    let text = two_services("", LOW_FREE_GATE);
+    assert_eq!(
+        rejection(&text),
+        format!(
+            "spec.services.spare ({}): {FREE_GATE}",
+            position_of(&text, "kind: ollama\n      image:")
+        )
+    );
+}
+
+#[test]
+fn one_run_reports_a_semantic_error_in_each_service() {
+    let text = two_services(LOW_FREE_GATE, LOW_FREE_GATE);
+    assert_eq!(
+        rejection(&text),
+        format!(
+            "2 configuration errors:\n  spec.services.ollama-server ({}): {FREE_GATE}\n  spec.services.spare ({}): {FREE_GATE}",
+            position_of(&text, "kind: ollama\n      hardware:"),
+            position_of(&text, "kind: ollama\n      image:")
+        )
+    );
+}
