@@ -425,6 +425,40 @@ fn a_semantic_error_names_its_field_and_position() {
 }
 
 #[test]
+fn a_forbidden_published_endpoint_is_reported_at_the_target_expose_endpoint() {
+    const FORBIDDEN: &str =
+        "unspecified, multicast, link-local, metadata, and IPv4-embedding endpoints are forbidden";
+    let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    for (file, target, endpoint, forbidden, reason) in [
+        (
+            "platforms/kubernetes/published-nodeport.yaml",
+            "kubernetes",
+            "https://gateway.agents.example.com:30080",
+            "https://0.0.0.0:30080",
+            FORBIDDEN,
+        ),
+        (
+            "platforms/openshift/published-route.yaml",
+            "openshift",
+            "https://nemoclaw-gateway.apps.example.com:443",
+            "https://metadata.google.internal:443",
+            "metadata endpoints are forbidden",
+        ),
+    ] {
+        let example = std::fs::read_to_string(examples.join(file)).unwrap();
+        let text = example.replace(endpoint, forbidden);
+        assert_ne!(text, example, "the edit must change {file}");
+        assert_eq!(
+            rejection(&text),
+            format!(
+                "spec.gateway.target.{target}.expose.endpoint ({}): {reason}",
+                position_of(&text, forbidden)
+            )
+        );
+    }
+}
+
+#[test]
 fn one_run_reports_every_semantic_error_in_document_order() {
     let text = edited(|yaml| api_key_auth(yaml) + HELPER);
     assert_eq!(
