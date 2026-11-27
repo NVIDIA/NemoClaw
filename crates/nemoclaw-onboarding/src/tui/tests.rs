@@ -3322,6 +3322,27 @@ fn a_referenced_policy_is_not_summarized_as_isolated() {
 }
 
 #[test]
+fn a_gateway_whose_policy_apf_authors_is_not_summarized_as_isolated() {
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
+    values["spec"]["gateway"]["policyAuthority"] = serde_json::json!({
+        "apf": {"registration": "managed", "endpoint": "https://host.docker.internal:18202"}
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("template.yaml");
+    std::fs::write(&path, serde_json::to_vec(&values).unwrap()).unwrap();
+    let wizard = reviewing_template(&path);
+    let text = flat(&screen(&wizard, 160, 60));
+    assert!(
+        text.contains("Network Policy that APF authors on the gateway"),
+        "{text}"
+    );
+    assert!(!text.contains("Isolated"), "{text}");
+}
+
+#[test]
 fn an_open_configuration_file_marks_and_rules_its_wrapped_lines() {
     let mut wizard = reviewing_wizard_with("nvidia.fabric.hermes");
     wizard.toggle_configuration();

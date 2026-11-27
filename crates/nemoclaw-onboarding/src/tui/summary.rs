@@ -325,8 +325,12 @@ fn image_row(sandbox: NamedSandbox<'_>, target: Option<CompatibilityStatus>, abs
 /// What the agent can reach. The isolated preset adds grants for the model,
 /// search, and API endpoints the document declares, and the named grants,
 /// written inline or selected by `grantRefs`; an explicit policy, written
-/// inline or selected by `policyRef`, states everything itself.
+/// inline or selected by `policyRef`, states everything itself. On a gateway
+/// with a policy authority, APF replaces the policy NemoClaw would submit.
 fn network(document: &Document, sandbox: NamedSandbox<'_>, search: bool, apis: bool) -> String {
+    if document.spec.gateway.policy_authority().is_some() {
+        return "Policy that APF authors on the gateway".into();
+    }
     let Ok(network) = document.sandbox_network(sandbox) else {
         return "unknown".into();
     };
