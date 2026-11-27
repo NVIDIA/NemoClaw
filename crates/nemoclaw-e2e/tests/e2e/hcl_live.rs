@@ -27,7 +27,13 @@ use nemoclaw_test_fixtures::Bundle;
 use openshell_provider::OpenShell;
 use serde_json::{Value, json};
 use std::{
-    env::var, fs, io::Write as _, path::PathBuf, process::Command, sync::Arc, time::Duration,
+    env::var,
+    fs,
+    io::Write as _,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::Arc,
+    time::Duration,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -41,7 +47,26 @@ async fn case() {
     for directory in [&reports, &work] {
         fs::create_dir_all(directory).unwrap();
     }
-    let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap_or_else(|_| format!("cases/{case}.yaml"));
+    // A registered case's document and scenario come from the case registry;
+    // NEMOCLAW_HCL_TEST_DIRECTORY names a scenario outside it, such as a
+    // manual case's, with NEMOCLAW_HCL_SCENARIO when its name differs.
+    let registered = nemoclaw_build::hcl_cases::files(Path::new("../.."), &case).unwrap();
+    let config =
+        var("NEMOCLAW_HCL_DOCUMENT").unwrap_or_else(|_| format!("../../{}", registered[0]));
+    let (directory, scenario) = match var("NEMOCLAW_HCL_TEST_DIRECTORY") {
+        Ok(directory) => (
+            directory,
+            var("NEMOCLAW_HCL_SCENARIO").unwrap_or_else(|_| case.clone()),
+        ),
+        Err(_) => {
+            let scenario = registered[1]
+                .strip_prefix("crates/nemoclaw-e2e/tests/e2e/hcl/")
+                .and_then(|path| path.strip_suffix(".tftest.hcl"))
+                .and_then(|path| path.split_once('/'))
+                .expect("a registered scenario under tests/e2e/hcl");
+            (scenario.0.to_owned(), scenario.1.to_owned())
+        }
+    };
     if var("NEMOCLAW_HCL_PERSISTENT").as_deref() == Ok("true") {
         assert!(!run.join("deployment").exists(), "use a fresh run");
         assert_eq!(
@@ -86,22 +111,21 @@ async fn case() {
         fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
         fs::write(reports.join("identity.json"), json!({"candidate":var("GITHUB_SHA").unwrap(),"uid":document["metadata"]["uid"],"case":case}).to_string()).unwrap();
     }
-    let mut model_cache = if nemoclaw_build::hcl_cases::STATION_CASES.contains(&case.as_str())
-        && var("NEMOCLAW_HCL_PERSISTENT").as_deref() == Ok("true")
-    {
-        let document: Value =
-            serde_saphyr::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
-        Some(
-            nemoclaw_build::ci::model_cache::Session::start(
-                nemoclaw_build::ci::model_cache::Installed,
-                &document,
-                &reports,
+    let mut model_cache =
+        if on_station(&case) && var("NEMOCLAW_HCL_PERSISTENT").as_deref() == Ok("true") {
+            let document: Value =
+                serde_saphyr::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+            Some(
+                nemoclaw_build::ci::model_cache::Session::start(
+                    nemoclaw_build::ci::model_cache::Installed,
+                    &document,
+                    &reports,
+                )
+                .expect("host model cache preparation failed; preserve this run for recovery"),
             )
-            .expect("host model cache preparation failed; preserve this run for recovery"),
-        )
-    } else {
-        None
-    };
+        } else {
+            None
+        };
     // The dummy case's middleware and effect recorder listen on the ports its
     // document names until the case ends, including after a failed run block.
     let _middleware = if case == "docker-dummy" {
@@ -135,12 +159,11 @@ async fn case() {
         "evidence_dir": reports,
         "versions": fs::canonicalize("../../versions.json").unwrap(),
     });
-    let directory = var("NEMOCLAW_HCL_TEST_DIRECTORY").unwrap_or_else(|_| "tests".into());
     let modules = fs::canonicalize("tests/e2e/hcl").unwrap();
     assert!(
         modules
             .join(&directory)
-            .join(format!("{case}.tftest.hcl"))
+            .join(format!("{scenario}.tftest.hcl"))
             .is_file(),
         "missing HCL case"
     );
@@ -174,7 +197,7 @@ async fn case() {
     assert!(initialized.unwrap().success(), "tofu init failed");
     // The test's core log times its runs.
     let log = CoreLog::create(work.join("tofu-test.log"));
-    let filter = format!("-filter={directory}/{case}.tftest.hcl");
+    let filter = format!("-filter={directory}/{scenario}.tftest.hcl");
     let tested = tofu()
         .args([
             "test",
@@ -184,8 +207,27 @@ async fn case() {
         ])
         .env("TF_LOG_CORE", "debug")
         .env("TF_LOG_PATH", &log.0)
-        .status();
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            // Echo the report as it arrives, and keep it to read each run
+            // block's result.
+            let mut report = String::new();
+            for line in
+                std::io::BufRead::lines(std::io::BufReader::new(child.stdout.take().unwrap()))
+            {
+                let line = line?;
+                println!("{line}");
+                report.push_str(&line);
+                report.push('\n');
+            }
+            Ok((child.wait()?, report))
+        });
     report_timings(&case, &log.run_durations());
+    if let Ok((_, report)) = &tested {
+        write_results(&case, report, &reports);
+    }
+    let tested = tested.map(|(status, _)| status);
     let succeeded = tested.as_ref().is_ok_and(|status| status.success());
     if let Some(cache) = &mut model_cache {
         let finished = cache.finish(succeeded);
@@ -208,12 +250,68 @@ async fn case() {
     );
 }
 
+/// For a case that a row of `examples/scenarios.md` names, writes the QA
+/// team's run records to `results.json` in `reports`: each deployment's run ID
+/// for each QA test, the tested commit, the result, and the workflow run, or
+/// locally the reports directory, as the report.
+fn write_results(case: &str, report: &str, reports: &Path) {
+    let root = Path::new("../..");
+    let Some(row) = nemoclaw_build::scenarios::read(root)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.case_id() == case)
+    else {
+        return;
+    };
+    let commit = var("GITHUB_SHA").unwrap_or_else(|_| {
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            .unwrap_or_default()
+    });
+    let link = match (
+        var("GITHUB_SERVER_URL"),
+        var("GITHUB_REPOSITORY"),
+        var("GITHUB_RUN_ID"),
+    ) {
+        (Ok(server), Ok(repository), Ok(run)) => format!(
+            "{server}/{repository}/actions/runs/{run}/attempts/{}",
+            var("GITHUB_RUN_ATTEMPT").unwrap_or_else(|_| "1".into())
+        ),
+        _ => reports.display().to_string(),
+    };
+    let outcomes = nemoclaw_build::scenarios::outcomes(report);
+    let results = nemoclaw_build::scenarios::results(&row.ids, &outcomes, &commit, &link);
+    fs::write(
+        reports.join("results.json"),
+        serde_json::to_vec_pretty(&results).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Whether `case` runs on the DGX Station runner, whose runs mount the host's
+/// model cache. The workflow runs this binary from the repository root or
+/// from this crate's directory.
+fn on_station(case: &str) -> bool {
+    let root = if Path::new("crates/nemoclaw-e2e").is_dir() {
+        "."
+    } else {
+        "../.."
+    };
+    nemoclaw_build::hcl_cases::placements(Path::new(root)).is_ok_and(|placements| {
+        placements
+            .get(case)
+            .is_some_and(|needs| needs.runner == nemoclaw_build::hcl_cases::Runner::DgxStation)
+    })
+}
+
 #[test]
 #[ignore = "live: recover this Station run's cached mount after SDK destroy"]
 fn model_cache_cleanup() {
-    if !var("NEMOCLAW_HCL_CASE")
-        .is_ok_and(|id| nemoclaw_build::hcl_cases::STATION_CASES.contains(&id.as_str()))
-    {
+    if !var("NEMOCLAW_HCL_CASE").is_ok_and(|id| on_station(&id)) {
         return;
     }
     let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap();

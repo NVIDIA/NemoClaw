@@ -161,7 +161,7 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 
 ### DGX Station and Spark on Colossus
 
-CI / Bundle also runs on `copy-pr-bot`'s pushes to `pull-request/<number>`, as its `hardware` suite. Like main, it uses the bot's trusted-author admission rather than a maintainer/admin-only actor gate. Its plan verifies that the PR is open, non-draft, targets `v1`, and still has the copied head SHA, then uses `changes cases --base` to select affected GPU and Station cases. It builds only the Linux platforms those cases need, Linux AMD64 for the GPU cases and Linux ARM64 for Station, without their unit, contract, integration, and live suites, and calls Live / HCL with their artifacts. The Station example and scenario belong to the Station placement in the same case registry; shared changes select it through the existing dependency rules. Spark remains manual-only and is excluded from this automatic selection. A PR based on v1 before this suite was introduced must pick up the workflow change before its copied branch can trigger it.
+CI / Bundle also runs on `copy-pr-bot`'s pushes to `pull-request/<number>`, as its `hardware` suite. Like main, it uses the bot's trusted-author admission rather than a maintainer/admin-only actor gate. Its plan verifies that the PR is open, non-draft, targets `v1`, and still has the copied head SHA, then uses `changes cases --base` to select affected GPU and Station cases. It builds only the Linux platforms those cases need, Linux AMD64 for the GPU cases and Linux ARM64 for Station, without their unit, contract, integration, and live suites, and calls Live / HCL with their artifacts. The Station and Spark cases are the rows of [`examples/scenarios.md`](../../examples/scenarios.md) that are on and whose platform is `STATION` or `SPARK`: the registry names each by its deployment ID in lowercase, such as `station-hermes`, deploys the row's example, and runs it on its platform's runner. A row's example selects only its case; the page and the scenario that the rows share select all of them, and shared changes select them through the existing dependency rules. Spark remains manual-only and is excluded from this automatic selection. A PR based on v1 before this suite was introduced must pick up the workflow change before its copied branch can trigger it.
 
 These runs report no `Test /` checks and are not merge requirements. Running jobs are not automatically cancelled. Hardware jobs recheck PR eligibility after queueing and before deployment. GitLab/Colorunner continues to own leases and replacement; CI does not provision hosts.
 
@@ -171,15 +171,15 @@ Operators can run the HCL cases by dispatching **CI / Bundle** with `suite=hcl` 
 
 ```bash
 gh workflow run rust.yml --ref v1 -f suite=hcl -f hcl-target=dgx-station -f hcl-hosted=false \
-  -f hcl-jobs=dgx-station-openclaw-nemotron
+  -f hcl-jobs=station-openclaw
 ```
 
-For Hermes alone, use `-f hcl-jobs=dgx-station-hermes-nemotron`. For both harnesses,
-use `-f hcl-jobs=dgx-station-openclaw-nemotron,dgx-station-hermes-nemotron`.
+For Hermes alone, use `-f hcl-jobs=station-hermes`. For both harnesses,
+use `-f hcl-jobs=station-openclaw,station-hermes`.
 Choose the affected harness for harness-specific changes and both for shared
 runtime or deployment changes. Each case has its own fresh deployment and state;
-selecting Hermes does not run the OpenClaw case. Both reuse the pinned Station
-model/runtime override and verified host model files. Basic text inference is the
+selecting Hermes does not run the OpenClaw case. Both run the pinned Nemotron
+3.5 Super VL model that their examples select, from verified host model files. Basic text inference is the
 qualification boundary; tools, vision, quality evaluation, and other models are
 separate work.
 
@@ -187,7 +187,7 @@ Spark uses the same workflow and persistent-runner path, with the fixed `colossu
 
 ```bash
 gh workflow run rust.yml --repo NVIDIA/NemoClaw --ref "pull-request/<number>" \
-  -f suite=hcl -f hcl-target=dgx-spark -f hcl-hosted=false -f hcl-jobs=dgx-spark-openclaw-nemotron
+  -f suite=hcl -f hcl-target=dgx-spark -f hcl-hosted=false -f hcl-jobs=spark-openclaw
 ```
 
 For a reviewer-requested extra case, dispatch CI / Bundle with `suite=hcl` on the PR's current admitted `pull-request/<number>` branch with that case ID in `hcl-jobs`. This starts an additional selection and leaves automatic selections intact. To preview an additive selection locally, use `changes cases --base origin/v1 --add CASE`; reviewed additions do not require an Advisor service.
@@ -201,10 +201,10 @@ The shared HCL workflow downloads CI / Bundle's Linux ARM64 bundle, test executa
 
 | Target | Runner label | Example and model |
 |---|---|---|
-| Station | `colossus-gb300` | `openclaw-dgx-station.yaml` or `hermes-dgx-station.yaml`, with the existing Nemotron 3.5 Super VL override |
+| Station | `colossus-gb300` | `openclaw-dgx-station.yaml` or `hermes-dgx-station.yaml`, which select Nemotron 3.5 Super VL |
 | Spark | `colossus-gb10` | `openclaw-dgx-spark.yaml`, retaining its pinned Nemotron 3 Super NVFP4 model and Spark memory settings |
 
-Each scenario applies, requires its selected agent to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup. Record the E2E commit, job URL, actual runner identity, and uploaded identity, inference and cleanup outcomes. A successful run establishes that case on that host; it does not establish renewal or replacement readiness. Leave #13934 open until its remaining capacity acceptance criteria have evidence.
+Each case runs the QA plan's 005-DEPLOY as `005-DEPLOY-E2E`: a plan that adds no Docker object, apply, `READY` and then `391` from the agent, and destroy; independent Docker observations verify owned runtime cleanup. The uploaded reports include `results.json`, the QA team's run record for each deployment: test ID, run ID such as `STATION-HERMES-005-E2E`, commit, result, and run link. Record the E2E commit, job URL, actual runner identity, and uploaded identity, inference and cleanup outcomes. A successful run establishes that case on that host; it does not establish renewal or replacement readiness. Leave #13934 open until its remaining capacity acceptance criteria have evidence.
 
 Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>-<case-id>/`. Published reports contain outcomes and candidate/UID/case identity only.
 After successful destroy and Docker verification, Station and Spark jobs remove
@@ -232,7 +232,7 @@ Qualify the coordinated Colorunner and NemoClaw revisions on an owned GB300,
 including cancellation recovery, before unattended use; see
 [#13994](https://github.com/NVIDIA/NemoClaw/issues/13994).
 
-The [Spark scenario](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-spark-openclaw-nemotron.tftest.hcl), including model download and load, must fit the existing 60-minute job budget with the downloads and cleanup; the model startup timeout does not extend that job budget. Do not reuse an existing deployment as evidence of a fresh run.
+The [Spark case's scenario](../../crates/nemoclaw-e2e/tests/e2e/hcl/scenarios/lifecycle-model.tftest.hcl), including model download and load, must fit the existing 60-minute job budget with the downloads and cleanup; the model startup timeout does not extend that job budget. Do not reuse an existing deployment as evidence of a fresh run.
 To recover a failed run, set `run` to its retained directory and use the original executables:
 
 ```bash
@@ -245,7 +245,7 @@ For a Station run with the host cache installed, release its mount after those
 commands succeed. Set `NEMOCLAW_HCL_CASE` to that run's selected case ID:
 
 ```bash
-NEMOCLAW_HCL_CASE=dgx-station-openclaw-nemotron \
+NEMOCLAW_HCL_CASE=station-openclaw \
   NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
   "$run/e2e" hcl_live::model_cache_cleanup --exact --ignored --nocapture
 ```

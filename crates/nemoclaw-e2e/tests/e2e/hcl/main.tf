@@ -26,6 +26,13 @@ variable "model_key" {
   sensitive   = true
 }
 
+# A row of examples/scenarios.md as JSON, which scenarios::page sets as
+# TF_VAR_scenario for scenarios/lifecycle.tftest.hcl.
+variable "scenario" {
+  type    = string
+  default = "{}"
+}
+
 # A kind case's cluster, which cargo ci live-kind sets as TF_VAR_kubeconfig.
 variable "kubeconfig" {
   type    = string

@@ -46,16 +46,16 @@ run "hermes" {
     condition = (
       docker_container.inference_service_inference_super.name == module.fixtures.services.super.name
       && jsondecode(data.vllm_runtime.inference_service_inference_super.spec).hardware.profile == "dgx-station"
-      && jsondecode(data.vllm_runtime.inference_service_inference_super.spec).model.repository == "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4"
+      && jsondecode(data.vllm_runtime.inference_service_inference_super.spec).model.repository == "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4"
     )
-    error_message = "The plan does not create the Nemotron Super vLLM service for the dgx-station profile."
+    error_message = "The plan does not create the Nemotron 3.5 Super VL vLLM service for the dgx-station profile."
   }
 
   assert {
     condition = (
       openshell_sandbox.assistant.name == "assistant"
       && data.fabric_harness.assistant_acquired.adapter_id == "nvidia.fabric.hermes"
-      && fabric_agent.assistant.models["primary"].model == "nemotron-3-super"
+      && fabric_agent.assistant.models["primary"].model == "nemotron-3.5-super-vl"
       && fabric_agent.assistant.models["primary"].base_url == "http://172.30.180.1:19101/v1"
     )
     error_message = "The plan does not create the hermes sandbox with its agent on the vLLM service."
@@ -91,16 +91,16 @@ run "openclaw" {
     condition = (
       docker_container.inference_service_inference_super.name == module.fixtures.services.super.name
       && jsondecode(data.vllm_runtime.inference_service_inference_super.spec).hardware.profile == "dgx-station"
-      && jsondecode(data.vllm_runtime.inference_service_inference_super.spec).model.repository == "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4"
+      && jsondecode(data.vllm_runtime.inference_service_inference_super.spec).model.repository == "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4"
     )
-    error_message = "The plan does not create the Nemotron Super vLLM service for the dgx-station profile."
+    error_message = "The plan does not create the Nemotron 3.5 Super VL vLLM service for the dgx-station profile."
   }
 
   assert {
     condition = (
       openshell_sandbox.assistant.name == "assistant"
       && data.fabric_harness.assistant_acquired.adapter_id == "nvidia.fabric.openclaw"
-      && fabric_agent.assistant.models["primary"].model == "nemotron-3-super"
+      && fabric_agent.assistant.models["primary"].model == "nemotron-3.5-super-vl"
       && fabric_agent.assistant.models["primary"].base_url == "http://172.30.182.1:19103/v1"
     )
     error_message = "The plan does not create the openclaw sandbox with its agent on the vLLM service."

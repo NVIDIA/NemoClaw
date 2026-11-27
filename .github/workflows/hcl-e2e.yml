@@ -81,6 +81,7 @@ jobs:
       cases: ${{ steps.cases.outputs.cases }}
       matrix: ${{ steps.cases.outputs.matrix }}
       runtimes: ${{ steps.cases.outputs.runtimes }}
+      documents: ${{ steps.cases.outputs.documents }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -147,12 +148,13 @@ jobs:
             CASES=$("$tool" changes cases --all | jq -c '{runners, nvidia_key}')
           fi
           runtimes=$("$tool" images runtimes)
-          if [[ $TARGET == dgx-station ]]; then
-            CASES=$(jq -c '.runners.gpu = .runners["dgx-station"] | .runners.hosted = []' <<< "$CASES")
-          elif [[ $TARGET == dgx-spark ]]; then
-            # Spark remains manual-only and is absent from automatic case discovery.
-            CASES="{\"runners\":{\"gpu\":[\"$TARGET-openclaw-nemotron\"]},\"nvidia_key\":[]}"
-            runtimes="{\"$TARGET-openclaw-nemotron\":[\"vllm\"]}"
+          # Every case's document, which the case's job binds; a page row's
+          # is its example.
+          documents=$("$tool" changes cases --all | jq -c .documents)
+          # Station and Spark cases run on their own runners. Spark is
+          # manual-only: automatic selection reads the gpu and dgx-station runners.
+          if [[ $TARGET == dgx-station || $TARGET == dgx-spark ]]; then
+            CASES=$(jq -c --arg target "$TARGET" '.runners.gpu = (.runners[$target] // []) | .runners.hosted = []' <<< "$CASES")
           fi
           if [[ -n $JOBS ]]; then
             CASES=$(jq -ce --arg jobs "$JOBS" '
@@ -167,6 +169,7 @@ jobs:
             echo "cases=$CASES"
             echo "matrix=$(jq -c --argjson hosted "$HOSTED" '.runners.gpu + (if $hosted then .runners.hosted else [] end)' <<< "$CASES")"
             echo "runtimes=$runtimes"
+            echo "documents=$documents"
           } >> "$GITHUB_OUTPUT"
           "$tool" images fetch
           # Tar keeps the mode and time that images fetch gave them, which the
@@ -225,14 +228,16 @@ jobs:
       # about a third smaller: the GPU runner downloads artifacts slowly.
       - name: Select the case's agent images
         id: agents
+        env:
+          DOCUMENTS: ${{ needs.cases.outputs.documents }}
         run: |
-          document="crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
+          document=$(jq -er --arg case "$NEMOCLAW_HCL_CASE" '.[$case]' <<< "$DOCUMENTS")
+          # A document whose only agent is Hermes binds its zero-digest
+          # nc-fabric image to the Hermes image.
           primary=openclaw
-          case "$NEMOCLAW_HCL_CASE" in
-            dgx-station-openclaw-nemotron) document=examples/platforms/docker/vllm/dgx-station/openclaw-dgx-station.yaml ;;
-            dgx-station-hermes-nemotron) document=examples/platforms/docker/vllm/dgx-station/hermes-dgx-station.yaml primary=hermes ;;
-            dgx-spark-openclaw-nemotron) document=examples/platforms/docker/vllm/dgx-spark/openclaw-dgx-spark.yaml ;;
-          esac
+          if grep -q 'kind: nvidia.fabric.hermes' "$document" && ! grep -q 'kind: nvidia.fabric.openclaw' "$document"; then
+            primary=hermes
+          fi
           printf 'document=%s\nprimary=%s\n' "$document" "$primary" >> "$GITHUB_OUTPUT"
           if grep -Eq 'nc-fabric-hermes@|kind: nvidia.fabric.hermes' "$document"; then
             printf 'names=openclaw hermes\nsuffix=\n' >> "$GITHUB_OUTPUT"
@@ -325,7 +330,6 @@ jobs:
           tar -xf "$RUNNER_TEMP/image-sources.tar"
           read -ra runtimes <<< "$RUNTIMES"
           NEMOCLAW_HCL_RUN="$RUNNER_TEMP/hcl"
-          bindings=()
           document="$DOCUMENT"
           if [[ $PERSISTENT == true ]]; then
             umask 077
@@ -334,19 +338,10 @@ jobs:
             mkdir -p "$NEMOCLAW_HCL_RUN"
             document="$NEMOCLAW_HCL_RUN/case.yaml"
             cp "$DOCUMENT" "$document"
-            # Station's qualified model stays separate from the Spark template.
-            if [[ $TARGET == dgx-station ]]; then
-              bindings+=(
-                -e 's#nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4#nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4#'
-                -e 's#ff433f5493e25d631c9f12b5d55c674229923d02#da5b2650a835292c678994a1fa3fb653250fb508#'
-                -e 's#nemotron-3-super#nemotron-3.5-super-vl#g'
-              )
-            fi
             cp -a "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_HCL_RUN/bundle"
             cp -L .build/e2e "$NEMOCLAW_HCL_RUN/e2e"
             {
               echo "NEMOCLAW_TEST_BUNDLE=$NEMOCLAW_HCL_RUN/bundle"
-              echo "NEMOCLAW_HCL_TEST_DIRECTORY=manual"
               echo "NEMOCLAW_HCL_PERSISTENT=true"
             } >> "$GITHUB_ENV"
           fi
@@ -359,7 +354,7 @@ jobs:
           for runtime in "${runtimes[@]}"; do docker image inspect "nc-prototype-$runtime:rust-v1" > /dev/null; done
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
           # Pin this run's images and give it a fresh deployment identity; plan rejects an unbound image.
-          sed -i "${bindings[@]}" -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id "nc-fabric:$PRIMARY_AGENT")#" \
+          sed -i -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id "nc-fabric:$PRIMARY_AGENT")#" \
             -e "s#nc-fabric-hermes@sha256:0\{64\}#nc-fabric@$(id nc-fabric:hermes)#" \
             -e "s#nc-prototype-vllm@sha256:0\{64\}#nc-prototype-vllm@$(id nc-prototype-vllm:rust-v1)#" \
             -e "s#nc-prototype-llama-cpp@sha256:0\{64\}#nc-prototype-llama-cpp@$(id nc-prototype-llama-cpp:rust-v1)#" \

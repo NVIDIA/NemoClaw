@@ -30,7 +30,7 @@ time.workspace = true
 getrandom.workspace = true
 ipnet.workspace = true
 serde-saphyr.workspace = true
-pulldown-cmark = { workspace = true, optional = true }
+pulldown-cmark.workspace = true
 pulldown-cmark-to-cmark = { workspace = true, optional = true }
 url.workspace = true
 determinator.workspace = true
@@ -47,4 +47,4 @@ workspace = true
 
 [features]
 default = ["sdk"]
-sdk = ["dep:nemoclaw-sdk", "dep:pulldown-cmark", "dep:pulldown-cmark-to-cmark", "dep:sha2"]
+sdk = ["dep:nemoclaw-sdk", "dep:pulldown-cmark-to-cmark", "dep:sha2"]
