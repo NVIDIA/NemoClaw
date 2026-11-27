@@ -407,7 +407,7 @@ sandboxes:
 The `assistant` agent loads `summarize`, `translate`, and the skill in `review-skill`.
 The `researcher` agent loads `summarize` and `translate`.
 
-In HCL, use `openshell_sandbox`'s [`driver_config`](../references/provider.md#openshell-resources-and-data-sources) and `fabric_agent`'s `skills` block, with one `directories` block per entry:
+In HCL, use `openshell_sandbox`'s [`driver_config`](../reference/provider.md#openshell-resources-and-data-sources) and `fabric_agent`'s `skills` block, with one `directories` block per entry:
 
 ```hcl
 resource "openshell_sandbox" "assistant" {
@@ -476,7 +476,7 @@ agent:
 Use `provider: tavily` for Tavily.
 The [web search example](../../examples/features/web-search.yaml) shows two agents sharing one definition.
 Set the referenced variable on the applying host through your secret-management mechanism.
-NemoClaw registers the search API as an [`openshell_api`](../references/provider.md#api-credentials) credential: a workspace-scoped provider profile and credential-bearing provider in OpenShell.
+NemoClaw registers the search API as an [`openshell_api`](../reference/provider.md#api-credentials) credential: a workspace-scoped provider profile and credential-bearing provider in OpenShell.
 The sandbox receives a placeholder, `BRAVE_API_KEY` or `TAVILY_API_KEY` even when the host reference has another name, and OpenShell substitutes the real key for authorized requests to the search API.
 Set `sandboxEnv` when the harness reads the key under another name.
 Hermes's Brave plugin, for example, reads `BRAVE_SEARCH_API_KEY`:

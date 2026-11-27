@@ -23,7 +23,7 @@ Use a registry digest or a local tag.
 
 ## Harnesses Without a Published Image
 
-Check the [harness matrix](../references/fabric-harnesses.md) and the build targets in [`docker-bake.hcl`](../../docker-bake.hcl) before choosing a base image.
+Check the [harness matrix](../reference/fabric-harnesses.md) and the build targets in [`docker-bake.hcl`](../../docker-bake.hcl) before choosing a base image.
 
 | What Is Available | What to Build |
 | --- | --- |
@@ -71,7 +71,7 @@ Reference the image by its digest in `sandboxes.<name>.image.ref`, as for any ag
 ## When Releases Change
 
 Rebuild from the new release's base image when you upgrade NemoClaw.
-See [compatibility](../references/compatibility.md).
+See [compatibility](../reference/compatibility.md).
 NemoClaw doesn't compare Fabric versions: the image's own Fabric runtime reports an incompatibility when the agent starts.
 An image from an older base can fail at apply with `sandbox unavailable`.
 `openshell logs SANDBOX --source sandbox` shows why, for example a missing `fabric-agent-ctl`.

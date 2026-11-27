@@ -16,7 +16,7 @@ The CLI runs on your client. The sandbox engine and model endpoint can run elsew
 | Build the bundle and agent image yourself | [Build and deploy Hermes from source](from-source.md) on Apple silicon macOS or in WSL2. |
 | Reuse an OpenShell gateway and model endpoint | [Install the release CLI](install.md), check [which OpenShell client you need](#using-the-bundled-openshell-cli), then [configure the external gateway example](first-deployment.md#using-an-existing-gateway-and-inference-endpoint). |
 
-For either release deployment, use a [bundle and OpenClaw image digest from the same release](../references/compatibility.md#using-one-release-together).
+For either release deployment, use a [bundle and OpenClaw image digest from the same release](../reference/compatibility.md#using-one-release-together).
 Use resources you control, a fresh deployment UUID, and a separate state directory.
 
 ## Identifying Each Host
@@ -79,15 +79,15 @@ The gateway's authentication determines which client to use for agent access:
 
 | Gateway | OpenShell client |
 |---|---|
-| None or mutual TLS (mTLS) | Use bundled [`nemoclaw osh`](../references/cli.md#running-openshell-against-a-deployment) with the deployment's state directory and any referenced TLS files. |
-| OpenID Connect (OIDC) | Use bundled `nemoclaw osh` after [signing in](../references/cli.md#logging-in-to-an-oidc-gateway). |
+| None or mutual TLS (mTLS) | Use bundled [`nemoclaw osh`](../reference/cli.md#running-openshell-against-a-deployment) with the deployment's state directory and any referenced TLS files. |
+| OpenID Connect (OIDC) | Use bundled `nemoclaw osh` after [signing in](../reference/cli.md#logging-in-to-an-oidc-gateway). |
 | Token only, no sign-in settings (`gateway.oidc`), or no endpoint this host can reach | [Prepare a standalone client](#preparing-the-standalone-openshell-cli) and [select its gateway and workspace](../agents-inference/interfaces.md#selecting-a-standalone-cli-for-bearer-token-gateways). |
 
 ## Preparing the Standalone OpenShell CLI
 
 This procedure is for gateways that require a separately configured client.
 
-Match the `components.gateway.version` pin in the release's [`version-pins.json`](../references/compatibility.md#using-one-release-together) or the `openshell` pin in `versions.json` for a source build.
+Match the `components.gateway.version` pin in the release's [`version-pins.json`](../reference/compatibility.md#using-one-release-together) or the `openshell` pin in `versions.json` for a source build.
 NemoClaw v0.1.0 pins OpenShell 0.1.10.
 If `command -v openshell` selects a compatible client and `openshell --version` confirms the pin, reuse it.
 

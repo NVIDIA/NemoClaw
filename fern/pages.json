@@ -192,7 +192,7 @@
       "pages": [
         {
           "title": "NemoClaw CLI Reference",
-          "source": "docs/references/cli.md",
+          "source": "docs/reference/cli.md",
           "slug": "reference/cli"
         },
         {
@@ -202,22 +202,22 @@
         },
         {
           "title": "Fabric Harnesses",
-          "source": "docs/references/fabric-harnesses.md",
+          "source": "docs/reference/fabric-harnesses.md",
           "slug": "reference/fabric-harnesses"
         },
         {
           "title": "Using the Rust SDK",
-          "source": "docs/references/sdk.md",
+          "source": "docs/reference/sdk.md",
           "slug": "sdk"
         },
         {
           "title": "OpenTofu Provider Reference",
-          "source": "docs/references/provider.md",
+          "source": "docs/reference/provider.md",
           "slug": "provider"
         },
         {
           "title": "Compatibility Across Releases",
-          "source": "docs/references/compatibility.md",
+          "source": "docs/reference/compatibility.md",
           "slug": "compatibility"
         }
       ]

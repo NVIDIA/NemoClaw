@@ -15,7 +15,7 @@ A non-interactive plan without an inference credential succeeds and defers the c
 ## How to get to it (user POV)
 
 - The review screen of `nemoclaw onboard`, and the [Reviewing and Saving the YAML](../../../../docs/get-started/onboard.md#reviewing-and-saving-the-yaml) steps.
-- `nemoclaw plan FILE --non-interactive`, as the [CLI reference](../../../../docs/references/cli.md#credential-resolution) describes.
+- `nemoclaw plan FILE --non-interactive`, as the [CLI reference](../../../../docs/reference/cli.md#credential-resolution) describes.
 
 ## Driving it with hc or tmux
 

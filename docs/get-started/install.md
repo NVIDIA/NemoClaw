@@ -278,7 +278,7 @@ Refer to [Usage Telemetry](../security/security.md#usage-telemetry).
 Existing deployments keep their original bundle, image pins, and state.
 Keep the previous bundle for recovery and teardown.
 Manage an existing deployment from its deployment directory with the original CLI's absolute path.
-Refer to [deployment state compatibility](../references/compatibility.md#deployment-state).
+Refer to [deployment state compatibility](../reference/compatibility.md#deployment-state).
 
 In an installation procedure, use the new tag to upgrade and the installed tag to preserve the old bundle from its archive.
 For a new release evaluation, use a fresh `metadata.uid`, state directory, and release-matched images.

@@ -87,11 +87,11 @@ Look up the interface contract of your source revision before adapting a command
 
 | Reader goal | Guide |
 |---|---|
-| Look up commands and options | [CLI](references/cli.md) |
+| Look up commands and options | [CLI](reference/cli.md) |
 | Look up configuration fields | [YAML Configuration Reference](reference/configuration.md) |
-| Compare harness descriptors and examples | [Fabric Harnesses](references/fabric-harnesses.md) |
-| Integrate with the Rust API or OpenTofu | [SDK](references/sdk.md), [Provider](references/provider.md) |
-| Check release guarantees | [Compatibility](references/compatibility.md) |
+| Compare harness descriptors and examples | [Fabric Harnesses](reference/fabric-harnesses.md) |
+| Integrate with the Rust API or OpenTofu | [SDK](reference/sdk.md), [Provider](reference/provider.md) |
+| Check release guarantees | [Compatibility](reference/compatibility.md) |
 
 ## Resources
 

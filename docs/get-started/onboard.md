@@ -52,7 +52,7 @@ When no usable local image fits the harness, release and release candidate CLIs 
 The suggestions match the selected adapter in the release metadata. Onboarding selects a sole match or lists multiple matches as choices.
 If the pins are unavailable or name another release or Fabric revision, onboarding offers local images and manual entry.
 A suggested release image has not been pulled or validated on your engine. Apply can pull the digest and check it.
-Refer to [provider discovery](../references/provider.md#engine-and-fabric-discovery) for the read contracts.
+Refer to [provider discovery](../reference/provider.md#engine-and-fabric-discovery) for the read contracts.
 
 ## Reviewing and Saving the YAML
 
@@ -78,9 +78,9 @@ The file names credential variables, not values.
 The new file describes a deployment but does not create it.
 
 1. Choose a state directory that no other deployment uses.
-2. Provide the [credentials that plan requires](../references/cli.md#credential-resolution) through a protected environment facility.
+2. Provide the [credentials that plan requires](../reference/cli.md#credential-resolution) through a protected environment facility.
    Plan can defer missing credentials that only apply requires.
    Keep credential values out of YAML.
 3. Follow [planning and applying a deployment](../build-deploy/usage.md#planning-and-applying) with the saved YAML.
 
-For command syntax, refer to the [CLI reference](../references/cli.md).
+For command syntax, refer to the [CLI reference](../reference/cli.md).

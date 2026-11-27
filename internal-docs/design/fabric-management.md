@@ -18,7 +18,7 @@ Agent images run Fabric's own sandbox bridge, `fabric-agent-ctl`; NemoClaw adds 
 | Authoring | Generic questions from owner schemas, accepted intent and unresolved work |
 
 `fabric_agent` starts the public Fabric document its typed inputs compose, after sandbox creation and route setup.
-NemoClaw runs one runtime per sandbox, so any configuration change replaces the sandbox; see [Fabric agents](../../docs/references/provider.md#fabric-agents).
+NemoClaw runs one runtime per sandbox, so any configuration change replaces the sandbox; see [Fabric agents](../../docs/reference/provider.md#fabric-agents).
 The resource is reconstructible and separate from immutable sandbox identity and retained deployment bindings.
 It does not promise conversation continuity across a sandbox replacement.
 

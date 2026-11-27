@@ -204,7 +204,7 @@ The runner prepares each module a test file names, in the same path of a work co
 | `./examples/<path>` | A NemoClaw document, `examples/<path>.yaml` | The same, so an example is tested unchanged |
 | `./examples/<path>` | An authored HCL directory, `examples/<path>`, or one authored file, `examples/<path>.tf` | A copy, with the bundle's version pinned on each NVIDIA provider, which a development bundle's pre-release providers need; a single file becomes the module's `main.tf`, beside a copy of `versions.json` |
 
-A scenario whose documents [`nemoclaw compile`](../../docs/references/cli.md#writing-a-configuration-out-as-hcl) writes, every one but a managed Kubernetes or OpenShift gateway's, also runs against their HCL projects.
+A scenario whose documents [`nemoclaw compile`](../../docs/reference/cli.md#writing-a-configuration-out-as-hcl) writes, every one but a managed Kubernetes or OpenShift gateway's, also runs against their HCL projects.
 The runner renders each such document's compiled graph with `nemoclaw_sdk::project`, as the command does, into the same module path of a second work copy, in place of `nemoclaw.tf.json`, and runs the scenario's test file there too, with the same assertions.
 `rendered::written_projects_configure_what_their_graphs_configure` checks that each project configures what its graph configures, with the project's variables and locals in the JSON syntax: OpenTofu reads both through a plan whose target names nothing, so it reads no data source and configures no provider, and their configurations must match.
 

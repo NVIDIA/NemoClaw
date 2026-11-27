@@ -16,7 +16,7 @@ Use the v0.1.0 bundle, configuration schema, and agent image together. The follo
 - [Deploy an OpenClaw agent](../get-started/first-deployment.md) with local Docker and NVIDIA Endpoints, then send a native request to verify the reply.
 - [Manage multiple sandboxes](../build-deploy/usage.md#configuring-sandboxes-and-inference), each with one agent, and connect them to hosted or managed inference providers.
 - [Plan, apply, export, and destroy](../build-deploy/usage.md) resources, with retained state for recovery and separate cleanup for persistent data.
-- [Using the Rust SDK](../references/sdk.md) to integrate deployment operations, or deploy to [Kubernetes](../build-deploy/kubernetes.md) or [OpenShift](../build-deploy/openshift.md) when the cluster prerequisites are available.
+- [Using the Rust SDK](../reference/sdk.md) to integrate deployment operations, or deploy to [Kubernetes](../build-deploy/kubernetes.md) or [OpenShift](../build-deploy/openshift.md) when the cluster prerequisites are available.
 - [Use the providers from your own OpenTofu project](../build-deploy/opentofu-project.md), with your own pipelines and state backend, instead of the CLI or SDK.
 
 The CLI doesn't invoke agents, manage channels, or take snapshots. An apply checks configuration and runtime readiness, not a model response. Refer to [native agent access](../agents-inference/agents.md#choosing-native-access) and [current limits](../resources/limits.md) before choosing a workflow.

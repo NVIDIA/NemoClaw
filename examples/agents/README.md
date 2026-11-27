@@ -30,7 +30,7 @@ Build the selected harness image and native bundle using the [build guide](../..
 The existing gateway must have access to that image and a compatible model endpoint.
 Replace the deployment UID, gateway endpoint, image reference, inference endpoint, and model ID in a private copy.
 Add an inference credential environment reference if your endpoint requires one.
-The [harness reference](../../docs/references/fabric-harnesses.md) defines protocol compatibility and adapter limits.
+The [harness reference](../../docs/reference/fabric-harnesses.md) defines protocol compatibility and adapter limits.
 
 Follow the [YAML run procedure](../README.md#prepare-and-run-a-yaml-example), then send a request to the selected agent.
 Expect one sandbox and one ready runtime; a completed invocation establishes an answer separately.

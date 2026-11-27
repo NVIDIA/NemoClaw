@@ -17,8 +17,8 @@ nemoclaw osh --state-dir .nemoclaw -- sandbox list
 
 It selects the gateway and workspace from the saved deployment and uses the referenced mTLS files without changing your OpenShell profiles.
 Use the same state directory and TLS environment as apply.
-The commands below use this form; [`nemoclaw openshell`](../references/cli.md#running-openshell-against-a-deployment) describes it.
-For an OIDC gateway, first sign in once, as [Logging In to an OIDC Gateway](../references/cli.md#logging-in-to-an-oidc-gateway) describes.
+The commands below use this form; [`nemoclaw openshell`](../reference/cli.md#running-openshell-against-a-deployment) describes it.
+For an OIDC gateway, first sign in once, as [Logging In to an OIDC Gateway](../reference/cli.md#logging-in-to-an-oidc-gateway) describes.
 
 ### Selecting a Standalone CLI for Bearer-Token Gateways
 
@@ -358,7 +358,7 @@ See its [service exposure rules](https://github.com/ai-openshell/openshell/blob/
 A sandbox takes at most 32 exposures.
 Adding, changing, or removing an exposure updates the running sandbox's endpoints in place, as `openshell service expose` and `openshell service delete` do, so the sandbox keeps its files and conversations.
 Apply also restores a declared endpoint that was changed or deleted on the gateway, and leaves endpoints under other names alone.
-In HCL, use `openshell_sandbox`'s [`service` blocks](../references/provider.md#openshell-resources-and-data-sources).
+In HCL, use `openshell_sandbox`'s [`service` blocks](../reference/provider.md#openshell-resources-and-data-sources).
 
 Requests to the URL skip OpenShell's gateway authentication: they use no OIDC or CLI login, and only the gateway listener's TLS, including any required client certificate, applies.
 The service must listen on loopback and authenticate its own clients.
