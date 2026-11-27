@@ -2,6 +2,37 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Mirror the CLI bounds for numeric auto-pair inputs: finite positive seconds,
+# and a positive safe integer for the poll count. The decimal text is parsed
+# exactly as 0.DIGITS * 10^point, without spawning a child.
+nemoclaw_valid_auto_pair_number() {
+  local name="$1" value="$2" digits lead exponent=0 point top zeros
+  [[ "$value" =~ ^\+?([0-9]*)(\.([0-9]*))?([eE]([+-]?[0-9]{1,4}))?$ ]] || return 1
+  digits="${BASH_REMATCH[1]}${BASH_REMATCH[3]}"
+  [ -n "$digits" ] || return 1
+  if [ -n "${BASH_REMATCH[5]}" ]; then
+    exponent=$((10#${BASH_REMATCH[5]#[+-]}))
+    [ "${BASH_REMATCH[5]:0:1}" != "-" ] || exponent=$((-exponent))
+  fi
+  point=$((${#BASH_REMATCH[1]} + exponent))
+  lead="${digits%%[!0]*}"
+  digits="${digits#"$lead"}"
+  digits="${digits%"${digits##*[!0]}"}"
+  [ -n "$digits" ] || return 1
+  point=$((point - ${#lead}))
+  if [ "$name" = "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS" ]; then
+    ((point >= ${#digits} && point <= 16)) || return 1
+    printf -v zeros '%*s' "$((point - ${#digits}))" ''
+    ((10#${digits}${zeros// /0} <= 9007199254740991))
+    return
+  fi
+  # Finite and nonzero as a double: about 4.9e-324 up to 1.7976931348623157e308.
+  printf -v top '%-17s' "${digits:0:17}"
+  top="${top// /0}"
+  ((point <= 308 || (point == 309 && 10#$top <= 17976931348623157))) \
+    && ((point >= -322 || (point == -323 && 10#$top >= 24703282292062328)))
+}
+
 # Normalize OpenShell's sandbox-create command when an OCI runtime invokes the
 # image ENTRYPOINT with the literal argv:
 #
@@ -137,6 +168,15 @@ nemoclaw_normalize_entrypoint_env_wrapper() {
         printf '%s\n' \
           "[SECURITY] Managed startup env wrapper repeats variable '${_nemoclaw_name}'." >&2
         return 1
+        ;;
+    esac
+    case "$_nemoclaw_name" in
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS | NEMOCLAW_AUTO_PAIR_*_SECS)
+        if ! nemoclaw_valid_auto_pair_number "$_nemoclaw_name" "${_nemoclaw_token#*=}"; then
+          printf '%s\n' \
+            "[SECURITY] Managed startup env wrapper has an invalid value for '${_nemoclaw_name}'." >&2
+          return 1
+        fi
         ;;
     esac
     _nemoclaw_assignments+=("$_nemoclaw_token")

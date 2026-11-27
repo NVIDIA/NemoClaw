@@ -79,6 +79,17 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     expect(result.stdout).toContain("ARG=/bin/sh\nARG=-c\nARG=printf managed command\n");
   });
 
+  it.each([
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "3.0"],
+    ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "3e0"],
+    ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "1e308"],
+    ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", "5e-324"],
+  ])("accepts %s=%s", (name, value) => {
+    const result = runNormalizer(["env", `${name}=${value}`, "nemoclaw-start", "/bin/true"]);
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("strips a direct self invocation without interpreting its command arguments", () => {
     const result = runNormalizer(["/usr/local/bin/nemoclaw-start", "env", "FOO=bar", "printenv"]);
 
@@ -125,6 +136,20 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       ],
       message: "repeats variable 'NEMOCLAW_STARTUP_PROFILE_B64'",
     },
+    ...[
+      ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "0"],
+      ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "-1"],
+      ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", "Infinity"],
+      ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "Infinity"],
+      ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "9007199254740993"],
+      ["NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", "3.5"],
+      ["NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", "1e-999"],
+      ["NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", "2e308"],
+    ].map(([name, value]) => ({
+      name: `rejects ${name}=${value}`,
+      argv: ["env", `${name}=${value}`, "nemoclaw-start", "/bin/true"],
+      message: `invalid value for '${name}'`,
+    })),
     {
       name: "rejects a startup profile handed to another command",
       argv: ["env", "NEMOCLAW_STARTUP_PROFILE_B64=profile", "/usr/bin/true"],
