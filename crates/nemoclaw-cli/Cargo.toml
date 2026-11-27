@@ -17,7 +17,6 @@ nemoclaw-discovery = { path = "../nemoclaw-discovery" }
 nemoclaw-onboarding = { path = "../nemoclaw-onboarding" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 clap.workspace = true
-futures-util.workspace = true
 ratatui.workspace = true
 terminal_size.workspace = true
 serde_json.workspace = true

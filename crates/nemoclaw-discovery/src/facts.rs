@@ -39,6 +39,17 @@ pub async fn docker_desktop(engines: &dyn Engines, endpoint: &str) -> Option<boo
     Some(info.operating_system.as_deref() == Some("Docker Desktop"))
 }
 
+/// The SDK's engine probe, reading each engine through its Docker API.
+pub struct DirectEngineProbe;
+impl nemoclaw_sdk::EngineProbe for DirectEngineProbe {
+    fn docker_desktop<'a>(
+        &'a self,
+        engine: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Option<bool>> {
+        Box::pin(docker_desktop(&crate::Direct, engine))
+    }
+}
+
 /// The selected engine's facts and its advertised hardware from one `/info`
 /// read, with the same meaning as [`observe_engine_facts`] and [`observe_hardware`].
 pub async fn observe_host(
