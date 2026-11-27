@@ -395,6 +395,14 @@ pub fn replace_when_observed(name: &str, prior: &State) -> Option<Value<String>>
     }
 }
 
+/// Carry an empty observation forward, but plan an unknown value when the
+/// prior observation reported a reason to restart the object. As the
+/// attribute isn't in [`Definition::replace_on_change`], the change updates
+/// the object in place.
+pub fn restart_when_observed(name: &str, prior: &State) -> Option<Value<String>> {
+    replace_when_observed(name, prior)
+}
+
 /// Preserve established computed identity; mark immutable configuration changes
 /// for replacement. The resource adapter protects retained and stateful resources.
 pub fn plan_update(

@@ -160,7 +160,8 @@ OpenShell validates the rest when the gateway starts: an unknown or misplaced fi
 A change replaces a Docker or Podman gateway's container, which receives the new file and keeps the gateway's data, and upgrades a Kubernetes gateway's chart release.
 The restarted gateway restarts its sandboxes but not their Fabric agents.
 The next plan finds each agent's runtime stopped, and apply starts it again in its sandbox, which keeps its files.
-A sandbox that exits instead of restarting is replaced, which deletes its files and conversation history.
+A sandbox that the gateway leaves stopped restarts in place first, as [workload recovery](#replacing-workloads-after-an-unusable-runtime) describes.
+A sandbox whose main process exits instead is replaced, which deletes its files and conversation history.
 Don't put secrets in it.
 Plans and state show it.
 An external gateway takes no `config`.
@@ -514,7 +515,7 @@ A failed start might have left a runtime running, so the next apply creates the 
 When Fabric rejected the configuration, correct the settings before reapplying.
 An invocation failure can also leave a runtime unusable.
 Unless Fabric's check reports it stopped, an unchanged apply leaves it alone.
-To recover from that, or from a sandbox that exited, see [workload replacement](#replacing-workloads-after-an-unusable-runtime).
+To recover from that, or from a sandbox that stopped or exited, see [workload replacement](#replacing-workloads-after-an-unusable-runtime).
 A sandbox in `Error` can still block apply, but its saved identity permits [teardown](#destroying) without a successful reapply.
 Changing a rejected sandbox policy or image doesn't authorize replacement.
 Follow the [change constraints](#choosing-the-change-path).
@@ -584,7 +585,13 @@ See [Diagnosing and Recovering a Stopped Runtime](../agents-inference/models.md#
 
 ### Replacing Workloads After an Unusable Runtime
 
-When OpenShell reports that a sandbox exited, `nemoclaw plan` replaces that sandbox and says why, such as `sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1`.
+When OpenShell reports that a sandbox that ran was stopped without a main-process exit code, `nemoclaw plan` restarts that sandbox in place and says why, such as `sandbox stopped: SANDBOX_PHASE_ERROR, reason PodSucceeded, exit code unknown`.
+This happens after its Kubernetes Pod is deleted, after its gateway restarts without starting it again, or after `openshell sandbox stop`.
+Apply stops and starts the sandbox, which keeps its ID, and then starts its agent's runtime again, which begins a new conversation.
+On Kubernetes, the sandbox starts in a new Pod, so files outside mounted volumes don't survive.
+If the sandbox doesn't run again, the next plan replaces it.
+
+When OpenShell reports that a sandbox exited, as when its main process exited, `nemoclaw plan` replaces that sandbox and says why, such as `sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1`.
 Read why it exited with `openshell logs SANDBOX --source sandbox` before applying.
 See [native logs](../observability/troubleshooting.md#reading-native-service-logs).
 **The replacement deletes that sandbox's files and conversation history.**

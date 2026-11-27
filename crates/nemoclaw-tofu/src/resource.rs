@@ -945,6 +945,32 @@ mod tests {
         assert!(replacements.is_empty());
     }
 
+    /// A computed observation that asks for a restart, such as a sandbox its
+    /// platform stopped, plans an update in place; an empty observation plans
+    /// no change.
+    #[test]
+    fn an_observation_that_asks_for_a_restart_plans_an_update_in_place() {
+        let definition = Definition::new("sandbox", &["name"], &[])
+            .computed("stopped", crate::restart_when_observed);
+        let known = |value: &str| Value::Value(value.to_owned());
+        let state = |stopped: &str| -> State {
+            [
+                ("id".to_owned(), known("sandbox/1")),
+                ("name".to_owned(), known("assistant")),
+                ("stopped".to_owned(), known(stopped)),
+            ]
+            .into()
+        };
+        let stopped = state("SANDBOX_PHASE_ERROR, reason PodSucceeded, exit code unknown");
+        let (planned, replacements) = plan_update(&definition, &stopped, stopped.clone());
+        assert_eq!(planned["stopped"], Value::Unknown);
+        assert!(replacements.is_empty());
+        let running = state("");
+        let (planned, replacements) = plan_update(&definition, &running, running.clone());
+        assert_eq!(planned["stopped"], known(""));
+        assert!(replacements.is_empty());
+    }
+
     #[test]
     fn refresh_preserves_declared_bound_fields() {
         let definition = Definition::new("profile", &["name", "workspace", "source"], &[])

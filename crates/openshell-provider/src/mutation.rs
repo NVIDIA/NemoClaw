@@ -23,6 +23,19 @@ fn policy_unchanged(prior: &Row, row: &Row) -> bool {
     );
     recorded.is_empty() || observed.is_empty() || recorded == observed
 }
+/// Whether a sandbox that OpenShell reports in `phase`, with the main
+/// process's `exit_code` or `unknown`, restarts in place rather than being
+/// replaced: it ran, so its binding records a loaded policy, and it was
+/// stopped without a main-process result, as after its Kubernetes Pod was
+/// deleted, its gateway restarted, or someone stopped it. OpenShell's stop and
+/// start keep its identity, and Fabric's runtime starts again in the new
+/// sandbox lifecycle. A sandbox whose main process exited is replaced, as is
+/// one that never ran or didn't run again after its restart.
+fn restarts_in_place(prior: &Row, phase: &str, exit_code: &str) -> bool {
+    let ran = !value(prior, crate::POLICY_HASH).is_empty();
+    ran && (phase == proto::SandboxPhase::Stopped.as_str_name()
+        || (phase == proto::SandboxPhase::Error.as_str_name() && exit_code.parse::<i32>().is_err()))
+}
 
 /// The binding a mutation leaves once its readback settles: the object read
 /// back, when it is the `established` one and reads back as `want` writes it.
@@ -305,8 +318,20 @@ impl OpenShell {
             return Err(ObservationError::BindingMismatch);
         }
         let created = live.is_none();
+        // Whether this update started a sandbox that was stopped. Its readback
+        // then waits as a new sandbox's does. If the sandbox doesn't load its
+        // policy again, the binding records none, as for a sandbox that never
+        // ran, so the next plan replaces it.
+        let mut restarted = false;
         let established = match live {
             Some(row) => {
+                if kind == "sandbox"
+                    && let Some(prior) = prior
+                    && self.stopped(want, prior).await?
+                {
+                    self.gateway.restart_bound_sandbox(want).await?;
+                    restarted = true;
+                }
                 if kind == "provider" {
                     self.gateway.update_provider(want, &row).await?;
                 }
@@ -343,7 +368,7 @@ impl OpenShell {
             }
         };
         let readback = if kind == "sandbox" {
-            self.read_back_sandbox(&established, want, created, STARTUP_DEADLINE)
+            self.read_back_sandbox(&established, want, created || restarted, STARTUP_DEADLINE)
                 .await
         } else {
             self.observe(kind, workspace, name, false).await
@@ -421,6 +446,17 @@ impl OpenShell {
             },
         )
     }
+    /// Whether OpenShell reports the bound sandbox stopped, so that it
+    /// restarts in place as [`restarts_in_place`] describes.
+    async fn stopped(&self, want: &Row, prior: &Row) -> Result<bool, ObservationError> {
+        match self.gateway.sandbox_phase(want, false).await {
+            Ok(_) => Ok(false),
+            Err(nemoclaw_backend::Error::SandboxStartup {
+                phase, exit_code, ..
+            }) => Ok(restarts_in_place(prior, phase, &exit_code)),
+            Err(error) => Err(error.into_observation()),
+        }
+    }
     async fn delete_bound(&self, kind: &str, want: &Row) -> Result<(), ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
@@ -474,8 +510,8 @@ impl Backend for OpenShell {
         {
             return Err(ObservationError::BindingMismatch);
         }
-        // Why OpenShell reports the sandbox exited, if it did.
-        let mut exited = String::new();
+        // Why OpenShell reports the sandbox exited, or was stopped, if it was.
+        let (mut exited, mut stopped) = (String::new(), String::new());
         // Whether the loaded policy is not the one APF issued.
         let mut unproven = false;
         if kind == "sandbox"
@@ -509,7 +545,14 @@ impl Backend for OpenShell {
                     phase,
                     reason,
                     exit_code,
-                }) => exited = format!("{phase}, reason {reason}, exit code {exit_code}"),
+                }) => {
+                    let why = format!("{phase}, reason {reason}, exit code {exit_code}");
+                    if restarts_in_place(prior, phase, &exit_code) {
+                        stopped = why;
+                    } else {
+                        exited = why;
+                    }
+                }
                 Err(error) => return Err(error.into_observation()),
             }
         }
@@ -520,6 +563,7 @@ impl Backend for OpenShell {
                 *row = unproven_policy(std::mem::take(row), prior);
             }
             row.insert(crate::EXITED.into(), exited);
+            row.insert(crate::STOPPED.into(), stopped);
             // Teardown, or a sandbox that isn't ready yet, doesn't observe the
             // loaded policy, so the recorded hash still stands.
             if row.get(crate::POLICY_HASH).is_none_or(String::is_empty)

@@ -279,13 +279,22 @@ pub(super) fn check_plan(
                         .iter()
                         .any(|planned| planned == action)
                 });
-                let reason = change
-                    .change
-                    .before
-                    .get("exited")
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|exited| replaced && !exited.is_empty())
+                let observed = |attribute: &str| {
+                    change
+                        .change
+                        .before
+                        .get(attribute)
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|observed| !observed.is_empty())
+                };
+                let reason = observed("exited")
+                    .filter(|_| replaced)
                     .map(|exited| format!("sandbox exited: {exited}"))
+                    .or_else(|| {
+                        observed("stopped")
+                            .filter(|_| !replaced)
+                            .map(|stopped| format!("sandbox stopped: {stopped}"))
+                    })
                     .or_else(|| {
                         (change.address.split_once('.').map(|(kind, _)| kind)
                             == Some(nemoclaw_fabric::agent::RESOURCE_TYPE)
@@ -594,6 +603,29 @@ mod native_helm_tests {
         assert_eq!(
             changes[0].reason.as_deref(),
             Some("sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1")
+        );
+    }
+
+    #[test]
+    fn a_sandbox_restarted_in_place_reports_why() {
+        let address = "openshell_sandbox.assistant";
+        let allowed: BTreeMap<String, Row> = [(address.to_owned(), Row::new())].into();
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{
+            "mode":"managed", "address":address,
+            "change":{
+                "actions":["update"],
+                "before":{
+                    "exited":"",
+                    "stopped":"SANDBOX_PHASE_ERROR, reason PodSucceeded, exit code unknown"
+                },
+                "after":{}
+            }
+        }]}))
+        .unwrap();
+        let changes = check_plan(&plan, &allowed, &BTreeMap::new()).unwrap();
+        assert_eq!(
+            changes[0].reason.as_deref(),
+            Some("sandbox stopped: SANDBOX_PHASE_ERROR, reason PodSucceeded, exit code unknown")
         );
     }
 

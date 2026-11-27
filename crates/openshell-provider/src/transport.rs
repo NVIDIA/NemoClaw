@@ -53,6 +53,9 @@ pub(super) trait OpenShellGateway: Send + Sync {
         Err(ObservationError::Authentication)
     }
     async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError>;
+    /// Stop the bound sandbox, which leaves a stopped one as it is, then start
+    /// it again, as `openshell sandbox stop` and `start` do.
+    async fn restart_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError>;
     /// Ask OpenShell to update the bound sandbox's configuration without a
     /// policy, so its policy authority issues the policy again.
     async fn reissue_policy(&self, want: &Row) -> Result<(), ObservationError>;
@@ -346,6 +349,10 @@ impl OpenShellGateway for ConnectedOpenShellGateway {
         ConnectedOpenShellGateway::delete_bound_sandbox(self, want).await
     }
 
+    async fn restart_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
+        ConnectedOpenShellGateway::restart_bound_sandbox(self, want).await
+    }
+
     async fn reissue_policy(&self, want: &Row) -> Result<(), ObservationError> {
         ConnectedOpenShellGateway::reissue_policy(self, want).await
     }
@@ -637,6 +644,10 @@ mod tests {
         }
 
         async fn delete_bound_sandbox(&self, _want: &Row) -> Result<(), ObservationError> {
+            unreachable!()
+        }
+
+        async fn restart_bound_sandbox(&self, _want: &Row) -> Result<(), ObservationError> {
             unreachable!()
         }
 

@@ -266,6 +266,8 @@ pub enum RejectableOperation {
     UpdateConfig,
     DeleteProvider,
     DeleteProviderProfile,
+    StopSandbox,
+    StartSandbox,
 }
 
 impl RejectableOperation {
@@ -277,6 +279,8 @@ impl RejectableOperation {
             Self::UpdateConfig => "UpdateConfig",
             Self::DeleteProvider => "DeleteProvider",
             Self::DeleteProviderProfile => "DeleteProviderProfile",
+            Self::StopSandbox => "StopSandbox",
+            Self::StartSandbox => "StartSandbox",
         }
     }
 }

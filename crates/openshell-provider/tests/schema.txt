@@ -175,6 +175,7 @@ resource openshell_sandbox (version 2)
   providers: list(object({ registration = string, type = string })), optional
   ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
   service_urls: map(string), computed
+  stopped: string, computed
   workspace: object({ name = string, type = string }), required
   block policy: optional
     cluster_grants: list(string), optional
