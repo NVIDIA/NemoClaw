@@ -281,7 +281,7 @@ build_zlib_package() {
     ./write-error-test
   )
   download \
-    "https://deb.debian.org/debian/pool/main/z/zlib/zlib1g_1.3.dfsg%2Breally1.3.1-1%2Bb1_${architecture}.deb" \
+    "https://snapshot.debian.org/archive/debian/20250810T000000Z/pool/main/z/zlib/zlib1g_1.3.dfsg%2Breally1.3.1-1%2Bb1_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   test "$(dpkg-deb -f "${original_deb}" Package)" = zlib1g

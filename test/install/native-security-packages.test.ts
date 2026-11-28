@@ -150,7 +150,116 @@ function runPythonFixPackageHarness(architecture: "amd64" | "arm64", sourceHashF
   return { fixture, harnessLog, outputDir, result };
 }
 
+const ZLIB_HASHES = {
+  amd64: "015be740d6236ad114582dea500c1d907f29e16d6db00566ca32fb68d71ac90d",
+  arm64: "209aa5cf671e97b9eb0410844fa6df4cae2e75b0c72e7802ab6c8ece13e6ddef",
+} as const;
+const ZLIB_VERSION = "1:1.3.dfsg+really1.3.1-1+b1";
+const zlibSnapshotUrl = (arch: keyof typeof ZLIB_HASHES) =>
+  `https://snapshot.debian.org/archive/debian/20250810T000000Z/pool/main/z/zlib/zlib1g_1.3.dfsg%2Breally1.3.1-1%2Bb1_${arch}.deb`;
+
+function runZlibHarness(
+  architecture: keyof typeof ZLIB_HASHES,
+  original: { hash?: string; name?: string; version?: string } = {},
+) {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-zlib-"));
+  try {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        String.raw`
+set -euo pipefail
+fixture="$1"
+verified_deb=""
+mktemp() { command mktemp -d "$fixture/build.XXXXXX"; }
+source "$2" "$fixture"
+download() { printf '%s\n' "$1" >"$2"; }
+verify_sha256() {
+  if [[ "$2" == *.deb ]]; then
+    printf '%s %s\n' "$1" "$(cat "$2")"
+    [[ "$1" == "$ORIGINAL_HASH" ]] || return 1
+    verified_deb="$2"
+  fi
+}
+tar() { printf "#!/bin/sh\nexit 0\n" >"$4/configure"; chmod +x "$4/configure"; touch "$4/libz.so.1.3.1"; }
+make() { :; }
+nproc() { echo 1; }
+cc() { printf '#!/bin/sh\n[ -f patched ] || exit 4\n' >write-error-test; chmod +x write-error-test; }
+git() { if [[ "$2" != --check ]]; then touch patched; fi; }
+gcc() { echo fixture-multiarch; }
+nm() { echo 'inflate T'; }
+readelf() { echo '[libz.so.1]'; }
+rewrite_control_field() { printf '%s\n' "$3" >"$1"; }
+refresh_md5sums() { :; }
+dpkg-deb() {
+  if [[ "$1" == -R || ( "$1" == -f && "$2" != "$fixture/zlib1g.deb" ) ]]; then
+    [[ "$2" == "$verified_deb" ]] || return 64
+  fi
+  case "$1" in
+    -f) case "$3" in
+      Package) echo "$ORIGINAL_NAME" ;;
+      Version) if [[ "$2" == "$fixture/zlib1g.deb" ]]; then cat "$2"; else echo "$ORIGINAL_VERSION"; fi ;;
+      *) return 64 ;;
+    esac ;;
+    -R) echo unpack; mkdir -p "$3/DEBIAN" "$3/usr/lib/fixture-multiarch"; touch "$3/usr/lib/fixture-multiarch/libz.so.1.3.1" ;;
+    --build) cp "$3/DEBIAN/control" "$4" ;;
+    *) return 64 ;;
+  esac
+}
+build_zlib_package "$ARCHITECTURE"
+`,
+        "zlib-harness",
+        fixture,
+        BUILD_SCRIPT,
+      ],
+      {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          ARCHITECTURE: architecture,
+          ORIGINAL_HASH: original.hash ?? ZLIB_HASHES[architecture],
+          ORIGINAL_NAME: original.name ?? "zlib1g",
+          ORIGINAL_VERSION: original.version ?? ZLIB_VERSION,
+        },
+      },
+    );
+    const deb = path.join(fixture, "zlib1g.deb");
+    return {
+      status: result.status,
+      stderr: result.stderr,
+      calls: result.stdout.trim().split("\n"),
+      output: fs.existsSync(deb) ? fs.readFileSync(deb, "utf-8").trim() : null,
+    };
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+}
+
 describe("native security package remediation", () => {
+  it.each(["amd64", "arm64"] as const)(
+    "builds zlib from the pinned %s snapshot package",
+    (architecture) => {
+      expect(runZlibHarness(architecture)).toEqual({
+        status: 0,
+        stderr: "",
+        calls: [`${ZLIB_HASHES[architecture]} ${zlibSnapshotUrl(architecture)}`, "unpack"],
+        output: `${ZLIB_VERSION}+nemoclaw1`,
+      });
+    },
+  );
+
+  it.each([
+    ["hash", { hash: "0".repeat(64) }],
+    ["package name", { name: "zlib1g-dev" }],
+    ["version", { version: "1:1.3.1-1" }],
+  ] as const)("rejects the wrong zlib %s before unpacking or building", (_, original) => {
+    const { status, calls, output } = runZlibHarness("arm64", original);
+    expect(status).toBe(1);
+    expect(calls).toEqual([`${ZLIB_HASHES.arm64} ${zlibSnapshotUrl("arm64")}`]);
+    expect(output).toBeNull();
+  });
+
   it("keeps the package builder syntactically valid", () => {
     const result = spawnSync("bash", ["-n", BUILD_SCRIPT], { encoding: "utf-8" });
     expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
